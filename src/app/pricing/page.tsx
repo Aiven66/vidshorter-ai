@@ -12,6 +12,7 @@ import { PaymentModal } from '@/components/payment-modal';
 
 interface PlanConfig {
   id: string;
+  name: string;
   titleKey: string;
   priceKey: string;
   periodKey: string;
@@ -26,6 +27,7 @@ interface PlanConfig {
 const plans: PlanConfig[] = [
   {
     id: 'free',
+    name: 'Free',
     titleKey: 'pricing.free.title',
     priceKey: 'pricing.free.price',
     periodKey: 'pricing.free.period',
@@ -42,6 +44,7 @@ const plans: PlanConfig[] = [
   },
   {
     id: 'basic',
+    name: 'Basic',
     titleKey: 'pricing.basic.title',
     priceKey: 'pricing.basic.price',
     periodKey: 'pricing.basic.period',
@@ -59,6 +62,7 @@ const plans: PlanConfig[] = [
   },
   {
     id: 'pro',
+    name: 'Pro',
     titleKey: 'pricing.pro.title',
     priceKey: 'pricing.pro.price',
     periodKey: 'pricing.pro.period',
