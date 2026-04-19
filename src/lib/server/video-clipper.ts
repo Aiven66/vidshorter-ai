@@ -1,47 +1,60 @@
 /**
  * video-clipper.ts
  * Core server-side library for AI-powered video analysis and clip generation.
- * Supports Bilibili and YouTube via yt-dlp + ffmpeg.
- * Generates real MP4 clips and JPEG thumbnails from highlight timestamps.
+ * Supports YouTube and Bilibili (via yt-dlp + ffmpeg locally, or Piped proxy on Vercel).
  *
- * Serverless-compatible:
- *  - All file I/O uses /tmp (writable on Vercel and other serverless platforms)
- *  - ffmpeg binary resolved via @ffmpeg-installer/ffmpeg (cross-platform)
- *  - yt-dlp: tries python3 -m yt_dlp first; on Linux auto-downloads standalone binary to /tmp
- *  - Clips are served via /api/serve-clip/[filename] API route (not static public/ dir)
+ * Architecture for serverless/Vercel:
+ *  - Analysis: youtube-transcript package (official YT caption API, no bot detection)
+ *              + Piped open-source proxy (title/duration/subtitles)
+ *  - Download: Piped stream URL passed directly to ffmpeg (-i https://...)
+ *              → no yt-dlp needed for YouTube on Vercel
+ *  - Local dev: yt-dlp used as primary (faster, better quality)
+ *  - All file I/O uses /tmp (writable on Vercel serverless)
+ *  - ffmpeg resolved via @ffmpeg-installer/ffmpeg (cross-platform binary)
+ *  - Clips served via /api/serve-clip/[filename] API route
  */
 
 import { promisify } from 'node:util';
 import { execFile as execFileCallback } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { access, mkdir, readFile, readdir, writeFile, chmod } from 'node:fs/promises';
+import { access, mkdir, readFile, readdir, writeFile, chmod, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { constants as fsConstants } from 'node:fs';
 
 const execFile = promisify(execFileCallback);
 
-// ── Directories (writable on all platforms including serverless) ────────────
+// ── Directories (writable on all platforms including serverless) ─────────────
 const TMP_DIR = '/tmp';
 const PUBLIC_CLIP_DIR = path.join(TMP_DIR, 'generated-clips');
 const CACHE_DIR = path.join(TMP_DIR, 'video-cache');
 
-// ── yt-dlp binary ───────────────────────────────────────────────────────────
+// ── yt-dlp ───────────────────────────────────────────────────────────────────
 const YT_DLP_BIN_PATH = path.join(TMP_DIR, 'yt-dlp');
-// URL for yt-dlp standalone Linux binary (no Python required)
 const YT_DLP_LINUX_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux';
 
 // ── ffmpeg (cross-platform via @ffmpeg-installer/ffmpeg) ─────────────────────
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const ffmpegInstaller: { path: string } = require('@ffmpeg-installer/ffmpeg');
 
-// Cookie file from a previous yt-dlp export (macOS local dev only)
+// ── Piped proxy instances (YouTube proxy, bypasses bot detection on datacenter IPs) ──
+// Piped is an open-source YouTube proxy running on community servers.
+// Multiple instances for redundancy.
+const PIPED_INSTANCES = [
+  'https://pipedapi.kavin.rocks',
+  'https://piped-api.garudalinux.org',
+  'https://api.piped.yt',
+  'https://pipedapi.tokhmi.xyz',
+  'https://pipedapi.mha.fi',
+];
+
+// Cookie files (local macOS dev only)
 const COOKIE_FILE_PATH = path.join(CACHE_DIR, 'yt-cookies.txt');
 const CHROME_COOKIE_DB = path.join(
   process.env.HOME || '',
   'Library/Application Support/Google/Chrome/Default/Cookies',
 );
 
-// ── Types ───────────────────────────────────────────────────────────────────
+// ── Types ────────────────────────────────────────────────────────────────────
 interface Highlight {
   title: string;
   start_time: number;
@@ -68,13 +81,43 @@ interface ClipResult {
   thumbnailUrl: string;
 }
 
-// ── Clip config ─────────────────────────────────────────────────────────────
+interface PipedVideoInfo {
+  title: string;
+  duration: number;
+  streamUrl: string;
+  subtitleUrl: string | null;
+}
+
+// ── Clip config ──────────────────────────────────────────────────────────────
 const CLIP_TARGET_DURATION = 60;
 const CLIP_MIN_DURATION = 45;
 const CLIP_MAX_DURATION = 65;
 const MAX_HIGHLIGHTS = 10;
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── URL helpers ──────────────────────────────────────────────────────────────
+function isYouTubeUrl(videoUrl: string) {
+  try {
+    const { hostname } = new URL(videoUrl);
+    return hostname.includes('youtube.com') || hostname.includes('youtu.be');
+  } catch { return false; }
+}
+
+function isBilibiliUrl(videoUrl: string) {
+  try {
+    const { hostname } = new URL(videoUrl);
+    return hostname.includes('bilibili.com') || hostname.includes('b23.tv');
+  } catch { return false; }
+}
+
+function extractYouTubeVideoId(url: string): string | null {
+  try {
+    const u = new URL(url);
+    if (u.hostname.includes('youtu.be')) return u.pathname.slice(1).split('?')[0];
+    return u.searchParams.get('v');
+  } catch { return null; }
+}
+
+// ── Highlight utils ──────────────────────────────────────────────────────────
 function sourceId(videoUrl: string) {
   return createHash('sha1').update(videoUrl).digest('hex');
 }
@@ -90,24 +133,6 @@ function clipFileName(title: string) {
 
 function thumbFileName(clipFile: string) {
   return clipFile.replace(/\.mp4$/, '.jpg');
-}
-
-function isYouTubeUrl(videoUrl: string) {
-  try {
-    const { hostname } = new URL(videoUrl);
-    return hostname.includes('youtube.com') || hostname.includes('youtu.be');
-  } catch {
-    return false;
-  }
-}
-
-function isBilibiliUrl(videoUrl: string) {
-  try {
-    const { hostname } = new URL(videoUrl);
-    return hostname.includes('bilibili.com') || hostname.includes('b23.tv');
-  } catch {
-    return false;
-  }
 }
 
 function formatSeconds(seconds: number) {
@@ -128,14 +153,9 @@ function parseVttTimestamp(value: string) {
 }
 
 function cleanCueText(value: string) {
-  return value
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/\[[^\]]+\]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return value.replace(/<[^>]+>/g, ' ').replace(/\[[^\]]+\]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-// ── Highlight normalisation ──────────────────────────────────────────────────
 function normalizeHighlights(input: Highlight[], duration: number) {
   const safeDuration = Math.max(duration, 60);
   const normalized = input
@@ -165,23 +185,19 @@ function normalizeHighlights(input: Highlight[], duration: number) {
         end = safeDuration;
         start = Math.max(0, end - CLIP_TARGET_DURATION);
       }
-
       return { title, summary, engagement_score: score, start_time: start, end_time: end };
     })
     .sort((a, b) => a.start_time - b.start_time);
 
   const deduped: Highlight[] = [];
-  for (const highlight of normalized) {
-    const previous = deduped[deduped.length - 1];
-    if (!previous) { deduped.push(highlight); continue; }
-    const adjustedStart = Math.max(highlight.start_time, previous.end_time);
-    const adjustedEnd = Math.min(
-      safeDuration,
-      Math.max(adjustedStart + CLIP_MIN_DURATION, highlight.end_time),
-    );
+  for (const h of normalized) {
+    const prev = deduped[deduped.length - 1];
+    if (!prev) { deduped.push(h); continue; }
+    const adjustedStart = Math.max(h.start_time, prev.end_time);
+    const adjustedEnd = Math.min(safeDuration, Math.max(adjustedStart + CLIP_MIN_DURATION, h.end_time));
     if (adjustedEnd - adjustedStart < CLIP_MIN_DURATION) continue;
     deduped.push({
-      ...highlight,
+      ...h,
       start_time: adjustedStart,
       end_time: Math.min(adjustedEnd, adjustedStart + CLIP_MAX_DURATION),
     });
@@ -194,15 +210,14 @@ function buildFallbackHighlights(duration: number) {
   const maxClips = Math.min(MAX_HIGHLIGHTS, Math.floor(safeDuration / (CLIP_MIN_DURATION + 10)));
   const clipCount = Math.max(2, maxClips);
   const spacing = Math.floor(safeDuration / (clipCount + 1));
-
   return normalizeHighlights(
-    Array.from({ length: clipCount }, (_, index) => {
-      const start = Math.max(0, spacing * (index + 1) - Math.floor(CLIP_TARGET_DURATION / 2));
+    Array.from({ length: clipCount }, (_, i) => {
+      const start = Math.max(0, spacing * (i + 1) - Math.floor(CLIP_TARGET_DURATION / 2));
       return {
-        title: `Highlight ${index + 1}`,
+        title: `Highlight ${i + 1}`,
         start_time: start,
         end_time: Math.min(start + CLIP_TARGET_DURATION, safeDuration),
-        summary: `Automatically selected highlight ${index + 1}`,
+        summary: `Automatically selected highlight ${i + 1}`,
         engagement_score: 7,
       };
     }),
@@ -212,195 +227,130 @@ function buildFallbackHighlights(duration: number) {
 
 function buildHeuristicHighlights(cues: CaptionCue[], duration: number) {
   if (cues.length === 0) return buildFallbackHighlights(duration);
-
   const windows: Highlight[] = [];
   const step = 20;
-  const length = CLIP_TARGET_DURATION;
+  const len = CLIP_TARGET_DURATION;
   const keywords = [
     'important', 'secret', 'best', 'amazing', 'crazy', 'must', 'mistake', 'learn',
     '关键', '重点', '一定', '震惊', '厉害', '方法', '秘诀', '技巧',
   ];
-
   for (let start = 0; start < Math.max(duration - CLIP_MIN_DURATION, 1); start += step) {
-    const end = Math.min(duration, start + length);
+    const end = Math.min(duration, start + len);
     const text = cues
-      .filter((cue) => cue.end >= start && cue.start <= end)
-      .map((cue) => cue.text)
+      .filter((c) => c.end >= start && c.start <= end)
+      .map((c) => c.text)
       .join(' ')
       .trim();
     if (!text) continue;
-
-    const keywordScore = keywords.reduce(
-      (sum, kw) => sum + (text.toLowerCase().includes(kw.toLowerCase()) ? 2 : 0),
-      0,
-    );
+    const keywordScore = keywords.reduce((s, kw) => s + (text.toLowerCase().includes(kw.toLowerCase()) ? 2 : 0), 0);
     const punctuationScore = (text.match(/[!?！？]/g) || []).length;
     const densityScore = Math.min(8, Math.floor(text.length / 80));
     const score = 4 + keywordScore + punctuationScore + densityScore;
     const title =
-      text
-        .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-        .split(/\s+/)
-        .filter(Boolean)
-        .slice(0, 8)
-        .join(' ') || `Highlight at ${formatSeconds(start)}`;
-
-    windows.push({
-      title: title.slice(0, 80),
-      start_time: start,
-      end_time: end,
-      summary: text.slice(0, 140),
-      engagement_score: Math.min(10, score),
-    });
+      text.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(Boolean).slice(0, 8).join(' ') ||
+      `Highlight at ${formatSeconds(start)}`;
+    windows.push({ title: title.slice(0, 80), start_time: start, end_time: end, summary: text.slice(0, 140), engagement_score: Math.min(10, score) });
   }
-
   windows.sort((a, b) => b.engagement_score - a.engagement_score);
   const targetCount = Math.min(MAX_HIGHLIGHTS, Math.max(6, Math.floor(duration / 120)));
   const selected: Highlight[] = [];
-  for (const candidate of windows) {
-    const overlaps = selected.some(
-      (item) =>
-        Math.max(item.start_time, candidate.start_time) <
-        Math.min(item.end_time, candidate.end_time),
-    );
-    if (!overlaps) selected.push(candidate);
+  for (const c of windows) {
+    if (!selected.some(
+      (s) => Math.max(s.start_time, c.start_time) < Math.min(s.end_time, c.end_time)
+    )) selected.push(c);
     if (selected.length === targetCount) break;
   }
-
-  return normalizeHighlights(
-    selected.length >= 2 ? selected : buildFallbackHighlights(duration),
-    duration,
-  );
+  return normalizeHighlights(selected.length >= 2 ? selected : buildFallbackHighlights(duration), duration);
 }
 
-// ── Ensure directories ───────────────────────────────────────────────────────
+// ── Ensure dirs ──────────────────────────────────────────────────────────────
 async function ensureDirectories() {
   await mkdir(PUBLIC_CLIP_DIR, { recursive: true });
   await mkdir(CACHE_DIR, { recursive: true });
 }
 
-// ── ffmpeg (cross-platform) ──────────────────────────────────────────────────
+// ── ffmpeg ───────────────────────────────────────────────────────────────────
 async function ensureFfmpegAvailable(): Promise<string> {
-  // 1. Try @ffmpeg-installer/ffmpeg (bundled cross-platform binary)
+  // 1. @ffmpeg-installer/ffmpeg bundled binary
   try {
     const fp = ffmpegInstaller.path;
     await access(fp, fsConstants.X_OK);
-    console.log(`Using bundled ffmpeg: ${fp}`);
     return fp;
-  } catch {
-    // fall through
-  }
-
-  // 2. Try system ffmpeg in PATH
+  } catch { /* fall through */ }
+  // 2. System PATH ffmpeg
   try {
     const { stdout } = await execFile('which', ['ffmpeg']);
     const fp = stdout.trim();
-    if (fp) {
-      await access(fp, fsConstants.X_OK);
-      console.log(`Using system ffmpeg: ${fp}`);
-      return fp;
-    }
-  } catch {
-    // fall through
-  }
-
-  throw new Error('ffmpeg is not available. Cannot generate video clips.');
+    if (fp) { await access(fp, fsConstants.X_OK); return fp; }
+  } catch { /* fall through */ }
+  throw new Error('ffmpeg is not available.');
 }
 
-// ── yt-dlp binary (works both locally and on Vercel/Linux) ──────────────────
+// ── yt-dlp binary ────────────────────────────────────────────────────────────
 let ytDlpCommand: string | null = null;
 let ytDlpUseModule = false;
 
 async function ensureYtDlp(): Promise<void> {
-  if (ytDlpCommand) return; // already resolved
-
-  // 1. Try python3 -m yt_dlp (local dev with pip-installed yt-dlp)
+  if (ytDlpCommand) return;
+  // 1. python3 -m yt_dlp (local macOS)
   try {
     await execFile('python3', ['-m', 'yt_dlp', '--version'], {
-      timeout: 8000,
-      env: { ...process.env, PYTHONWARNINGS: 'ignore' },
+      timeout: 8000, env: { ...process.env, PYTHONWARNINGS: 'ignore' },
     });
-    ytDlpCommand = 'python3';
-    ytDlpUseModule = true;
-    console.log('Using python3 -m yt_dlp');
+    ytDlpCommand = 'python3'; ytDlpUseModule = true;
+    console.log('yt-dlp: using python3 -m yt_dlp');
     return;
-  } catch {
-    // fall through
-  }
-
-  // 2. Try standalone yt-dlp binary in PATH
+  } catch { /* fall through */ }
+  // 2. Standalone binary in PATH
   try {
     await execFile('yt-dlp', ['--version'], { timeout: 5000 });
-    ytDlpCommand = 'yt-dlp';
-    ytDlpUseModule = false;
-    console.log('Using system yt-dlp binary');
+    ytDlpCommand = 'yt-dlp'; ytDlpUseModule = false;
+    console.log('yt-dlp: using system binary');
     return;
-  } catch {
-    // fall through
-  }
-
-  // 3. Try cached binary in /tmp
+  } catch { /* fall through */ }
+  // 3. Cached binary in /tmp
   try {
     await access(YT_DLP_BIN_PATH, fsConstants.X_OK);
     await execFile(YT_DLP_BIN_PATH, ['--version'], { timeout: 5000 });
-    ytDlpCommand = YT_DLP_BIN_PATH;
-    ytDlpUseModule = false;
-    console.log(`Using cached yt-dlp binary at ${YT_DLP_BIN_PATH}`);
+    ytDlpCommand = YT_DLP_BIN_PATH; ytDlpUseModule = false;
+    console.log(`yt-dlp: using cached binary at ${YT_DLP_BIN_PATH}`);
     return;
-  } catch {
-    // fall through
-  }
-
-  // 4. Download standalone Linux binary (for Vercel / Linux servers)
+  } catch { /* fall through */ }
+  // 4. Download standalone Linux binary
   if (process.platform === 'linux') {
-    console.log('Downloading yt-dlp standalone Linux binary…');
+    console.log('Downloading yt-dlp Linux binary…');
     try {
       const res = await fetch(YT_DLP_LINUX_URL);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const buf = await res.arrayBuffer();
-      await writeFile(YT_DLP_BIN_PATH, Buffer.from(buf));
+      await writeFile(YT_DLP_BIN_PATH, Buffer.from(await res.arrayBuffer()));
       await chmod(YT_DLP_BIN_PATH, 0o755);
-      // Verify
       await execFile(YT_DLP_BIN_PATH, ['--version'], { timeout: 10000 });
-      ytDlpCommand = YT_DLP_BIN_PATH;
-      ytDlpUseModule = false;
-      console.log('yt-dlp binary downloaded and ready');
+      ytDlpCommand = YT_DLP_BIN_PATH; ytDlpUseModule = false;
+      console.log('yt-dlp: downloaded Linux binary');
       return;
     } catch (err) {
-      console.error('Failed to download yt-dlp binary:', err);
+      console.error('Failed to download yt-dlp:', err);
     }
   }
-
-  throw new Error(
-    'yt-dlp is not available. On macOS, install with: pip3 install yt-dlp. On Linux, ensure yt-dlp is in PATH.',
-  );
+  throw new Error('yt-dlp not available. Install with: pip3 install yt-dlp');
 }
 
 async function runYtDlp(args: string[], isBilibili = false) {
   await ensureYtDlp();
-
   const ffmpegPath = await ensureFfmpegAvailable().catch(() => '');
   const ffmpegDir = ffmpegPath ? path.dirname(ffmpegPath) : '';
 
-  const commonArgs: string[] = [
-    '--no-check-certificate',
-    '--ignore-errors',
-    '--socket-timeout', '30',
-    '--retries', '3',
-    '--fragment-retries', '3',
+  const commonArgs = [
+    '--no-check-certificate', '--ignore-errors', '--socket-timeout', '30',
+    '--retries', '3', '--fragment-retries', '3',
     '--user-agent', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
-  ];
-
-  if (ffmpegDir) commonArgs.push('--ffmpeg-location', ffmpegDir);
-  if (ffmpegPath && !ytDlpUseModule) commonArgs.push('--ffmpeg-location', path.dirname(ffmpegPath));
-
-  if (isBilibili) {
-    commonArgs.push(
+    ...(ffmpegDir ? ['--ffmpeg-location', ffmpegDir] : []),
+    ...(isBilibili ? [
       '--add-header', 'Referer: https://www.bilibili.com/',
       '--add-header', 'Origin: https://www.bilibili.com',
       '--add-header', 'Accept-Language: zh-CN,zh;q=0.9,en;q=0.8',
-    );
-  }
+    ] : []),
+  ];
 
   const env: NodeJS.ProcessEnv = { ...process.env, PYTHONWARNINGS: 'ignore' };
   if (ffmpegDir) env.PATH = `${ffmpegDir}:${process.env.PATH || ''}`;
@@ -408,35 +358,157 @@ async function runYtDlp(args: string[], isBilibili = false) {
   if (!process.env.HTTPS_PROXY) delete env.HTTPS_PROXY;
   if (!process.env.ALL_PROXY) delete env.ALL_PROXY;
 
-  let cmd: string;
-  let cmdArgs: string[];
-
-  if (ytDlpUseModule) {
-    // python3 -m yt_dlp [commonArgs] [args]
-    cmd = 'python3';
-    cmdArgs = ['-m', 'yt_dlp', ...commonArgs, ...args];
-  } else {
-    // /path/to/yt-dlp [commonArgs] [args]
-    cmd = ytDlpCommand!;
-    cmdArgs = [...commonArgs, ...args];
-  }
+  const [cmd, cmdArgs] = ytDlpUseModule
+    ? ['python3', ['-m', 'yt_dlp', ...commonArgs, ...args]]
+    : [ytDlpCommand!, [...commonArgs, ...args]];
 
   return execFile(cmd, cmdArgs, {
-    cwd: CACHE_DIR,
-    maxBuffer: 30 * 1024 * 1024,
-    timeout: 15 * 60 * 1000,
-    env,
+    cwd: CACHE_DIR, maxBuffer: 30 * 1024 * 1024, timeout: 15 * 60 * 1000, env,
   });
+}
+
+// ── Piped proxy (YouTube stream URLs, bypasses bot detection) ────────────────
+async function getYouTubeInfoViaPiped(videoId: string): Promise<PipedVideoInfo> {
+  let lastError = 'No Piped instance reachable';
+  for (const instance of PIPED_INSTANCES) {
+    try {
+      const res = await fetch(`${instance}/streams/${videoId}`, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; VidShorter/1.0)' },
+        signal: AbortSignal.timeout(12000),
+      });
+      if (!res.ok) { lastError = `${instance}: HTTP ${res.status}`; continue; }
+
+      const data = await res.json() as {
+        title?: string;
+        duration?: number;
+        videoStreams?: Array<{ url: string; quality?: string; mimeType?: string; videoOnly?: boolean }>;
+        subtitles?: Array<{ url: string; mimeType?: string; code?: string; autoGenerated?: boolean }>;
+      };
+
+      // Prefer combined (videoOnly=false) MP4 streams at reasonable quality
+      const combined = (data.videoStreams || []).filter(s => !s.videoOnly && s.mimeType?.includes('mp4'));
+      const stream = combined.find(s => s.quality?.includes('360'))
+        || combined.find(s => s.quality?.includes('480'))
+        || combined.find(s => s.quality?.includes('240'))
+        || combined[0]
+        || (data.videoStreams || [])[0];
+
+      if (!stream?.url) { lastError = `${instance}: no stream URL in response`; continue; }
+
+      // Find subtitle/caption URL (prefer English or auto-generated)
+      const subtitle = (data.subtitles || []).find(s =>
+        (s.code === 'en' || s.code?.startsWith('en') || s.autoGenerated) && s.mimeType?.includes('vtt')
+      ) || (data.subtitles || []).find(s => s.mimeType?.includes('vtt'))
+        || data.subtitles?.[0];
+
+      console.log(`Piped success (${instance}): "${data.title?.slice(0, 50)}", stream: ${stream.quality}`);
+      return {
+        title: data.title || 'YouTube video',
+        duration: data.duration || 300,
+        streamUrl: stream.url,
+        subtitleUrl: subtitle?.url || null,
+      };
+    } catch (err) {
+      lastError = err instanceof Error ? err.message.slice(0, 100) : String(err);
+      console.warn(`Piped ${instance} failed: ${lastError}`);
+    }
+  }
+  throw new Error(`All Piped instances failed. Last error: ${lastError}`);
+}
+
+async function fetchPipedSubtitleCues(subtitleUrl: string): Promise<CaptionCue[]> {
+  try {
+    const res = await fetch(subtitleUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return [];
+    const vttText = await res.text();
+    const tmpFile = path.join(CACHE_DIR, `sub-${randomUUID()}.vtt`);
+    await writeFile(tmpFile, vttText);
+    const cues = await parseVttFile(tmpFile);
+    unlink(tmpFile).catch(() => {});
+    return cues;
+  } catch {
+    return [];
+  }
+}
+
+// ── youtube-transcript fallback for analysis ─────────────────────────────────
+async function fetchYouTubeTranscriptCues(videoId: string): Promise<CaptionCue[]> {
+  try {
+    const { YoutubeTranscript } = await import('youtube-transcript');
+    // Try several languages
+    for (const lang of ['en', 'en-US', 'zh-Hans', 'zh', '']) {
+      try {
+        const transcript = lang
+          ? await YoutubeTranscript.fetchTranscript(videoId, { lang })
+          : await YoutubeTranscript.fetchTranscript(videoId);
+        if (transcript.length > 0) {
+          return transcript.map(item => ({
+            start: item.offset / 1000,
+            end: (item.offset + item.duration) / 1000,
+            text: item.text,
+          }));
+        }
+      } catch { /* try next lang */ }
+    }
+  } catch (err) {
+    console.warn('youtube-transcript failed:', err instanceof Error ? err.message : err);
+  }
+  return [];
+}
+
+// ── YouTube analysis via Piped + transcript (no bot detection) ───────────────
+async function analyzeYouTubeViaPipedAndTranscript(videoUrl: string): Promise<VideoAnalysisResult> {
+  const videoId = extractYouTubeVideoId(videoUrl);
+  if (!videoId) throw new Error('Invalid YouTube URL');
+
+  let title = 'YouTube video';
+  let duration = 300;
+  let cues: CaptionCue[] = [];
+
+  // Get title/duration/subtitles from Piped
+  try {
+    const pipedInfo = await getYouTubeInfoViaPiped(videoId);
+    title = pipedInfo.title;
+    duration = pipedInfo.duration;
+    if (pipedInfo.subtitleUrl) {
+      cues = await fetchPipedSubtitleCues(pipedInfo.subtitleUrl);
+      console.log(`Piped subtitles: ${cues.length} cues`);
+    }
+  } catch (err) {
+    console.warn('Piped analysis failed:', err instanceof Error ? err.message : err);
+  }
+
+  // If no cues from Piped subtitles, try youtube-transcript
+  if (cues.length === 0) {
+    cues = await fetchYouTubeTranscriptCues(videoId);
+    console.log(`youtube-transcript: ${cues.length} cues`);
+  }
+
+  // Estimate duration from cues if Piped didn't give us one
+  if (duration <= 60 && cues.length > 0) {
+    duration = Math.ceil(cues[cues.length - 1].end) + 30;
+  }
+
+  // Try oEmbed for title if needed (lightweight, rarely blocked)
+  if (title === 'YouTube video') {
+    try {
+      const r = await fetch(
+        `https://www.youtube.com/oembed?url=${encodeURIComponent(videoUrl)}&format=json`,
+        { signal: AbortSignal.timeout(5000) },
+      );
+      if (r.ok) { const d = await r.json() as { title?: string }; title = d.title || title; }
+    } catch { /* ignore */ }
+  }
+
+  return { duration, title, highlights: buildHeuristicHighlights(cues, duration) };
 }
 
 // ── Cookie helpers (macOS local dev) ─────────────────────────────────────────
 async function hasChromeCookies() {
-  try {
-    await access(CHROME_COOKIE_DB, fsConstants.R_OK);
-    return true;
-  } catch {
-    return false;
-  }
+  try { await access(CHROME_COOKIE_DB, fsConstants.R_OK); return true; } catch { return false; }
 }
 
 async function hasFreshCookieFile(): Promise<boolean> {
@@ -444,81 +516,58 @@ async function hasFreshCookieFile(): Promise<boolean> {
     const { stat } = await import('node:fs/promises');
     const stats = await stat(COOKIE_FILE_PATH);
     return Date.now() - stats.mtimeMs < 30 * 60 * 1000;
-  } catch {
-    return false;
-  }
+  } catch { return false; }
 }
 
 async function exportChromeCookies(videoUrl: string): Promise<boolean> {
-  if (!ytDlpUseModule) return false; // only available with python yt-dlp
+  if (!ytDlpUseModule) return false;
   try {
     const ffmpegPath = await ensureFfmpegAvailable().catch(() => '');
     const ffmpegDir = ffmpegPath ? path.dirname(ffmpegPath) : '';
     const env: NodeJS.ProcessEnv = {
-      ...process.env,
-      PYTHONWARNINGS: 'ignore',
+      ...process.env, PYTHONWARNINGS: 'ignore',
       ...(ffmpegDir ? { PATH: `${ffmpegDir}:${process.env.PATH || ''}` } : {}),
     };
     await execFile('python3', [
-      '-m', 'yt_dlp',
-      '--no-check-certificate',
+      '-m', 'yt_dlp', '--no-check-certificate',
       '--cookies-from-browser', 'chrome',
       '--cookies', COOKIE_FILE_PATH,
-      '--skip-download',
-      '--no-playlist',
-      '-q',
-      videoUrl,
+      '--skip-download', '--no-playlist', '-q', videoUrl,
     ], { maxBuffer: 5 * 1024 * 1024, timeout: 30_000, env });
     await access(COOKIE_FILE_PATH, fsConstants.R_OK);
     return true;
-  } catch {
-    return false;
-  }
+  } catch { return false; }
 }
 
-// ── Proxy detection ──────────────────────────────────────────────────────────
+// ── Proxy detection (local dev only) ─────────────────────────────────────────
 async function detectProxy(): Promise<string | undefined> {
   const fromEnv =
-    process.env.HTTPS_PROXY ||
-    process.env.HTTP_PROXY ||
-    process.env.ALL_PROXY ||
-    process.env.https_proxy ||
-    process.env.http_proxy ||
-    process.env.all_proxy;
+    process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.ALL_PROXY ||
+    process.env.https_proxy || process.env.http_proxy || process.env.all_proxy;
   if (fromEnv?.trim()) return fromEnv.trim();
-
-  // Only probe local proxy ports on non-serverless environments
   if (process.env.VERCEL) return undefined;
-
   const candidates = [7897, 7890, 7891, 1087, 1080, 8080, 8118, 10809];
   for (const port of candidates) {
     try {
-      await execFile('bash', ['-c', `timeout 0.5 bash -c "</dev/tcp/127.0.0.1/${port}" 2>/dev/null && echo ok`], {
-        timeout: 1500,
-      });
+      await execFile('bash', ['-c', `timeout 0.5 bash -c "</dev/tcp/127.0.0.1/${port}" 2>/dev/null && echo ok`], { timeout: 1500 });
       return `http://127.0.0.1:${port}`;
-    } catch {
-      // try next
-    }
+    } catch { /* try next */ }
   }
   return undefined;
 }
 
-// ── VTT parsing ──────────────────────────────────────────────────────────────
+// ── VTT parsing ───────────────────────────────────────────────────────────────
 async function findFirstFile(dir: string, extensions: string[]) {
   try {
     const files = await readdir(dir);
-    return files.find((file) => extensions.some((ext) => file.endsWith(ext))) || null;
-  } catch {
-    return null;
-  }
+    return files.find((f) => extensions.some((ext) => f.endsWith(ext))) || null;
+  } catch { return null; }
 }
 
-async function parseVttFile(filePath: string) {
+async function parseVttFile(filePath: string): Promise<CaptionCue[]> {
   const raw = await readFile(filePath, 'utf8');
   const blocks = raw.split(/\n\s*\n/);
   const cues: CaptionCue[] = [];
-
   for (const block of blocks) {
     const lines = block.split('\n').map((l) => l.trim()).filter(Boolean);
     const timeLine = lines.find((l) => l.includes('-->'));
@@ -537,11 +586,11 @@ async function parseVttFile(filePath: string) {
 
 function parseYtDlpJson(stdout: string): Record<string, unknown> {
   const jsonStart = stdout.indexOf('{');
-  if (jsonStart === -1) throw new Error('No JSON found in yt-dlp output');
+  if (jsonStart === -1) throw new Error('No JSON in yt-dlp output');
   return JSON.parse(stdout.slice(jsonStart));
 }
 
-// ── YouTube analysis ─────────────────────────────────────────────────────────
+// ── YouTube analysis via yt-dlp ───────────────────────────────────────────────
 async function analyzeYouTubeVideo(videoUrl: string, workDir: string): Promise<VideoAnalysisResult> {
   const outputTemplate = path.join(workDir, 'analysis.%(ext)s');
   const baseArgs = [
@@ -549,14 +598,13 @@ async function analyzeYouTubeVideo(videoUrl: string, workDir: string): Promise<V
     '--write-auto-subs', '--write-subs',
     '--sub-langs', 'en.*,en,zh.*,zh-Hans.*,zh-Hant.*',
     '--convert-subs', 'vtt',
-    '-o', outputTemplate,
-    videoUrl,
+    '-o', outputTemplate, videoUrl,
   ];
 
   const proxyUrl = await detectProxy();
   const proxyArg = proxyUrl ? ['--proxy', proxyUrl] : [];
 
-  const strategies: string[][] = [
+  const strategies = [
     [...proxyArg, '--extractor-args', 'youtube:player_client=tv_embedded', ...baseArgs],
     [...proxyArg, '--extractor-args', 'youtube:player_client=android_embedded', ...baseArgs],
     [...proxyArg, '--extractor-args', 'youtube:player_client=ios', ...baseArgs],
@@ -564,47 +612,34 @@ async function analyzeYouTubeVideo(videoUrl: string, workDir: string): Promise<V
     baseArgs,
   ];
 
-  // Add cookie strategies if available (local dev only)
   if (await hasFreshCookieFile()) {
-    strategies.splice(3, 0, [
-      ...proxyArg, '--cookies', COOKIE_FILE_PATH,
-      '--extractor-args', 'youtube:player_client=tv_embedded', ...baseArgs,
-    ]);
+    strategies.splice(3, 0, [...proxyArg, '--cookies', COOKIE_FILE_PATH, '--extractor-args', 'youtube:player_client=tv_embedded', ...baseArgs]);
   }
   if (await hasChromeCookies()) {
-    strategies.splice(3, 0, [
-      ...proxyArg, '--cookies-from-browser', 'chrome',
-      '--extractor-args', 'youtube:player_client=tv_embedded', ...baseArgs,
-    ]);
+    strategies.splice(3, 0, [...proxyArg, '--cookies-from-browser', 'chrome', '--extractor-args', 'youtube:player_client=tv_embedded', ...baseArgs]);
   }
 
-  let stdout = '';
-  let stderr = '';
-  let lastError: unknown;
+  let stdout = '', stderr = '', lastError: unknown;
 
   for (let i = 0; i < strategies.length; i++) {
     try {
-      console.log(`YouTube analysis strategy ${i + 1}/${strategies.length}…`);
-      const result = await runYtDlp(strategies[i], false);
-      stdout = result.stdout;
-      stderr = result.stderr;
-      lastError = null;
-      console.log(`YouTube analysis strategy ${i + 1} succeeded`);
+      console.log(`yt-dlp analysis strategy ${i + 1}/${strategies.length}…`);
+      const r = await runYtDlp(strategies[i], false);
+      stdout = r.stdout; stderr = r.stderr; lastError = null;
+      console.log(`yt-dlp analysis strategy ${i + 1} succeeded`);
       break;
-    } catch (error) {
-      lastError = error;
-      stdout = (error && typeof error === 'object' && 'stdout' in error) ? String(error.stdout) : '';
-      stderr = (error && typeof error === 'object' && 'stderr' in error) ? String(error.stderr) : '';
-      console.log(`Strategy ${i + 1} failed: ${stderr.substring(0, 200)}`);
+    } catch (err) {
+      lastError = err;
+      stdout = (err && typeof err === 'object' && 'stdout' in err) ? String(err.stdout) : '';
+      stderr = (err && typeof err === 'object' && 'stderr' in err) ? String(err.stderr) : '';
     }
   }
 
   if (!stdout.trim()) {
-    const msg =
-      stderr.trim() ||
-      (lastError instanceof Error ? lastError.message : '') ||
-      'Failed to fetch YouTube metadata.';
-    throw new Error(`Failed to analyze YouTube video: ${msg}`);
+    // yt-dlp failed (expected on Vercel due to YouTube bot detection)
+    const ytdlpErr = stderr.slice(0, 200) || (lastError instanceof Error ? lastError.message.slice(0, 200) : '');
+    console.warn(`yt-dlp analysis failed (${ytdlpErr}), falling back to Piped+transcript…`);
+    return await analyzeYouTubeViaPipedAndTranscript(videoUrl);
   }
 
   const info = parseYtDlpJson(stdout);
@@ -615,7 +650,7 @@ async function analyzeYouTubeVideo(videoUrl: string, workDir: string): Promise<V
   return { duration, title, highlights: buildHeuristicHighlights(cues, duration) };
 }
 
-// ── Bilibili analysis ────────────────────────────────────────────────────────
+// ── Bilibili analysis ─────────────────────────────────────────────────────────
 async function analyzeBilibiliVideo(videoUrl: string, workDir: string): Promise<VideoAnalysisResult> {
   const outputTemplate = path.join(workDir, 'analysis.%(ext)s');
   const bilibiliHeaders = [
@@ -628,38 +663,30 @@ async function analyzeBilibiliVideo(videoUrl: string, workDir: string): Promise<
     '--write-subs', '--write-auto-subs',
     '--sub-langs', 'zh-Hans,zh-Hant,zh,en.*',
     '--convert-subs', 'vtt',
-    '-o', outputTemplate,
-    videoUrl,
+    '-o', outputTemplate, videoUrl,
   ];
 
   const hasCookies = await hasChromeCookies();
-  const strategies: string[][] = [];
-  if (hasCookies) strategies.push(['--cookies-from-browser', 'chrome', ...bilibiliHeaders, ...analysisArgs]);
-  strategies.push([...bilibiliHeaders, ...analysisArgs]);
+  const strategies = [
+    ...(hasCookies ? [['--cookies-from-browser', 'chrome', ...bilibiliHeaders, ...analysisArgs]] : []),
+    [...bilibiliHeaders, ...analysisArgs],
+  ];
 
-  let stdout = '';
-  let stderr = '';
-  let lastError: unknown;
-
-  for (let i = 0; i < strategies.length; i++) {
+  let stdout = '', stderr = '', lastError: unknown;
+  for (const s of strategies) {
     try {
-      const result = await runYtDlp(strategies[i], true);
-      stdout = result.stdout;
-      stderr = result.stderr;
-      lastError = null;
+      const r = await runYtDlp(s, true);
+      stdout = r.stdout; stderr = r.stderr; lastError = null;
       break;
-    } catch (error) {
-      lastError = error;
-      stdout = (error && typeof error === 'object' && 'stdout' in error) ? String(error.stdout) : '';
-      stderr = (error && typeof error === 'object' && 'stderr' in error) ? String(error.stderr) : '';
+    } catch (err) {
+      lastError = err;
+      stdout = (err && typeof err === 'object' && 'stdout' in err) ? String(err.stdout) : '';
+      stderr = (err && typeof err === 'object' && 'stderr' in err) ? String(err.stderr) : '';
     }
   }
 
   if (!stdout.trim()) {
-    const msg =
-      stderr.trim() ||
-      (lastError instanceof Error ? lastError.message : '') ||
-      'Failed to fetch Bilibili metadata.';
+    const msg = stderr.trim() || (lastError instanceof Error ? lastError.message : '') || 'yt-dlp failed for Bilibili.';
     throw new Error(`Failed to analyze Bilibili video: ${msg}`);
   }
 
@@ -671,12 +698,13 @@ async function analyzeBilibiliVideo(videoUrl: string, workDir: string): Promise<
   return { duration, title, highlights: buildHeuristicHighlights(cues, duration) };
 }
 
-// ── Video download ───────────────────────────────────────────────────────────
-async function downloadSourceVideo(videoUrl: string) {
+// ── Video download ─────────────────────────────────────────────────────────────
+async function downloadSourceVideo(videoUrl: string): Promise<string> {
   await ensureDirectories();
   const sourceDir = path.join(CACHE_DIR, sourceId(videoUrl));
   await mkdir(sourceDir, { recursive: true });
 
+  // Check cache for locally-downloaded file
   const cachedFile = await findFirstFile(sourceDir, ['.mp4', '.mkv', '.webm', '.mov']);
   if (cachedFile) {
     console.log(`Using cached video: ${cachedFile}`);
@@ -691,9 +719,7 @@ async function downloadSourceVideo(videoUrl: string) {
 }
 
 async function downloadBilibiliVideo(
-  videoUrl: string,
-  outputTemplate: string,
-  hasCookies: boolean,
+  videoUrl: string, outputTemplate: string, hasCookies: boolean,
 ): Promise<string> {
   const bilibiliHeaders = [
     '--add-header', 'Referer: https://www.bilibili.com/',
@@ -703,30 +729,27 @@ async function downloadBilibiliVideo(
   const baseDownloadArgs = [
     '--no-playlist', '--restrict-filenames',
     '--print', 'after_move:filepath',
-    '-o', outputTemplate,
-    '--merge-output-format', 'mp4',
+    '-o', outputTemplate, '--merge-output-format', 'mp4',
   ];
 
-  const strategies: string[][] = [];
-  if (hasCookies) {
-    strategies.push(['--cookies-from-browser', 'chrome', ...bilibiliHeaders, ...baseDownloadArgs, '-f', 'bestvideo[height<=360]+bestaudio/best', videoUrl]);
-    strategies.push(['--cookies-from-browser', 'chrome', ...bilibiliHeaders, ...baseDownloadArgs, '-f', 'best', videoUrl]);
-  }
-  strategies.push([...bilibiliHeaders, ...baseDownloadArgs, '-f', 'bestvideo[height<=360]+bestaudio/best', videoUrl]);
-  strategies.push([...bilibiliHeaders, ...baseDownloadArgs, '-f', 'best', videoUrl]);
+  const strategies = [
+    ...(hasCookies ? [
+      ['--cookies-from-browser', 'chrome', ...bilibiliHeaders, ...baseDownloadArgs, '-f', 'bestvideo[height<=360]+bestaudio/best', videoUrl],
+      ['--cookies-from-browser', 'chrome', ...bilibiliHeaders, ...baseDownloadArgs, '-f', 'best', videoUrl],
+    ] : []),
+    [...bilibiliHeaders, ...baseDownloadArgs, '-f', 'bestvideo[height<=360]+bestaudio/best', videoUrl],
+    [...bilibiliHeaders, ...baseDownloadArgs, '-f', 'best', videoUrl],
+  ];
 
-  let stdout = '';
-  let stderr = '';
-  let lastError: unknown;
-
+  let stdout = '', stderr = '', lastError: unknown;
   for (let i = 0; i < strategies.length; i++) {
     try {
-      const result = await runYtDlp(strategies[i], true);
-      stdout = result.stdout; stderr = result.stderr; lastError = null; break;
-    } catch (error) {
-      lastError = error;
-      stdout = (error && typeof error === 'object' && 'stdout' in error) ? String(error.stdout) : '';
-      stderr = (error && typeof error === 'object' && 'stderr' in error) ? String(error.stderr) : '';
+      const r = await runYtDlp(strategies[i], true);
+      stdout = r.stdout; stderr = r.stderr; lastError = null; break;
+    } catch (err) {
+      lastError = err;
+      stdout = (err && typeof err === 'object' && 'stdout' in err) ? String(err.stdout) : '';
+      stderr = (err && typeof err === 'object' && 'stderr' in err) ? String(err.stderr) : '';
     }
   }
 
@@ -739,15 +762,12 @@ async function downloadBilibiliVideo(
 }
 
 async function downloadYouTubeOrGenericVideo(
-  videoUrl: string,
-  outputTemplate: string,
-  hasCookies: boolean,
+  videoUrl: string, outputTemplate: string, hasCookies: boolean,
 ): Promise<string> {
   const baseArgs = [
     '--no-playlist', '--restrict-filenames',
     '--print', 'after_move:filepath',
-    '-o', outputTemplate,
-    '--merge-output-format', 'mp4',
+    '-o', outputTemplate, '--merge-output-format', 'mp4',
   ];
 
   const proxyUrl = await detectProxy();
@@ -756,10 +776,7 @@ async function downloadYouTubeOrGenericVideo(
   const strategies: string[][] = [];
 
   if (isYouTubeUrl(videoUrl)) {
-    // Export cookies once if Chrome is available (local dev only)
-    if (hasCookies && !(await hasFreshCookieFile())) {
-      await exportChromeCookies(videoUrl);
-    }
+    if (hasCookies && !(await hasFreshCookieFile())) await exportChromeCookies(videoUrl);
     const cookieFileArg = (await hasFreshCookieFile()) ? ['--cookies', COOKIE_FILE_PATH] : [];
     const cookieBrowserArg = hasCookies ? ['--cookies-from-browser', 'chrome'] : [];
 
@@ -767,8 +784,8 @@ async function downloadYouTubeOrGenericVideo(
     strategies.push([...proxyArg, '--extractor-args', 'youtube:player_client=android_embedded', ...baseArgs, '-f', 'bestvideo[height<=480]+bestaudio/best[height<=480]/best', videoUrl]);
     strategies.push([...proxyArg, '--extractor-args', 'youtube:player_client=ios', ...baseArgs, '-f', 'best[height<=480]/best', videoUrl]);
     strategies.push([...proxyArg, '--extractor-args', 'youtube:player_client=android', ...baseArgs, '-f', 'bestvideo[height<=480]+bestaudio/best[height<=480]/best', videoUrl]);
-    if (cookieFileArg.length > 0) strategies.push([...proxyArg, ...cookieFileArg, '--extractor-args', 'youtube:player_client=tv_embedded', ...baseArgs, '-f', 'bestvideo[height<=480][ext=mp4]+bestaudio/best[height<=480]/best', videoUrl]);
-    if (cookieBrowserArg.length > 0) strategies.push([...proxyArg, ...cookieBrowserArg, '--extractor-args', 'youtube:player_client=tv_embedded', ...baseArgs, '-f', 'bestvideo[height<=480][ext=mp4]+bestaudio/best[height<=480]/best', videoUrl]);
+    if (cookieFileArg.length) strategies.push([...proxyArg, ...cookieFileArg, '--extractor-args', 'youtube:player_client=tv_embedded', ...baseArgs, '-f', 'bestvideo[height<=480][ext=mp4]+bestaudio/best[height<=480]/best', videoUrl]);
+    if (cookieBrowserArg.length) strategies.push([...proxyArg, ...cookieBrowserArg, '--extractor-args', 'youtube:player_client=tv_embedded', ...baseArgs, '-f', 'bestvideo[height<=480][ext=mp4]+bestaudio/best[height<=480]/best', videoUrl]);
     strategies.push([...proxyArg, ...baseArgs, '-f', '18', videoUrl]);
     strategies.push(['--extractor-args', 'youtube:player_client=tv_embedded', ...baseArgs, '-f', 'best', videoUrl]);
     strategies.push([...baseArgs, '-f', 'best', videoUrl]);
@@ -776,26 +793,35 @@ async function downloadYouTubeOrGenericVideo(
     strategies.push([...baseArgs, '-f', 'bestvideo*+bestaudio/best', videoUrl]);
   }
 
-  let stdout = '';
-  let stderr = '';
-  let lastError: unknown;
-
+  let stdout = '', stderr = '', lastError: unknown;
   for (let i = 0; i < strategies.length; i++) {
     try {
-      console.log(`Download strategy ${i + 1}/${strategies.length}…`);
-      const result = await runYtDlp(strategies[i], false);
-      stdout = result.stdout; stderr = result.stderr; lastError = null;
-      console.log(`Download strategy ${i + 1} succeeded`);
+      console.log(`yt-dlp download strategy ${i + 1}/${strategies.length}…`);
+      const r = await runYtDlp(strategies[i], false);
+      stdout = r.stdout; stderr = r.stderr; lastError = null;
+      console.log(`yt-dlp download strategy ${i + 1} succeeded`);
       break;
-    } catch (error) {
-      lastError = error;
-      stdout = (error && typeof error === 'object' && 'stdout' in error) ? String(error.stdout) : '';
-      stderr = (error && typeof error === 'object' && 'stderr' in error) ? String(error.stderr) : '';
-      console.log(`Strategy ${i + 1} failed: ${stderr.substring(0, 200)}`);
+    } catch (err) {
+      lastError = err;
+      stdout = (err && typeof err === 'object' && 'stdout' in err) ? String(err.stdout) : '';
+      stderr = (err && typeof err === 'object' && 'stderr' in err) ? String(err.stderr) : '';
     }
   }
 
   const resolvedPath = stdout.split('\n').map((l) => l.trim()).filter(Boolean).pop();
+
+  if (!resolvedPath && isYouTubeUrl(videoUrl)) {
+    // yt-dlp failed for YouTube (expected on Vercel) — fall back to Piped stream URL
+    // ffmpeg accepts HTTPS URLs as input directly, so we return the stream URL.
+    const ytdlpErr = stderr.slice(0, 200);
+    console.warn(`yt-dlp download failed (${ytdlpErr}), falling back to Piped stream URL…`);
+    const videoId = extractYouTubeVideoId(videoUrl);
+    if (!videoId) throw new Error('Invalid YouTube URL');
+    const { streamUrl } = await getYouTubeInfoViaPiped(videoId);
+    console.log('Using Piped stream URL as ffmpeg input (no local download needed)');
+    return streamUrl; // ffmpeg -i <streamUrl> works just like -i <localfile>
+  }
+
   if (!resolvedPath) {
     const msg = stderr.trim() || (lastError instanceof Error ? lastError.message : '') || 'No file path returned.';
     throw new Error(`Failed to download video: ${msg}`);
@@ -805,6 +831,9 @@ async function downloadYouTubeOrGenericVideo(
 
 // ── Thumbnail generation ──────────────────────────────────────────────────────
 async function generateThumbnail(clipPath: string, clipDuration: number): Promise<string> {
+  // Don't try to generate thumbnails from remote URLs
+  if (clipPath.startsWith('http')) return '';
+
   const ffmpegPath = await ensureFfmpegAvailable();
   const fileName = thumbFileName(path.basename(clipPath));
   const thumbPath = path.join(PUBLIC_CLIP_DIR, fileName);
@@ -813,8 +842,7 @@ async function generateThumbnail(clipPath: string, clipDuration: number): Promis
   const tryThumb = async (seek: number) => {
     await execFile(ffmpegPath, [
       '-y', '-ss', String(seek), '-i', clipPath,
-      '-vframes', '1', '-q:v', '2', '-vf', 'scale=640:-2',
-      thumbPath,
+      '-vframes', '1', '-q:v', '2', '-vf', 'scale=640:-2', thumbPath,
     ], { timeout: 30_000, maxBuffer: 5 * 1024 * 1024 });
     await access(thumbPath, fsConstants.R_OK);
   };
@@ -832,9 +860,9 @@ async function generateThumbnail(clipPath: string, clipDuration: number): Promis
   }
 }
 
-// ── Clip creation ─────────────────────────────────────────────────────────────
+// ── Clip creation ──────────────────────────────────────────────────────────────
 async function createLocalClip(params: {
-  inputPath: string;
+  inputPath: string;  // local file path OR remote HTTPS URL (ffmpeg supports both)
   startTime: number;
   endTime: number;
   title: string;
@@ -845,21 +873,23 @@ async function createLocalClip(params: {
   const outputPath = path.join(PUBLIC_CLIP_DIR, fileName);
   const duration = Math.max(1, params.endTime - params.startTime);
 
+  const isRemoteInput = params.inputPath.startsWith('http');
+
   const args = [
     '-y',
     '-ss', String(params.startTime),
-    '-i', params.inputPath,
+    '-i', params.inputPath,   // Works with both local paths and HTTPS URLs
     '-t', String(duration),
     '-map', '0:v:0',
     '-map', '0:a:0?',
     '-c:v', 'libx264',
-    '-preset', 'fast',
-    '-crf', '18',
+    '-preset', isRemoteInput ? 'ultrafast' : 'fast', // Faster preset for remote streams
+    '-crf', isRemoteInput ? '24' : '18',
     '-profile:v', 'high',
     '-level:v', '4.1',
     '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
     '-c:a', 'aac',
-    '-b:a', '192k',
+    '-b:a', '128k',
     '-ar', '44100',
     '-movflags', '+faststart',
     outputPath,
@@ -872,8 +902,8 @@ async function createLocalClip(params: {
       timeout: 5 * 60 * 1000,
     });
   } catch (error) {
-    const stderr = error && typeof error === 'object' && 'stderr' in error ? String(error.stderr) : '';
-    throw new Error(stderr.trim() || 'ffmpeg failed to generate the clip.');
+    const errStderr = error && typeof error === 'object' && 'stderr' in error ? String(error.stderr) : '';
+    throw new Error(errStderr.trim() || 'ffmpeg failed to generate the clip.');
   }
 
   const thumbnailUrl = await generateThumbnail(outputPath, duration);
@@ -881,13 +911,12 @@ async function createLocalClip(params: {
 
   return {
     outputPath,
-    // Serve via API route (works in serverless environments, not just local static files)
     publicUrl: `/api/serve-clip/${fileName}`,
     thumbnailUrl,
   };
 }
 
-// ── Video analysis (public API) ───────────────────────────────────────────────
+// ── Video analysis (public API) ────────────────────────────────────────────────
 async function analyzeVideo(videoUrl: string): Promise<VideoAnalysisResult> {
   await ensureDirectories();
   const workDir = path.join(CACHE_DIR, sourceId(videoUrl));
@@ -897,8 +926,13 @@ async function analyzeVideo(videoUrl: string): Promise<VideoAnalysisResult> {
     try {
       return await analyzeYouTubeVideo(videoUrl, workDir);
     } catch (error) {
-      console.warn('YouTube analysis failed, using fallback:', error);
-      return { duration: 180, title: 'YouTube video', highlights: buildFallbackHighlights(180) };
+      console.warn('YouTube analysis failed completely, using fallback:', error instanceof Error ? error.message.slice(0, 100) : '');
+      // Final fallback: try Piped/transcript one more time without yt-dlp
+      try {
+        return await analyzeYouTubeViaPipedAndTranscript(videoUrl);
+      } catch {
+        return { duration: 180, title: 'YouTube video', highlights: buildFallbackHighlights(180) };
+      }
     }
   }
 
@@ -906,7 +940,7 @@ async function analyzeVideo(videoUrl: string): Promise<VideoAnalysisResult> {
     try {
       return await analyzeBilibiliVideo(videoUrl, workDir);
     } catch (error) {
-      console.warn('Bilibili analysis failed, using fallback:', error);
+      console.warn('Bilibili analysis failed, using fallback:', error instanceof Error ? error.message.slice(0, 100) : '');
       return { duration: 180, title: 'Bilibili video', highlights: buildFallbackHighlights(180) };
     }
   }
@@ -915,22 +949,15 @@ async function analyzeVideo(videoUrl: string): Promise<VideoAnalysisResult> {
 }
 
 async function downloadYouTubeClip(params: {
-  videoUrl: string;
-  title: string;
-  startTime: number;
-  endTime: number;
+  videoUrl: string; title: string; startTime: number; endTime: number;
 }) {
   const inputPath = await downloadSourceVideo(params.videoUrl);
   return createLocalClip({ inputPath, startTime: params.startTime, endTime: params.endTime, title: params.title });
 }
 
 const videoClipper = {
-  analyzeVideo,
-  createLocalClip,
-  downloadSourceVideo,
-  downloadYouTubeClip,
-  isYouTubeUrl,
-  isBilibiliUrl,
+  analyzeVideo, createLocalClip, downloadSourceVideo, downloadYouTubeClip,
+  isYouTubeUrl, isBilibiliUrl,
 };
 
 export default videoClipper;
