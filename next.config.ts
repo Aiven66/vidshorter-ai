@@ -6,6 +6,11 @@ const nextConfig: NextConfig = {
   serverExternalPackages: [
     '@aws-sdk/client-s3',
     '@aws-sdk/lib-storage',
+    '@ffmpeg-installer/ffmpeg',
+    '@ffmpeg-installer/linux-x64',
+    '@ffmpeg-installer/darwin-arm64',
+    '@ffmpeg-installer/darwin-x64',
+    '@ffmpeg-installer/win32-x64',
     'sharp',
     'nodemailer',
     'pg',
