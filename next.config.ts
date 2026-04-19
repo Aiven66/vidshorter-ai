@@ -2,6 +2,14 @@ import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
   allowedDevOrigins: ['*.dev.coze.site'],
+  // Externalize large server-only packages to avoid bundling them into the lambda
+  serverExternalPackages: [
+    '@aws-sdk/client-s3',
+    '@aws-sdk/lib-storage',
+    'sharp',
+    'nodemailer',
+    'pg',
+  ],
   images: {
     remotePatterns: [
       {
