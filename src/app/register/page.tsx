@@ -145,8 +145,8 @@ export default function RegisterPage() {
           {/* Step indicator */}
           <div className="flex items-center justify-center gap-2 mt-3">
             <div className={`flex items-center gap-1.5 text-xs ${step === 'info' ? 'text-primary font-semibold' : 'text-muted-foreground'}`}>
-              <div className={`h-5 w-5 rounded-full flex items-center justify-center text-xs ${step === 'info' ? 'bg-primary text-primary-foreground' : (step !== 'info' ? 'bg-green-500 text-white' : 'bg-muted text-muted-foreground')}`}>
-                {step !== 'info' ? <CheckCircle className="h-3 w-3" /> : '1'}
+              <div className={`h-5 w-5 rounded-full flex items-center justify-center text-xs ${step === 'info' ? 'bg-primary text-primary-foreground' : 'bg-green-500 text-white'}`}>
+                {step === 'info' ? '1' : <CheckCircle className="h-3 w-3" />}
               </div>
               Fill Info
             </div>
