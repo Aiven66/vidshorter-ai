@@ -617,11 +617,27 @@ async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInf
   };
 }
 
+// ── InnerTube response cache (per function invocation) ───────────────────────
+// On Vercel, both the analysis path and the download path call InnerTube for
+// the same videoId within milliseconds of each other.  Making two requests in
+// rapid succession from the same datacenter IP often triggers LOGIN_REQUIRED
+// on the second call.  This in-memory cache (valid 30 min) ensures we only hit
+// InnerTube once per invocation and reuse the result for both steps.
+const innerTubeCache = new Map<string, { result: PipedVideoInfo; expiresAt: number }>();
+
 // ── Direct InnerTube API (raw HTTP, no youtubei.js dependency) ────────────────
 // Makes direct calls to YouTube's InnerTube API using mobile/TV clients.
 // Mobile clients (IOS/ANDROID) return stream URLs without cipher encryption.
 // Uses current app versions to avoid HTTP 400 rejections.
 async function getYouTubeInfoViaDirectInnerTube(videoId: string): Promise<PipedVideoInfo> {
+  // Check cache — avoids a second InnerTube request when both the analysis and
+  // download paths call this for the same videoId within the same invocation.
+  const cached = innerTubeCache.get(videoId);
+  if (cached && cached.expiresAt > Date.now()) {
+    console.log(`DirectInnerTube cache hit for ${videoId}`);
+    return cached.result;
+  }
+
   // Multiple client configurations to try — use current iOS/Android app versions
   const clients = [
     {
@@ -783,12 +799,15 @@ async function getYouTubeInfoViaDirectInnerTube(videoId: string): Promise<PipedV
       const title = data.videoDetails?.title ?? 'YouTube Video';
       const dur = parseInt(data.videoDetails?.lengthSeconds ?? '300', 10);
       console.log(`DirectInnerTube (${client.name}): "${title.slice(0, 50)}", quality=${format.qualityLabel ?? format.quality}`);
-      return {
+      const result: PipedVideoInfo = {
         title,
         duration: Number.isFinite(dur) ? dur : 300,
         streamUrl: format.url,
         subtitleUrl: null,
       };
+      // Populate cache — the download path will reuse this without a second request
+      innerTubeCache.set(videoId, { result, expiresAt: Date.now() + 30 * 60 * 1000 });
+      return result;
     } catch (err) {
       errors.push(`${client.name}: ${err instanceof Error ? err.message.slice(0, 100) : String(err)}`);
     }
@@ -1232,52 +1251,38 @@ async function getYouTubeStreamUrlWithFallbacks(videoId: string): Promise<string
 
 // ── Stream-to-file downloader (for Vercel: fetch stream → /tmp local file) ───
 // YouTube's legacy combined MP4 streams store the moov atom at end-of-file
-// (not faststart). When ffmpeg uses a remote HTTP URL as -i input it must
-// download the ENTIRE video before it can seek to any timestamp, causing
-// 60-120s delays per clip on a 213-second video.
-// Solution: fetch the stream to /tmp once (~1s for 13MB at datacenter speed),
-// then pass the local path to ffmpeg which can seek instantly.
+// (not faststart). When ffmpeg uses a remote HTTP URL as -i, it must download
+// the ENTIRE video before it can seek to any timestamp, causing 60-120s delays.
+// Solution: fetch the stream to /tmp first (~1-10s), then ffmpeg seeks instantly.
 async function downloadStreamToLocalFile(url: string, outputPath: string): Promise<boolean> {
-  const maxBytes = 450 * 1024 * 1024; // 450 MB — stay under Vercel /tmp 512 MB limit
+  const maxBytes = 400 * 1024 * 1024; // 400 MB — stay under Vercel /tmp 512 MB limit
   try {
-    console.log(`Fetching stream to ${outputPath}…`);
+    console.log(`Fetching video stream to /tmp…`);
     const res = await fetch(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
         'Accept': '*/*',
-        'Accept-Encoding': 'identity', // disable compression so we get raw bytes
+        'Accept-Encoding': 'identity',
       },
-      signal: AbortSignal.timeout(240_000), // 4 min
+      signal: AbortSignal.timeout(180_000), // 3 min
     });
     if (!res.ok) {
       console.warn(`Stream fetch HTTP ${res.status}`);
       return false;
     }
     const contentLength = parseInt(res.headers.get('content-length') || '0', 10);
-    if (contentLength > maxBytes) {
-      console.warn(`Video too large (${Math.round(contentLength / 1024 / 1024)}MB), using remote URL`);
+    if (contentLength > 0 && contentLength > maxBytes) {
+      console.warn(`Video too large to cache locally: ${Math.round(contentLength / 1024 / 1024)}MB`);
       return false;
     }
-    const { createWriteStream } = await import('node:fs');
-    const ws = createWriteStream(outputPath);
-    let written = 0;
-    const reader = res.body!.getReader();
-    await new Promise<void>((resolve, reject) => {
-      ws.on('error', reject);
-      const pump = async () => {
-        try {
-          for (;;) {
-            const { done, value } = await reader.read();
-            if (done) { ws.end(resolve); return; }
-            written += value.length;
-            if (written > maxBytes) { ws.destroy(); reject(new Error('Video exceeded size limit')); return; }
-            if (!ws.write(value)) await new Promise(r => ws.once('drain', r));
-          }
-        } catch (e) { reject(e); }
-      };
-      pump();
-    });
-    console.log(`Stream downloaded: ${Math.round(written / 1024 / 1024 * 10) / 10}MB → ${outputPath}`);
+    // Buffer into memory then write — simpler and more reliable than streaming pipe
+    const buffer = await res.arrayBuffer();
+    if (buffer.byteLength > maxBytes) {
+      console.warn(`Downloaded video exceeds size limit: ${Math.round(buffer.byteLength / 1024 / 1024)}MB`);
+      return false;
+    }
+    await writeFile(outputPath, Buffer.from(buffer));
+    console.log(`Video downloaded: ${Math.round(buffer.byteLength / 1024 / 1024 * 10) / 10}MB → ${outputPath}`);
     return true;
   } catch (err) {
     console.warn('downloadStreamToLocalFile failed:', err instanceof Error ? err.message.slice(0, 100) : err);
