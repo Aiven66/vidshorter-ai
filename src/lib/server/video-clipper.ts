@@ -36,15 +36,27 @@ const YT_DLP_LINUX_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/downl
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const ffmpegInstaller: { path: string } = require('@ffmpeg-installer/ffmpeg');
 
-// ── Piped proxy instances (YouTube proxy, bypasses bot detection on datacenter IPs) ──
-// Piped is an open-source YouTube proxy running on community servers.
-// Multiple instances for redundancy.
+// ── Piped proxy instances (YouTube proxy, community-hosted) ──────────────────
 const PIPED_INSTANCES = [
   'https://pipedapi.kavin.rocks',
   'https://piped-api.garudalinux.org',
   'https://api.piped.yt',
   'https://pipedapi.tokhmi.xyz',
   'https://pipedapi.mha.fi',
+  'https://watchapi.whatever.social',
+  'https://api.piped.projectsegfau.lt',
+  'https://piped-api.privacy.com.de',
+];
+
+// ── Invidious instances (alternative YouTube proxy) ───────────────────────────
+const INVIDIOUS_INSTANCES = [
+  'https://yewtu.be',
+  'https://invidious.nerdvpn.de',
+  'https://inv.nadeko.net',
+  'https://invidious.privacyredirect.com',
+  'https://iv.datura.network',
+  'https://invidious.lunar.icu',
+  'https://yt.artemislena.eu',
 ];
 
 // Cookie files (local macOS dev only)
@@ -416,6 +428,105 @@ async function getYouTubeInfoViaPiped(videoId: string): Promise<PipedVideoInfo> 
   throw new Error(`All Piped instances failed. Last error: ${lastError}`);
 }
 
+// ── Invidious API (alternative YouTube proxy, returns direct googlevideo.com URLs) ─
+async function getYouTubeInfoViaInvidious(videoId: string): Promise<PipedVideoInfo> {
+  let lastError = 'No instance tried';
+  for (const instance of INVIDIOUS_INSTANCES) {
+    try {
+      const res = await fetch(
+        `${instance}/api/v1/videos/${videoId}?fields=title,lengthSeconds,formatStreams`,
+        {
+          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; VidShorter/1.0)' },
+          signal: AbortSignal.timeout(12000),
+        },
+      );
+      if (!res.ok) { lastError = `${instance}: HTTP ${res.status}`; continue; }
+      const data = await res.json() as {
+        title?: string;
+        lengthSeconds?: number;
+        formatStreams?: Array<{ url: string; container?: string; qualityLabel?: string }>;
+      };
+      const streams = (data.formatStreams || []).filter(f => f.url);
+      const stream = streams.find(f => f.qualityLabel?.includes('360'))
+        || streams.find(f => f.qualityLabel?.includes('480'))
+        || streams.find(f => f.qualityLabel?.includes('240'))
+        || streams[0];
+      if (!stream?.url) { lastError = `${instance}: no stream found`; continue; }
+      console.log(`Invidious (${instance}): "${(data.title || '').slice(0, 50)}"`);
+      return {
+        title: data.title || 'YouTube Video',
+        duration: data.lengthSeconds || 300,
+        streamUrl: stream.url,
+        subtitleUrl: null,
+      };
+    } catch (err) {
+      lastError = err instanceof Error ? err.message.slice(0, 100) : String(err);
+      console.warn(`Invidious ${instance} failed: ${lastError}`);
+    }
+  }
+  throw new Error(`All Invidious instances failed. Last: ${lastError}`);
+}
+
+// ── YouTube.js (direct InnerTube API, TV_EMBEDDED client bypasses PO token requirement) ─
+async function getYouTubeInfoViaYouTubeJs(videoId: string): Promise<PipedVideoInfo> {
+  let lastError = 'not tried';
+  // TV_EMBEDDED and TV clients don't require PO tokens and are less aggressively blocked
+  const clientTypes = ['TV_EMBEDDED', 'TV', 'ANDROID', 'IOS'] as const;
+
+  for (const ct of clientTypes) {
+    try {
+      console.log(`YouTube.js trying client: ${ct}…`);
+      // Dynamic import — avoids bundling, youtubei.js is in serverExternalPackages
+      const { Innertube, UniversalCache } = await import('youtubei.js');
+      const yt = await Innertube.create({
+        cache: new UniversalCache(false),
+        generate_session_locally: true,
+      });
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const info = await (yt as any).getBasicInfo(videoId, ct);
+      const title: string = info?.basic_info?.title ?? 'YouTube Video';
+      const duration: number = info?.basic_info?.duration ?? 300;
+
+      const allFormats: Array<{
+        has_audio?: boolean;
+        has_video?: boolean;
+        mime_type?: string;
+        url?: string;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        decipher?: (player: any) => string;
+      }> = [
+        ...(info?.streaming_data?.formats ?? []),
+        ...(info?.streaming_data?.adaptive_formats ?? []),
+      ];
+
+      // Prefer combined video+audio MP4
+      const format = allFormats.find(f => f.has_audio && f.has_video && f.mime_type?.startsWith('video/mp4'))
+        ?? allFormats.find(f => f.has_audio && f.has_video)
+        ?? allFormats[0];
+
+      if (!format) { lastError = `${ct}: no format found`; continue; }
+
+      let streamUrl = '';
+      if (typeof format.decipher === 'function') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        streamUrl = format.decipher((yt as any).session?.player) || format.url || '';
+      } else {
+        streamUrl = format.url || '';
+      }
+
+      if (!streamUrl) { lastError = `${ct}: empty URL after decipher`; continue; }
+
+      console.log(`YouTube.js success (${ct}): "${title.slice(0, 50)}"`);
+      return { title, duration, streamUrl, subtitleUrl: null };
+    } catch (err) {
+      lastError = err instanceof Error ? err.message.slice(0, 100) : String(err);
+      console.warn(`YouTube.js ${ct} failed: ${lastError}`);
+    }
+  }
+  throw new Error(`YouTube.js all clients failed. Last: ${lastError}`);
+}
+
 async function fetchPipedSubtitleCues(subtitleUrl: string): Promise<CaptionCue[]> {
   try {
     const res = await fetch(subtitleUrl, {
@@ -459,7 +570,7 @@ async function fetchYouTubeTranscriptCues(videoId: string): Promise<CaptionCue[]
   return [];
 }
 
-// ── YouTube analysis via Piped + transcript (no bot detection) ───────────────
+// ── YouTube analysis via YouTube.js / Invidious / Piped + transcript ─────────
 async function analyzeYouTubeViaPipedAndTranscript(videoUrl: string): Promise<VideoAnalysisResult> {
   const videoId = extractYouTubeVideoId(videoUrl);
   if (!videoId) throw new Error('Invalid YouTube URL');
@@ -468,31 +579,40 @@ async function analyzeYouTubeViaPipedAndTranscript(videoUrl: string): Promise<Vi
   let duration = 300;
   let cues: CaptionCue[] = [];
 
-  // Get title/duration/subtitles from Piped
-  try {
-    const pipedInfo = await getYouTubeInfoViaPiped(videoId);
-    title = pipedInfo.title;
-    duration = pipedInfo.duration;
-    if (pipedInfo.subtitleUrl) {
-      cues = await fetchPipedSubtitleCues(pipedInfo.subtitleUrl);
-      console.log(`Piped subtitles: ${cues.length} cues`);
+  // Try each proxy in order for title/duration/subtitles
+  const metaGetters = [
+    () => getYouTubeInfoViaYouTubeJs(videoId),
+    () => getYouTubeInfoViaInvidious(videoId),
+    () => getYouTubeInfoViaPiped(videoId),
+  ];
+
+  for (const getter of metaGetters) {
+    try {
+      const info = await getter();
+      title = info.title;
+      duration = info.duration;
+      if (info.subtitleUrl) {
+        cues = await fetchPipedSubtitleCues(info.subtitleUrl);
+        console.log(`Got ${cues.length} subtitle cues`);
+      }
+      break; // success
+    } catch (err) {
+      console.warn('Meta getter failed:', err instanceof Error ? err.message.slice(0, 80) : err);
     }
-  } catch (err) {
-    console.warn('Piped analysis failed:', err instanceof Error ? err.message : err);
   }
 
-  // If no cues from Piped subtitles, try youtube-transcript
+  // Fallback: youtube-transcript for cues
   if (cues.length === 0) {
     cues = await fetchYouTubeTranscriptCues(videoId);
     console.log(`youtube-transcript: ${cues.length} cues`);
   }
 
-  // Estimate duration from cues if Piped didn't give us one
+  // Estimate duration from cues if proxies gave nothing
   if (duration <= 60 && cues.length > 0) {
     duration = Math.ceil(cues[cues.length - 1].end) + 30;
   }
 
-  // Try oEmbed for title if needed (lightweight, rarely blocked)
+  // oEmbed for title as last resort
   if (title === 'YouTube video') {
     try {
       const r = await fetch(
@@ -780,6 +900,18 @@ async function downloadYouTubeOrGenericVideo(
     const cookieFileArg = (await hasFreshCookieFile()) ? ['--cookies', COOKIE_FILE_PATH] : [];
     const cookieBrowserArg = hasCookies ? ['--cookies-from-browser', 'chrome'] : [];
 
+    // Support YOUTUBE_COOKIES env var (Netscape format cookie file content)
+    const envCookieContent = process.env.YOUTUBE_COOKIES;
+    if (envCookieContent) {
+      try {
+        const envCookiePath = path.join(CACHE_DIR, 'env-yt-cookies.txt');
+        await writeFile(envCookiePath, envCookieContent);
+        strategies.push([...proxyArg, '--cookies', envCookiePath, '--extractor-args', 'youtube:player_client=tv_embedded', ...baseArgs, '-f', 'bestvideo[height<=480][ext=mp4]+bestaudio/best[height<=480]/best', videoUrl]);
+        strategies.push([...proxyArg, '--cookies', envCookiePath, ...baseArgs, '-f', 'best', videoUrl]);
+        console.log('yt-dlp: YOUTUBE_COOKIES env var detected, added cookie strategies');
+      } catch { /* ignore cookie write errors */ }
+    }
+
     strategies.push([...proxyArg, '--extractor-args', 'youtube:player_client=tv_embedded', ...baseArgs, '-f', 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480]/best', videoUrl]);
     strategies.push([...proxyArg, '--extractor-args', 'youtube:player_client=android_embedded', ...baseArgs, '-f', 'bestvideo[height<=480]+bestaudio/best[height<=480]/best', videoUrl]);
     strategies.push([...proxyArg, '--extractor-args', 'youtube:player_client=ios', ...baseArgs, '-f', 'best[height<=480]/best', videoUrl]);
@@ -811,15 +943,33 @@ async function downloadYouTubeOrGenericVideo(
   const resolvedPath = stdout.split('\n').map((l) => l.trim()).filter(Boolean).pop();
 
   if (!resolvedPath && isYouTubeUrl(videoUrl)) {
-    // yt-dlp failed for YouTube (expected on Vercel) — fall back to Piped stream URL
-    // ffmpeg accepts HTTPS URLs as input directly, so we return the stream URL.
+    // yt-dlp failed for YouTube (bot detection on Vercel datacenter IPs)
+    // Try YouTube.js → Invidious → Piped in order
     const ytdlpErr = stderr.slice(0, 200);
-    console.warn(`yt-dlp download failed (${ytdlpErr}), falling back to Piped stream URL…`);
+    console.warn(`yt-dlp download failed (${ytdlpErr}), trying YouTube.js / Invidious / Piped…`);
     const videoId = extractYouTubeVideoId(videoUrl);
     if (!videoId) throw new Error('Invalid YouTube URL');
-    const { streamUrl } = await getYouTubeInfoViaPiped(videoId);
-    console.log('Using Piped stream URL as ffmpeg input (no local download needed)');
-    return streamUrl; // ffmpeg -i <streamUrl> works just like -i <localfile>
+
+    const streamGetters = [
+      { name: 'YouTube.js', fn: () => getYouTubeInfoViaYouTubeJs(videoId) },
+      { name: 'Invidious', fn: () => getYouTubeInfoViaInvidious(videoId) },
+      { name: 'Piped', fn: () => getYouTubeInfoViaPiped(videoId) },
+    ];
+
+    for (const getter of streamGetters) {
+      try {
+        const { streamUrl } = await getter.fn();
+        console.log(`Using ${getter.name} stream URL as ffmpeg input`);
+        return streamUrl; // ffmpeg accepts HTTPS URLs directly as -i input
+      } catch (err) {
+        console.warn(`${getter.name} failed: ${err instanceof Error ? err.message.slice(0, 80) : err}`);
+      }
+    }
+
+    throw new Error(
+      'Failed to get YouTube stream. All methods (YouTube.js, Invidious, Piped) failed. ' +
+      'Tip: set YOUTUBE_COOKIES env var with Netscape-format YouTube cookies to bypass bot detection.',
+    );
   }
 
   if (!resolvedPath) {
