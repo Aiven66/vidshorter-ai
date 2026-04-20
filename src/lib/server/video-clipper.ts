@@ -20,6 +20,9 @@ import { createHash, randomUUID } from 'node:crypto';
 import { access, mkdir, readFile, readdir, writeFile, chmod, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { constants as fsConstants } from 'node:fs';
+import https from 'node:https';
+import http from 'node:http';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 
 const execFile = promisify(execFileCallback);
 
@@ -538,6 +541,8 @@ async function getYouTubeInfoViaYouTubeJs(videoId: string): Promise<PipedVideoIn
 // ── cobalt.tools API (YouTube + Bilibili download, non-datacenter IPs) ────────
 // cobalt.tools is an open-source download service whose servers are NOT blocked
 // by YouTube or Bilibili, making it the most reliable fallback on Vercel.
+// Crucially, cobalt.tools handles age-restricted YouTube videos via its own
+// server-side cookie management — no per-user auth required.
 async function getYouTubeInfoViaCobalt(videoId: string): Promise<PipedVideoInfo> {
   const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
 
@@ -547,8 +552,13 @@ async function getYouTubeInfoViaCobalt(videoId: string): Promise<PipedVideoInfo>
       'Accept': 'application/json',
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ url: videoUrl }),
-    signal: AbortSignal.timeout(30_000),
+    body: JSON.stringify({
+      url: videoUrl,
+      videoQuality: '480',
+      youtubeVideoCodec: 'h264',
+      audioBitrate: '128',
+    }),
+    signal: AbortSignal.timeout(35_000),
   });
 
   if (!res.ok) {
@@ -908,8 +918,8 @@ async function getBilibiliStreamViaCobalt(videoUrl: string): Promise<string> {
       'Accept': 'application/json',
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ url: videoUrl }),
-    signal: AbortSignal.timeout(30_000),
+    body: JSON.stringify({ url: videoUrl, videoQuality: '480', audioBitrate: '128' }),
+    signal: AbortSignal.timeout(35_000),
   });
 
   if (!res.ok) throw new Error(`cobalt.tools returned HTTP ${res.status}`);
@@ -1184,7 +1194,58 @@ async function analyzeYouTubeVideo(videoUrl: string, workDir: string): Promise<V
 }
 
 // ── Bilibili analysis ─────────────────────────────────────────────────────────
+
+// Direct Bilibili API call — works from any IP including Vercel HKG1.
+// Returns title + duration without needing yt-dlp.
+async function getBilibiliVideoMeta(videoUrl: string): Promise<{ title: string; duration: number }> {
+  const bvMatch = videoUrl.match(/\/video\/(BV[a-zA-Z0-9]+)/i);
+  const avMatch = videoUrl.match(/\/video\/av(\d+)/i);
+  if (!bvMatch && !avMatch) throw new Error('Cannot extract BV/AV ID from Bilibili URL');
+
+  const apiUrl = bvMatch
+    ? `https://api.bilibili.com/x/web-interface/view?bvid=${bvMatch[1]}`
+    : `https://api.bilibili.com/x/web-interface/view?aid=${avMatch![1]}`;
+
+  const res = await fetch(apiUrl, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+      'Referer': 'https://www.bilibili.com/',
+    },
+    signal: AbortSignal.timeout(10_000),
+  });
+
+  if (!res.ok) throw new Error(`Bilibili API HTTP ${res.status}`);
+
+  const data = await res.json() as {
+    code: number;
+    message?: string;
+    data?: { title?: string; duration?: number };
+  };
+
+  if (data.code !== 0 || !data.data) {
+    throw new Error(`Bilibili API error: code=${data.code}, msg=${data.message ?? ''}`);
+  }
+
+  return {
+    title: data.data.title?.trim() || 'Bilibili Video',
+    duration: data.data.duration || 300,
+  };
+}
+
 async function analyzeBilibiliVideo(videoUrl: string, workDir: string): Promise<VideoAnalysisResult> {
+  // On Vercel: skip yt-dlp entirely — use Bilibili's public API for title/duration
+  // (yt-dlp binary download is slow on cold start and the binary often fails from HKG1)
+  if (process.env.VERCEL) {
+    console.log('Vercel environment: using Bilibili direct API for analysis');
+    try {
+      const { title, duration } = await getBilibiliVideoMeta(videoUrl);
+      console.log(`Bilibili API: "${title.slice(0, 50)}", duration=${duration}s`);
+      return { duration, title, highlights: buildFallbackHighlights(duration) };
+    } catch (err) {
+      console.warn('Bilibili direct API failed:', err instanceof Error ? err.message.slice(0, 100) : err);
+      return { duration: 300, title: 'Bilibili Video', highlights: buildFallbackHighlights(300) };
+    }
+  }
   const outputTemplate = path.join(workDir, 'analysis.%(ext)s');
   const bilibiliHeaders = [
     '--add-header', 'Referer: https://www.bilibili.com/',
@@ -1254,6 +1315,22 @@ async function downloadSourceVideo(videoUrl: string): Promise<string> {
 async function downloadBilibiliVideo(
   videoUrl: string, outputTemplate: string, hasCookies: boolean,
 ): Promise<string> {
+  // On Vercel: skip yt-dlp entirely — use cobalt.tools directly
+  // (yt-dlp binary download ~40s cold start, then Bilibili blocks many AWS IPs)
+  if (process.env.VERCEL) {
+    console.log('Vercel environment: using cobalt.tools for Bilibili download');
+    const cobaltUrl = await getBilibiliStreamViaCobalt(videoUrl);
+    // Download to /tmp first so ffmpeg can seek instantly (same pattern as YouTube)
+    const localPath = outputTemplate.replace('%(ext)s', 'mp4');
+    const downloaded = await downloadStreamToLocalFile(cobaltUrl, localPath);
+    if (downloaded) {
+      console.log(`Bilibili: downloaded ${localPath}`);
+      return localPath;
+    }
+    console.log('Bilibili: local cache failed; using stream URL for ffmpeg');
+    return cobaltUrl;
+  }
+
   const bilibiliHeaders = [
     '--add-header', 'Referer: https://www.bilibili.com/',
     '--add-header', 'Origin: https://www.bilibili.com',
@@ -1305,7 +1382,7 @@ async function downloadBilibiliVideo(
 
 // ── YouTube stream URL retrieval with all fallbacks ───────────────────────────
 // Used directly on Vercel (skips yt-dlp) and as fallback after yt-dlp fails.
-// Priority: CF Worker > Edge Function (CDN IPs) > DirectInnerTube > YouTube.js > Invidious > Piped
+// Priority: CF Worker > Edge Function (CDN IPs) > cobalt.tools (age-restricted OK) > DirectInnerTube > YouTube.js > Invidious > Piped
 async function getYouTubeStreamUrlWithFallbacks(videoId: string): Promise<string> {
   const streamGetters = [
     ...(CF_WORKER_URL ? [{ name: 'CF Worker', fn: () => getYouTubeInfoViaCFWorker(videoId) }] : []),
@@ -1314,6 +1391,8 @@ async function getYouTubeStreamUrlWithFallbacks(videoId: string): Promise<string
     ...(process.env.VERCEL_URL
       ? [{ name: 'EdgeFunction', fn: () => getYouTubeInfoViaEdgeFunction(videoId) }]
       : []),
+    // cobalt.tools: uses own server IPs + cookie management → handles age-restricted videos
+    { name: 'cobalt', fn: () => getYouTubeInfoViaCobalt(videoId) },
     { name: 'DirectInnerTube', fn: () => getYouTubeInfoViaDirectInnerTube(videoId) },
     { name: 'YouTube.js', fn: () => getYouTubeInfoViaYouTubeJs(videoId) },
     { name: 'Invidious', fn: () => getYouTubeInfoViaInvidious(videoId) },

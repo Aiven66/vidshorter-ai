@@ -1,9 +1,9 @@
 import type { Metadata } from 'next';
-import { Inspector } from 'react-dev-inspector';
 import './globals.css';
 import { Providers } from './providers';
 import { Navbar } from '@/components/navbar';
 import { Footer } from '@/components/footer';
+import { DevInspector } from '@/components/dev-inspector';
 
 export const metadata: Metadata = {
   title: {
@@ -47,7 +47,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="antialiased min-h-screen flex flex-col" suppressHydrationWarning>
-        {isDev && <Inspector />}
+        {isDev && <DevInspector />}
         <Providers>
           <Navbar />
           <main className="flex-1">{children}</main>
