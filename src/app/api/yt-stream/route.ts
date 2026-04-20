@@ -20,8 +20,19 @@ const CORS = {
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
 };
 
-// Current mobile client versions — must stay up-to-date to avoid HTTP 400
+// Client configurations — ordered by success rate and age-restriction bypass capability
 const CLIENTS = [
+  // WEB_CREATOR: works for most videos including some age-restricted content
+  {
+    name: 'WEB_CREATOR',
+    clientName: 'WEB_CREATOR',
+    clientVersion: '1.20240701.00.00',
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+    xClientName: '62',
+    extra: {},
+    extraHeaders: {},
+  },
+  // IOS v20 — returns direct un-ciphered stream URLs for most videos
   {
     name: 'IOS_v20',
     clientName: 'IOS',
@@ -35,7 +46,9 @@ const CLIENTS = [
       osVersion: '18.3.2.22D82',
       clientFormFactor: 'SMALL_FORM_FACTOR',
     },
+    extraHeaders: {},
   },
+  // ANDROID v20 — broad compatibility
   {
     name: 'ANDROID_v20',
     clientName: 'ANDROID',
@@ -43,7 +56,22 @@ const CLIENTS = [
     userAgent: 'com.google.android.youtube/20.03.03 (Linux; U; Android 14) gzip',
     xClientName: '3',
     extra: { androidSdkVersion: 34, clientFormFactor: 'SMALL_FORM_FACTOR' },
+    extraHeaders: {},
   },
+  // TVHTML5_SIMPLY_EMBEDDED_PLAYER — known to bypass age restrictions when embedded
+  {
+    name: 'TV_EMBEDDED',
+    clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
+    clientVersion: '2.0',
+    userAgent: 'Mozilla/5.0 (TV; Chromecast; U; Android 9; Build/PPR1) AppleWebKit/537.36',
+    xClientName: '85',
+    extra: { clientScreen: 'EMBED' },
+    extraHeaders: {
+      'Referer': 'https://www.youtube.com/',
+      'Origin': 'https://www.youtube.com',
+    },
+  },
+  // ANDROID_TESTSUITE — minimal client, sometimes avoids bot detection
   {
     name: 'ANDROID_TESTSUITE',
     clientName: 'ANDROID_TESTSUITE',
@@ -51,7 +79,9 @@ const CLIENTS = [
     userAgent: 'com.google.android.youtube/1.9 (Linux; U; Android 11) gzip',
     xClientName: '30',
     extra: { androidSdkVersion: 30 },
+    extraHeaders: {},
   },
+  // IOS v19 — legacy fallback
   {
     name: 'IOS_v19',
     clientName: 'IOS',
@@ -62,6 +92,7 @@ const CLIENTS = [
       deviceMake: 'Apple', deviceModel: 'iPhone16,2',
       osName: 'iPhone', osVersion: '17.5.1.21F90',
     },
+    extraHeaders: {},
   },
 ] as const;
 
@@ -90,7 +121,9 @@ interface InnerTubeResponse {
 async function tryClient(videoId: string, client: Client): Promise<{
   title: string; duration: number; streamUrl: string; quality: string;
 } | null> {
-  const body = {
+  // Build the InnerTube request body. For TV_EMBEDDED, include thirdParty to bypass age checks.
+  const isTvEmbedded = client.clientName === 'TVHTML5_SIMPLY_EMBEDDED_PLAYER';
+  const body: Record<string, unknown> = {
     videoId,
     context: {
       client: {
@@ -100,6 +133,9 @@ async function tryClient(videoId: string, client: Client): Promise<{
         gl: 'US',
         ...client.extra,
       },
+      ...(isTvEmbedded ? {
+        thirdParty: { embedUrl: 'https://www.youtube.com/' },
+      } : {}),
     },
     playbackContext: {
       contentPlaybackContext: { html5Preference: 'HTML5_PREF_WANTS' },
@@ -115,9 +151,10 @@ async function tryClient(videoId: string, client: Client): Promise<{
       'Referer': 'https://www.youtube.com/',
       'X-Youtube-Client-Name': client.xClientName,
       'X-Youtube-Client-Version': client.clientVersion,
+      ...client.extraHeaders,
     },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(15_000),
+    signal: AbortSignal.timeout(12_000), // 12s per client × 6 clients = 72s max
   });
 
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
