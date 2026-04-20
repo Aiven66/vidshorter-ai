@@ -876,8 +876,12 @@ async function analyzeYouTubeViaPipedAndTranscript(videoUrl: string): Promise<Vi
   let duration = 300;
   let cues: CaptionCue[] = [];
 
-  // Try each proxy in order for title/duration/subtitles
+  // Try each proxy in order for title/duration/subtitles.
+  // DirectInnerTube is first (works from Vercel when not rate-limited; provides title+duration).
+  // CF Worker is tried first of all if configured (most reliable from any IP).
   const metaGetters = [
+    ...(CF_WORKER_URL ? [() => getYouTubeInfoViaCFWorker(videoId)] : []),
+    () => getYouTubeInfoViaDirectInnerTube(videoId),
     () => getYouTubeInfoViaYouTubeJs(videoId),
     () => getYouTubeInfoViaInvidious(videoId),
     () => getYouTubeInfoViaPiped(videoId),
@@ -1009,6 +1013,14 @@ function parseYtDlpJson(stdout: string): Record<string, unknown> {
 
 // ── YouTube analysis via yt-dlp ───────────────────────────────────────────────
 async function analyzeYouTubeVideo(videoUrl: string, workDir: string): Promise<VideoAnalysisResult> {
+  // On Vercel, yt-dlp cannot solve YouTube's JS signature challenges and
+  // its repeated failed requests trigger YouTube rate-limiting (LOGIN_REQUIRED).
+  // Skip yt-dlp entirely on Vercel and go straight to proxy-based analysis.
+  if (process.env.VERCEL) {
+    console.log('Vercel environment detected: skipping yt-dlp analysis, using proxy+transcript');
+    return analyzeYouTubeViaPipedAndTranscript(videoUrl);
+  }
+
   const outputTemplate = path.join(workDir, 'analysis.%(ext)s');
   const baseArgs = [
     '--no-playlist', '--skip-download', '--dump-single-json',
@@ -1187,9 +1199,51 @@ async function downloadBilibiliVideo(
   return resolvedPath;
 }
 
+// ── YouTube stream URL retrieval with all fallbacks ───────────────────────────
+// Used directly on Vercel (skips yt-dlp) and as fallback after yt-dlp fails.
+// Priority: CF Worker (if configured) > DirectInnerTube > YouTube.js > Invidious > Piped
+async function getYouTubeStreamUrlWithFallbacks(videoId: string): Promise<string> {
+  const streamGetters = [
+    ...(CF_WORKER_URL ? [{ name: 'CF Worker', fn: () => getYouTubeInfoViaCFWorker(videoId) }] : []),
+    { name: 'DirectInnerTube', fn: () => getYouTubeInfoViaDirectInnerTube(videoId) },
+    { name: 'YouTube.js', fn: () => getYouTubeInfoViaYouTubeJs(videoId) },
+    { name: 'Invidious', fn: () => getYouTubeInfoViaInvidious(videoId) },
+    { name: 'Piped', fn: () => getYouTubeInfoViaPiped(videoId) },
+  ];
+
+  const errors: string[] = [];
+  for (const getter of streamGetters) {
+    try {
+      const { streamUrl } = await getter.fn();
+      console.log(`Stream URL obtained via ${getter.name} for videoId=${videoId}`);
+      return streamUrl; // ffmpeg accepts HTTPS URLs directly as -i input
+    } catch (err) {
+      const msg = err instanceof Error ? err.message.slice(0, 150) : String(err);
+      errors.push(`${getter.name}: ${msg}`);
+      console.warn(`${getter.name} failed: ${msg}`);
+    }
+  }
+
+  throw new Error(
+    `Failed to get YouTube stream. All methods failed: ${errors.join(' | ')}\n` +
+    'Deploy a Cloudflare Worker (see /cf-worker/README.md) and set CF_WORKER_URL in Vercel env vars for reliable access.',
+  );
+}
+
 async function downloadYouTubeOrGenericVideo(
   videoUrl: string, outputTemplate: string, hasCookies: boolean,
 ): Promise<string> {
+  // On Vercel, yt-dlp cannot solve YouTube's JS signature challenges.
+  // More critically: each yt-dlp attempt makes YouTube API requests that accumulate
+  // on the same datacenter IP and trigger LOGIN_REQUIRED ("Sign in to confirm you're not a bot")
+  // by the time we reach DirectInnerTube. Skip yt-dlp entirely on Vercel for YouTube.
+  if (process.env.VERCEL && isYouTubeUrl(videoUrl)) {
+    console.log('Vercel environment: skipping yt-dlp for YouTube, going direct to stream proxy');
+    const videoId = extractYouTubeVideoId(videoUrl);
+    if (!videoId) throw new Error('Invalid YouTube URL');
+    return getYouTubeStreamUrlWithFallbacks(videoId);
+  }
+
   const baseArgs = [
     '--no-playlist', '--restrict-filenames',
     '--print', 'after_move:filepath',
@@ -1251,43 +1305,12 @@ async function downloadYouTubeOrGenericVideo(
   const resolvedPath = stdout.split('\n').map((l) => l.trim()).filter(Boolean).pop();
 
   if (!resolvedPath && isYouTubeUrl(videoUrl)) {
-    // yt-dlp failed for YouTube (bot detection on Vercel datacenter IPs)
-    // Try in priority order:
-    //   1. CF Worker (Cloudflare IPs — not blocked by YouTube, set CF_WORKER_URL env var)
-    //   2. Direct InnerTube API (current client versions, may work from some regions)
-    //   3. YouTube.js (youtubei.js library, last resort)
-    //   4. Invidious (community proxies, unreliable)
-    //   5. Piped (community proxies, unreliable)
+    // yt-dlp failed for YouTube (bot detection on non-Vercel environments with proxy config)
     const ytdlpErr = stderr.slice(0, 200);
     console.warn(`yt-dlp download failed (${ytdlpErr.slice(0, 120)}), trying stream proxy fallbacks…`);
     const videoId = extractYouTubeVideoId(videoUrl);
     if (!videoId) throw new Error('Invalid YouTube URL');
-
-    const streamGetters = [
-      ...(CF_WORKER_URL ? [{ name: 'CF Worker', fn: () => getYouTubeInfoViaCFWorker(videoId) }] : []),
-      { name: 'DirectInnerTube', fn: () => getYouTubeInfoViaDirectInnerTube(videoId) },
-      { name: 'YouTube.js', fn: () => getYouTubeInfoViaYouTubeJs(videoId) },
-      { name: 'Invidious', fn: () => getYouTubeInfoViaInvidious(videoId) },
-      { name: 'Piped', fn: () => getYouTubeInfoViaPiped(videoId) },
-    ];
-
-    const errors: string[] = [];
-    for (const getter of streamGetters) {
-      try {
-        const { streamUrl } = await getter.fn();
-        console.log(`Using ${getter.name} stream URL as ffmpeg input`);
-        return streamUrl; // ffmpeg accepts HTTPS URLs directly as -i input
-      } catch (err) {
-        const msg = err instanceof Error ? err.message.slice(0, 120) : String(err);
-        errors.push(`${getter.name}: ${msg}`);
-        console.warn(`${getter.name} failed: ${msg}`);
-      }
-    }
-
-    throw new Error(
-      `Failed to get YouTube stream. All methods failed:\n${errors.join('\n')}\n` +
-      'For best reliability, deploy a Cloudflare Worker (see /cf-worker/) and set CF_WORKER_URL env var.',
-    );
+    return getYouTubeStreamUrlWithFallbacks(videoId);
   }
 
   if (!resolvedPath) {
