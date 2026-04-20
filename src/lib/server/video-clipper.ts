@@ -1230,6 +1230,61 @@ async function getYouTubeStreamUrlWithFallbacks(videoId: string): Promise<string
   );
 }
 
+// ── Stream-to-file downloader (for Vercel: fetch stream → /tmp local file) ───
+// YouTube's legacy combined MP4 streams store the moov atom at end-of-file
+// (not faststart). When ffmpeg uses a remote HTTP URL as -i input it must
+// download the ENTIRE video before it can seek to any timestamp, causing
+// 60-120s delays per clip on a 213-second video.
+// Solution: fetch the stream to /tmp once (~1s for 13MB at datacenter speed),
+// then pass the local path to ffmpeg which can seek instantly.
+async function downloadStreamToLocalFile(url: string, outputPath: string): Promise<boolean> {
+  const maxBytes = 450 * 1024 * 1024; // 450 MB — stay under Vercel /tmp 512 MB limit
+  try {
+    console.log(`Fetching stream to ${outputPath}…`);
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+        'Accept': '*/*',
+        'Accept-Encoding': 'identity', // disable compression so we get raw bytes
+      },
+      signal: AbortSignal.timeout(240_000), // 4 min
+    });
+    if (!res.ok) {
+      console.warn(`Stream fetch HTTP ${res.status}`);
+      return false;
+    }
+    const contentLength = parseInt(res.headers.get('content-length') || '0', 10);
+    if (contentLength > maxBytes) {
+      console.warn(`Video too large (${Math.round(contentLength / 1024 / 1024)}MB), using remote URL`);
+      return false;
+    }
+    const { createWriteStream } = await import('node:fs');
+    const ws = createWriteStream(outputPath);
+    let written = 0;
+    const reader = res.body!.getReader();
+    await new Promise<void>((resolve, reject) => {
+      ws.on('error', reject);
+      const pump = async () => {
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) { ws.end(resolve); return; }
+            written += value.length;
+            if (written > maxBytes) { ws.destroy(); reject(new Error('Video exceeded size limit')); return; }
+            if (!ws.write(value)) await new Promise(r => ws.once('drain', r));
+          }
+        } catch (e) { reject(e); }
+      };
+      pump();
+    });
+    console.log(`Stream downloaded: ${Math.round(written / 1024 / 1024 * 10) / 10}MB → ${outputPath}`);
+    return true;
+  } catch (err) {
+    console.warn('downloadStreamToLocalFile failed:', err instanceof Error ? err.message.slice(0, 100) : err);
+    return false;
+  }
+}
+
 async function downloadYouTubeOrGenericVideo(
   videoUrl: string, outputTemplate: string, hasCookies: boolean,
 ): Promise<string> {
@@ -1241,7 +1296,22 @@ async function downloadYouTubeOrGenericVideo(
     console.log('Vercel environment: skipping yt-dlp for YouTube, going direct to stream proxy');
     const videoId = extractYouTubeVideoId(videoUrl);
     if (!videoId) throw new Error('Invalid YouTube URL');
-    return getYouTubeStreamUrlWithFallbacks(videoId);
+    const streamUrl = await getYouTubeStreamUrlWithFallbacks(videoId);
+
+    // Download to /tmp before passing to ffmpeg.
+    // YouTube's legacy MP4 has moov-at-end: ffmpeg must download the full file
+    // before it can seek when using an HTTP URL, turning a 1-second clip into
+    // a 60+ second download. Fetching to /tmp first costs ~1s and makes all
+    // subsequent clip seeks instant.
+    const localPath = outputTemplate.replace('%(ext)s', 'mp4');
+    const downloaded = await downloadStreamToLocalFile(streamUrl, localPath);
+    if (downloaded) {
+      console.log(`Using local copy at ${localPath} for ffmpeg`);
+      return localPath;
+    }
+    // Fallback: use remote URL directly (ffmpeg will be slower but still works)
+    console.log('Local download failed; using remote stream URL as ffmpeg input');
+    return streamUrl;
   }
 
   const baseArgs = [
@@ -1366,10 +1436,20 @@ async function createLocalClip(params: {
 
   const isRemoteInput = params.inputPath.startsWith('http');
 
+  // For remote HTTP inputs (fallback when local download failed), add reconnect flags
+  // and put -ss before -i for container-level seeking (HTTP Range requests).
+  const httpInputFlags = isRemoteInput ? [
+    '-reconnect', '1',
+    '-reconnect_at_eof', '1',
+    '-reconnect_streamed', '1',
+    '-reconnect_delay_max', '5',
+  ] : [];
+
   const args = [
     '-y',
+    ...httpInputFlags,
     '-ss', String(params.startTime),
-    '-i', params.inputPath,   // Works with both local paths and HTTPS URLs
+    '-i', params.inputPath,   // local file (fast) or remote HTTPS URL (fallback)
     '-t', String(duration),
     '-map', '0:v:0',
     '-map', '0:a:0?',
