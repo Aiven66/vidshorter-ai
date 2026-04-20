@@ -1,0 +1,8 @@
+name = "youtube-proxy"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+# Optional: protect the worker with a secret key
+# If set, requests must include ?key=<value> to be authorized
+# [vars]
+# CF_SECRET_KEY = "your-secret-key-here"

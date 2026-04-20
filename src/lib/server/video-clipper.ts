@@ -59,6 +59,14 @@ const INVIDIOUS_INSTANCES = [
   'https://yt.artemislena.eu',
 ];
 
+// ── cobalt.tools API (reliable open-source downloader, non-datacenter IPs) ───
+const COBALT_API_URL = 'https://api.cobalt.tools/';
+
+// ── Cloudflare Worker URL (optional, set CF_WORKER_URL env var) ───────────────
+// If set, this CF Worker proxies YouTube InnerTube API requests from CF IPs
+// which are not blocked by YouTube. See /cf-worker/README.md for deployment.
+const CF_WORKER_URL = process.env.CF_WORKER_URL || '';
+
 // Cookie files (local macOS dev only)
 const COOKIE_FILE_PATH = path.join(CACHE_DIR, 'yt-cookies.txt');
 const CHROME_COOKIE_DB = path.join(
@@ -527,6 +535,114 @@ async function getYouTubeInfoViaYouTubeJs(videoId: string): Promise<PipedVideoIn
   throw new Error(`YouTube.js all clients failed. Last: ${lastError}`);
 }
 
+// ── cobalt.tools API (YouTube + Bilibili download, non-datacenter IPs) ────────
+// cobalt.tools is an open-source download service whose servers are NOT blocked
+// by YouTube or Bilibili, making it the most reliable fallback on Vercel.
+async function getYouTubeInfoViaCobalt(videoId: string): Promise<PipedVideoInfo> {
+  const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+
+  const res = await fetch(COBALT_API_URL, {
+    method: 'POST',
+    headers: {
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ url: videoUrl }),
+    signal: AbortSignal.timeout(30_000),
+  });
+
+  if (!res.ok) {
+    throw new Error(`cobalt.tools returned HTTP ${res.status}`);
+  }
+
+  const data = await res.json() as {
+    status: string;
+    url?: string;
+    filename?: string;
+    error?: { code?: string; context?: Record<string, unknown> };
+  };
+
+  if (data.status === 'error' || !data.url) {
+    throw new Error(`cobalt.tools error: ${data.error?.code ?? data.status ?? 'unknown'}`);
+  }
+
+  // cobalt.tools doesn't return title/duration — fetch title from YouTube oEmbed
+  let title = 'YouTube Video';
+  try {
+    const oembedRes = await fetch(
+      `https://www.youtube.com/oembed?url=${encodeURIComponent(videoUrl)}&format=json`,
+      { signal: AbortSignal.timeout(6000) },
+    );
+    if (oembedRes.ok) {
+      const oembedData = await oembedRes.json() as { title?: string };
+      title = oembedData.title || title;
+    }
+  } catch { /* oEmbed is best-effort */ }
+
+  console.log(`cobalt.tools YouTube: status=${data.status}, title="${title.slice(0, 50)}"`);
+  return { title, duration: 300, streamUrl: data.url, subtitleUrl: null };
+}
+
+// ── Cloudflare Worker proxy (optional — set CF_WORKER_URL env var) ────────────
+// The CF Worker calls YouTube InnerTube API from Cloudflare's IP space,
+// which YouTube does not block. Deploy the worker from /cf-worker/.
+async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInfo> {
+  if (!CF_WORKER_URL) throw new Error('CF_WORKER_URL not configured');
+
+  const endpoint = `${CF_WORKER_URL.replace(/\/$/, '')}?videoId=${encodeURIComponent(videoId)}`;
+  const res = await fetch(endpoint, {
+    headers: { 'Accept': 'application/json' },
+    signal: AbortSignal.timeout(20_000),
+  });
+
+  if (!res.ok) throw new Error(`CF Worker returned HTTP ${res.status}`);
+
+  const data = await res.json() as {
+    title?: string;
+    duration?: number;
+    streamUrl?: string;
+    error?: string;
+  };
+
+  if (!data.streamUrl) throw new Error(data.error ?? 'CF Worker: missing streamUrl');
+
+  console.log(`CF Worker success: "${(data.title ?? '').slice(0, 50)}", client=${data}`);
+  return {
+    title: data.title || 'YouTube Video',
+    duration: data.duration || 300,
+    streamUrl: data.streamUrl,
+    subtitleUrl: null,
+  };
+}
+
+// ── cobalt.tools for Bilibili ─────────────────────────────────────────────────
+async function getBilibiliStreamViaCobalt(videoUrl: string): Promise<string> {
+  const res = await fetch(COBALT_API_URL, {
+    method: 'POST',
+    headers: {
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ url: videoUrl }),
+    signal: AbortSignal.timeout(30_000),
+  });
+
+  if (!res.ok) throw new Error(`cobalt.tools returned HTTP ${res.status}`);
+
+  const data = await res.json() as {
+    status: string;
+    url?: string;
+    error?: { code?: string };
+  };
+
+  if (data.status === 'error' || !data.url) {
+    throw new Error(`cobalt.tools Bilibili error: ${data.error?.code ?? data.status ?? 'unknown'}`);
+  }
+
+  console.log(`cobalt.tools Bilibili: status=${data.status}`);
+  return data.url;
+}
+
 async function fetchPipedSubtitleCues(subtitleUrl: string): Promise<CaptionCue[]> {
   try {
     const res = await fetch(subtitleUrl, {
@@ -875,8 +991,17 @@ async function downloadBilibiliVideo(
 
   const resolvedPath = stdout.split('\n').map((l) => l.trim()).filter(Boolean).pop();
   if (!resolvedPath) {
-    const msg = stderr.trim() || (lastError instanceof Error ? lastError.message : '') || 'No file path returned.';
-    throw new Error(`Failed to download Bilibili video: ${msg}`);
+    // yt-dlp failed for Bilibili — try cobalt.tools as fallback
+    const ytdlpErr = stderr.trim() || (lastError instanceof Error ? lastError.message : '') || 'yt-dlp failed';
+    console.warn(`yt-dlp Bilibili failed (${ytdlpErr.slice(0, 150)}), trying cobalt.tools…`);
+    try {
+      const cobaltUrl = await getBilibiliStreamViaCobalt(videoUrl);
+      console.log('cobalt.tools Bilibili stream URL obtained, using as ffmpeg input');
+      return cobaltUrl;
+    } catch (cobaltErr) {
+      const cobaltMsg = cobaltErr instanceof Error ? cobaltErr.message.slice(0, 100) : String(cobaltErr);
+      throw new Error(`Failed to download Bilibili video. yt-dlp: ${ytdlpErr.slice(0, 100)}. cobalt.tools: ${cobaltMsg}`);
+    }
   }
   return resolvedPath;
 }
@@ -944,31 +1069,41 @@ async function downloadYouTubeOrGenericVideo(
 
   if (!resolvedPath && isYouTubeUrl(videoUrl)) {
     // yt-dlp failed for YouTube (bot detection on Vercel datacenter IPs)
-    // Try YouTube.js → Invidious → Piped in order
+    // Try in priority order:
+    //   1. CF Worker (Cloudflare IPs — not blocked by YouTube, set CF_WORKER_URL env var)
+    //   2. cobalt.tools (open-source service, reliable non-datacenter IPs, no setup needed)
+    //   3. YouTube.js (direct InnerTube, sometimes works)
+    //   4. Invidious (community proxies, unreliable but worth trying)
+    //   5. Piped (community proxies, unreliable but worth trying)
     const ytdlpErr = stderr.slice(0, 200);
-    console.warn(`yt-dlp download failed (${ytdlpErr}), trying YouTube.js / Invidious / Piped…`);
+    console.warn(`yt-dlp download failed (${ytdlpErr}), trying stream proxy fallbacks…`);
     const videoId = extractYouTubeVideoId(videoUrl);
     if (!videoId) throw new Error('Invalid YouTube URL');
 
     const streamGetters = [
+      ...(CF_WORKER_URL ? [{ name: 'CF Worker', fn: () => getYouTubeInfoViaCFWorker(videoId) }] : []),
+      { name: 'cobalt.tools', fn: () => getYouTubeInfoViaCobalt(videoId) },
       { name: 'YouTube.js', fn: () => getYouTubeInfoViaYouTubeJs(videoId) },
       { name: 'Invidious', fn: () => getYouTubeInfoViaInvidious(videoId) },
       { name: 'Piped', fn: () => getYouTubeInfoViaPiped(videoId) },
     ];
 
+    const errors: string[] = [];
     for (const getter of streamGetters) {
       try {
         const { streamUrl } = await getter.fn();
         console.log(`Using ${getter.name} stream URL as ffmpeg input`);
         return streamUrl; // ffmpeg accepts HTTPS URLs directly as -i input
       } catch (err) {
-        console.warn(`${getter.name} failed: ${err instanceof Error ? err.message.slice(0, 80) : err}`);
+        const msg = err instanceof Error ? err.message.slice(0, 120) : String(err);
+        errors.push(`${getter.name}: ${msg}`);
+        console.warn(`${getter.name} failed: ${msg}`);
       }
     }
 
     throw new Error(
-      'Failed to get YouTube stream. All methods (YouTube.js, Invidious, Piped) failed. ' +
-      'Tip: set YOUTUBE_COOKIES env var with Netscape-format YouTube cookies to bypass bot detection.',
+      `Failed to get YouTube stream. All methods failed:\n${errors.join('\n')}\n` +
+      'For best reliability, deploy a Cloudflare Worker (see /cf-worker/) and set CF_WORKER_URL env var.',
     );
   }
 
