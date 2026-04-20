@@ -22,14 +22,14 @@ const CORS = {
 
 // Client configurations — ordered by success rate and age-restriction bypass capability
 const CLIENTS = [
-  // WEB_CREATOR: works for most videos including some age-restricted content
+  // ANDROID_VR (Quest/Oculus) — bypasses age restrictions without auth on most content
   {
-    name: 'WEB_CREATOR',
-    clientName: 'WEB_CREATOR',
-    clientVersion: '1.20240701.00.00',
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
-    xClientName: '62',
-    extra: {},
+    name: 'ANDROID_VR',
+    clientName: 'ANDROID_VR',
+    clientVersion: '1.57.29',
+    userAgent: 'com.google.android.apps.youtube.vr.oculus/1.57.29 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
+    xClientName: '28',
+    extra: { androidSdkVersion: 32 },
     extraHeaders: {},
   },
   // IOS v20 — returns direct un-ciphered stream URLs for most videos
@@ -58,13 +58,13 @@ const CLIENTS = [
     extra: { androidSdkVersion: 34, clientFormFactor: 'SMALL_FORM_FACTOR' },
     extraHeaders: {},
   },
-  // TVHTML5_SIMPLY_EMBEDDED_PLAYER — known to bypass age restrictions when embedded
+  // WEB_EMBEDDED_PLAYER — bypass age restrictions via embed context
   {
-    name: 'TV_EMBEDDED',
-    clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
-    clientVersion: '2.0',
-    userAgent: 'Mozilla/5.0 (TV; Chromecast; U; Android 9; Build/PPR1) AppleWebKit/537.36',
-    xClientName: '85',
+    name: 'WEB_EMBEDDED',
+    clientName: 'WEB_EMBEDDED_PLAYER',
+    clientVersion: '2.20240101.00.00',
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+    xClientName: '56',
     extra: { clientScreen: 'EMBED' },
     extraHeaders: {
       'Referer': 'https://www.youtube.com/',
@@ -121,8 +121,9 @@ interface InnerTubeResponse {
 async function tryClient(videoId: string, client: Client): Promise<{
   title: string; duration: number; streamUrl: string; quality: string;
 } | null> {
-  // Build the InnerTube request body. For TV_EMBEDDED, include thirdParty to bypass age checks.
-  const isTvEmbedded = client.clientName === 'TVHTML5_SIMPLY_EMBEDDED_PLAYER';
+  // Build the InnerTube request body. For WEB_EMBEDDED, include thirdParty to bypass age checks.
+  const isEmbedClient = client.clientName === 'TVHTML5_SIMPLY_EMBEDDED_PLAYER' ||
+                        client.clientName === 'WEB_EMBEDDED_PLAYER';
   const body: Record<string, unknown> = {
     videoId,
     context: {
@@ -133,7 +134,7 @@ async function tryClient(videoId: string, client: Client): Promise<{
         gl: 'US',
         ...client.extra,
       },
-      ...(isTvEmbedded ? {
+      ...(isEmbedClient ? {
         thirdParty: { embedUrl: 'https://www.youtube.com/' },
       } : {}),
     },
