@@ -617,6 +617,46 @@ async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInf
   };
 }
 
+// ── Vercel Edge Function proxy (/api/yt-stream) ───────────────────────────────
+// The edge function runs on Vercel's global CDN nodes (non-AWS, non-datacenter
+// IPs) that YouTube does NOT block.  The serverless function calls its own
+// co-deployed edge function to resolve the stream URL from safe IPs.
+// VERCEL_URL is automatically injected by Vercel (e.g. "projects-pi-kohl.vercel.app").
+async function getYouTubeInfoViaEdgeFunction(videoId: string): Promise<PipedVideoInfo> {
+  const vercelUrl = process.env.VERCEL_URL || '';
+  if (!vercelUrl) throw new Error('VERCEL_URL env var not set — edge function unavailable');
+
+  const endpoint = `https://${vercelUrl}/api/yt-stream?videoId=${encodeURIComponent(videoId)}`;
+  const res = await fetch(endpoint, {
+    headers: { Accept: 'application/json' },
+    signal: AbortSignal.timeout(25_000),
+  });
+
+  if (!res.ok) throw new Error(`Edge function HTTP ${res.status}`);
+
+  const data = await res.json() as {
+    title?: string;
+    duration?: number;
+    streamUrl?: string;
+    quality?: string;
+    client?: string;
+    error?: string;
+  };
+
+  if (!data.streamUrl) throw new Error(data.error ?? 'Edge function: missing streamUrl');
+
+  console.log(
+    `Edge function success: "${(data.title ?? '').slice(0, 50)}", ` +
+    `client=${data.client}, quality=${data.quality}`,
+  );
+  return {
+    title: data.title || 'YouTube Video',
+    duration: data.duration || 300,
+    streamUrl: data.streamUrl,
+    subtitleUrl: null,
+  };
+}
+
 // ── InnerTube response cache (per function invocation) ───────────────────────
 // On Vercel, both the analysis path and the download path call InnerTube for
 // the same videoId within milliseconds of each other.  Making two requests in
@@ -896,10 +936,10 @@ async function analyzeYouTubeViaPipedAndTranscript(videoUrl: string): Promise<Vi
   let cues: CaptionCue[] = [];
 
   // Try each proxy in order for title/duration/subtitles.
-  // DirectInnerTube is first (works from Vercel when not rate-limited; provides title+duration).
-  // CF Worker is tried first of all if configured (most reliable from any IP).
+  // Priority: CF Worker (if set) > Edge Function (CDN IPs, reliable) > DirectInnerTube > YouTube.js > Invidious > Piped
   const metaGetters = [
     ...(CF_WORKER_URL ? [() => getYouTubeInfoViaCFWorker(videoId)] : []),
+    ...(process.env.VERCEL_URL ? [() => getYouTubeInfoViaEdgeFunction(videoId)] : []),
     () => getYouTubeInfoViaDirectInnerTube(videoId),
     () => getYouTubeInfoViaYouTubeJs(videoId),
     () => getYouTubeInfoViaInvidious(videoId),
@@ -1220,10 +1260,15 @@ async function downloadBilibiliVideo(
 
 // ── YouTube stream URL retrieval with all fallbacks ───────────────────────────
 // Used directly on Vercel (skips yt-dlp) and as fallback after yt-dlp fails.
-// Priority: CF Worker (if configured) > DirectInnerTube > YouTube.js > Invidious > Piped
+// Priority: CF Worker > Edge Function (CDN IPs) > DirectInnerTube > YouTube.js > Invidious > Piped
 async function getYouTubeStreamUrlWithFallbacks(videoId: string): Promise<string> {
   const streamGetters = [
     ...(CF_WORKER_URL ? [{ name: 'CF Worker', fn: () => getYouTubeInfoViaCFWorker(videoId) }] : []),
+    // Edge function runs on Vercel CDN nodes (non-AWS IPs) — YouTube doesn't block these.
+    // The serverless function calls its own co-deployed /api/yt-stream edge endpoint.
+    ...(process.env.VERCEL_URL
+      ? [{ name: 'EdgeFunction', fn: () => getYouTubeInfoViaEdgeFunction(videoId) }]
+      : []),
     { name: 'DirectInnerTube', fn: () => getYouTubeInfoViaDirectInnerTube(videoId) },
     { name: 'YouTube.js', fn: () => getYouTubeInfoViaYouTubeJs(videoId) },
     { name: 'Invidious', fn: () => getYouTubeInfoViaInvidious(videoId) },
