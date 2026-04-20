@@ -592,7 +592,7 @@ async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInf
   const endpoint = `${CF_WORKER_URL.replace(/\/$/, '')}?videoId=${encodeURIComponent(videoId)}`;
   const res = await fetch(endpoint, {
     headers: { 'Accept': 'application/json' },
-    signal: AbortSignal.timeout(20_000),
+    signal: AbortSignal.timeout(25_000),
   });
 
   if (!res.ok) throw new Error(`CF Worker returned HTTP ${res.status}`);
@@ -601,18 +601,199 @@ async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInf
     title?: string;
     duration?: number;
     streamUrl?: string;
+    quality?: string;
+    client?: string;
     error?: string;
   };
 
   if (!data.streamUrl) throw new Error(data.error ?? 'CF Worker: missing streamUrl');
 
-  console.log(`CF Worker success: "${(data.title ?? '').slice(0, 50)}", client=${data}`);
+  console.log(`CF Worker success: "${(data.title ?? '').slice(0, 50)}", client=${data.client}, quality=${data.quality}`);
   return {
     title: data.title || 'YouTube Video',
     duration: data.duration || 300,
     streamUrl: data.streamUrl,
     subtitleUrl: null,
   };
+}
+
+// ── Direct InnerTube API (raw HTTP, no youtubei.js dependency) ────────────────
+// Makes direct calls to YouTube's InnerTube API using mobile/TV clients.
+// Mobile clients (IOS/ANDROID) return stream URLs without cipher encryption.
+// Uses current app versions to avoid HTTP 400 rejections.
+async function getYouTubeInfoViaDirectInnerTube(videoId: string): Promise<PipedVideoInfo> {
+  // Multiple client configurations to try — use current iOS/Android app versions
+  const clients = [
+    {
+      name: 'IOS_v20',
+      headers: {
+        'User-Agent': 'com.google.ios.youtube/20.03.03 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)',
+        'X-Youtube-Client-Name': '5',
+        'X-Youtube-Client-Version': '20.03.03',
+      },
+      context: {
+        client: {
+          clientName: 'IOS',
+          clientVersion: '20.03.03',
+          deviceMake: 'Apple',
+          deviceModel: 'iPhone16,2',
+          osName: 'iPhone',
+          osVersion: '18.3.2.22D82',
+          hl: 'en',
+          gl: 'US',
+          clientFormFactor: 'SMALL_FORM_FACTOR',
+        },
+      },
+    },
+    {
+      name: 'ANDROID_v20',
+      headers: {
+        'User-Agent': 'com.google.android.youtube/20.03.03 (Linux; U; Android 14) gzip',
+        'X-Youtube-Client-Name': '3',
+        'X-Youtube-Client-Version': '20.03.03',
+      },
+      context: {
+        client: {
+          clientName: 'ANDROID',
+          clientVersion: '20.03.03',
+          androidSdkVersion: 34,
+          hl: 'en',
+          gl: 'US',
+          clientFormFactor: 'SMALL_FORM_FACTOR',
+        },
+      },
+    },
+    {
+      name: 'IOS_v19',
+      headers: {
+        'User-Agent': 'com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)',
+        'X-Youtube-Client-Name': '5',
+        'X-Youtube-Client-Version': '19.29.1',
+      },
+      context: {
+        client: {
+          clientName: 'IOS',
+          clientVersion: '19.29.1',
+          deviceMake: 'Apple',
+          deviceModel: 'iPhone16,2',
+          osName: 'iPhone',
+          osVersion: '17.5.1.21F90',
+          hl: 'en',
+          gl: 'US',
+        },
+      },
+    },
+    {
+      name: 'ANDROID_TESTSUITE',
+      headers: {
+        'User-Agent': 'com.google.android.youtube/1.9 (Linux; U; Android 11) gzip',
+        'X-Youtube-Client-Name': '30',
+        'X-Youtube-Client-Version': '1.9',
+      },
+      context: {
+        client: {
+          clientName: 'ANDROID_TESTSUITE',
+          clientVersion: '1.9',
+          androidSdkVersion: 30,
+          hl: 'en',
+          gl: 'US',
+        },
+      },
+    },
+  ];
+
+  const errors: string[] = [];
+  for (const client of clients) {
+    try {
+      const body = {
+        videoId,
+        context: client.context,
+        playbackContext: {
+          contentPlaybackContext: { html5Preference: 'HTML5_PREF_WANTS' },
+        },
+      };
+
+      const res = await fetch('https://www.youtube.com/youtubei/v1/player?prettyPrint=false', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Origin': 'https://www.youtube.com',
+          'Referer': 'https://www.youtube.com/',
+          ...client.headers,
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(18_000),
+      });
+
+      if (!res.ok) {
+        errors.push(`${client.name}: HTTP ${res.status}`);
+        continue;
+      }
+
+      const data = await res.json() as {
+        videoDetails?: { title?: string; lengthSeconds?: string };
+        streamingData?: {
+          formats?: Array<{
+            url?: string; signatureCipher?: string;
+            mimeType?: string; qualityLabel?: string; quality?: string;
+            audioQuality?: string; audioChannels?: number;
+          }>;
+          adaptiveFormats?: Array<{
+            url?: string; signatureCipher?: string;
+            mimeType?: string; qualityLabel?: string; quality?: string;
+            audioQuality?: string; audioChannels?: number;
+          }>;
+        };
+        playabilityStatus?: { status?: string; reason?: string };
+      };
+
+      const ps = data.playabilityStatus?.status;
+      if (ps && ps !== 'OK') {
+        errors.push(`${client.name}: ${ps} (${data.playabilityStatus?.reason ?? ''})`);
+        continue;
+      }
+
+      const allFormats = [
+        ...(data.streamingData?.formats ?? []),
+        ...(data.streamingData?.adaptiveFormats ?? []),
+      ];
+
+      if (!allFormats.length) {
+        errors.push(`${client.name}: no formats in response`);
+        continue;
+      }
+
+      // Prefer combined audio+video MP4 with direct URL (not cipher)
+      const combined = allFormats.filter(f =>
+        f.url && f.mimeType?.startsWith('video/mp4') && (f.audioQuality || f.audioChannels)
+      );
+      const format =
+        combined.find(f => f.qualityLabel?.includes('360')) ??
+        combined.find(f => f.qualityLabel?.includes('480')) ??
+        combined.find(f => f.qualityLabel?.includes('240')) ??
+        combined[0] ??
+        allFormats.find(f => f.url);
+
+      if (!format?.url) {
+        const hasCipher = allFormats.some(f => f.signatureCipher);
+        errors.push(`${client.name}: no direct URL${hasCipher ? ' (cipher-only)' : ''}`);
+        continue;
+      }
+
+      const title = data.videoDetails?.title ?? 'YouTube Video';
+      const dur = parseInt(data.videoDetails?.lengthSeconds ?? '300', 10);
+      console.log(`DirectInnerTube (${client.name}): "${title.slice(0, 50)}", quality=${format.qualityLabel ?? format.quality}`);
+      return {
+        title,
+        duration: Number.isFinite(dur) ? dur : 300,
+        streamUrl: format.url,
+        subtitleUrl: null,
+      };
+    } catch (err) {
+      errors.push(`${client.name}: ${err instanceof Error ? err.message.slice(0, 100) : String(err)}`);
+    }
+  }
+  throw new Error(`Direct InnerTube failed for all clients. Errors: ${errors.join(' | ')}`);
 }
 
 // ── cobalt.tools for Bilibili ─────────────────────────────────────────────────
@@ -1037,6 +1218,8 @@ async function downloadYouTubeOrGenericVideo(
       } catch { /* ignore cookie write errors */ }
     }
 
+    strategies.push([...proxyArg, '--extractor-args', 'youtube:player_client=mweb', ...baseArgs, '-f', 'best[height<=480]/best', videoUrl]);
+    strategies.push([...proxyArg, '--extractor-args', 'youtube:player_client=android_testsuite', ...baseArgs, '-f', 'bestvideo[height<=480]+bestaudio/best', videoUrl]);
     strategies.push([...proxyArg, '--extractor-args', 'youtube:player_client=tv_embedded', ...baseArgs, '-f', 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480]/best', videoUrl]);
     strategies.push([...proxyArg, '--extractor-args', 'youtube:player_client=android_embedded', ...baseArgs, '-f', 'bestvideo[height<=480]+bestaudio/best[height<=480]/best', videoUrl]);
     strategies.push([...proxyArg, '--extractor-args', 'youtube:player_client=ios', ...baseArgs, '-f', 'best[height<=480]/best', videoUrl]);
@@ -1071,18 +1254,18 @@ async function downloadYouTubeOrGenericVideo(
     // yt-dlp failed for YouTube (bot detection on Vercel datacenter IPs)
     // Try in priority order:
     //   1. CF Worker (Cloudflare IPs — not blocked by YouTube, set CF_WORKER_URL env var)
-    //   2. cobalt.tools (open-source service, reliable non-datacenter IPs, no setup needed)
-    //   3. YouTube.js (direct InnerTube, sometimes works)
-    //   4. Invidious (community proxies, unreliable but worth trying)
-    //   5. Piped (community proxies, unreliable but worth trying)
+    //   2. Direct InnerTube API (current client versions, may work from some regions)
+    //   3. YouTube.js (youtubei.js library, last resort)
+    //   4. Invidious (community proxies, unreliable)
+    //   5. Piped (community proxies, unreliable)
     const ytdlpErr = stderr.slice(0, 200);
-    console.warn(`yt-dlp download failed (${ytdlpErr}), trying stream proxy fallbacks…`);
+    console.warn(`yt-dlp download failed (${ytdlpErr.slice(0, 120)}), trying stream proxy fallbacks…`);
     const videoId = extractYouTubeVideoId(videoUrl);
     if (!videoId) throw new Error('Invalid YouTube URL');
 
     const streamGetters = [
       ...(CF_WORKER_URL ? [{ name: 'CF Worker', fn: () => getYouTubeInfoViaCFWorker(videoId) }] : []),
-      { name: 'cobalt.tools', fn: () => getYouTubeInfoViaCobalt(videoId) },
+      { name: 'DirectInnerTube', fn: () => getYouTubeInfoViaDirectInnerTube(videoId) },
       { name: 'YouTube.js', fn: () => getYouTubeInfoViaYouTubeJs(videoId) },
       { name: 'Invidious', fn: () => getYouTubeInfoViaInvidious(videoId) },
       { name: 'Piped', fn: () => getYouTubeInfoViaPiped(videoId) },
