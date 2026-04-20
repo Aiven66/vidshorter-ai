@@ -209,6 +209,83 @@ export async function GET(request: Request) {
 
   const errors: string[] = [];
 
+  // If YOUTUBE_COOKIES is set, try a cookie-authenticated WEB client first.
+  // This reliably handles age-restricted videos and reduces bot-detection false positives.
+  // To set: Vercel Dashboard → Settings → Environment Variables → YOUTUBE_COOKIES
+  // Cookie format: Netscape/cookies.txt string exported from your browser.
+  const ytCookies = (process.env.YOUTUBE_COOKIES || '').trim();
+  if (ytCookies) {
+    // Convert Netscape cookie file format to a "Cookie: name=value; ..." header string if needed
+    let cookieHeader = ytCookies;
+    if (ytCookies.includes('\t')) {
+      // Netscape format: one cookie per line with tab-separated fields
+      cookieHeader = ytCookies
+        .split('\n')
+        .filter(l => !l.startsWith('#') && l.trim())
+        .map(l => { const p = l.split('\t'); return p.length >= 7 ? `${p[5]}=${p[6]}` : ''; })
+        .filter(Boolean)
+        .join('; ');
+    }
+
+    if (cookieHeader) {
+      try {
+        const body: Record<string, unknown> = {
+          videoId,
+          context: {
+            client: { clientName: 'WEB', clientVersion: '2.20240101.00.00', hl: 'en', gl: 'US' },
+          },
+          playbackContext: { contentPlaybackContext: { html5Preference: 'HTML5_PREF_WANTS' } },
+        };
+        const res = await fetch('https://www.youtube.com/youtubei/v1/player?prettyPrint=false', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+            'Origin': 'https://www.youtube.com',
+            'Referer': 'https://www.youtube.com/',
+            'X-Youtube-Client-Name': '1',
+            'X-Youtube-Client-Version': '2.20240101.00.00',
+            'Cookie': cookieHeader,
+          },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(12_000),
+        });
+        if (res.ok) {
+          const data = await res.json() as InnerTubeResponse;
+          const ps = data.playabilityStatus?.status;
+          if (ps === 'OK') {
+            const formats: Format[] = [
+              ...(data.streamingData?.formats ?? []),
+              ...(data.streamingData?.adaptiveFormats ?? []),
+            ];
+            const combined = formats.filter(f =>
+              f.url && f.mimeType?.startsWith('video/mp4') && (f.audioQuality || f.audioChannels)
+            );
+            const format =
+              combined.find(f => f.qualityLabel?.includes('360')) ??
+              combined.find(f => f.qualityLabel?.includes('480')) ??
+              combined.find(f => f.qualityLabel?.includes('240')) ??
+              combined[0] ?? formats.find(f => f.url);
+            if (format?.url) {
+              return Response.json({
+                title: data.videoDetails?.title ?? 'YouTube Video',
+                duration: parseInt(data.videoDetails?.lengthSeconds ?? '300', 10) || 300,
+                streamUrl: format.url,
+                quality: format.qualityLabel ?? format.quality ?? 'unknown',
+                client: 'WEB_COOKIES',
+              }, { status: 200, headers: { ...CORS, 'Cache-Control': 'no-store' } });
+            }
+          }
+          errors.push(`WEB_COOKIES: ${ps ?? 'no stream'}: ${data.playabilityStatus?.reason ?? ''}`);
+        } else {
+          errors.push(`WEB_COOKIES: HTTP ${res.status}`);
+        }
+      } catch (e) {
+        errors.push(`WEB_COOKIES: ${e instanceof Error ? e.message.slice(0, 100) : String(e)}`);
+      }
+    }
+  }
+
   for (const client of CLIENTS) {
     try {
       const result = await tryClient(videoId, client);

@@ -679,7 +679,52 @@ async function getYouTubeInfoViaDirectInnerTube(videoId: string): Promise<PipedV
   }
 
   // Multiple client configurations to try — use current iOS/Android app versions
+  const ytCookies = (process.env.YOUTUBE_COOKIES || '').trim();
+
+  // Build cookie header string from Netscape format if needed
+  let cookieHeader = '';
+  if (ytCookies) {
+    if (ytCookies.includes('\t')) {
+      cookieHeader = ytCookies
+        .split('\n')
+        .filter((l: string) => !l.startsWith('#') && l.trim())
+        .map((l: string) => { const p = l.split('\t'); return p.length >= 7 ? `${p[5]}=${p[6]}` : ''; })
+        .filter(Boolean)
+        .join('; ');
+    } else {
+      cookieHeader = ytCookies;
+    }
+  }
+
   const clients = [
+    // WEB client with auth cookies (highest priority when available — handles age-restricted)
+    ...(cookieHeader ? [{
+      name: 'WEB_COOKIES',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+        'X-Youtube-Client-Name': '1',
+        'X-Youtube-Client-Version': '2.20240101.00.00',
+        'Cookie': cookieHeader,
+      },
+      context: {
+        client: { clientName: 'WEB', clientVersion: '2.20240101.00.00', hl: 'en', gl: 'US' },
+      },
+    }] : []),
+    // ANDROID_VR — bypasses age restrictions on some content
+    {
+      name: 'ANDROID_VR',
+      headers: {
+        'User-Agent': 'com.google.android.apps.youtube.vr.oculus/1.57.29 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
+        'X-Youtube-Client-Name': '28',
+        'X-Youtube-Client-Version': '1.57.29',
+      },
+      context: {
+        client: {
+          clientName: 'ANDROID_VR', clientVersion: '1.57.29',
+          androidSdkVersion: 32, hl: 'en', gl: 'US',
+        },
+      },
+    },
     {
       name: 'IOS_v20',
       headers: {
