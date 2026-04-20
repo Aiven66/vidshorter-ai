@@ -62,8 +62,14 @@ const INVIDIOUS_INSTANCES = [
   'https://yt.artemislena.eu',
 ];
 
-// ── cobalt.tools API (reliable open-source downloader, non-datacenter IPs) ───
-const COBALT_API_URL = 'https://api.cobalt.tools/';
+// ── cobalt.tools instances (public self-hosted, no auth required) ────────────
+// api.cobalt.tools now requires JWT auth; community instances are still open.
+// We try multiple in order and fall back gracefully to other methods.
+const COBALT_INSTANCES = [
+  'https://cobalt.ggtyler.dev/',
+  'https://cobalt.api.timelessnesses.me/',
+  'https://api.cobalt.tools/',  // auth now required on main instance — kept as last resort
+];
 
 // ── Cloudflare Worker URL (optional, set CF_WORKER_URL env var) ───────────────
 // If set, this CF Worker proxies YouTube InnerTube API requests from CF IPs
@@ -543,54 +549,53 @@ async function getYouTubeInfoViaYouTubeJs(videoId: string): Promise<PipedVideoIn
 // by YouTube or Bilibili, making it the most reliable fallback on Vercel.
 // Crucially, cobalt.tools handles age-restricted YouTube videos via its own
 // server-side cookie management — no per-user auth required.
+// We cycle through multiple public instances in case one requires JWT auth.
 async function getYouTubeInfoViaCobalt(videoId: string): Promise<PipedVideoInfo> {
   const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const body = JSON.stringify({ url: videoUrl, videoQuality: '480', youtubeVideoCodec: 'h264', audioBitrate: '128' });
+  let lastError = 'no instances tried';
 
-  const res = await fetch(COBALT_API_URL, {
-    method: 'POST',
-    headers: {
-      'Accept': 'application/json',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      url: videoUrl,
-      videoQuality: '480',
-      youtubeVideoCodec: 'h264',
-      audioBitrate: '128',
-    }),
-    signal: AbortSignal.timeout(35_000),
-  });
+  for (const instance of COBALT_INSTANCES) {
+    try {
+      const res = await fetch(instance, {
+        method: 'POST',
+        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+        body,
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!res.ok) { lastError = `${instance}: HTTP ${res.status}`; continue; }
 
-  if (!res.ok) {
-    throw new Error(`cobalt.tools returned HTTP ${res.status}`);
-  }
+      const data = await res.json() as {
+        status: string;
+        url?: string;
+        filename?: string;
+        error?: { code?: string; context?: Record<string, unknown> };
+      };
+      if (data.status === 'error' || !data.url) {
+        lastError = `${instance}: ${data.error?.code ?? data.status ?? 'no url'}`;
+        continue;
+      }
 
-  const data = await res.json() as {
-    status: string;
-    url?: string;
-    filename?: string;
-    error?: { code?: string; context?: Record<string, unknown> };
-  };
+      // Get title from oEmbed (best-effort)
+      let title = 'YouTube Video';
+      try {
+        const oembedRes = await fetch(
+          `https://www.youtube.com/oembed?url=${encodeURIComponent(videoUrl)}&format=json`,
+          { signal: AbortSignal.timeout(6000) },
+        );
+        if (oembedRes.ok) {
+          const oembedData = await oembedRes.json() as { title?: string };
+          title = oembedData.title || title;
+        }
+      } catch { /* oEmbed is best-effort */ }
 
-  if (data.status === 'error' || !data.url) {
-    throw new Error(`cobalt.tools error: ${data.error?.code ?? data.status ?? 'unknown'}`);
-  }
-
-  // cobalt.tools doesn't return title/duration — fetch title from YouTube oEmbed
-  let title = 'YouTube Video';
-  try {
-    const oembedRes = await fetch(
-      `https://www.youtube.com/oembed?url=${encodeURIComponent(videoUrl)}&format=json`,
-      { signal: AbortSignal.timeout(6000) },
-    );
-    if (oembedRes.ok) {
-      const oembedData = await oembedRes.json() as { title?: string };
-      title = oembedData.title || title;
+      console.log(`cobalt (${instance}) YouTube: status=${data.status}, title="${title.slice(0, 50)}"`);
+      return { title, duration: 300, streamUrl: data.url, subtitleUrl: null };
+    } catch (err) {
+      lastError = `${instance}: ${err instanceof Error ? err.message.slice(0, 80) : String(err)}`;
     }
-  } catch { /* oEmbed is best-effort */ }
-
-  console.log(`cobalt.tools YouTube: status=${data.status}, title="${title.slice(0, 50)}"`);
-  return { title, duration: 300, streamUrl: data.url, subtitleUrl: null };
+  }
+  throw new Error(`All cobalt instances failed for YouTube. Last: ${lastError}`);
 }
 
 // ── Cloudflare Worker proxy (optional — set CF_WORKER_URL env var) ────────────
@@ -912,30 +917,36 @@ async function getYouTubeInfoViaDirectInnerTube(videoId: string): Promise<PipedV
 
 // ── cobalt.tools for Bilibili ─────────────────────────────────────────────────
 async function getBilibiliStreamViaCobalt(videoUrl: string): Promise<string> {
-  const res = await fetch(COBALT_API_URL, {
-    method: 'POST',
-    headers: {
-      'Accept': 'application/json',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ url: videoUrl, videoQuality: '480', audioBitrate: '128' }),
-    signal: AbortSignal.timeout(35_000),
-  });
+  const body = JSON.stringify({ url: videoUrl, videoQuality: '480', audioBitrate: '128' });
+  let lastError = 'no instances tried';
 
-  if (!res.ok) throw new Error(`cobalt.tools returned HTTP ${res.status}`);
+  for (const instance of COBALT_INSTANCES) {
+    try {
+      const res = await fetch(instance, {
+        method: 'POST',
+        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+        body,
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!res.ok) { lastError = `${instance}: HTTP ${res.status}`; continue; }
 
-  const data = await res.json() as {
-    status: string;
-    url?: string;
-    error?: { code?: string };
-  };
+      const data = await res.json() as {
+        status: string;
+        url?: string;
+        error?: { code?: string };
+      };
+      if (data.status === 'error' || !data.url) {
+        lastError = `${instance}: ${data.error?.code ?? data.status ?? 'no url'}`;
+        continue;
+      }
 
-  if (data.status === 'error' || !data.url) {
-    throw new Error(`cobalt.tools Bilibili error: ${data.error?.code ?? data.status ?? 'unknown'}`);
+      console.log(`cobalt (${instance}) Bilibili: status=${data.status}`);
+      return data.url;
+    } catch (err) {
+      lastError = `${instance}: ${err instanceof Error ? err.message.slice(0, 80) : String(err)}`;
+    }
   }
-
-  console.log(`cobalt.tools Bilibili: status=${data.status}`);
-  return data.url;
+  throw new Error(`All cobalt instances failed for Bilibili. Last: ${lastError}`);
 }
 
 async function fetchPipedSubtitleCues(subtitleUrl: string): Promise<CaptionCue[]> {
@@ -1315,20 +1326,24 @@ async function downloadSourceVideo(videoUrl: string): Promise<string> {
 async function downloadBilibiliVideo(
   videoUrl: string, outputTemplate: string, hasCookies: boolean,
 ): Promise<string> {
-  // On Vercel: skip yt-dlp entirely — use cobalt.tools directly
-  // (yt-dlp binary download ~40s cold start, then Bilibili blocks many AWS IPs)
+  // On Vercel: try cobalt.tools first (no binary download needed, faster)
+  // If cobalt fails (auth required or instance down), fall through to yt-dlp.
   if (process.env.VERCEL) {
-    console.log('Vercel environment: using cobalt.tools for Bilibili download');
-    const cobaltUrl = await getBilibiliStreamViaCobalt(videoUrl);
-    // Download to /tmp first so ffmpeg can seek instantly (same pattern as YouTube)
-    const localPath = outputTemplate.replace('%(ext)s', 'mp4');
-    const downloaded = await downloadStreamToLocalFile(cobaltUrl, localPath);
-    if (downloaded) {
-      console.log(`Bilibili: downloaded ${localPath}`);
-      return localPath;
+    try {
+      console.log('Vercel: trying cobalt.tools for Bilibili download');
+      const cobaltUrl = await getBilibiliStreamViaCobalt(videoUrl);
+      const localPath = outputTemplate.replace('%(ext)s', 'mp4');
+      const downloaded = await downloadStreamToLocalFile(cobaltUrl, localPath);
+      if (downloaded) {
+        console.log(`Bilibili (cobalt): downloaded to ${localPath}`);
+        return localPath;
+      }
+      console.log('Bilibili (cobalt): local cache failed; using stream URL for ffmpeg');
+      return cobaltUrl;
+    } catch (cobaltErr) {
+      console.warn('cobalt.tools Bilibili failed on Vercel, falling back to yt-dlp:', cobaltErr instanceof Error ? cobaltErr.message.slice(0, 100) : cobaltErr);
+      // Fall through to yt-dlp below
     }
-    console.log('Bilibili: local cache failed; using stream URL for ffmpeg');
-    return cobaltUrl;
   }
 
   const bilibiliHeaders = [
