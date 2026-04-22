@@ -45,20 +45,33 @@ function toPem(base64Key: string, type: 'PRIVATE KEY' | 'PUBLIC KEY'): string {
 
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
-  const { planId, amount, subject } = body as {
+  const { planId, amount, subject, userId, config } = body as {
     planId?: string;
     amount?: number;    // 元 (CNY)
     subject?: string;
+    userId?: string;
+    config?: {
+      alipay?: {
+        appId?: string;
+        privateKey?: string;
+        publicKey?: string;
+        notifyUrl?: string;
+        sandbox?: boolean;
+      };
+    };
   };
 
   if (!planId || !amount) {
     return Response.json({ error: 'planId and amount are required' }, { status: 400 });
   }
 
-  const appId         = process.env.ALIPAY_APP_ID;
-  const privateKeyB64 = process.env.ALIPAY_PRIVATE_KEY;
-  const notifyUrl     = process.env.ALIPAY_NOTIFY_URL || '';
-  const sandbox       = process.env.ALIPAY_SANDBOX === 'true';
+  const appId = process.env.ALIPAY_APP_ID || config?.alipay?.appId;
+  const privateKeyB64 = process.env.ALIPAY_PRIVATE_KEY || config?.alipay?.privateKey;
+  const notifyUrl =
+    process.env.ALIPAY_NOTIFY_URL ||
+    config?.alipay?.notifyUrl ||
+    `${request.nextUrl.origin}/api/payment/alipay`;
+  const sandbox = (process.env.ALIPAY_SANDBOX === 'true') || config?.alipay?.sandbox === true;
 
   // ── Demo mode when not configured ──
   if (!appId || !privateKeyB64) {
@@ -85,6 +98,7 @@ export async function POST(request: NextRequest) {
       total_amount: amount.toFixed(2),
       subject: subject || 'VidShorter AI 订阅',
       product_code: 'FACE_TO_FACE_PAYMENT',
+      passback_params: userId ? encodeURIComponent(JSON.stringify({ user_id: userId, plan_id: planId })) : undefined,
     }),
   };
 
@@ -180,7 +194,20 @@ export async function PUT(request: NextRequest) {
       }
     }
 
-    // TODO: Update order status in DB based on params.trade_status
+    const tradeStatus = params.trade_status || '';
+    if (tradeStatus === 'TRADE_SUCCESS' || tradeStatus === 'TRADE_FINISHED') {
+      try {
+        const { applyPlanPurchase, isPaidPlan } = await import('@/lib/server/subscriptions');
+        const passback = params.passback_params ? decodeURIComponent(params.passback_params) : '';
+        const meta = passback ? JSON.parse(passback) as { user_id?: string; plan_id?: string } : null;
+        const userId = meta?.user_id;
+        const planId = meta?.plan_id;
+        const orderId = params.out_trade_no || params.trade_no || `alipay_${Date.now()}`;
+        if (userId && planId && isPaidPlan(planId)) {
+          await applyPlanPurchase({ userId, planId, provider: 'alipay', orderId });
+        }
+      } catch {}
+    }
     return new Response('success', { status: 200 });
   } catch {
     return new Response('fail', { status: 400 });

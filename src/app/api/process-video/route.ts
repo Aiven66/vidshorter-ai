@@ -25,7 +25,7 @@ interface ClipResult {
   summary: string;
   engagementScore: number;
   thumbnailUrl: string;
-  videoUrl: string | null;
+  videoUrl: string | null;   // data URL (preferred) or serve-clip URL
   status: 'processing' | 'completed' | 'failed';
 }
 
@@ -36,8 +36,15 @@ interface SSEMessage {
   data?: Record<string, unknown>;
 }
 
+const sseEncoder = new TextEncoder();
+
 function sendSSE(controller: ReadableStreamDefaultController<Uint8Array>, payload: SSEMessage) {
-  controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(payload)}\n\n`));
+  try {
+    controller.enqueue(sseEncoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function isValidVideoUrl(value: string) {
@@ -53,11 +60,16 @@ function hasPlayableUrl(clip: ClipResult): clip is ClipResult & { videoUrl: stri
   return clip.status === 'completed' && typeof clip.videoUrl === 'string' && clip.videoUrl.length > 0;
 }
 
+// On Vercel serverless, limit clips to avoid hitting the 300s function timeout.
+// 3 clips × ~60s each (stream fetch + ffmpeg encode) = ~180s comfortably within budget.
+const MAX_CLIPS = process.env.VERCEL ? 3 : 10;
+
 export async function POST(request: NextRequest) {
   const body = (await request.json()) as ProcessVideoRequest;
   const videoUrl = body.videoUrl?.trim();
   const userId = body.userId?.trim();
   const sourceType = body.sourceType?.trim() || 'url';
+  const abortSignal = request.signal;
 
   if (!videoUrl) {
     return new Response(JSON.stringify({ error: 'Missing video URL' }), {
@@ -83,25 +95,29 @@ export async function POST(request: NextRequest) {
   const stream = new ReadableStream({
     async start(controller) {
       try {
-        sendSSE(controller, {
+        if (abortSignal.aborted) return;
+        if (!sendSSE(controller, {
           stage: 'init',
           progress: 5,
           message: 'Initializing AutoClip-style processing...',
-        });
+        })) return;
 
         const isBilibili = videoUrl.includes('bilibili.com') || videoUrl.includes('b23.tv');
-        sendSSE(controller, {
+        if (abortSignal.aborted) return;
+        if (!sendSSE(controller, {
           stage: 'ai_analysis',
           progress: 20,
           message: isBilibili
             ? 'Analyzing Bilibili video metadata and timeline...'
             : 'Analyzing subtitles and timeline to find highlight moments...',
-        });
+        })) return;
 
         const analysis = await videoClipper.analyzeVideo(videoUrl);
-        const highlights = analysis.highlights as Highlight[];
+        if (abortSignal.aborted) return;
+        // Limit highlights to MAX_CLIPS to stay within serverless timeout budget
+        const highlights = (analysis.highlights as Highlight[]).slice(0, MAX_CLIPS);
 
-        sendSSE(controller, {
+        if (!sendSSE(controller, {
           stage: 'analysis_complete',
           progress: 45,
           message: `Found ${highlights.length} highlight moments in "${analysis.title}".`,
@@ -109,19 +125,22 @@ export async function POST(request: NextRequest) {
             highlights,
             estimatedDuration: analysis.duration,
           },
-        });
+        })) return;
 
         const clips: ClipResult[] = [];
-        let sourceInputPath = '';
+        let source: { inputPath: string; ffmpegHeaders?: string } | null = null;
 
-        sendSSE(controller, {
+        if (abortSignal.aborted) return;
+        if (!sendSSE(controller, {
           stage: 'generating_clip',
           progress: 48,
-          message: 'Downloading source video for clip generation...',
-        });
+          message: isBilibili
+            ? 'Connecting to Bilibili video stream...'
+            : 'Connecting to video stream...',
+        })) return;
 
         try {
-          sourceInputPath = await videoClipper.downloadSourceVideo(videoUrl);
+          source = await videoClipper.downloadSourceVideo(videoUrl);
         } catch (error) {
           throw new Error(
             error instanceof Error
@@ -130,11 +149,12 @@ export async function POST(request: NextRequest) {
           );
         }
 
-        if (!sourceInputPath) {
+        if (!source?.inputPath) {
           throw new Error('Failed to prepare source video: no file path returned.');
         }
 
         for (let index = 0; index < highlights.length; index += 1) {
+          if (abortSignal.aborted) return;
           const highlight = highlights[index];
           const draftClip: ClipResult = {
             id: `clip-${Date.now()}-${index}`,
@@ -149,22 +169,25 @@ export async function POST(request: NextRequest) {
             status: 'processing',
           };
 
-          sendSSE(controller, {
+          if (!sendSSE(controller, {
             stage: 'generating_clip',
             progress: 50 + Math.floor((index / highlights.length) * 35),
             message: `Generating clip ${index + 1}/${highlights.length}: "${highlight.title}"`,
             data: { clip: draftClip, clipIndex: index },
-          });
+          })) return;
 
           try {
             const result = await videoClipper.createLocalClip({
-              inputPath: sourceInputPath,
+              inputPath: source.inputPath,
+              inputHeaders: source.ffmpegHeaders,
               startTime: highlight.start_time,
               endTime: highlight.end_time,
               title: highlight.title,
             });
 
-            draftClip.videoUrl = result.publicUrl;
+            // Prefer data URL (works across Lambda invocations without /tmp dependency)
+            // Fall back to serve-clip URL (works only within same Lambda instance)
+            draftClip.videoUrl = result.dataUrl || result.publicUrl;
             draftClip.thumbnailUrl = result.thumbnailUrl || '';
             draftClip.status = 'completed';
           } catch (error) {
@@ -175,7 +198,8 @@ export async function POST(request: NextRequest) {
 
           clips.push(draftClip);
 
-          sendSSE(controller, {
+          if (abortSignal.aborted) return;
+          if (!sendSSE(controller, {
             stage: 'clip_ready',
             progress: 55 + Math.floor(((index + 1) / highlights.length) * 35),
             message:
@@ -183,19 +207,20 @@ export async function POST(request: NextRequest) {
                 ? `Clip ready: "${highlight.title}"`
                 : `Clip failed: "${highlight.title}"`,
             data: { clip: draftClip, clipIndex: index },
-          });
+          })) return;
         }
 
         const completedClips = clips.filter(hasPlayableUrl);
+        if (abortSignal.aborted) return;
         if (completedClips.length === 0) {
           throw new Error('All highlight clip generation failed. Please retry or try a different video.');
         }
 
-        sendSSE(controller, {
+        if (!sendSSE(controller, {
           stage: 'saving',
           progress: 93,
           message: 'Saving generated clips...',
-        });
+        })) return;
 
         if (isSupabaseConfigured() && !userId.startsWith('demo-')) {
           try {
@@ -208,6 +233,7 @@ export async function POST(request: NextRequest) {
                 user_id: userId,
                 original_url: videoUrl,
                 source_type: sourceType,
+                title: analysis.title,
                 duration: analysis.duration,
                 status: completedClips.length === clips.length ? 'completed' : 'partial',
                 highlights: JSON.stringify(highlights),
@@ -217,10 +243,14 @@ export async function POST(request: NextRequest) {
 
             if (video) {
               for (const clip of completedClips) {
+                // Don't save large data URLs to the database — store a placeholder
+                const dbVideoUrl = clip.videoUrl?.startsWith('data:')
+                  ? `data-url:${clip.id}`
+                  : clip.videoUrl;
                 await client.from('short_videos').insert({
                   video_id: video.id,
                   user_id: userId,
-                  url: clip.videoUrl,
+                  url: dbVideoUrl,
                   start_time: clip.startTime,
                   end_time: clip.endTime,
                   duration: clip.duration,
@@ -235,6 +265,7 @@ export async function POST(request: NextRequest) {
           }
         }
 
+        if (abortSignal.aborted) return;
         sendSSE(controller, {
           stage: 'complete',
           progress: 100,
@@ -246,15 +277,19 @@ export async function POST(request: NextRequest) {
           },
         });
       } catch (error) {
-        console.error('Video processing failed:', error);
-        sendSSE(controller, {
-          stage: 'error',
-          progress: 0,
-          message: error instanceof Error ? error.message : 'Unexpected processing error',
-          data: { error: true },
-        });
+        if (!abortSignal.aborted) {
+          console.error('Video processing failed:', error);
+          sendSSE(controller, {
+            stage: 'error',
+            progress: 0,
+            message: error instanceof Error ? error.message : 'Unexpected processing error',
+            data: { error: true },
+          });
+        }
       } finally {
-        controller.close();
+        try {
+          controller.close();
+        } catch {}
       }
     },
   });

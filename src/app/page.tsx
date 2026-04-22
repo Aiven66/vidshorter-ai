@@ -160,6 +160,10 @@ export default function HomePage() {
       // Use a more reliable placeholder video URL
       return 'https://samplelib.com/preview/mp4/sample-5s.mp4';
     }
+
+    if (clip.videoUrl.startsWith('data:')) {
+      return clip.videoUrl;
+    }
     
     // Handle local paths
     if (clip.videoUrl.startsWith('/')) {
@@ -270,6 +274,20 @@ export default function HomePage() {
     if (!clip.videoUrl) return;
     setDownloadingId(clip.id);
     try {
+      if (clip.videoUrl.startsWith('data:')) {
+        const res = await fetch(clip.videoUrl);
+        if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
+        const blob = await res.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `${clip.title.replace(/[^a-zA-Z0-9]/g, '_')}.mp4`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(a.href);
+        return;
+      }
+
       const url = proxyUrl(clip, true);
       const res = await fetch(url);
       if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);

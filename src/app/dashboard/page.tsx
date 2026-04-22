@@ -72,16 +72,19 @@ function ClipPlayerDialog({
   const resolveUrl = (c: VideoClip) => {
     if (!c.videoUrl) return '';
     if (c.videoUrl.includes('bilibili-fallback')) return 'https://samplelib.com/preview/mp4/sample-5s.mp4';
+    if (c.videoUrl.startsWith('data:')) return c.videoUrl;
     if (c.videoUrl.startsWith('/')) return c.videoUrl;
     const q = new URLSearchParams({ url: c.videoUrl, title: c.title });
     return `/api/video-proxy?${q.toString()}`;
   };
 
-  const downloadUrl = clip.videoUrl?.startsWith('/')
+  const downloadUrl = clip.videoUrl?.startsWith('data:')
     ? clip.videoUrl
-    : clip.videoUrl
-      ? `/api/video-proxy?${new URLSearchParams({ url: clip.videoUrl, title: clip.title, download: 'true' })}`
-      : '';
+    : clip.videoUrl?.startsWith('/')
+      ? clip.videoUrl
+      : clip.videoUrl
+        ? `/api/video-proxy?${new URLSearchParams({ url: clip.videoUrl, title: clip.title, download: 'true' })}`
+        : '';
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
@@ -270,7 +273,12 @@ export default function DashboardPage() {
   }, [user]);
 
   async function fetchVideos() {
-    if (!isSupabaseConfigured() || user?.id?.startsWith('demo-') || user?.id?.startsWith('google-demo-')) {
+    if (
+      !isSupabaseConfigured() ||
+      user?.id === 'demo-admin-id' ||
+      user?.id?.startsWith('demo-') ||
+      user?.id?.startsWith('google-demo-')
+    ) {
       setVideos(getDemoVideos(user?.id || 'anonymous'));
       setVideosLoading(false);
       return;
@@ -284,16 +292,44 @@ export default function DashboardPage() {
 
     try {
       const { getSupabaseClient } = await import('@/storage/database/supabase-client');
-      const client = getSupabaseClient(user.id);
+      const client = getSupabaseClient();
       const { data, error } = await client
         .from('videos')
-        .select('*')
+        .select('*, short_videos(*)')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
         .limit(20);
 
       if (error) throw error;
-      setVideos(data || []);
+      const mapped: VideoRecord[] = (data || []).map((v: any) => {
+        const clips: VideoClip[] = (v.short_videos || []).map((c: any) => {
+          const url = typeof c.url === 'string' && c.url.startsWith('data-url:') ? null : (c.url || null);
+          return {
+            id: c.id,
+            title: c.highlight_title || 'Clip',
+            startTime: Number(c.start_time ?? 0),
+            endTime: Number(c.end_time ?? 0),
+            duration: Number(c.duration ?? 0),
+            summary: c.highlight_summary || '',
+            engagementScore: 0,
+            thumbnailUrl: c.thumbnail_url || '',
+            videoUrl: url,
+            status: url ? 'completed' : 'failed',
+          };
+        });
+
+        return {
+          id: v.id,
+          original_url: v.original_url,
+          source_type: v.source_type,
+          title: v.title || null,
+          status: v.status,
+          clips_count: clips.length,
+          clips,
+          created_at: v.created_at,
+        };
+      });
+      setVideos(mapped);
     } catch (error) {
       console.warn('Videos fetch error, using demo mode');
       setVideos(getDemoVideos(user?.id || 'anonymous'));

@@ -8,13 +8,14 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { CheckCircle, Loader2, QrCode, CreditCard, Globe, Smartphone, ExternalLink } from 'lucide-react';
+import { useAuth } from '@/lib/auth-context';
 
 const PAYMENT_CONFIG_KEY = 'vidshorter_payment_config';
 
 interface StoredPaymentConfig {
-  wechat?: { appId?: string; mchId?: string; apiKey?: string; enabled?: boolean };
-  alipay?: { appId?: string; enabled?: boolean };
-  creem?: { apiKey?: string; enabled?: boolean };
+  wechat?: { appId?: string; mchId?: string; apiKey?: string; serialNo?: string; privateKey?: string; notifyUrl?: string; enabled?: boolean };
+  alipay?: { appId?: string; privateKey?: string; publicKey?: string; notifyUrl?: string; sandbox?: boolean; enabled?: boolean };
+  creem?: { apiKey?: string; webhookSecret?: string; enabled?: boolean };
 }
 
 function getStoredPaymentConfig(): StoredPaymentConfig {
@@ -65,11 +66,13 @@ function qrUrl(data: string) {
 }
 
 export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
+  const { user } = useAuth();
   const [region, setRegion] = useState<Region>('intl');
   const [method, setMethod] = useState<PayMethod>('wechat');
   const [payState, setPayState] = useState<PayState>('selecting');
   const [countdown, setCountdown] = useState(0);
   const [qrCodeUrl, setQrCodeUrl] = useState('');
+  const [creemCheckoutUrl, setCreemCheckoutUrl] = useState('');
   const [paymentError, setPaymentError] = useState('');
   const [payConfig, setPayConfig] = useState<StoredPaymentConfig>({});
 
@@ -79,6 +82,7 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
       setPayState('selecting');
       setCountdown(0);
       setQrCodeUrl('');
+      setCreemCheckoutUrl('');
       setPaymentError('');
       setPayConfig(getStoredPaymentConfig());
     }
@@ -107,12 +111,16 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
 
   const price = region === 'cn' ? `¥${plan.price.cn}` : `$${plan.price.intl}`;
 
-  const hasWechat = payConfig.wechat?.enabled && payConfig.wechat?.appId;
-  const hasAlipay = payConfig.alipay?.enabled && payConfig.alipay?.appId;
-  const hasCreem = payConfig.creem?.enabled && payConfig.creem?.apiKey;
+  const hasWechat = !!(payConfig.wechat?.enabled && payConfig.wechat?.appId && payConfig.wechat?.mchId && payConfig.wechat?.apiKey && payConfig.wechat?.serialNo && payConfig.wechat?.privateKey);
+  const hasAlipay = !!(payConfig.alipay?.enabled && payConfig.alipay?.appId && payConfig.alipay?.privateKey);
+  const hasCreem = !!(payConfig.creem?.enabled && payConfig.creem?.apiKey);
 
   const handlePay = async () => {
     setPaymentError('');
+    if (!user) {
+      window.location.href = '/login';
+      return;
+    }
 
     if (method === 'wechat') {
       setPayState('pending');
@@ -122,7 +130,13 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
           const res = await fetch('/api/payment/wechat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ planId: plan.id, amount: plan.price.cn * 100, description: `${plan.name} 订阅` }),
+            body: JSON.stringify({
+              planId: plan.id,
+              amount: plan.price.cn * 100,
+              description: `${plan.name} 订阅`,
+              userId: user.id,
+              config: payConfig,
+            }),
           });
           const data = await res.json();
           if (data.codeUrl) {
@@ -148,7 +162,13 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
           const res = await fetch('/api/payment/alipay', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ planId: plan.id, amount: plan.price.cn, subject: `${plan.name} 订阅` }),
+            body: JSON.stringify({
+              planId: plan.id,
+              amount: plan.price.cn,
+              subject: `${plan.name} 订阅`,
+              userId: user.id,
+              config: payConfig,
+            }),
           });
           const data = await res.json();
           if (data.qrCode) {
@@ -176,24 +196,24 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
           const res = await fetch('/api/payment/creem', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ planId: plan.id, amount: plan.price.intl, currency: 'USD' }),
+            body: JSON.stringify({ planId: plan.id, amount: plan.price.intl, currency: 'USD', userId: user.id, config: payConfig }),
           });
           const data = await res.json();
           if (data.checkoutUrl) {
-            window.open(data.checkoutUrl, '_blank');
+            setCreemCheckoutUrl(data.checkoutUrl);
           } else {
             const url = `https://www.creem.io/payment?product=${plan.id}&amount=${plan.price.intl * 100}&currency=USD`;
-            window.open(url, '_blank');
+            setCreemCheckoutUrl(url);
           }
         } catch {
           const url = `https://www.creem.io/payment?product=${plan.id}&amount=${plan.price.intl * 100}&currency=USD`;
-          window.open(url, '_blank');
+          setCreemCheckoutUrl(url);
           setPayState('pending');
         }
       } else {
         // Demo Creem flow
         const creemUrl = `https://www.creem.io/payment?product=${plan.id}&amount=${plan.price.intl * 100}&currency=USD&redirect=${encodeURIComponent(window.location.href)}`;
-        window.open(creemUrl, '_blank');
+        setCreemCheckoutUrl(creemUrl);
         setPayState('pending');
         setTimeout(() => setPayState('success'), 5000);
       }
@@ -203,7 +223,7 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className={method === 'creem' && payState === 'pending' && creemCheckoutUrl ? 'sm:max-w-3xl' : 'sm:max-w-md'}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <CreditCard className="h-5 w-5 text-primary" />
@@ -376,14 +396,29 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
                   </p>
                 )}
                 {payState === 'pending' ? (
-                  <div className="flex flex-col items-center gap-3 py-4">
-                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                    <p className="text-sm text-muted-foreground">正在跳转到 Creem 支付页面...</p>
-                    <p className="text-xs text-muted-foreground">在新标签页完成支付后，点击下方按钮。</p>
-                    <Button variant="outline" size="sm" onClick={() => setPayState('success')}>
-                      我已完成支付
-                    </Button>
-                  </div>
+                  creemCheckoutUrl ? (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs text-muted-foreground">如内嵌支付页无法加载，可使用右侧按钮新窗口打开。</p>
+                        <Button size="sm" variant="outline" asChild>
+                          <a href={creemCheckoutUrl} target="_blank" rel="noreferrer">
+                            <ExternalLink className="h-4 w-4 mr-1" />新窗口打开
+                          </a>
+                        </Button>
+                      </div>
+                      <div className="border rounded-md overflow-hidden">
+                        <iframe title="Creem Checkout" src={creemCheckoutUrl} className="w-full h-[70vh]" />
+                      </div>
+                      <Button variant="outline" size="sm" onClick={() => setPayState('success')}>
+                        我已完成支付
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center gap-3 py-4">
+                      <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                      <p className="text-sm text-muted-foreground">正在创建支付...</p>
+                    </div>
+                  )
                 ) : (
                   <Button className="w-full gap-2" onClick={handlePay}>
                     <CreditCard className="h-4 w-4" />

@@ -15,7 +15,8 @@
  */
 
 import { NextRequest } from 'next/server';
-import { createHash, createSign, randomBytes } from 'crypto';
+import { createDecipheriv, createSign, randomBytes } from 'crypto';
+import { applyPlanPurchase } from '@/lib/server/subscriptions';
 
 const WECHAT_API = 'https://api.mch.weixin.qq.com';
 
@@ -50,22 +51,36 @@ function buildWechatAuth(
 
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
-  const { planId, amount, description } = body as {
+  const { planId, amount, description, userId, config } = body as {
     planId?: string;
     amount?: number;    // 分 (cents)
     description?: string;
+    userId?: string;
+    config?: {
+      wechat?: {
+        appId?: string;
+        mchId?: string;
+        apiKey?: string;
+        serialNo?: string;
+        privateKey?: string;
+        notifyUrl?: string;
+      };
+    };
   };
 
   if (!planId || !amount) {
     return Response.json({ error: 'planId and amount are required' }, { status: 400 });
   }
 
-  const appId      = process.env.WECHAT_APP_ID;
-  const mchId      = process.env.WECHAT_MCH_ID;
-  const apiV3Key   = process.env.WECHAT_API_V3_KEY;
-  const serialNo   = process.env.WECHAT_SERIAL_NO;
-  const privateKeyB64 = process.env.WECHAT_PRIVATE_KEY; // base64-encoded PEM
-  const notifyUrl  = process.env.WECHAT_NOTIFY_URL || '';
+  const appId = process.env.WECHAT_APP_ID || config?.wechat?.appId;
+  const mchId = process.env.WECHAT_MCH_ID || config?.wechat?.mchId;
+  const apiV3Key = process.env.WECHAT_API_V3_KEY || config?.wechat?.apiKey;
+  const serialNo = process.env.WECHAT_SERIAL_NO || config?.wechat?.serialNo;
+  const privateKeyB64 = process.env.WECHAT_PRIVATE_KEY || config?.wechat?.privateKey;
+  const notifyUrl =
+    process.env.WECHAT_NOTIFY_URL ||
+    config?.wechat?.notifyUrl ||
+    `${request.nextUrl.origin}/api/payment/wechat`;
 
   // ── Demo mode when not configured ──
   if (!appId || !mchId || !apiV3Key || !serialNo || !privateKeyB64) {
@@ -95,6 +110,7 @@ export async function POST(request: NextRequest) {
     description: description || 'VidShorter AI 订阅',
     out_trade_no: outTradeNo,
     notify_url: notifyUrl,
+    attach: userId ? JSON.stringify({ user_id: userId, plan_id: planId }) : undefined,
     amount: {
       total: amount,
       currency: 'CNY',
@@ -140,11 +156,48 @@ export async function POST(request: NextRequest) {
 
 /** Webhook: WeChat Pay async notification */
 export async function PUT(request: NextRequest) {
-  // In production: verify signature, decrypt payload, update order status
-  // For now, acknowledge receipt
   try {
-    const body = await request.json();
-    console.log('[WeChat Pay] Webhook received:', body);
+    const raw = await request.text();
+    const evt = JSON.parse(raw) as {
+      resource?: { ciphertext?: string; nonce?: string; associated_data?: string };
+    };
+
+    const apiV3Key = process.env.WECHAT_API_V3_KEY || '';
+    if (apiV3Key && evt.resource?.ciphertext && evt.resource?.nonce) {
+      const key = Buffer.from(apiV3Key, 'utf8');
+      const nonce = Buffer.from(evt.resource.nonce, 'utf8');
+      const aad = Buffer.from(evt.resource.associated_data || '', 'utf8');
+      const data = Buffer.from(evt.resource.ciphertext, 'base64');
+      const ciphertext = data.subarray(0, data.length - 16);
+      const tag = data.subarray(data.length - 16);
+
+      try {
+        const decipher = createDecipheriv('aes-256-gcm', key, nonce);
+        decipher.setAuthTag(tag);
+        if (aad.length) decipher.setAAD(aad);
+        const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
+        const payload = JSON.parse(decrypted) as {
+          out_trade_no?: string;
+          trade_state?: string;
+          attach?: string;
+        };
+
+        if (payload.trade_state === 'SUCCESS' && payload.attach) {
+          try {
+            const attach = JSON.parse(payload.attach) as { user_id?: string; plan_id?: string };
+            if (attach.user_id && attach.plan_id && payload.out_trade_no) {
+              await applyPlanPurchase({
+                userId: attach.user_id,
+                planId: attach.plan_id,
+                provider: 'wechat',
+                orderId: payload.out_trade_no,
+              });
+            }
+          } catch {}
+        }
+      } catch {}
+    }
+
     return Response.json({ code: 'SUCCESS', message: '成功' });
   } catch {
     return Response.json({ code: 'FAIL', message: '处理失败' }, { status: 400 });

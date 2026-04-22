@@ -20,8 +20,24 @@ const CORS = {
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
 };
 
+const MAX_HEIGHT = parseInt(process.env.YOUTUBE_MAX_HEIGHT || '1080', 10) || 1080;
+
+function parseQuality(value?: string) {
+  const m = value?.match(/(\d{3,4})/);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
 // Client configurations — ordered by success rate and age-restriction bypass capability
 const CLIENTS = [
+  {
+    name: 'TV',
+    clientName: 'TVHTML5',
+    clientVersion: '7.20250312.16.00',
+    userAgent: 'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/24.0.0',
+    xClientName: '7',
+    extra: { clientScreen: 'TV' },
+    extraHeaders: {},
+  },
   // ANDROID_VR (Quest/Oculus) — bypasses age restrictions without auth on most content
   {
     name: 'ANDROID_VR',
@@ -126,6 +142,8 @@ async function tryClient(videoId: string, client: Client): Promise<{
                         client.clientName === 'WEB_EMBEDDED_PLAYER';
   const body: Record<string, unknown> = {
     videoId,
+    contentCheckOk: true,
+    racyCheckOk: true,
     context: {
       client: {
         clientName: client.clientName,
@@ -176,11 +194,15 @@ async function tryClient(videoId: string, client: Client): Promise<{
   );
 
   const format =
-    combined.find(f => f.qualityLabel?.includes('360')) ??
-    combined.find(f => f.qualityLabel?.includes('480')) ??
-    combined.find(f => f.qualityLabel?.includes('240')) ??
-    combined[0] ??
-    formats.find(f => f.url);
+    combined
+      .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
+      .filter(item => item.q > 0 && item.q <= MAX_HEIGHT)
+      .sort((a, b) => b.q - a.q)[0]?.f
+    || combined
+      .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
+      .sort((a, b) => b.q - a.q)[0]?.f
+    || combined[0]
+    || formats.find(f => f.url);
 
   if (!format?.url) {
     const hasCipher = formats.some(f => f.signatureCipher || f.cipher);
@@ -262,10 +284,15 @@ export async function GET(request: Request) {
               f.url && f.mimeType?.startsWith('video/mp4') && (f.audioQuality || f.audioChannels)
             );
             const format =
-              combined.find(f => f.qualityLabel?.includes('360')) ??
-              combined.find(f => f.qualityLabel?.includes('480')) ??
-              combined.find(f => f.qualityLabel?.includes('240')) ??
-              combined[0] ?? formats.find(f => f.url);
+              combined
+                .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
+                .filter(item => item.q > 0 && item.q <= MAX_HEIGHT)
+                .sort((a, b) => b.q - a.q)[0]?.f
+              || combined
+                .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
+                .sort((a, b) => b.q - a.q)[0]?.f
+              || combined[0]
+              || formats.find(f => f.url);
             if (format?.url) {
               return Response.json({
                 title: data.videoDetails?.title ?? 'YouTube Video',

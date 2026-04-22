@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -71,6 +72,8 @@ interface PaymentConfig {
     appId: string;
     mchId: string;
     apiKey: string;
+    serialNo: string;
+    privateKey: string;
     notifyUrl: string;
     enabled: boolean;
   };
@@ -90,7 +93,7 @@ interface PaymentConfig {
 }
 
 const defaultPaymentConfig: PaymentConfig = {
-  wechat: { appId: '', mchId: '', apiKey: '', notifyUrl: '', enabled: false },
+  wechat: { appId: '', mchId: '', apiKey: '', serialNo: '', privateKey: '', notifyUrl: '', enabled: false },
   alipay: { appId: '', privateKey: '', publicKey: '', notifyUrl: '', sandbox: true, enabled: false },
   creem: { apiKey: '', webhookSecret: '', enabled: false },
 };
@@ -904,6 +907,32 @@ export default function AdminPage() {
                           className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                         >
                           {showSecrets['wx_apikey'] ? <EyeOff className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>证书序列号 <span className="text-muted-foreground text-xs">(Serial No)</span></Label>
+                      <Input
+                        value={paymentConfig.wechat.serialNo}
+                        onChange={e => updateWechat('serialNo', e.target.value)}
+                        placeholder="7777B8E8..."
+                      />
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>商户私钥 <span className="text-muted-foreground text-xs">(RSA 私钥 / PEM)</span></Label>
+                      <div className="relative">
+                        <Textarea
+                          value={paymentConfig.wechat.privateKey}
+                          onChange={e => updateWechat('privateKey', e.target.value)}
+                          placeholder="-----BEGIN PRIVATE KEY-----"
+                          className="min-h-[140px] pr-10 font-mono text-xs"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => toggleSecret('wx_private')}
+                          className="absolute right-3 top-3 text-muted-foreground hover:text-foreground"
+                        >
+                          {showSecrets['wx_private'] ? <EyeOff className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />}
                         </button>
                       </div>
                     </div>

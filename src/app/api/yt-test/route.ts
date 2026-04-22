@@ -162,28 +162,58 @@ async function testYtDlpGetUrl(videoId: string): Promise<TestResult> {
 
 export async function GET(request: NextRequest) {
   const videoId = new URL(request.url).searchParams.get('videoId') || 'dQw4w9WgXcQ';
-  const cfWorkerUrl = process.env.CF_WORKER_URL;
+  const cfWorkerUrl = process.env['CF_WORKER_URL'] || process.env.CF_WORKER_URL;
 
-  const [innerTubeResults, ytdlpResult, cfWorkerResult] = await Promise.allSettled([
+  const [innerTubeResults, ytdlpResult, cfWorkerResults] = await Promise.allSettled([
     testInnerTubeClients(videoId),
     testYtDlpGetUrl(videoId),
-    cfWorkerUrl
-      ? fetch(`${cfWorkerUrl}?videoId=${videoId}`, { signal: AbortSignal.timeout(15_000) })
-          .then(r => r.json())
-          .then((d: { streamUrl?: string; title?: string; error?: string }) => ({
-            name: 'CF Worker',
-            success: !!d.streamUrl,
-            title: d.title,
-            streamUrlPrefix: d.streamUrl?.slice(0, 80),
-            error: d.error,
-          } as TestResult))
-      : Promise.resolve({ name: 'CF Worker', success: false, error: 'CF_WORKER_URL not set' } as TestResult),
+    (async () => {
+      if (!cfWorkerUrl) return [{ name: 'CF Worker', success: false, error: 'CF_WORKER_URL not set' } as TestResult];
+      try {
+        const resolveUrl = new URL(cfWorkerUrl);
+        resolveUrl.pathname = `${resolveUrl.pathname.replace(/\/$/, '')}/resolve`;
+        resolveUrl.searchParams.set('videoId', videoId);
+
+        const streamUrl = new URL(cfWorkerUrl);
+        streamUrl.pathname = `${streamUrl.pathname.replace(/\/$/, '')}/stream`;
+        streamUrl.searchParams.set('videoId', videoId);
+
+        const [resolved, streamPreflight] = await Promise.allSettled([
+          fetch(resolveUrl.toString(), { signal: AbortSignal.timeout(15_000) })
+            .then(r => r.json())
+            .then((d: { streamUrl?: string; title?: string; error?: string; quality?: string }) => ({
+              name: 'CF Worker (resolve)',
+              success: !!d.streamUrl,
+              title: d.title,
+              quality: d.quality,
+              streamUrlPrefix: d.streamUrl?.slice(0, 80),
+              error: d.error,
+            } as TestResult)),
+          fetch(streamUrl.toString(), {
+            headers: { Range: 'bytes=0-1' },
+            signal: AbortSignal.timeout(15_000),
+          }).then(r => ({
+            name: 'CF Worker (stream)',
+            success: r.status === 200 || r.status === 206,
+            error: r.status === 200 || r.status === 206 ? undefined : `HTTP ${r.status}`,
+            streamUrlPrefix: streamUrl.toString().slice(0, 80),
+          } as TestResult)),
+        ]);
+
+        return [
+          resolved.status === 'fulfilled' ? resolved.value : { name: 'CF Worker (resolve)', success: false, error: String(resolved.reason).slice(0, 120) } as TestResult,
+          streamPreflight.status === 'fulfilled' ? streamPreflight.value : { name: 'CF Worker (stream)', success: false, error: String(streamPreflight.reason).slice(0, 120) } as TestResult,
+        ];
+      } catch (e) {
+        return [{ name: 'CF Worker', success: false, error: String(e).slice(0, 200) } as TestResult];
+      }
+    })(),
   ]);
 
   const allResults: TestResult[] = [
     ...(innerTubeResults.status === 'fulfilled' ? innerTubeResults.value : [{ name: 'InnerTube', success: false, error: String(innerTubeResults.reason) } as TestResult]),
     ytdlpResult.status === 'fulfilled' ? ytdlpResult.value : { name: 'yt-dlp', success: false, error: String(ytdlpResult.reason) } as TestResult,
-    cfWorkerResult.status === 'fulfilled' ? cfWorkerResult.value : { name: 'CF Worker', success: false, error: String(cfWorkerResult.reason) } as TestResult,
+    ...(cfWorkerResults.status === 'fulfilled' ? cfWorkerResults.value : [{ name: 'CF Worker', success: false, error: String(cfWorkerResults.reason) } as TestResult]),
   ];
 
   return NextResponse.json({
