@@ -156,12 +156,18 @@ export async function POST(request: NextRequest) {
         for (let index = 0; index < highlights.length; index += 1) {
           if (abortSignal.aborted) return;
           const highlight = highlights[index];
+          const maxDuration = Math.max(0, analysis.duration || 0);
+          const rawStart = Math.max(0, Number.isFinite(highlight.start_time) ? highlight.start_time : 0);
+          const rawEnd = Math.max(0, Number.isFinite(highlight.end_time) ? highlight.end_time : rawStart + 60);
+          const safeStart = maxDuration > 0 ? Math.min(rawStart, Math.max(0, maxDuration - 1)) : rawStart;
+          const safeEnd = maxDuration > 0 ? Math.min(Math.max(rawEnd, safeStart + 1), maxDuration) : Math.max(rawEnd, safeStart + 1);
+
           const draftClip: ClipResult = {
             id: `clip-${Date.now()}-${index}`,
             title: highlight.title,
-            startTime: highlight.start_time,
-            endTime: highlight.end_time,
-            duration: highlight.end_time - highlight.start_time,
+            startTime: safeStart,
+            endTime: safeEnd,
+            duration: safeEnd - safeStart,
             summary: highlight.summary,
             engagementScore: highlight.engagement_score,
             thumbnailUrl: '',
@@ -177,19 +183,34 @@ export async function POST(request: NextRequest) {
           })) return;
 
           try {
-            const result = await videoClipper.createLocalClip({
-              inputPath: source.inputPath,
-              inputHeaders: source.ffmpegHeaders,
-              startTime: highlight.start_time,
-              endTime: highlight.end_time,
-              title: highlight.title,
-            });
+            let lastError: unknown = null;
+            for (let attempt = 0; attempt < 2; attempt += 1) {
+              const currentSource = attempt === 0
+                ? source
+                : await videoClipper.downloadSourceVideo(videoUrl);
+
+              try {
+                const result = await videoClipper.createLocalClip({
+                  inputPath: currentSource.inputPath,
+                  inputHeaders: currentSource.ffmpegHeaders,
+                  startTime: safeStart,
+                  endTime: safeEnd,
+                  title: highlight.title,
+                });
+
+                draftClip.videoUrl = result.dataUrl || result.publicUrl;
+                draftClip.thumbnailUrl = result.thumbnailUrl || '';
+                draftClip.status = 'completed';
+                lastError = null;
+                break;
+              } catch (err) {
+                lastError = err;
+                if (attempt === 1) throw err;
+              }
+            }
 
             // Prefer data URL (works across Lambda invocations without /tmp dependency)
             // Fall back to serve-clip URL (works only within same Lambda instance)
-            draftClip.videoUrl = result.dataUrl || result.publicUrl;
-            draftClip.thumbnailUrl = result.thumbnailUrl || '';
-            draftClip.status = 'completed';
           } catch (error) {
             console.warn(`Clip generation failed for "${highlight.title}":`, error);
             draftClip.status = 'failed';

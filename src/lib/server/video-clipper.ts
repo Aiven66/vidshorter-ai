@@ -710,6 +710,7 @@ async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInf
   const u = new URL(cfWorkerUrl);
   u.pathname = `${u.pathname.replace(/\/$/, '')}/resolve`;
   u.searchParams.set('videoId', videoId);
+  u.searchParams.set('maxHeight', String(YOUTUBE_MAX_HEIGHT));
   const endpoint = u.toString();
   const res = await fetch(endpoint, {
     headers: { 'Accept': 'application/json' },
@@ -1694,7 +1695,15 @@ async function downloadYouTubeOrGenericVideo(
         const u = new URL(cfWorkerUrl);
         u.pathname = `${u.pathname.replace(/\/$/, '')}/stream`;
         u.searchParams.set('videoId', videoId);
+        u.searchParams.set('maxHeight', String(YOUTUBE_MAX_HEIGHT));
         const streamProxyUrl = u.toString();
+        const localPath = path.join(path.dirname(outputTemplate), 'source.mp4');
+        const downloaded = await downloadStreamToLocalFile(streamProxyUrl, localPath);
+        if (downloaded) {
+          console.log('Vercel environment: using locally cached YouTube source for ffmpeg input');
+          return { inputPath: localPath };
+        }
+
         console.log('Vercel environment: using CF Worker stream proxy as ffmpeg input');
         return { inputPath: streamProxyUrl };
       } catch (e) {

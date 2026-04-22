@@ -79,6 +79,7 @@ export default {
     const url = new URL(request.url);
     const videoId = url.searchParams.get('videoId');
     const mode = url.pathname.endsWith('/stream') ? 'stream' : 'resolve';
+    const maxHeight = normalizeMaxHeight(url.searchParams.get('maxHeight'));
 
     const secretKey = env.CF_SECRET_KEY;
     if (secretKey && url.searchParams.get('key') !== secretKey) {
@@ -91,7 +92,7 @@ export default {
 
     if (mode === 'stream') {
       try {
-        const resolved = await resolveCached(videoId);
+        const resolved = await resolveCached(videoId, maxHeight);
         const range = request.headers.get('Range') || request.headers.get('range') || 'bytes=0-';
         const upstream = await fetch(resolved.streamUrl, {
           headers: {
@@ -137,7 +138,7 @@ export default {
     const errors = [];
     for (const client of CLIENTS) {
       try {
-        const result = await tryClient(videoId, client);
+        const result = await tryClient(videoId, client, maxHeight);
         if (result) return json({ ...result, client: client.name });
         errors.push(`${client.name}: no stream URL`);
       } catch (e) {
@@ -150,7 +151,15 @@ export default {
   },
 };
 
-async function tryClient(videoId, client) {
+function normalizeMaxHeight(value) {
+  const n = parseInt(String(value || ''), 10);
+  if (!Number.isFinite(n)) return MAX_HEIGHT;
+  if (n < 144) return 144;
+  if (n > MAX_HEIGHT) return MAX_HEIGHT;
+  return n;
+}
+
+async function tryClient(videoId, client, maxHeight) {
   const body = {
     videoId,
     contentCheckOk: true,
@@ -202,7 +211,7 @@ async function tryClient(videoId, client) {
     f.url && f.mimeType?.startsWith('video/mp4') && (f.audioQuality || f.audioChannels)
   );
 
-  const format = pickBest(combined.length ? combined : formats);
+  const format = pickBest(combined.length ? combined : formats, maxHeight);
 
   if (!format?.url) {
     const hasCipher = formats.some(f => f.signatureCipher || f.cipher);
@@ -233,20 +242,22 @@ function parseQuality(value) {
   return m ? parseInt(m[1], 10) : 0;
 }
 
-function pickBest(formats) {
+function pickBest(formats, maxHeight) {
   const withQ = (formats || []).map(f => ({ f, q: parseQuality(f.qualityLabel || f.quality) })).filter(x => x.f?.url);
-  const under = withQ.filter(x => x.q > 0 && x.q <= MAX_HEIGHT).sort((a, b) => b.q - a.q)[0]?.f;
+  const limit = typeof maxHeight === 'number' && Number.isFinite(maxHeight) ? maxHeight : MAX_HEIGHT;
+  const under = withQ.filter(x => x.q > 0 && x.q <= limit).sort((a, b) => b.q - a.q)[0]?.f;
   const any = withQ.sort((a, b) => b.q - a.q)[0]?.f;
   return under || any || (formats || []).find(f => f?.url);
 }
 
-async function resolveCached(videoId) {
-  const cached = cache.get(videoId);
+async function resolveCached(videoId, maxHeight) {
+  const cacheKey = `${videoId}|${String(maxHeight || MAX_HEIGHT)}`;
+  const cached = cache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
   const errors = [];
   for (const client of CLIENTS) {
     try {
-      const result = await tryClient(videoId, client);
+      const result = await tryClient(videoId, client, maxHeight);
       if (result?.streamUrl) {
         const value = {
           streamUrl: result.streamUrl,
@@ -255,7 +266,7 @@ async function resolveCached(videoId) {
           xClientName: result.xClientName,
           clientVersion: result.clientVersion,
         };
-        cache.set(videoId, { value, expiresAt: Date.now() + 5 * 60 * 1000 });
+        cache.set(cacheKey, { value, expiresAt: Date.now() + 5 * 60 * 1000 });
         return value;
       }
       errors.push(`${client.name}: no stream URL`);

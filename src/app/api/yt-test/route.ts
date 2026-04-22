@@ -173,10 +173,12 @@ export async function GET(request: NextRequest) {
         const resolveUrl = new URL(cfWorkerUrl);
         resolveUrl.pathname = `${resolveUrl.pathname.replace(/\/$/, '')}/resolve`;
         resolveUrl.searchParams.set('videoId', videoId);
+        resolveUrl.searchParams.set('maxHeight', '720');
 
         const streamUrl = new URL(cfWorkerUrl);
         streamUrl.pathname = `${streamUrl.pathname.replace(/\/$/, '')}/stream`;
         streamUrl.searchParams.set('videoId', videoId);
+        streamUrl.searchParams.set('maxHeight', '720');
 
         const [resolved, streamPreflight] = await Promise.allSettled([
           fetch(resolveUrl.toString(), { signal: AbortSignal.timeout(15_000) })
