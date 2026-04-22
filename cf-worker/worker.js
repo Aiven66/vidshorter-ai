@@ -1,4 +1,4 @@
-//**
+/**
  * YouTube Stream Proxy - Cloudflare Worker
  *
  * Calls YouTube InnerTube API from Cloudflare IP space (not blocked by YouTube).
@@ -499,11 +499,11 @@ async function tryClient(videoId, client, maxHeight) {
 
   if (!formats.length) throw new Error('No formats in response');
 
-  const combined = formats.filter(f =>
-    f.url && f.mimeType?.startsWith('video/mp4') && (f.audioQuality || f.audioChannels)
+  const videoFormats = formats.filter((f) =>
+    f?.url && typeof f.mimeType === 'string' && f.mimeType.startsWith('video/')
   );
-
-  const format = pickBest(combined.length ? combined : formats, maxHeight);
+  const muxed = videoFormats.filter((f) => f.audioQuality || f.audioChannels || f.audioBitrate);
+  const format = pickBest(muxed.length ? muxed : videoFormats, maxHeight);
 
   if (!format?.url) {
     const hasCipher = formats.some(f => f.signatureCipher || f.cipher);
@@ -534,12 +534,26 @@ function parseQuality(value) {
   return m ? parseInt(m[1], 10) : 0;
 }
 
+function formatHeight(format) {
+  if (format && typeof format.height === 'number' && Number.isFinite(format.height)) {
+    return format.height;
+  }
+  return parseQuality(format?.qualityLabel || format?.quality);
+}
+
 function pickBest(formats, maxHeight) {
-  const withQ = (formats || []).map(f => ({ f, q: parseQuality(f.qualityLabel || f.quality) })).filter(x => x.f?.url);
+  const withQ = (formats || [])
+    .map((f) => ({
+      f,
+      q: formatHeight(f),
+      muxed: !!(f && (f.audioQuality || f.audioChannels || f.audioBitrate)),
+    }))
+    .filter((x) => x.f?.url);
   const limit = typeof maxHeight === 'number' && Number.isFinite(maxHeight) ? maxHeight : MAX_HEIGHT;
-  const under = withQ.filter(x => x.q > 0 && x.q <= limit).sort((a, b) => b.q - a.q)[0]?.f;
-  const any = withQ.sort((a, b) => b.q - a.q)[0]?.f;
-  return under || any || (formats || []).find(f => f?.url);
+  const sortFn = (a, b) => (Number(b.muxed) - Number(a.muxed)) || (b.q - a.q);
+  const under = withQ.filter((x) => x.q > 0 && x.q <= limit).sort(sortFn)[0]?.f;
+  const any = withQ.sort(sortFn)[0]?.f;
+  return under || any || (formats || []).find((f) => f?.url);
 }
 
 async function resolveCached(videoId, maxHeight) {

@@ -17,9 +17,11 @@
 import { promisify } from 'node:util';
 import { execFile as execFileCallback } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { access, mkdir, readFile, readdir, writeFile, chmod, unlink } from 'node:fs/promises';
+import { access, mkdir, readFile, readdir, writeFile, chmod, unlink, rename } from 'node:fs/promises';
 import path from 'node:path';
-import { constants as fsConstants } from 'node:fs';
+import { constants as fsConstants, createWriteStream } from 'node:fs';
+import { once } from 'node:events';
+import { Readable } from 'node:stream';
 import https from 'node:https';
 import http from 'node:http';
 import { HttpsProxyAgent } from 'https-proxy-agent';
@@ -135,16 +137,16 @@ const IS_VERCEL = !!process.env.VERCEL;
 // Max clips on Vercel to stay within 300s function timeout
 const VERCEL_MAX_HIGHLIGHTS = 3;
 const VERCEL_CRF = process.env.VERCEL_CLIP_CRF || '30';
-const VERCEL_TARGET_WIDTH = process.env.VERCEL_CLIP_WIDTH || '1280';
-const VERCEL_TARGET_HEIGHT = process.env.VERCEL_CLIP_HEIGHT || '720';
+const VERCEL_TARGET_WIDTH = process.env.VERCEL_CLIP_WIDTH || '854';
+const VERCEL_TARGET_HEIGHT = process.env.VERCEL_CLIP_HEIGHT || '480';
 const VERCEL_SCALE = `scale=${VERCEL_TARGET_WIDTH}:${VERCEL_TARGET_HEIGHT}:force_original_aspect_ratio=decrease,pad=${VERCEL_TARGET_WIDTH}:${VERCEL_TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2`;
 // Maximum file size (bytes) we will base64-encode and send inline in the SSE stream
 const MAX_INLINE_BYTES = 25 * 1024 * 1024; // 25 MB
 const LOCAL_MAX_HEIGHT = process.env.CLIP_MAX_HEIGHT || '1080';
 const YOUTUBE_MAX_HEIGHT = parseInt(
-  process.env.YOUTUBE_MAX_HEIGHT || (IS_VERCEL ? '720' : LOCAL_MAX_HEIGHT),
+  process.env.YOUTUBE_MAX_HEIGHT || (IS_VERCEL ? '480' : LOCAL_MAX_HEIGHT),
   10,
-) || (IS_VERCEL ? 720 : 1080);
+) || (IS_VERCEL ? 480 : 1080);
 
 // ── URL helpers ──────────────────────────────────────────────────────────────
 function isYouTubeUrl(videoUrl: string) {
@@ -1488,17 +1490,28 @@ async function analyzeBilibiliVideo(videoUrl: string, workDir: string): Promise<
 }
 
 // ── Video download ─────────────────────────────────────────────────────────────
-async function downloadSourceVideo(videoUrl: string): Promise<PreparedSource> {
+async function downloadSourceVideo(
+  videoUrl: string,
+  options?: { forceRefresh?: boolean },
+): Promise<PreparedSource> {
   const normalizedUrl = await normalizeVideoUrl(videoUrl);
   await ensureDirectories();
   const sourceDir = path.join(CACHE_DIR, sourceId(normalizedUrl));
   await mkdir(sourceDir, { recursive: true });
 
-  // Check cache for locally-downloaded file
-  const cachedFile = await findFirstFile(sourceDir, ['.mp4', '.mkv', '.webm', '.mov']);
-  if (cachedFile) {
-    console.log(`Using cached video: ${cachedFile}`);
-    return { inputPath: path.join(sourceDir, cachedFile) };
+  if (options?.forceRefresh) {
+    const files = await readdir(sourceDir).catch(() => []);
+    await Promise.all(
+      files
+        .filter(f => /\.(mp4|mkv|webm|mov)$/i.test(f))
+        .map(f => unlink(path.join(sourceDir, f)).catch(() => {})),
+    );
+  } else {
+    const cachedFile = await findFirstFile(sourceDir, ['.mp4', '.mkv', '.webm', '.mov']);
+    if (cachedFile) {
+      console.log(`Using cached video: ${cachedFile}`);
+      return { inputPath: path.join(sourceDir, cachedFile) };
+    }
   }
 
   const outputTemplate = path.join(sourceDir, 'source.%(ext)s');
@@ -1645,37 +1658,79 @@ async function getYouTubeStreamUrlWithFallbacks(videoId: string): Promise<string
 async function downloadStreamToLocalFile(url: string, outputPath: string): Promise<boolean> {
   const maxBytes = 400 * 1024 * 1024; // 400 MB — stay under Vercel /tmp 512 MB limit
   try {
-    console.log(`Fetching video stream to /tmp…`);
-    const res = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
-        'Accept': '*/*',
-        'Accept-Encoding': 'identity',
-      },
-      signal: AbortSignal.timeout(180_000), // 3 min
-    });
-    if (!res.ok) {
-      console.warn(`Stream fetch HTTP ${res.status}`);
-      return false;
-    }
-    const contentLength = parseInt(res.headers.get('content-length') || '0', 10);
-    if (contentLength > 0 && contentLength > maxBytes) {
-      console.warn(`Video too large to cache locally: ${Math.round(contentLength / 1024 / 1024)}MB`);
-      return false;
-    }
-    // Buffer into memory then write — simpler and more reliable than streaming pipe
-    const buffer = await res.arrayBuffer();
-    if (buffer.byteLength > maxBytes) {
-      console.warn(`Downloaded video exceeds size limit: ${Math.round(buffer.byteLength / 1024 / 1024)}MB`);
-      return false;
-    }
-    await writeFile(outputPath, Buffer.from(buffer));
-    console.log(`Video downloaded: ${Math.round(buffer.byteLength / 1024 / 1024 * 10) / 10}MB → ${outputPath}`);
+    await access(outputPath, fsConstants.R_OK);
     return true;
-  } catch (err) {
-    console.warn('downloadStreamToLocalFile failed:', err instanceof Error ? err.message.slice(0, 100) : err);
-    return false;
+  } catch {
+    // ignore
   }
+
+  const tempPath = `${outputPath}.part`;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      console.log(`Fetching video stream to /tmp…`);
+      const res = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+          'Accept': '*/*',
+          'Accept-Encoding': 'identity',
+        },
+        signal: AbortSignal.timeout(240_000),
+      });
+      if (!res.ok) {
+        console.warn(`Stream fetch HTTP ${res.status}`);
+        continue;
+      }
+
+      const contentLength = parseInt(res.headers.get('content-length') || '0', 10);
+      if (contentLength > 0 && contentLength > maxBytes) {
+        console.warn(`Video too large to cache locally: ${Math.round(contentLength / 1024 / 1024)}MB`);
+        return false;
+      }
+
+      if (!res.body) {
+        console.warn('Stream fetch returned empty body');
+        continue;
+      }
+
+      const fileStream = createWriteStream(tempPath);
+      let downloadedBytes = 0;
+      try {
+        const readable = Readable.fromWeb(res.body as never);
+        for await (const chunk of readable) {
+          const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
+          downloadedBytes += buf.length;
+          if (downloadedBytes > maxBytes) {
+            throw new Error(`Downloaded video exceeds size limit: ${Math.round(downloadedBytes / 1024 / 1024)}MB`);
+          }
+          if (!fileStream.write(buf)) {
+            await once(fileStream, 'drain');
+          }
+        }
+        fileStream.end();
+        await once(fileStream, 'finish');
+      } catch (streamErr) {
+        fileStream.destroy();
+        await once(fileStream, 'close').catch(() => {});
+        throw streamErr;
+      }
+
+      if (downloadedBytes <= 0) {
+        console.warn('Downloaded empty file');
+        continue;
+      }
+
+      await rename(tempPath, outputPath);
+      console.log(`Video downloaded: ${Math.round(downloadedBytes / 1024 / 1024 * 10) / 10}MB → ${outputPath}`);
+      return true;
+    } catch (err) {
+      console.warn('downloadStreamToLocalFile failed:', err instanceof Error ? err.message.slice(0, 100) : err);
+    }
+
+    await unlink(tempPath).catch(() => {});
+    await unlink(outputPath).catch(() => {});
+  }
+
+  return false;
 }
 
 async function downloadYouTubeOrGenericVideo(
@@ -1692,20 +1747,27 @@ async function downloadYouTubeOrGenericVideo(
     const cfWorkerUrl = getCfWorkerUrl();
     if (cfWorkerUrl) {
       try {
-        const u = new URL(cfWorkerUrl);
-        u.pathname = `${u.pathname.replace(/\/$/, '')}/stream`;
-        u.searchParams.set('videoId', videoId);
-        u.searchParams.set('maxHeight', String(YOUTUBE_MAX_HEIGHT));
-        const streamProxyUrl = u.toString();
         const localPath = path.join(path.dirname(outputTemplate), 'source.mp4');
-        const downloaded = await downloadStreamToLocalFile(streamProxyUrl, localPath);
-        if (downloaded) {
-          console.log('Vercel environment: using locally cached YouTube source for ffmpeg input');
-          return { inputPath: localPath };
+        const heights = Array.from(new Set([YOUTUBE_MAX_HEIGHT, 360, 240].filter(Boolean)));
+        for (const h of heights) {
+          const u = new URL(cfWorkerUrl);
+          u.pathname = `${u.pathname.replace(/\/$/, '')}/stream`;
+          u.searchParams.set('videoId', videoId);
+          u.searchParams.set('maxHeight', String(h));
+          const streamProxyUrl = u.toString();
+          const downloaded = await downloadStreamToLocalFile(streamProxyUrl, localPath);
+          if (downloaded) {
+            console.log('Vercel environment: using locally cached YouTube source for ffmpeg input');
+            return { inputPath: localPath };
+          }
         }
 
         console.log('Vercel environment: using CF Worker stream proxy as ffmpeg input');
-        return { inputPath: streamProxyUrl };
+        const u = new URL(cfWorkerUrl);
+        u.pathname = `${u.pathname.replace(/\/$/, '')}/stream`;
+        u.searchParams.set('videoId', videoId);
+        u.searchParams.set('maxHeight', String(heights[heights.length - 1] || YOUTUBE_MAX_HEIGHT));
+        return { inputPath: u.toString() };
       } catch (e) {
         console.warn(
           'CF Worker stream URL build failed, trying Vercel edge proxy…',

@@ -184,10 +184,10 @@ export async function POST(request: NextRequest) {
 
           try {
             let lastError: unknown = null;
-            for (let attempt = 0; attempt < 2; attempt += 1) {
+            for (let attempt = 0; attempt < 3; attempt += 1) {
               const currentSource = attempt === 0
                 ? source
-                : await videoClipper.downloadSourceVideo(videoUrl);
+                : await videoClipper.downloadSourceVideo(videoUrl, { forceRefresh: true });
 
               try {
                 const result = await videoClipper.createLocalClip({
@@ -205,7 +205,7 @@ export async function POST(request: NextRequest) {
                 break;
               } catch (err) {
                 lastError = err;
-                if (attempt === 1) throw err;
+                if (attempt === 2) throw err;
               }
             }
 
