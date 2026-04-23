@@ -16,6 +16,11 @@ fi
 
 git add -A
 
+if git diff --cached --name-only | grep -qE '^(\\.home/|\\.wrangler/)'; then
+  echo "Refusing to commit local cache folders (.home/.wrangler). Fix .gitignore and untrack them first."
+  exit 1
+fi
+
 if git diff --cached --quiet; then
   echo "No changes to commit."
   exit 0

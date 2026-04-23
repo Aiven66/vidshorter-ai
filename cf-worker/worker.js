@@ -92,9 +92,10 @@ export default {
 
     if (mode === 'stream') {
       try {
-        const resolved = await resolveCached(videoId, maxHeight);
+        const cacheKey = `${videoId}|${String(maxHeight || MAX_HEIGHT)}`;
+        let resolved = await resolveCached(videoId, maxHeight);
         const range = request.headers.get('Range') || request.headers.get('range') || 'bytes=0-';
-        const upstream = await fetch(resolved.streamUrl, {
+        const doFetch = () => fetch(resolved.streamUrl, {
           headers: {
             Range: range,
             'User-Agent': resolved.userAgent,
@@ -107,6 +108,13 @@ export default {
             'X-Youtube-Client-Version': resolved.clientVersion,
           },
         });
+
+        let upstream = await doFetch();
+        if (upstream.status !== 200 && upstream.status !== 206) {
+          cache.delete(cacheKey);
+          resolved = await resolveCached(videoId, maxHeight);
+          upstream = await doFetch();
+        }
 
         if (upstream.status !== 200 && upstream.status !== 206) {
           const body = await upstream.text().catch(() => '');
@@ -290,4 +298,3 @@ async function resolveCached(videoId, maxHeight) {
   }
   throw new Error(`All clients failed: ${errors.join(' | ')}`);
 }
-

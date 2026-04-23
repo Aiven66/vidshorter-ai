@@ -1665,8 +1665,108 @@ async function downloadStreamToLocalFile(url: string, outputPath: string): Promi
   }
 
   const tempPath = `${outputPath}.part`;
+  const isWorkerStreamUrl = (() => {
+    try {
+      const u = new URL(url);
+      return u.pathname.includes('/stream') && (u.hostname.endsWith('.workers.dev') || u.hostname.includes('youtube-proxy'));
+    } catch {
+      return false;
+    }
+  })();
+
+  const downloadChunked = async () => {
+    const fileStream = createWriteStream(tempPath);
+    let downloadedBytes = 0;
+    const chunkSize = 8 * 1024 * 1024;
+    let offset = 0;
+    let total: number | null = null;
+
+    try {
+      while (downloadedBytes < maxBytes) {
+        const end = offset + chunkSize - 1;
+        const res = await fetch(url, {
+          headers: {
+            Range: `bytes=${offset}-${end}`,
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+            'Accept': '*/*',
+            'Accept-Encoding': 'identity',
+          },
+          signal: AbortSignal.timeout(60_000),
+        });
+
+        if (res.status === 416) break;
+        if (res.status !== 206 && res.status !== 200) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+
+        if (!res.body) throw new Error('Empty body');
+        const readable = Readable.fromWeb(res.body as never);
+        let chunkBytes = 0;
+        for await (const chunk of readable) {
+          const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
+          chunkBytes += buf.length;
+          downloadedBytes += buf.length;
+          if (downloadedBytes > maxBytes) throw new Error('Exceeded size limit');
+          if (!fileStream.write(buf)) await once(fileStream, 'drain');
+        }
+
+        if (chunkBytes <= 0) throw new Error('Downloaded empty chunk');
+
+        if (res.status === 200) {
+          total = downloadedBytes;
+          break;
+        }
+
+        const cr = res.headers.get('content-range') || '';
+        const m = cr.match(/bytes\s+(\d+)-(\d+)\/(\d+|\*)/i);
+        if (m) {
+          const start = parseInt(m[1], 10);
+          const endByte = parseInt(m[2], 10);
+          if (start !== offset) {
+            throw new Error(`Unexpected range start ${start} (expected ${offset})`);
+          }
+          if (m[3] !== '*') total = parseInt(m[3], 10);
+          offset = endByte + 1;
+        } else {
+          offset += chunkBytes;
+        }
+
+        if (total && offset >= total) break;
+      }
+
+      fileStream.end();
+      await once(fileStream, 'finish');
+    } catch (err) {
+      fileStream.destroy();
+      await once(fileStream, 'close').catch(() => {});
+      throw err;
+    }
+
+    if (downloadedBytes <= 0) throw new Error('Downloaded empty file');
+    await rename(tempPath, outputPath);
+    try {
+      const head = await readFile(outputPath, { encoding: null, flag: 'r' }).then((b) => b.subarray(0, 16));
+      const headStr = head.toString('utf8').toLowerCase();
+      const isMp4 = head.length >= 8 && head.subarray(4, 8).toString('ascii') === 'ftyp';
+      const isWebm = head.length >= 4 && head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf && head[3] === 0xa3;
+      const looksHtml = headStr.includes('<!doctype') || headStr.includes('<html') || headStr.includes('<head');
+      if (!isMp4 && !isWebm && looksHtml) {
+        await unlink(outputPath).catch(() => {});
+        throw new Error('Downloaded HTML instead of video');
+      }
+    } catch {
+      // ignore
+    }
+    console.log(`Video downloaded (chunked): ${Math.round(downloadedBytes / 1024 / 1024 * 10) / 10}MB → ${outputPath}`);
+    return true;
+  };
+
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
+      if (isWorkerStreamUrl) {
+        console.log('Fetching video stream to /tmp (chunked)…');
+        return await downloadChunked();
+      }
       console.log(`Fetching video stream to /tmp…`);
       const res = await fetch(url, {
         headers: {
@@ -1782,7 +1882,7 @@ async function downloadYouTubeOrGenericVideo(
     if (cfWorkerUrl) {
       try {
         const localPath = path.join(path.dirname(outputTemplate), 'source.mp4');
-        const heights = Array.from(new Set([YOUTUBE_MAX_HEIGHT, 360, 240].filter(Boolean)));
+        const heights = Array.from(new Set([YOUTUBE_MAX_HEIGHT, 360, 240, 144].filter(Boolean)));
         for (const h of heights) {
           const u = new URL(cfWorkerUrl);
           u.pathname = `${u.pathname.replace(/\/$/, '')}/stream`;
@@ -1800,17 +1900,7 @@ async function downloadYouTubeOrGenericVideo(
             return { inputPath: localPath };
           }
         }
-
-        console.log('Vercel environment: using CF Worker stream proxy as ffmpeg input');
-        const u = new URL(cfWorkerUrl);
-        u.pathname = `${u.pathname.replace(/\/$/, '')}/stream`;
-        u.searchParams.set('videoId', videoId);
-        u.searchParams.set('maxHeight', String(heights[heights.length - 1] || YOUTUBE_MAX_HEIGHT));
-        const streamUrl = u.toString();
-        if (await preflightStream(streamUrl)) {
-          return { inputPath: streamUrl };
-        }
-        throw new Error('CF Worker /stream preflight failed (will try other fallbacks)');
+        throw new Error('CF Worker stream could not be cached locally');
       } catch (e) {
         console.warn(
           'CF Worker stream URL build failed, trying Vercel edge proxy…',
