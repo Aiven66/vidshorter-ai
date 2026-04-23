@@ -1720,6 +1720,18 @@ async function downloadStreamToLocalFile(url: string, outputPath: string): Promi
       }
 
       await rename(tempPath, outputPath);
+      try {
+        const head = await readFile(outputPath, { encoding: null, flag: 'r' }).then((b) => b.subarray(0, 16));
+        const headStr = head.toString('utf8').toLowerCase();
+        const isMp4 = head.length >= 8 && head.subarray(4, 8).toString('ascii') === 'ftyp';
+        const isWebm = head.length >= 4 && head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf && head[3] === 0xa3;
+        const looksHtml = headStr.includes('<!doctype') || headStr.includes('<html') || headStr.includes('<head');
+        if (!isMp4 && !isWebm && looksHtml) {
+          console.warn('Downloaded file looks like HTML, rejecting');
+          await unlink(outputPath).catch(() => {});
+          continue;
+        }
+      } catch {}
       console.log(`Video downloaded: ${Math.round(downloadedBytes / 1024 / 1024 * 10) / 10}MB → ${outputPath}`);
       return true;
     } catch (err) {
@@ -1744,8 +1756,12 @@ async function preflightStream(url: string): Promise<boolean> {
       },
       signal: AbortSignal.timeout(12_000),
     });
+    const type = (res.headers.get('content-type') || '').toLowerCase();
     res.body?.cancel();
-    return res.status === 200 || res.status === 206;
+    const statusOk = res.status === 200 || res.status === 206;
+    const typeOk = !type || type.startsWith('video/') || type.includes('octet-stream') || type.includes('application/mp4') || type.includes('application/vnd.apple.mpegurl');
+    const looksBad = type.includes('text/html') || type.includes('application/json');
+    return statusOk && typeOk && !looksBad;
   } catch {
     return false;
   }
@@ -2000,13 +2016,15 @@ async function createLocalClip(params: {
   const crf = IS_VERCEL ? VERCEL_CRF : (isRemoteInput ? '20' : '18');
   const preset = IS_VERCEL ? 'ultrafast' : (isRemoteInput ? 'veryfast' : 'fast');
 
+  const seekArgs = isRemoteInput
+    ? ['-i', params.inputPath, '-ss', String(params.startTime), '-t', String(duration)]
+    : ['-ss', String(params.startTime), '-i', params.inputPath, '-t', String(duration)];
+
   const args = [
     '-y',
     ...ffmpegInputHeaders,
     ...httpInputFlags,
-    '-ss', String(params.startTime),
-    '-i', params.inputPath,
-    '-t', String(duration),
+    ...seekArgs,
     '-map', '0:v:0',
     '-map', '0:a:0?',
     '-c:v', 'libx264',
@@ -2030,7 +2048,10 @@ async function createLocalClip(params: {
     });
   } catch (error) {
     const errStderr = error && typeof error === 'object' && 'stderr' in error ? String(error.stderr) : '';
-    throw new Error(errStderr.trim() || 'ffmpeg failed to generate the clip.');
+    const errStdout = error && typeof error === 'object' && 'stdout' in error ? String(error.stdout) : '';
+    const combined = `${errStderr}\n${errStdout}`.trim();
+    const tail = combined.length > 6000 ? combined.slice(-6000) : combined;
+    throw new Error(tail || 'ffmpeg failed to generate the clip.');
   }
 
   const thumbnailUrl = await generateThumbnail(outputPath, duration);

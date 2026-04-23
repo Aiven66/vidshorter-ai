@@ -104,6 +104,9 @@ public/generated-clips/
 *.mp4
 *.mp4.part
 
+.home/
+.wrangler/
+
 # Test files
 test-*.js
 test-output*

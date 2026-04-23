@@ -304,8 +304,8 @@ export async function POST(request: NextRequest) {
             draftClip.status = 'failed';
             draftClip.videoUrl = null;
             (draftClip as unknown as { error?: string }).error = error instanceof Error
-              ? error.message.slice(0, 200)
-              : String(error).slice(0, 200);
+              ? error.message.slice(-800)
+              : String(error).slice(-800);
           }
 
           clips.push(draftClip);
