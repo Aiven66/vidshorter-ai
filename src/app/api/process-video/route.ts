@@ -6,6 +6,14 @@ interface ProcessVideoRequest {
   videoUrl?: string;
   userId?: string;
   sourceType?: string;
+  highlights?: Highlight[];
+  duration?: number;
+  title?: string;
+  desiredClipCount?: number;
+  clipOffset?: number;
+  clipLimit?: number;
+  jobId?: string;
+  videoId?: string;
 }
 
 interface Highlight {
@@ -47,6 +55,18 @@ function sendSSE(controller: ReadableStreamDefaultController<Uint8Array>, payloa
   }
 }
 
+function clampInt(value: unknown, min: number, max: number, fallback: number) {
+  const n = typeof value === 'number' ? value : parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(n)));
+}
+
+function recommendClipCount(duration: number) {
+  const safe = Math.max(0, Number.isFinite(duration) ? duration : 0);
+  const guess = Math.round(safe / 90);
+  return Math.max(3, Math.min(10, guess));
+}
+
 function isValidVideoUrl(value: string) {
   try {
     const url = new URL(value);
@@ -60,15 +80,23 @@ function hasPlayableUrl(clip: ClipResult): clip is ClipResult & { videoUrl: stri
   return clip.status === 'completed' && typeof clip.videoUrl === 'string' && clip.videoUrl.length > 0;
 }
 
-// On Vercel serverless, limit clips to avoid hitting the 300s function timeout.
-// 3 clips × ~60s each (stream fetch + ffmpeg encode) = ~180s comfortably within budget.
-const MAX_CLIPS = process.env.VERCEL ? 3 : 10;
+const DEFAULT_BATCH_SIZE =
+  clampInt(process.env.PROCESS_VIDEO_BATCH_SIZE, 1, 10, 0) ||
+  (process.env.VERCEL ? 3 : 10);
 
 export async function POST(request: NextRequest) {
   const body = (await request.json()) as ProcessVideoRequest;
   const videoUrl = body.videoUrl?.trim();
   const userId = body.userId?.trim();
   const sourceType = body.sourceType?.trim() || 'url';
+  const jobId = body.jobId?.trim() || `job-${Date.now()}`;
+  const clipOffset = clampInt(body.clipOffset, 0, 10_000, 0);
+  const clipLimitFromRequest = clampInt(body.clipLimit, 1, 10, 0);
+  const desiredClipCountFromRequest = clampInt(body.desiredClipCount, 1, 10, 0);
+  const suppliedHighlights = Array.isArray(body.highlights) ? (body.highlights as Highlight[]) : null;
+  const suppliedDuration = clampInt(body.duration, 0, 100_000, 0);
+  const suppliedTitle = typeof body.title === 'string' ? body.title.trim().slice(0, 120) : '';
+  const suppliedVideoId = typeof body.videoId === 'string' ? body.videoId.trim() : '';
   const abortSignal = request.signal;
 
   if (!videoUrl) {
@@ -100,6 +128,7 @@ export async function POST(request: NextRequest) {
           stage: 'init',
           progress: 5,
           message: 'Initializing AutoClip-style processing...',
+          data: { jobId },
         })) return;
 
         const isBilibili = videoUrl.includes('bilibili.com') || videoUrl.includes('b23.tv');
@@ -110,20 +139,48 @@ export async function POST(request: NextRequest) {
           message: isBilibili
             ? 'Analyzing Bilibili video metadata and timeline...'
             : 'Analyzing subtitles and timeline to find highlight moments...',
+          data: { jobId },
         })) return;
 
-        const analysis = await videoClipper.analyzeVideo(videoUrl);
+        const analysis = suppliedHighlights && suppliedHighlights.length > 0
+          ? {
+              duration: suppliedDuration,
+              title: suppliedTitle || 'Video',
+              highlights: suppliedHighlights,
+            }
+          : await videoClipper.analyzeVideo(videoUrl);
         if (abortSignal.aborted) return;
-        // Limit highlights to MAX_CLIPS to stay within serverless timeout budget
-        const highlights = (analysis.highlights as Highlight[]).slice(0, MAX_CLIPS);
+        const recommendedCount =
+          desiredClipCountFromRequest ||
+          (suppliedHighlights && suppliedHighlights.length > 0 ? suppliedHighlights.length : 0) ||
+          recommendClipCount(analysis.duration);
+        const allHighlights = (analysis.highlights as Highlight[]).slice(0, recommendedCount);
+        const remaining = Math.max(0, allHighlights.length - clipOffset);
+        const batchLimit = Math.max(
+          0,
+          Math.min(remaining, clipLimitFromRequest || DEFAULT_BATCH_SIZE),
+        );
+        const highlights = allHighlights.slice(clipOffset, clipOffset + batchLimit);
+        if (highlights.length === 0) {
+          throw new Error('No highlights to process for the given clipOffset/clipLimit.');
+        }
+
+        let dbVideoId = suppliedVideoId || '';
 
         if (!sendSSE(controller, {
           stage: 'analysis_complete',
           progress: 45,
-          message: `Found ${highlights.length} highlight moments in "${analysis.title}".`,
+          message: `Found ${allHighlights.length} highlight moments in "${analysis.title}".`,
           data: {
-            highlights,
+            jobId,
+            highlights: allHighlights,
             estimatedDuration: analysis.duration,
+            title: analysis.title,
+            clipOffset,
+            clipLimit: batchLimit,
+            totalHighlights: allHighlights.length,
+            recommendedClipCount: recommendedCount,
+            videoId: dbVideoId || undefined,
           },
         })) return;
 
@@ -137,7 +194,38 @@ export async function POST(request: NextRequest) {
           message: isBilibili
             ? 'Connecting to Bilibili video stream...'
             : 'Connecting to video stream...',
+          data: { jobId },
         })) return;
+
+        if (!dbVideoId && isSupabaseConfigured() && !userId.startsWith('demo-')) {
+          try {
+            const { getSupabaseClient } = await import('@/storage/database/supabase-client');
+            const client = getSupabaseClient();
+            const { data: video } = await client
+              .from('videos')
+              .insert({
+                user_id: userId,
+                original_url: videoUrl,
+                source_type: sourceType,
+                title: analysis.title,
+                duration: analysis.duration,
+                status: 'processing',
+                highlights: JSON.stringify(allHighlights),
+              })
+              .select()
+              .single();
+            if (video?.id) dbVideoId = String(video.id);
+          } catch {}
+        }
+
+        if (dbVideoId) {
+          sendSSE(controller, {
+            stage: 'analysis_complete',
+            progress: 46,
+            message: 'Preparing clip generation...',
+            data: { jobId, videoId: dbVideoId },
+          });
+        }
 
         try {
           source = await videoClipper.downloadSourceVideo(videoUrl);
@@ -163,7 +251,7 @@ export async function POST(request: NextRequest) {
           const safeEnd = maxDuration > 0 ? Math.min(Math.max(rawEnd, safeStart + 1), maxDuration) : Math.max(rawEnd, safeStart + 1);
 
           const draftClip: ClipResult = {
-            id: `clip-${Date.now()}-${index}`,
+            id: `${jobId}-clip-${clipOffset + index}`,
             title: highlight.title,
             startTime: safeStart,
             endTime: safeEnd,
@@ -178,8 +266,8 @@ export async function POST(request: NextRequest) {
           if (!sendSSE(controller, {
             stage: 'generating_clip',
             progress: 50 + Math.floor((index / highlights.length) * 35),
-            message: `Generating clip ${index + 1}/${highlights.length}: "${highlight.title}"`,
-            data: { clip: draftClip, clipIndex: index },
+            message: `Generating clip ${clipOffset + index + 1}/${allHighlights.length}: "${highlight.title}"`,
+            data: { clip: draftClip, clipIndex: clipOffset + index, jobId, videoId: dbVideoId || undefined },
           })) return;
 
           try {
@@ -215,6 +303,9 @@ export async function POST(request: NextRequest) {
             console.warn(`Clip generation failed for "${highlight.title}":`, error);
             draftClip.status = 'failed';
             draftClip.videoUrl = null;
+            (draftClip as unknown as { error?: string }).error = error instanceof Error
+              ? error.message.slice(0, 200)
+              : String(error).slice(0, 200);
           }
 
           clips.push(draftClip);
@@ -227,59 +318,45 @@ export async function POST(request: NextRequest) {
               draftClip.status === 'completed'
                 ? `Clip ready: "${highlight.title}"`
                 : `Clip failed: "${highlight.title}"`,
-            data: { clip: draftClip, clipIndex: index },
+            data: { clip: draftClip, clipIndex: clipOffset + index, jobId, videoId: dbVideoId || undefined },
           })) return;
         }
 
         const completedClips = clips.filter(hasPlayableUrl);
         if (abortSignal.aborted) return;
-        if (completedClips.length === 0) {
-          throw new Error('All highlight clip generation failed. Please retry or try a different video.');
+        if (completedClips.length === 0 && clipOffset === 0) {
+          const lastFailed = clips.findLast(c => c.status === 'failed') as (ClipResult & { error?: string }) | undefined;
+          const extra = lastFailed?.error ? ` Last error: ${lastFailed.error}` : '';
+          throw new Error(`All highlight clip generation failed. Please retry or try a different video.${extra}`);
         }
 
         if (!sendSSE(controller, {
           stage: 'saving',
           progress: 93,
           message: 'Saving generated clips...',
+          data: { jobId, videoId: dbVideoId || undefined },
         })) return;
 
-        if (isSupabaseConfigured() && !userId.startsWith('demo-')) {
+        if (dbVideoId && isSupabaseConfigured() && !userId.startsWith('demo-')) {
           try {
             const { getSupabaseClient } = await import('@/storage/database/supabase-client');
             const client = getSupabaseClient();
 
-            const { data: video } = await client
-              .from('videos')
-              .insert({
+            for (const clip of completedClips) {
+              const dbVideoUrl = clip.videoUrl?.startsWith('data:')
+                ? `data-url:${clip.id}`
+                : clip.videoUrl;
+              await client.from('short_videos').insert({
+                video_id: dbVideoId,
                 user_id: userId,
-                original_url: videoUrl,
-                source_type: sourceType,
-                title: analysis.title,
-                duration: analysis.duration,
-                status: completedClips.length === clips.length ? 'completed' : 'partial',
-                highlights: JSON.stringify(highlights),
-              })
-              .select()
-              .single();
-
-            if (video) {
-              for (const clip of completedClips) {
-                // Don't save large data URLs to the database — store a placeholder
-                const dbVideoUrl = clip.videoUrl?.startsWith('data:')
-                  ? `data-url:${clip.id}`
-                  : clip.videoUrl;
-                await client.from('short_videos').insert({
-                  video_id: video.id,
-                  user_id: userId,
-                  url: dbVideoUrl,
-                  start_time: clip.startTime,
-                  end_time: clip.endTime,
-                  duration: clip.duration,
-                  highlight_title: clip.title,
-                  highlight_summary: clip.summary,
-                  thumbnail_url: clip.thumbnailUrl,
-                });
-              }
+                url: dbVideoUrl,
+                start_time: clip.startTime,
+                end_time: clip.endTime,
+                duration: clip.duration,
+                highlight_title: clip.title,
+                highlight_summary: clip.summary,
+                thumbnail_url: clip.thumbnailUrl,
+              });
             }
           } catch (dbError) {
             console.warn('Database save failed:', dbError);
@@ -287,14 +364,37 @@ export async function POST(request: NextRequest) {
         }
 
         if (abortSignal.aborted) return;
+        const nextOffset = clipOffset + highlights.length;
+        const done = nextOffset >= allHighlights.length;
+        if (dbVideoId && isSupabaseConfigured() && !userId.startsWith('demo-')) {
+          try {
+            const { getSupabaseClient } = await import('@/storage/database/supabase-client');
+            const client = getSupabaseClient();
+            await client
+              .from('videos')
+              .update({
+                status: done
+                  ? (completedClips.length === clips.length ? 'completed' : 'partial')
+                  : 'processing',
+              })
+              .eq('id', dbVideoId);
+          } catch {}
+        }
         sendSSE(controller, {
           stage: 'complete',
           progress: 100,
           message: `Generated ${completedClips.length} playable highlight clips.`,
           data: {
+            jobId,
+            videoId: dbVideoId || undefined,
             clips,
-            highlights,
+            highlights: allHighlights,
             estimatedDuration: analysis.duration,
+            clipOffset,
+            clipLimit: batchLimit,
+            totalHighlights: allHighlights.length,
+            nextOffset,
+            done,
           },
         });
       } catch (error) {

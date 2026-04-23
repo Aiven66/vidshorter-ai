@@ -67,6 +67,15 @@ interface SSEData {
     error?: boolean;
     frameCount?: number;
     estimatedDuration?: number;
+    title?: string;
+    recommendedClipCount?: number;
+    totalHighlights?: number;
+    clipOffset?: number;
+    clipLimit?: number;
+    nextOffset?: number;
+    done?: boolean;
+    jobId?: string;
+    videoId?: string;
   };
 }
 
@@ -129,6 +138,13 @@ function saveDemoVideoRecord(url: string, title: string | null, clips: VideoClip
   } catch {
     // ignore localStorage errors
   }
+}
+
+function mergeClips(prev: VideoClip[], next: VideoClip[]) {
+  const map = new Map<string, VideoClip>();
+  for (const clip of prev) map.set(clip.id, clip);
+  for (const clip of next) map.set(clip.id, clip);
+  return Array.from(map.values());
 }
 
 /* ── Component ─────────────────────────────────── */
@@ -200,66 +216,116 @@ export default function HomePage() {
       const ok = await deductCredits(30);
       if (!ok) throw new Error('Failed to deduct credits');
 
-      const res = await fetch('/api/process-video', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      let allHighlights: NonNullable<SSEData['data']>['highlights'] = [];
+      let analysisDuration = 0;
+      let analysisTitle: string | null = null;
+      let jobId: string | null = null;
+      let videoId: string | null = null;
+      let nextOffset = 0;
+      let done = false;
+      let batchLimit = 3;
+      const clipMap = new Map<string, VideoClip>();
+
+      const runBatch = async (payload: Record<string, unknown>) => {
+        const res = await fetch('/api/process-video', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) throw new Error(`Server error: ${res.status}`);
+
+        const reader = res.body?.getReader();
+        if (!reader) throw new Error('No response stream');
+
+        const decoder = new TextDecoder();
+        let buf = '';
+
+        while (true) {
+          const { done: readDone, value } = await reader.read();
+          if (readDone) break;
+          buf += decoder.decode(value, { stream: true });
+          const lines = buf.split('\n');
+          buf = lines.pop() || '';
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const d: SSEData = JSON.parse(line.slice(6));
+              setProgress(d);
+
+              if (d.data?.jobId && !jobId) jobId = d.data.jobId;
+              if (d.data?.videoId) videoId = d.data.videoId;
+              if (d.data?.estimatedDuration) analysisDuration = d.data.estimatedDuration;
+              if (typeof d.data?.title === 'string' && d.data.title.trim()) analysisTitle = d.data.title.trim();
+              if (d.data?.highlights && d.data.highlights.length > 0) allHighlights = d.data.highlights;
+              if (typeof d.data?.clipLimit === 'number' && d.data.clipLimit > 0) batchLimit = d.data.clipLimit;
+              if (typeof d.data?.nextOffset === 'number') nextOffset = d.data.nextOffset;
+              if (typeof d.data?.done === 'boolean') done = d.data.done;
+
+              if (d.data?.clips) {
+                for (const clip of d.data.clips) clipMap.set(clip.id, clip);
+                setClips(prev => mergeClips(prev, d.data!.clips!));
+              }
+              if (d.data?.clip) {
+                clipMap.set(d.data.clip.id, d.data.clip);
+                setClips(prev => mergeClips(prev, [d.data!.clip!]));
+              }
+              if (d.data?.error) setError(d.message);
+            } catch {}
+          }
+        }
+
+        if (buf.startsWith('data: ')) {
+          try {
+            const d: SSEData = JSON.parse(buf.slice(6));
+            setProgress(d);
+            if (d.data?.jobId && !jobId) jobId = d.data.jobId;
+            if (d.data?.videoId) videoId = d.data.videoId;
+            if (d.data?.estimatedDuration) analysisDuration = d.data.estimatedDuration;
+            if (typeof d.data?.title === 'string' && d.data.title.trim()) analysisTitle = d.data.title.trim();
+            if (d.data?.highlights && d.data.highlights.length > 0) allHighlights = d.data.highlights;
+            if (typeof d.data?.clipLimit === 'number' && d.data.clipLimit > 0) batchLimit = d.data.clipLimit;
+            if (typeof d.data?.nextOffset === 'number') nextOffset = d.data.nextOffset;
+            if (typeof d.data?.done === 'boolean') done = d.data.done;
+            if (d.data?.clips) {
+              for (const clip of d.data.clips) clipMap.set(clip.id, clip);
+              setClips(prev => mergeClips(prev, d.data!.clips!));
+            }
+            if (d.data?.clip) {
+              clipMap.set(d.data.clip.id, d.data.clip);
+              setClips(prev => mergeClips(prev, [d.data!.clip!]));
+            }
+            if (d.data?.error) setError(d.message);
+          } catch {}
+        }
+      };
+
+      await runBatch({
+        videoUrl: trimmedVideoUrl,
+        userId: user.id,
+        sourceType: 'url',
+        aiConfig: getAdminAiConfig(),
+      });
+
+      while (!done && allHighlights && allHighlights.length > 0 && nextOffset < allHighlights.length) {
+        await runBatch({
           videoUrl: trimmedVideoUrl,
           userId: user.id,
           sourceType: 'url',
           aiConfig: getAdminAiConfig(),
-        }),
-      });
-      if (!res.ok) throw new Error(`Server error: ${res.status}`);
-
-      const reader = res.body?.getReader();
-      if (!reader) throw new Error('No response stream');
-
-      const decoder = new TextDecoder();
-      let buf = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split('\n');
-        buf = lines.pop() || '';
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          try {
-            const d: SSEData = JSON.parse(line.slice(6));
-            setProgress(d);
-
-            if (d.data?.clips) setClips(d.data.clips);
-            if (d.data?.clip) {
-              setClips(prev => {
-                const exists = prev.find(c => c.id === d.data!.clip!.id);
-                return exists
-                  ? prev.map(c => (c.id === d.data!.clip!.id ? d.data!.clip! : c))
-                  : [...prev, d.data!.clip!];
-              });
-            }
-            if (d.data?.error) setError(d.message);
-            // Save to processing history when complete
-            if (d.stage === 'complete' && d.data?.clips) {
-              const allClips = d.data.clips as VideoClip[];
-              const videoTitle = d.message.match(/in "(.+)"/)?.[1] || null;
-              saveDemoVideoRecord(trimmedVideoUrl, videoTitle, allClips, user?.id);
-            }
-          } catch { /* incomplete chunk */ }
-        }
+          highlights: allHighlights,
+          duration: analysisDuration,
+          title: analysisTitle,
+          clipOffset: nextOffset,
+          clipLimit: batchLimit,
+          jobId,
+          videoId,
+        });
       }
 
-      if (buf.startsWith('data: ')) {
-        try {
-          const d: SSEData = JSON.parse(buf.slice(6));
-          setProgress(d);
-          if (d.data?.clips) setClips(d.data.clips);
-          if (d.data?.error) setError(d.message);
-        } catch {
-          // Ignore an incomplete trailing event chunk.
-        }
+      if (done) {
+        const videoTitle = analysisTitle || null;
+        saveDemoVideoRecord(trimmedVideoUrl, videoTitle, Array.from(clipMap.values()), user?.id);
       }
     } catch (err) {
       console.error('Processing error:', err);

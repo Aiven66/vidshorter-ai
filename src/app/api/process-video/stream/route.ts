@@ -111,7 +111,8 @@ export async function POST(request: NextRequest) {
         const llmClient = new LLMClient(config, customHeaders);
         
         // Build the analysis prompt
-        const analysisPrompt = `You are an expert video content analyst. Analyze this video and identify the 3 most engaging highlights that would make great 30-60 second short video clips.
+        const targetHighlights = Math.max(3, Math.min(10, Math.round(videoDuration / 90)));
+        const analysisPrompt = `You are an expert video content analyst. Analyze this video and identify the ${targetHighlights} most engaging highlights that would make great 30-60 second short video clips.
 
 Video Information:
 - URL: ${finalVideoUrl}
@@ -183,30 +184,20 @@ Respond with ONLY valid JSON in this exact format:
           console.error('LLM analysis error:', llmError);
           
           // Generate default highlights based on video duration
-          const segmentDuration = Math.min(30, videoDuration / 4);
-          highlights = [
-            { 
-              title: 'Opening Hook', 
-              start_time: 0, 
-              end_time: Math.min(30, videoDuration), 
-              summary: 'The opening moments that set the tone',
-              engagement_score: 7 
-            },
-            { 
-              title: 'Key Moment', 
-              start_time: Math.min(60, videoDuration / 3), 
-              end_time: Math.min(90, videoDuration / 3 + 30), 
-              summary: 'Important content in the middle section',
-              engagement_score: 8 
-            },
-            { 
-              title: 'Memorable Ending', 
-              start_time: Math.max(0, videoDuration - 60), 
-              end_time: videoDuration, 
-              summary: 'The impactful conclusion',
-              engagement_score: 7 
-            },
-          ];
+          const clipLen = 45;
+          const spacing = Math.max(20, Math.floor(videoDuration / (targetHighlights + 1)));
+          highlights = Array.from({ length: targetHighlights }, (_, i) => {
+            const center = spacing * (i + 1);
+            const start = Math.max(0, Math.min(videoDuration - clipLen, center - Math.floor(clipLen / 2)));
+            const end = Math.min(videoDuration, start + clipLen);
+            return {
+              title: `Highlight ${i + 1}`,
+              start_time: start,
+              end_time: end,
+              summary: `Automatically selected highlight ${i + 1}`,
+              engagement_score: 7,
+            };
+          });
 
           sendMessage(controller, {
             stage: 'ai_fallback',

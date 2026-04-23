@@ -352,7 +352,7 @@ function buildHeuristicHighlights(cues: CaptionCue[], duration: number) {
     windows.push({ title: title.slice(0, 80), start_time: start, end_time: end, summary: text.slice(0, 140), engagement_score: Math.min(10, score) });
   }
   windows.sort((a, b) => b.engagement_score - a.engagement_score);
-  const targetCount = Math.min(MAX_HIGHLIGHTS, Math.max(6, Math.floor(duration / 120)));
+  const targetCount = Math.min(MAX_HIGHLIGHTS, Math.max(5, Math.round(duration / 90)));
   const selected: Highlight[] = [];
   for (const c of windows) {
     if (!selected.some(
@@ -1606,7 +1606,7 @@ async function downloadBilibiliVideo(
 // Used directly on Vercel (skips yt-dlp) and as fallback after yt-dlp fails.
 // Priority: CF Worker > Edge Function (CDN IPs) > cobalt.tools (age-restricted OK) > DirectInnerTube > YouTube.js > Invidious > Piped
 async function getYouTubeStreamUrlWithFallbacks(videoId: string): Promise<string> {
-  const allowCobalt = !IS_VERCEL || !!process.env.COBALT_API_URL;
+  const allowCobalt = true;
   const streamGetters = IS_VERCEL
     ? [
         ...(getCfWorkerUrl() ? [{ name: 'CF Worker', fn: () => getYouTubeInfoViaCFWorker(videoId) }] : []),
@@ -1733,6 +1733,24 @@ async function downloadStreamToLocalFile(url: string, outputPath: string): Promi
   return false;
 }
 
+async function preflightStream(url: string): Promise<boolean> {
+  try {
+    const res = await fetch(url, {
+      headers: {
+        Range: 'bytes=0-1',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+        'Accept': '*/*',
+        'Accept-Encoding': 'identity',
+      },
+      signal: AbortSignal.timeout(12_000),
+    });
+    res.body?.cancel();
+    return res.status === 200 || res.status === 206;
+  } catch {
+    return false;
+  }
+}
+
 async function downloadYouTubeOrGenericVideo(
   videoUrl: string, outputTemplate: string, hasCookies: boolean,
 ): Promise<PreparedSource> {
@@ -1755,6 +1773,11 @@ async function downloadYouTubeOrGenericVideo(
           u.searchParams.set('videoId', videoId);
           u.searchParams.set('maxHeight', String(h));
           const streamProxyUrl = u.toString();
+          const ok = await preflightStream(streamProxyUrl);
+          if (!ok) {
+            console.warn(`CF Worker /stream preflight failed for maxHeight=${h}, trying next…`);
+            continue;
+          }
           const downloaded = await downloadStreamToLocalFile(streamProxyUrl, localPath);
           if (downloaded) {
             console.log('Vercel environment: using locally cached YouTube source for ffmpeg input');
@@ -1767,7 +1790,11 @@ async function downloadYouTubeOrGenericVideo(
         u.pathname = `${u.pathname.replace(/\/$/, '')}/stream`;
         u.searchParams.set('videoId', videoId);
         u.searchParams.set('maxHeight', String(heights[heights.length - 1] || YOUTUBE_MAX_HEIGHT));
-        return { inputPath: u.toString() };
+        const streamUrl = u.toString();
+        if (await preflightStream(streamUrl)) {
+          return { inputPath: streamUrl };
+        }
+        throw new Error('CF Worker /stream preflight failed (will try other fallbacks)');
       } catch (e) {
         console.warn(
           'CF Worker stream URL build failed, trying Vercel edge proxy…',
@@ -1798,7 +1825,19 @@ async function downloadYouTubeOrGenericVideo(
     }
 
     console.log('Vercel environment: using non-yt-dlp YouTube stream fallbacks');
-    return { inputPath: await getYouTubeStreamUrlWithFallbacks(videoId) };
+    const streamUrl = await getYouTubeStreamUrlWithFallbacks(videoId);
+    try {
+      const localPath = path.join(path.dirname(outputTemplate), 'source.mp4');
+      const ok = await preflightStream(streamUrl);
+      if (ok) {
+        const downloaded = await downloadStreamToLocalFile(streamUrl, localPath);
+        if (downloaded) {
+          console.log('Vercel environment: using locally cached fallback stream for ffmpeg input');
+          return { inputPath: localPath };
+        }
+      }
+    } catch {}
+    return { inputPath: streamUrl };
   }
 
   const baseArgs = [
