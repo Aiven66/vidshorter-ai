@@ -1883,6 +1883,7 @@ async function downloadYouTubeOrGenericVideo(
       try {
         const localPath = path.join(path.dirname(outputTemplate), 'source.mp4');
         const heights = Array.from(new Set([YOUTUBE_MAX_HEIGHT, 360, 240, 144].filter(Boolean)));
+        let remoteCandidate = '';
         for (const h of heights) {
           const u = new URL(cfWorkerUrl);
           u.pathname = `${u.pathname.replace(/\/$/, '')}/stream`;
@@ -1899,8 +1900,13 @@ async function downloadYouTubeOrGenericVideo(
             console.log('Vercel environment: using locally cached YouTube source for ffmpeg input');
             return { inputPath: localPath };
           }
+          remoteCandidate = streamProxyUrl;
         }
-        throw new Error('CF Worker stream could not be cached locally');
+        if (remoteCandidate) {
+          console.log('Vercel environment: using CF Worker stream proxy directly as ffmpeg input (no local cache)');
+          return { inputPath: remoteCandidate };
+        }
+        throw new Error('CF Worker stream is unavailable');
       } catch (e) {
         console.warn(
           'CF Worker stream URL build failed, trying Vercel edge proxy…',
@@ -1943,7 +1949,13 @@ async function downloadYouTubeOrGenericVideo(
         }
       }
     } catch {}
-    return { inputPath: streamUrl };
+    const ffmpegHeaders =
+      'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36\r\n' +
+      'Referer: https://www.youtube.com/\r\n' +
+      'Origin: https://www.youtube.com\r\n' +
+      'Accept: */*\r\n' +
+      'Accept-Encoding: identity\r\n';
+    return { inputPath: streamUrl, ffmpegHeaders };
   }
 
   const baseArgs = [
@@ -2068,6 +2080,14 @@ async function createLocalClip(params: {
   const duration = Math.max(1, params.endTime - params.startTime);
 
   const isRemoteInput = params.inputPath.startsWith('http');
+  const isWorkerStream = isRemoteInput && (() => {
+    try {
+      const u = new URL(params.inputPath);
+      return u.pathname.includes('/stream') && (u.hostname.endsWith('.workers.dev') || u.hostname.includes('youtube-proxy'));
+    } catch {
+      return false;
+    }
+  })();
 
   // Detect Bilibili CDN streams (need anti-leech headers)
   const isBilibiliStream = isRemoteInput && (
@@ -2106,9 +2126,9 @@ async function createLocalClip(params: {
   const crf = IS_VERCEL ? VERCEL_CRF : (isRemoteInput ? '20' : '18');
   const preset = IS_VERCEL ? 'ultrafast' : (isRemoteInput ? 'veryfast' : 'fast');
 
-  const seekArgs = isRemoteInput
-    ? ['-i', params.inputPath, '-ss', String(params.startTime), '-t', String(duration)]
-    : ['-ss', String(params.startTime), '-i', params.inputPath, '-t', String(duration)];
+  const seekArgs = (!isRemoteInput || isWorkerStream)
+    ? ['-ss', String(params.startTime), '-i', params.inputPath, '-t', String(duration)]
+    : ['-i', params.inputPath, '-ss', String(params.startTime), '-t', String(duration)];
 
   const args = [
     '-y',
