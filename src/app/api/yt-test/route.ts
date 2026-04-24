@@ -194,12 +194,32 @@ export async function GET(request: NextRequest) {
           fetch(streamUrl.toString(), {
             headers: { Range: 'bytes=0-1' },
             signal: AbortSignal.timeout(15_000),
-          }).then(r => ({
-            name: 'CF Worker (stream)',
-            success: r.status === 200 || r.status === 206,
-            error: r.status === 200 || r.status === 206 ? undefined : `HTTP ${r.status}`,
-            streamUrlPrefix: streamUrl.toString().slice(0, 80),
-          } as TestResult)),
+          }).then(async (r) => {
+            if (r.status === 200 || r.status === 206) {
+              r.body?.cancel();
+              return {
+                name: 'CF Worker (stream)',
+                success: true,
+                streamUrlPrefix: streamUrl.toString().slice(0, 80),
+              } as TestResult;
+            }
+            const contentType = (r.headers.get('content-type') || '').toLowerCase();
+            let details = '';
+            try {
+              if (contentType.includes('application/json')) {
+                const d = await r.json() as { error?: string; details?: string };
+                details = [d.error, d.details].filter(Boolean).join(' ').slice(0, 200);
+              } else {
+                details = (await r.text()).slice(0, 200);
+              }
+            } catch {}
+            return {
+              name: 'CF Worker (stream)',
+              success: false,
+              error: `HTTP ${r.status}${details ? `: ${details}` : ''}`,
+              streamUrlPrefix: streamUrl.toString().slice(0, 80),
+            } as TestResult;
+          }),
         ]);
 
         return [

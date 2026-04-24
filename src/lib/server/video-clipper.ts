@@ -78,6 +78,34 @@ function getCfWorkerUrl() {
   return typeof value === 'string' ? value : '';
 }
 
+function getAppBaseUrl() {
+  const raw =
+    (process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || '').trim();
+  const value = raw || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '');
+  if (!value) return '';
+  const withProto = /^https?:\/\//i.test(value) ? value : `https://${value}`;
+  return withProto.replace(/\/$/, '');
+}
+
+function getVercelProtectionBypassHeaders() {
+  const secret =
+    (process.env.VERCEL_AUTOMATION_BYPASS_SECRET || process.env.VERCEL_PROTECTION_BYPASS || process.env.VERCEL_BYPASS_SECRET || '').trim();
+  return secret ? { 'x-vercel-protection-bypass': secret } : {};
+}
+
+function getBypassHeadersForUrl(url: string) {
+  const baseUrl = getAppBaseUrl();
+  if (!baseUrl) return {};
+  if (!url.startsWith(baseUrl)) return {};
+  return getVercelProtectionBypassHeaders();
+}
+
+function getBypassFfmpegHeaderString() {
+  const headers = getVercelProtectionBypassHeaders();
+  const secret = headers['x-vercel-protection-bypass'];
+  return secret ? `x-vercel-protection-bypass: ${secret}\r\n` : '';
+}
+
 // Cookie files (local macOS dev only)
 const COOKIE_FILE_PATH = path.join(CACHE_DIR, 'yt-cookies.txt');
 const CHROME_COOKIE_DB = path.join(
@@ -732,11 +760,16 @@ async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInf
 
   if (!data.streamUrl) throw new Error(data.error ?? 'CF Worker: missing streamUrl');
 
+  const streamEndpoint = new URL(cfWorkerUrl);
+  streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
+  streamEndpoint.searchParams.set('videoId', videoId);
+  streamEndpoint.searchParams.set('maxHeight', String(YOUTUBE_MAX_HEIGHT));
+
   console.log(`CF Worker success: "${(data.title ?? '').slice(0, 50)}", client=${data.client}, quality=${data.quality}`);
   return {
     title: data.title || 'YouTube Video',
     duration: data.duration || 300,
-    streamUrl: data.streamUrl,
+    streamUrl: streamEndpoint.toString(),
     subtitleUrl: null,
   };
 }
@@ -747,12 +780,12 @@ async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInf
 // co-deployed edge function to resolve the stream URL from safe IPs.
 // VERCEL_URL is automatically injected by Vercel (e.g. "projects-pi-kohl.vercel.app").
 async function getYouTubeInfoViaEdgeFunction(videoId: string): Promise<PipedVideoInfo> {
-  const vercelUrl = process.env.VERCEL_URL || '';
-  if (!vercelUrl) throw new Error('VERCEL_URL env var not set — edge function unavailable');
+  const baseUrl = getAppBaseUrl();
+  if (!baseUrl) throw new Error('APP_BASE_URL/NEXT_PUBLIC_APP_URL/VERCEL_URL env var not set — edge function unavailable');
 
-  const endpoint = `https://${vercelUrl}/api/yt-stream?videoId=${encodeURIComponent(videoId)}`;
+  const endpoint = `${baseUrl}/api/yt-stream?videoId=${encodeURIComponent(videoId)}`;
   const res = await fetch(endpoint, {
-    headers: { Accept: 'application/json' },
+    headers: { Accept: 'application/json', ...getVercelProtectionBypassHeaders() },
     signal: AbortSignal.timeout(25_000),
   });
 
@@ -769,6 +802,7 @@ async function getYouTubeInfoViaEdgeFunction(videoId: string): Promise<PipedVide
 
   if (!data.streamUrl) throw new Error(data.error ?? 'Edge function: missing streamUrl');
 
+  const proxyUrl = `${baseUrl}/api/yt-proxy?videoId=${encodeURIComponent(videoId)}&maxHeight=${encodeURIComponent(String(YOUTUBE_MAX_HEIGHT))}`;
   console.log(
     `Edge function success: "${(data.title ?? '').slice(0, 50)}", ` +
     `client=${data.client}, quality=${data.quality}`,
@@ -776,7 +810,7 @@ async function getYouTubeInfoViaEdgeFunction(videoId: string): Promise<PipedVide
   return {
     title: data.title || 'YouTube Video',
     duration: data.duration || 300,
-    streamUrl: data.streamUrl,
+    streamUrl: proxyUrl,
     subtitleUrl: null,
   };
 }
@@ -1157,12 +1191,19 @@ async function fetchPipedSubtitleCues(subtitleUrl: string): Promise<CaptionCue[]
 async function fetchYouTubeTranscriptCues(videoId: string): Promise<CaptionCue[]> {
   try {
     const { YoutubeTranscript } = await import('youtube-transcript');
+    const withTimeout = async <T>(fn: () => Promise<T>, ms: number): Promise<T> => Promise.race([
+      fn(),
+      new Promise<T>((_, reject) => setTimeout(() => reject(new Error('timeout')), ms)),
+    ]);
     // Try several languages
     for (const lang of ['en', 'en-US', 'zh-Hans', 'zh', '']) {
       try {
-        const transcript = lang
-          ? await YoutubeTranscript.fetchTranscript(videoId, { lang })
-          : await YoutubeTranscript.fetchTranscript(videoId);
+        const transcript = await withTimeout(
+          () => (lang
+            ? YoutubeTranscript.fetchTranscript(videoId, { lang })
+            : YoutubeTranscript.fetchTranscript(videoId)),
+          12_000,
+        );
         if (transcript.length > 0) {
           return transcript.map(item => ({
             start: item.offset / 1000,
@@ -1191,7 +1232,7 @@ async function analyzeYouTubeViaPipedAndTranscript(videoUrl: string): Promise<Vi
   // Priority: CF Worker (if set) > Edge Function (CDN IPs, reliable) > DirectInnerTube > YouTube.js > Invidious > Piped
   const metaGetters = [
     ...(getCfWorkerUrl() ? [() => getYouTubeInfoViaCFWorker(videoId)] : []),
-    ...(process.env.VERCEL_URL ? [() => getYouTubeInfoViaEdgeFunction(videoId)] : []),
+    ...(getAppBaseUrl() ? [() => getYouTubeInfoViaEdgeFunction(videoId)] : []),
     () => getYouTubeInfoViaDirectInnerTube(videoId),
     () => getYouTubeInfoViaYouTubeJs(videoId),
     () => getYouTubeInfoViaInvidious(videoId),
@@ -1607,10 +1648,12 @@ async function downloadBilibiliVideo(
 // Priority: CF Worker > Edge Function (CDN IPs) > cobalt.tools (age-restricted OK) > DirectInnerTube > YouTube.js > Invidious > Piped
 async function getYouTubeStreamUrlWithFallbacks(videoId: string): Promise<string> {
   const allowCobalt = true;
+  const startedAt = Date.now();
+  const budgetMs = IS_VERCEL ? 60_000 : 120_000;
   const streamGetters = IS_VERCEL
     ? [
         ...(getCfWorkerUrl() ? [{ name: 'CF Worker', fn: () => getYouTubeInfoViaCFWorker(videoId) }] : []),
-        ...(process.env.VERCEL_URL
+        ...(getAppBaseUrl()
           ? [{ name: 'EdgeFunction', fn: () => getYouTubeInfoViaEdgeFunction(videoId) }]
           : []),
         ...(allowCobalt ? [{ name: 'cobalt', fn: () => getYouTubeInfoViaCobalt(videoId) }] : []),
@@ -1621,7 +1664,7 @@ async function getYouTubeStreamUrlWithFallbacks(videoId: string): Promise<string
       ]
     : [
         ...(getCfWorkerUrl() ? [{ name: 'CF Worker', fn: () => getYouTubeInfoViaCFWorker(videoId) }] : []),
-        ...(process.env.VERCEL_URL
+        ...(getAppBaseUrl()
           ? [{ name: 'EdgeFunction', fn: () => getYouTubeInfoViaEdgeFunction(videoId) }]
           : []),
         { name: 'cobalt', fn: () => getYouTubeInfoViaCobalt(videoId) },
@@ -1634,6 +1677,7 @@ async function getYouTubeStreamUrlWithFallbacks(videoId: string): Promise<string
   const errors: string[] = [];
   for (const getter of streamGetters) {
     try {
+      if (Date.now() - startedAt > budgetMs) break;
       const { streamUrl } = await getter.fn();
       console.log(`Stream URL obtained via ${getter.name} for videoId=${videoId}`);
       return streamUrl; // ffmpeg accepts HTTPS URLs directly as -i input
@@ -1646,6 +1690,7 @@ async function getYouTubeStreamUrlWithFallbacks(videoId: string): Promise<string
 
   throw new Error(
     `Failed to get YouTube stream. All methods failed: ${errors.join(' | ')}\n` +
+    `Time budget exceeded: ${budgetMs}ms\n` +
     'Deploy a Cloudflare Worker (see /cf-worker/README.md) and set CF_WORKER_URL in Vercel env vars for reliable access.',
   );
 }
@@ -1680,13 +1725,19 @@ async function downloadStreamToLocalFile(url: string, outputPath: string): Promi
     const chunkSize = 8 * 1024 * 1024;
     let offset = 0;
     let total: number | null = null;
+    const startedAt = Date.now();
+    const budgetMs = IS_VERCEL ? 150_000 : 300_000;
 
     try {
       while (downloadedBytes < maxBytes) {
+        if (Date.now() - startedAt > budgetMs) {
+          throw new Error('Download timed out');
+        }
         const end = offset + chunkSize - 1;
         const res = await fetch(url, {
           headers: {
             Range: `bytes=${offset}-${end}`,
+            ...getBypassHeadersForUrl(url),
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
             'Accept': '*/*',
             'Accept-Encoding': 'identity',
@@ -1770,6 +1821,7 @@ async function downloadStreamToLocalFile(url: string, outputPath: string): Promi
       console.log(`Fetching video stream to /tmp…`);
       const res = await fetch(url, {
         headers: {
+          ...getBypassHeadersForUrl(url),
           'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
           'Accept': '*/*',
           'Accept-Encoding': 'identity',
@@ -1850,6 +1902,7 @@ async function preflightStream(url: string): Promise<boolean> {
     const res = await fetch(url, {
       headers: {
         Range: 'bytes=0-1',
+        ...getBypassHeadersForUrl(url),
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
         'Accept': '*/*',
         'Accept-Encoding': 'identity',
@@ -1915,17 +1968,21 @@ async function downloadYouTubeOrGenericVideo(
       }
     }
 
-    const vercelUrl = process.env.VERCEL_URL || '';
-    if (vercelUrl) {
-      const proxyUrl = `https://${vercelUrl}/api/yt-proxy?videoId=${encodeURIComponent(videoId)}`;
+    const baseUrl = getAppBaseUrl();
+    if (baseUrl) {
+      const proxyUrl = `${baseUrl}/api/yt-proxy?videoId=${encodeURIComponent(videoId)}`;
       try {
         const res = await fetch(proxyUrl, {
-          headers: { Range: 'bytes=0-1' },
+          headers: { Range: 'bytes=0-1', ...getVercelProtectionBypassHeaders() },
           signal: AbortSignal.timeout(10_000),
         });
         if (res.status === 200 || res.status === 206) {
           console.log('Vercel environment: using /api/yt-proxy as ffmpeg input');
-          return { inputPath: proxyUrl };
+          const ffmpegHeaders =
+            `${getBypassFfmpegHeaderString()}` +
+            'Accept: */*\r\n' +
+            'Accept-Encoding: identity\r\n';
+          return { inputPath: proxyUrl, ffmpegHeaders };
         }
         console.warn(`yt-proxy preflight failed (HTTP ${res.status}), falling back to yt-dlp stream URL`);
       } catch (e) {
@@ -1949,7 +2006,9 @@ async function downloadYouTubeOrGenericVideo(
         }
       }
     } catch {}
+    const internalBaseUrl = getAppBaseUrl();
     const ffmpegHeaders =
+      `${internalBaseUrl && streamUrl.startsWith(internalBaseUrl) ? getBypassFfmpegHeaderString() : ''}` +
       'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36\r\n' +
       'Referer: https://www.youtube.com/\r\n' +
       'Origin: https://www.youtube.com\r\n' +

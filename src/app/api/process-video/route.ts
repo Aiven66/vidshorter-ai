@@ -56,6 +56,17 @@ function sendSSE(controller: ReadableStreamDefaultController<Uint8Array>, payloa
   }
 }
 
+function promiseWithTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), ms);
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      controller.signal.addEventListener('abort', () => reject(new Error(message)), { once: true });
+    }),
+  ]).finally(() => clearTimeout(timeoutId));
+}
+
 function clampInt(value: unknown, min: number, max: number, fallback: number) {
   const n = typeof value === 'number' ? value : parseInt(String(value ?? ''), 10);
   if (!Number.isFinite(n)) return fallback;
@@ -125,6 +136,16 @@ export async function POST(request: NextRequest) {
 
   const stream = new ReadableStream({
     async start(controller) {
+      let lastSsePayload: SSEMessage | null = null;
+      const send = (payload: SSEMessage) => {
+        lastSsePayload = payload;
+        return sendSSE(controller, payload);
+      };
+      const heartbeat = setInterval(() => {
+        if (abortSignal.aborted) return;
+        if (lastSsePayload) sendSSE(controller, lastSsePayload);
+      }, 15_000);
+
       try {
         const isSupabaseMode = isSupabaseConfigured() && !!bearerToken && !requestedUserId?.startsWith('demo-');
         let userId = requestedUserId || '';
@@ -163,12 +184,13 @@ export async function POST(request: NextRequest) {
           supabaseClient = client;
           const { data: { user }, error } = await client.auth.getUser();
           if (error || !user?.id) {
-            sendSSE(controller, {
+            send({
               stage: 'error',
               progress: 0,
               message: 'Authentication required. Please log in again.',
               data: { error: true },
             });
+            clearInterval(heartbeat);
             return;
           }
           userId = user.id;
@@ -236,17 +258,18 @@ export async function POST(request: NextRequest) {
             });
           }
         } else if (!userId) {
-          sendSSE(controller, {
+          send({
             stage: 'error',
             progress: 0,
             message: 'Missing userId',
             data: { error: true },
           });
+          clearInterval(heartbeat);
           return;
         }
 
         if (abortSignal.aborted) return;
-        if (!sendSSE(controller, {
+        if (!send({
           stage: 'init',
           progress: 5,
           message: 'Initializing AutoClip-style processing...',
@@ -255,7 +278,7 @@ export async function POST(request: NextRequest) {
 
         const isBilibili = videoUrl.includes('bilibili.com') || videoUrl.includes('b23.tv');
         if (abortSignal.aborted) return;
-        if (!sendSSE(controller, {
+        if (!send({
           stage: 'ai_analysis',
           progress: 20,
           message: isBilibili
@@ -270,7 +293,11 @@ export async function POST(request: NextRequest) {
               title: suppliedTitle || 'Video',
               highlights: suppliedHighlights,
             }
-          : await videoClipper.analyzeVideo(videoUrl);
+          : await promiseWithTimeout(
+              videoClipper.analyzeVideo(videoUrl),
+              120_000,
+              'AI analysis timed out. Please retry or try another video.',
+            );
         if (abortSignal.aborted) return;
         const recommendedCount =
           desiredClipCountFromRequest ||
@@ -289,7 +316,7 @@ export async function POST(request: NextRequest) {
 
         let dbVideoId = suppliedVideoId || '';
 
-        if (!sendSSE(controller, {
+        if (!send({
           stage: 'analysis_complete',
           progress: 45,
           message: `Found ${allHighlights.length} highlight moments in "${analysis.title}".`,
@@ -310,7 +337,7 @@ export async function POST(request: NextRequest) {
         let source: { inputPath: string; ffmpegHeaders?: string } | null = null;
 
         if (abortSignal.aborted) return;
-        if (!sendSSE(controller, {
+        if (!send({
           stage: 'generating_clip',
           progress: 48,
           message: isBilibili
@@ -339,7 +366,7 @@ export async function POST(request: NextRequest) {
         }
 
         if (dbVideoId) {
-          sendSSE(controller, {
+          send({
             stage: 'analysis_complete',
             progress: 46,
             message: 'Preparing clip generation...',
@@ -348,7 +375,11 @@ export async function POST(request: NextRequest) {
         }
 
         try {
-          source = await videoClipper.downloadSourceVideo(videoUrl);
+          source = await promiseWithTimeout(
+            videoClipper.downloadSourceVideo(videoUrl),
+            150_000,
+            'Failed to prepare source video within time limit. This YouTube video may require login or be blocked. Please retry or try another video.',
+          );
         } catch (error) {
           throw new Error(
             error instanceof Error
@@ -360,6 +391,14 @@ export async function POST(request: NextRequest) {
         if (!source?.inputPath) {
           throw new Error('Failed to prepare source video: no file path returned.');
         }
+
+        if (abortSignal.aborted) return;
+        if (!send({
+          stage: 'generating_clip',
+          progress: 49,
+          message: 'Source ready. Generating highlight clips...',
+          data: { jobId, videoId: dbVideoId || undefined },
+        })) return;
 
         for (let index = 0; index < highlights.length; index += 1) {
           if (abortSignal.aborted) return;
@@ -383,7 +422,7 @@ export async function POST(request: NextRequest) {
             status: 'processing',
           };
 
-          if (!sendSSE(controller, {
+          if (!send({
             stage: 'generating_clip',
             progress: 50 + Math.floor((index / highlights.length) * 35),
             message: `Generating clip ${clipOffset + index + 1}/${allHighlights.length}: "${highlight.title}"`,
@@ -428,7 +467,7 @@ export async function POST(request: NextRequest) {
           clips.push(draftClip);
 
           if (abortSignal.aborted) return;
-          if (!sendSSE(controller, {
+          if (!send({
             stage: 'clip_ready',
             progress: 55 + Math.floor(((index + 1) / highlights.length) * 35),
             message:
@@ -447,7 +486,7 @@ export async function POST(request: NextRequest) {
           throw new Error(`All highlight clip generation failed. Please retry or try a different video.${extra}`);
         }
 
-        if (!sendSSE(controller, {
+        if (!send({
           stage: 'saving',
           progress: 93,
           message: 'Saving generated clips...',
@@ -509,6 +548,7 @@ export async function POST(request: NextRequest) {
             done,
           },
         });
+        clearInterval(heartbeat);
       } catch (error) {
         if (!abortSignal.aborted) {
           console.error('Video processing failed:', error);
@@ -520,6 +560,7 @@ export async function POST(request: NextRequest) {
           });
         }
       } finally {
+        clearInterval(heartbeat);
         try {
           controller.close();
         } catch {}

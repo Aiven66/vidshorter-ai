@@ -14,6 +14,24 @@
 
 const CLIENTS = [
   {
+    name: 'TV',
+    clientName: 'TVHTML5',
+    clientVersion: '7.20250312.16.00',
+    userAgent: 'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/24.0.0',
+    xClientName: '7',
+    extra: { clientScreen: 'TV' },
+    extraHeaders: {},
+  },
+  {
+    name: 'ANDROID_VR',
+    clientName: 'ANDROID_VR',
+    clientVersion: '1.57.29',
+    userAgent: 'com.google.android.apps.youtube.vr.oculus/1.57.29 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
+    xClientName: '28',
+    extra: { androidSdkVersion: 32 },
+    extraHeaders: {},
+  },
+  {
     name: 'IOS_v20',
     clientName: 'IOS',
     clientVersion: '20.03.03',
@@ -26,14 +44,7 @@ const CLIENTS = [
       osVersion: '18.3.2.22D82',
       clientFormFactor: 'SMALL_FORM_FACTOR',
     },
-  },
-  {
-    name: 'ANDROID_TESTSUITE',
-    clientName: 'ANDROID_TESTSUITE',
-    clientVersion: '1.9',
-    userAgent: 'com.google.android.youtube/1.9 (Linux; U; Android 11) gzip',
-    xClientName: '30',
-    extra: { androidSdkVersion: 30 },
+    extraHeaders: {},
   },
   {
     name: 'ANDROID_v20',
@@ -42,6 +53,28 @@ const CLIENTS = [
     userAgent: 'com.google.android.youtube/20.03.03 (Linux; U; Android 14) gzip',
     xClientName: '3',
     extra: { androidSdkVersion: 34, clientFormFactor: 'SMALL_FORM_FACTOR' },
+    extraHeaders: {},
+  },
+  {
+    name: 'WEB_EMBEDDED',
+    clientName: 'WEB_EMBEDDED_PLAYER',
+    clientVersion: '2.20240101.00.00',
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+    xClientName: '56',
+    extra: { clientScreen: 'EMBED' },
+    extraHeaders: {
+      'Referer': 'https://www.youtube.com/',
+      'Origin': 'https://www.youtube.com',
+    },
+  },
+  {
+    name: 'ANDROID_TESTSUITE',
+    clientName: 'ANDROID_TESTSUITE',
+    clientVersion: '1.9',
+    userAgent: 'com.google.android.youtube/1.9 (Linux; U; Android 11) gzip',
+    xClientName: '30',
+    extra: { androidSdkVersion: 30 },
+    extraHeaders: {},
   },
   {
     name: 'IOS_v19',
@@ -50,6 +83,7 @@ const CLIENTS = [
     userAgent: 'com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)',
     xClientName: '5',
     extra: { deviceMake: 'Apple', deviceModel: 'iPhone16,2', osName: 'iPhone', osVersion: '17.5.1.21F90' },
+    extraHeaders: {},
   },
   {
     name: 'TV_EMBEDDED',
@@ -58,9 +92,25 @@ const CLIENTS = [
     userAgent: 'Mozilla/5.0 (SMART-TV; LINUX; Tizen 6.0) AppleWebKit/538.1 (KHTML, like Gecko) Version/6.0 TV Safari/538.1',
     xClientName: '85',
     extra: {},
+    extraHeaders: {},
     thirdParty: { embedUrl: 'https://www.youtube.com/' },
   },
 ];
+
+function netscapeCookiesToHeader(text) {
+  const pairs = [];
+  for (const line of String(text || '').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const parts = trimmed.split('\t');
+    if (parts.length < 7) continue;
+    const name = parts[5]?.trim();
+    const value = parts[6]?.trim();
+    if (!name) continue;
+    pairs.push(`${name}=${value ?? ''}`);
+  }
+  return pairs.join('; ');
+}
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -80,6 +130,9 @@ export default {
     const videoId = url.searchParams.get('videoId');
     const mode = url.pathname.endsWith('/stream') ? 'stream' : 'resolve';
     const maxHeight = normalizeMaxHeight(url.searchParams.get('maxHeight'));
+    const ytCookiesRaw = typeof env?.YOUTUBE_COOKIES === 'string' ? env.YOUTUBE_COOKIES.trim() : '';
+    const cookieHeader =
+      ytCookiesRaw && ytCookiesRaw.includes('\t') ? netscapeCookiesToHeader(ytCookiesRaw) : ytCookiesRaw;
 
     const secretKey = env.CF_SECRET_KEY;
     if (secretKey && url.searchParams.get('key') !== secretKey) {
@@ -93,9 +146,11 @@ export default {
     if (mode === 'stream') {
       try {
         const cacheKey = `${videoId}|${String(maxHeight || MAX_HEIGHT)}`;
-        let resolved = await resolveCached(videoId, maxHeight);
         const range = request.headers.get('Range') || request.headers.get('range') || 'bytes=0-';
-        const doFetch = () => fetch(resolved.streamUrl, {
+        const cached = cache.get(cacheKey);
+        const isCachedValid = cached && cached.expiresAt > Date.now() && cached.value?.streamUrl;
+
+        const doFetch = (resolved) => fetch(resolved.streamUrl, {
           headers: {
             Range: range,
             'User-Agent': resolved.userAgent,
@@ -106,38 +161,47 @@ export default {
             ...(resolved.visitorData ? { 'X-Goog-Visitor-Id': resolved.visitorData } : {}),
             'X-Youtube-Client-Name': resolved.xClientName,
             'X-Youtube-Client-Version': resolved.clientVersion,
+            ...(cookieHeader ? { Cookie: cookieHeader } : {}),
           },
         });
 
-        let upstream = await doFetch();
-        if (upstream.status !== 200 && upstream.status !== 206) {
-          cache.delete(cacheKey);
-          resolved = await resolveCached(videoId, maxHeight);
-          upstream = await doFetch();
-        }
+        const errors = [];
 
-        if (upstream.status !== 200 && upstream.status !== 206) {
+        if (isCachedValid) {
+          const resolved = cached.value;
+          const upstream = await doFetch(resolved);
+          if (upstream.status === 200 || upstream.status === 206) {
+            return passthroughStream(upstream);
+          }
           const body = await upstream.text().catch(() => '');
-          return json({ error: `Upstream HTTP ${upstream.status}`, details: body.slice(0, 200) }, 502);
+          errors.push(`cached: HTTP ${upstream.status} ${body.slice(0, 120)}`);
+          cache.delete(cacheKey);
         }
 
-        const headers = new Headers();
-        headers.set('Cache-Control', 'no-store');
-        headers.set('Access-Control-Allow-Origin', '*');
-        const passthrough = [
-          'content-type',
-          'content-length',
-          'content-range',
-          'accept-ranges',
-          'etag',
-          'last-modified',
-        ];
-        for (const key of passthrough) {
-          const v = upstream.headers.get(key);
-          if (v) headers.set(key, v);
+        for (const client of CLIENTS) {
+          try {
+            const info = await tryClient(videoId, client, maxHeight, cookieHeader);
+            const resolved = {
+              streamUrl: info.streamUrl,
+              userAgent: info.userAgent,
+              visitorData: info.visitorData,
+              xClientName: info.xClientName,
+              clientVersion: info.clientVersion,
+            };
+            const upstream = await doFetch(resolved);
+            if (upstream.status === 200 || upstream.status === 206) {
+              cache.set(cacheKey, { value: resolved, expiresAt: Date.now() + 5 * 60 * 1000 });
+              return passthroughStream(upstream);
+            }
+            const body = await upstream.text().catch(() => '');
+            errors.push(`${client.name}: HTTP ${upstream.status} ${body.slice(0, 120)}`);
+          } catch (e) {
+            errors.push(`${client.name}: ${(e instanceof Error ? e.message : String(e)).slice(0, 120)}`);
+          }
         }
 
-        return new Response(upstream.body, { status: upstream.status, headers });
+        return json({ error: 'All clients failed to stream', details: errors.slice(0, 10).join(' | ') }, 502);
+
       } catch (e) {
         return json({ error: e instanceof Error ? e.message : String(e) }, 502);
       }
@@ -146,7 +210,7 @@ export default {
     const errors = [];
     for (const client of CLIENTS) {
       try {
-        const result = await tryClient(videoId, client, maxHeight);
+        const result = await tryClient(videoId, client, maxHeight, cookieHeader);
         if (result) return json({ ...result, client: client.name });
         errors.push(`${client.name}: no stream URL`);
       } catch (e) {
@@ -167,7 +231,7 @@ function normalizeMaxHeight(value) {
   return n;
 }
 
-async function tryClient(videoId, client, maxHeight) {
+async function tryClient(videoId, client, maxHeight, cookieHeader) {
   const body = {
     videoId,
     contentCheckOk: true,
@@ -196,6 +260,8 @@ async function tryClient(videoId, client, maxHeight) {
       'Referer': 'https://www.youtube.com/',
       'X-Youtube-Client-Name': client.xClientName,
       'X-Youtube-Client-Version': client.clientVersion,
+      ...(client.extraHeaders || {}),
+      ...(cookieHeader ? { Cookie: cookieHeader } : {}),
     },
     body: JSON.stringify(body),
   });
@@ -272,14 +338,14 @@ function pickBest(formats, maxHeight) {
   return under || any || (formats || []).find((f) => f?.url);
 }
 
-async function resolveCached(videoId, maxHeight) {
+async function resolveCached(videoId, maxHeight, cookieHeader) {
   const cacheKey = `${videoId}|${String(maxHeight || MAX_HEIGHT)}`;
   const cached = cache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
   const errors = [];
   for (const client of CLIENTS) {
     try {
-      const result = await tryClient(videoId, client, maxHeight);
+      const result = await tryClient(videoId, client, maxHeight, cookieHeader);
       if (result?.streamUrl) {
         const value = {
           streamUrl: result.streamUrl,
@@ -297,4 +363,23 @@ async function resolveCached(videoId, maxHeight) {
     }
   }
   throw new Error(`All clients failed: ${errors.join(' | ')}`);
+}
+
+function passthroughStream(upstream) {
+  const headers = new Headers();
+  headers.set('Cache-Control', 'no-store');
+  headers.set('Access-Control-Allow-Origin', '*');
+  const passthrough = [
+    'content-type',
+    'content-length',
+    'content-range',
+    'accept-ranges',
+    'etag',
+    'last-modified',
+  ];
+  for (const key of passthrough) {
+    const v = upstream.headers.get(key);
+    if (v) headers.set(key, v);
+  }
+  return new Response(upstream.body, { status: upstream.status, headers });
 }
