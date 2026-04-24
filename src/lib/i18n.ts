@@ -97,7 +97,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     // Dashboard
     'dashboard.title': 'Dashboard',
     'dashboard.credits': 'Available Credits',
-    'dashboard.credits.reset': 'Resets daily at 8:00 AM',
+    'dashboard.credits.reset': 'Resets daily at 00:00 UTC',
     'dashboard.history': 'Processing History',
     'dashboard.noVideos': 'No videos processed yet',
     'dashboard.startProcessing': 'Start Processing Videos',
@@ -222,7 +222,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     // Dashboard
     'dashboard.title': '控制台',
     'dashboard.credits': '可用积分',
-    'dashboard.credits.reset': '每天上午 8 点重置',
+    'dashboard.credits.reset': '每天 0 点（UTC）重置',
     'dashboard.history': '处理历史',
     'dashboard.noVideos': '暂无处理记录',
     'dashboard.startProcessing': '开始处理视频',

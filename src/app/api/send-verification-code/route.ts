@@ -1,23 +1,39 @@
 import { NextRequest } from 'next/server';
+import { createHmac, createHash, timingSafeEqual } from 'crypto';
 
-// In-memory store for demo mode (in production, use Redis or DB)
-const codeStore = new Map<string, { code: string; expiresAt: number; attempts: number }>();
+export const runtime = 'nodejs';
 
 function generateCode(): string {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-function cleanupExpired() {
-  const now = Date.now();
-  for (const [key, val] of codeStore.entries()) {
-    if (val.expiresAt < now) codeStore.delete(key);
-  }
+const COOKIE_NAME = 'vidshorter_email_otp';
+const MAX_ATTEMPTS = 5;
+
+function base64url(input: string) {
+  return Buffer.from(input).toString('base64url');
+}
+
+function fromBase64url(input: string) {
+  return Buffer.from(input, 'base64url').toString('utf8');
+}
+
+function sha256(input: string) {
+  return createHash('sha256').update(input).digest('hex');
+}
+
+function sign(payloadB64: string, secret: string) {
+  return createHmac('sha256', secret).update(payloadB64).digest('hex');
+}
+
+function getSecret() {
+  return process.env.EMAIL_OTP_SECRET || process.env.NEXTAUTH_SECRET || '';
 }
 
 /* ── Send email via Resend HTTP API (no extra npm package, just fetch) ── */
-async function sendViaResend(to: string, code: string): Promise<boolean> {
+async function sendViaResend(to: string, code: string): Promise<{ ok: boolean; reason?: string }> {
   const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) return false;
+  if (!apiKey) return { ok: false, reason: 'missing_resend_api_key' };
 
   const fromDomain = process.env.RESEND_FROM || 'onboarding@resend.dev';
 
@@ -56,25 +72,28 @@ async function sendViaResend(to: string, code: string): Promise<boolean> {
     if (res.ok) {
       const data = await res.json();
       console.log('[Resend] Email sent successfully, id:', data.id);
-      return true;
+      return { ok: true };
     }
     const errData = await res.json().catch(() => ({}));
     console.warn('[Resend] Send failed:', res.status, errData);
-    return false;
+    return {
+      ok: false,
+      reason: typeof errData?.message === 'string' ? errData.message : `resend_http_${res.status}`,
+    };
   } catch (err) {
     console.warn('[Resend] Network error:', err);
-    return false;
+    return { ok: false, reason: 'resend_network_error' };
   }
 }
 
 /* ── Send email via SMTP (nodemailer) ── */
-async function sendViaSMTP(to: string, code: string): Promise<boolean> {
+async function sendViaSMTP(to: string, code: string): Promise<{ ok: boolean; reason?: string }> {
   const smtpHost = process.env.SMTP_HOST;
   const smtpUser = process.env.SMTP_USER;
   const smtpPass = process.env.SMTP_PASS;
   const smtpFrom = process.env.SMTP_FROM || smtpUser;
 
-  if (!smtpHost || !smtpUser || !smtpPass) return false;
+  if (!smtpHost || !smtpUser || !smtpPass) return { ok: false, reason: 'missing_smtp_config' };
 
   try {
     const nodemailer = await import('nodemailer');
@@ -100,10 +119,10 @@ async function sendViaSMTP(to: string, code: string): Promise<boolean> {
       `,
     });
     console.log('[SMTP] Email sent to', to);
-    return true;
+    return { ok: true };
   } catch (err) {
     console.warn('[SMTP] Send failed, falling back to demo mode:', err);
-    return false;
+    return { ok: false, reason: 'smtp_send_failed' };
   }
 }
 
@@ -115,34 +134,82 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'Invalid email address' }, { status: 400 });
   }
 
-  cleanupExpired();
+  const secret = getSecret();
+  if (!secret && process.env.NODE_ENV === 'production') {
+    return Response.json({ error: 'Verification service not configured' }, { status: 500 });
+  }
 
-  // Rate limit: 1 code per 60s
-  const existing = codeStore.get(email);
-  if (existing && existing.expiresAt - Date.now() > 4 * 60 * 1000) {
-    return Response.json({ error: 'Please wait before requesting another code' }, { status: 429 });
+  if (
+    process.env.NODE_ENV === 'production' &&
+    !process.env.RESEND_API_KEY &&
+    !(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS)
+  ) {
+    return Response.json({ error: 'Email provider not configured' }, { status: 500 });
   }
 
   const code = generateCode();
-  const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes
-
-  codeStore.set(email, { code, expiresAt, attempts: 0 });
+  const expiresAt = Date.now() + 5 * 60 * 1000;
 
   // ── Priority 1: Resend API (free, no extra packages) ──
-  const sentViaResend = await sendViaResend(email, code);
-  if (sentViaResend) {
-    return Response.json({ success: true, demo: false, provider: 'resend' });
+  const resendResult = await sendViaResend(email, code);
+  if (resendResult.ok) {
+    const payload = {
+      email,
+      expiresAt,
+      attempts: 0,
+      codeHash: sha256(`${code}:${secret}`),
+    };
+    const payloadB64 = base64url(JSON.stringify(payload));
+    const token = `${payloadB64}.${sign(payloadB64, secret)}`;
+    const res = Response.json({ success: true, provider: 'resend' });
+    res.headers.append(
+      'Set-Cookie',
+      `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=300${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`,
+    );
+    return res;
   }
 
   // ── Priority 2: SMTP (nodemailer) ──
-  const sentViaSMTP = await sendViaSMTP(email, code);
-  if (sentViaSMTP) {
-    return Response.json({ success: true, demo: false, provider: 'smtp' });
+  const smtpResult = await sendViaSMTP(email, code);
+  if (smtpResult.ok) {
+    const payload = {
+      email,
+      expiresAt,
+      attempts: 0,
+      codeHash: sha256(`${code}:${secret}`),
+    };
+    const payloadB64 = base64url(JSON.stringify(payload));
+    const token = `${payloadB64}.${sign(payloadB64, secret)}`;
+    const res = Response.json({ success: true, provider: 'smtp' });
+    res.headers.append(
+      'Set-Cookie',
+      `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=300${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`,
+    );
+    return res;
   }
 
-  // ── Priority 3: Demo mode – return code in response (shown in UI) ──
-  console.log(`[DEMO] Verification code for ${email}: ${code}`);
-  return Response.json({ success: true, demo: true, code });
+  if (process.env.NODE_ENV !== 'production') {
+    const payload = {
+      email,
+      expiresAt,
+      attempts: 0,
+      codeHash: sha256(`${code}:${secret || 'dev'}`),
+    };
+    const payloadB64 = base64url(JSON.stringify(payload));
+    const token = `${payloadB64}.${sign(payloadB64, secret || 'dev')}`;
+    const res = Response.json({ success: true, provider: 'demo', code });
+    res.headers.append('Set-Cookie', `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=300`);
+    return res;
+  }
+
+  if (process.env.RESEND_API_KEY && smtpResult.reason === 'missing_smtp_config') {
+    return Response.json(
+      { error: 'Resend failed. Please verify RESEND_FROM and your Resend domain settings.' },
+      { status: 500 },
+    );
+  }
+
+  return Response.json({ error: 'Failed to send verification code' }, { status: 500 });
 }
 
 export async function PUT(request: NextRequest) {
@@ -155,29 +222,59 @@ export async function PUT(request: NextRequest) {
     return Response.json({ error: 'Email and code are required' }, { status: 400 });
   }
 
-  cleanupExpired();
-  const stored = codeStore.get(email);
+  const secret = getSecret() || (process.env.NODE_ENV !== 'production' ? 'dev' : '');
+  if (!secret) return Response.json({ error: 'Verification service not configured' }, { status: 500 });
 
-  if (!stored) {
-    return Response.json({ error: 'No verification code found. Please request a new one.' }, { status: 400 });
+  const cookie = request.cookies.get(COOKIE_NAME)?.value || '';
+  const [payloadB64, sig] = cookie.split('.');
+  if (!payloadB64 || !sig) {
+    return Response.json({ error: 'No verification code found. Please request a new code.' }, { status: 400 });
   }
 
-  if (stored.expiresAt < Date.now()) {
-    codeStore.delete(email);
-    return Response.json({ error: 'Code has expired. Please request a new one.' }, { status: 400 });
+  const expected = sign(payloadB64, secret);
+  const a = Buffer.from(expected, 'hex');
+  const b = Buffer.from(sig, 'hex');
+  if (a.length !== b.length || !timingSafeEqual(a, b)) {
+    return Response.json({ error: 'Invalid verification code. Please request a new one.' }, { status: 400 });
   }
 
-  stored.attempts += 1;
-  if (stored.attempts > 5) {
-    codeStore.delete(email);
-    return Response.json({ error: 'Too many attempts. Please request a new code.' }, { status: 400 });
+  let payload: { email: string; expiresAt: number; attempts: number; codeHash: string } | null = null;
+  try {
+    payload = JSON.parse(fromBase64url(payloadB64));
+  } catch {
+    payload = null;
+  }
+  if (!payload || payload.email !== email) {
+    return Response.json({ error: 'Invalid verification code. Please request a new one.' }, { status: 400 });
   }
 
-  if (stored.code !== inputCode) {
-    return Response.json({ error: `Incorrect code. ${5 - stored.attempts} attempts remaining.` }, { status: 400 });
+  if (payload.expiresAt < Date.now()) {
+    const res = Response.json({ error: 'Code has expired. Please request a new one.' }, { status: 400 });
+    res.headers.append('Set-Cookie', `${COOKIE_NAME}=; Path=/; Max-Age=0`);
+    return res;
   }
 
-  // Code verified - remove it
-  codeStore.delete(email);
-  return Response.json({ success: true });
+  const nextAttempts = (payload.attempts || 0) + 1;
+  if (nextAttempts > MAX_ATTEMPTS) {
+    const res = Response.json({ error: 'Too many attempts. Please request a new code.' }, { status: 400 });
+    res.headers.append('Set-Cookie', `${COOKIE_NAME}=; Path=/; Max-Age=0`);
+    return res;
+  }
+
+  const ok = sha256(`${inputCode}:${secret}`) === payload.codeHash;
+  if (!ok) {
+    const nextPayload = { ...payload, attempts: nextAttempts };
+    const nextPayloadB64 = base64url(JSON.stringify(nextPayload));
+    const nextToken = `${nextPayloadB64}.${sign(nextPayloadB64, secret)}`;
+    const res = Response.json({ error: `Incorrect code. ${MAX_ATTEMPTS - nextAttempts} attempts remaining.` }, { status: 400 });
+    res.headers.append(
+      'Set-Cookie',
+      `${COOKIE_NAME}=${nextToken}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.max(1, Math.floor((payload.expiresAt - Date.now()) / 1000))}${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`,
+    );
+    return res;
+  }
+
+  const res = Response.json({ success: true });
+  res.headers.append('Set-Cookie', `${COOKIE_NAME}=; Path=/; Max-Age=0`);
+  return res;
 }

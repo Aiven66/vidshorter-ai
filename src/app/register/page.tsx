@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
-import { Badge } from '@/components/ui/badge';
 import { useLocale } from '@/lib/locale-context';
 import { useAuth } from '@/lib/auth-context';
 import { useRouter } from 'next/navigation';
@@ -26,7 +25,6 @@ export default function RegisterPage() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [code, setCode] = useState('');
-  const [demoCode, setDemoCode] = useState<string | null>(null); // shown in demo mode
   const [loading, setLoading] = useState(false);
   const [sendingCode, setSendingCode] = useState(false);
   const [countdown, setCountdown] = useState(0);
@@ -55,11 +53,6 @@ export default function RegisterPage() {
         return;
       }
 
-      // Demo mode: code returned directly
-      if (data.demo && data.code) {
-        setDemoCode(data.code);
-      }
-
       setStep('verify');
       // 60s countdown before resend
       setCountdown(60);
@@ -69,7 +62,7 @@ export default function RegisterPage() {
           return prev - 1;
         });
       }, 1000);
-    } catch (err) {
+    } catch {
       setError('Network error. Please try again.');
     } finally {
       setSendingCode(false);
@@ -102,13 +95,9 @@ export default function RegisterPage() {
         return;
       }
     } catch {
-      // If verification API fails (e.g., server restart cleared in-memory store),
-      // allow demo code or skip for demo mode
-      if (!demoCode || code !== demoCode) {
-        setError('Verification failed. Please request a new code.');
-        setLoading(false);
-        return;
-      }
+      setError('Verification failed. Please request a new code.');
+      setLoading(false);
+      return;
     }
 
     // Code verified, complete registration
@@ -184,13 +173,6 @@ export default function RegisterPage() {
                 <p className="text-sm text-muted-foreground">
                   We sent a 6-digit code to <strong className="text-foreground">{email}</strong>
                 </p>
-                {demoCode && (
-                  <div className="mt-2 p-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-md">
-                    <p className="text-xs text-amber-700 dark:text-amber-400">
-                      📧 Demo mode – your code is: <Badge variant="outline" className="ml-1 font-mono text-sm">{demoCode}</Badge>
-                    </p>
-                  </div>
-                )}
               </div>
 
               <div className="space-y-2">
@@ -225,7 +207,7 @@ export default function RegisterPage() {
                 <button
                   type="button"
                   className="text-muted-foreground hover:text-foreground"
-                  onClick={() => { setStep('info'); setCode(''); setError(''); setDemoCode(null); }}
+                  onClick={() => { setStep('info'); setCode(''); setError(''); }}
                 >
                   ← Change email
                 </button>

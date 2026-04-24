@@ -25,7 +25,7 @@ import {
   Heading1, Heading2, Heading3, Code, AlignLeft,
   AlignCenter, AlignRight, Undo, Redo,
   CreditCard, CheckCircle, Eye as EyeIcon, EyeOff,
-  Cpu, RefreshCw,
+  Cpu, RefreshCw, Users, MessageSquare,
 } from 'lucide-react';
 import { isSupabaseConfigured } from '@/storage/database/supabase-client';
 import { toast } from 'sonner';
@@ -343,7 +343,7 @@ function RichEditor({ value, onChange }: RichEditorProps) {
 ─────────────────────────────────────────────── */
 export default function AdminPage() {
   const { t } = useLocale();
-  const { user, loading: authLoading } = useAuth();
+  const { user, accessToken, loading: authLoading } = useAuth();
   const router = useRouter();
   const [posts, setPosts] = useState<BlogPost[]>([]);
   const [loading, setLoading] = useState(true);
@@ -359,6 +359,12 @@ export default function AdminPage() {
   const [aiConfig, setAiConfig] = useState<AiConfig>(defaultAiConfig);
   const [testingAi, setTestingAi] = useState(false);
   const [aiTestResult, setAiTestResult] = useState<string>('');
+  const [adminUsers, setAdminUsers] = useState<any[]>([]);
+  const [adminUsersLoading, setAdminUsersLoading] = useState(false);
+  const [adminFeedbacks, setAdminFeedbacks] = useState<any[]>([]);
+  const [adminFeedbacksLoading, setAdminFeedbacksLoading] = useState(false);
+  const [adminUsersError, setAdminUsersError] = useState('');
+  const [adminFeedbacksError, setAdminFeedbacksError] = useState('');
 
   useEffect(() => {
     if (!authLoading && (!user || user.role !== 'admin')) {
@@ -373,6 +379,13 @@ export default function AdminPage() {
       setAiConfig(getAiConfig());
     }
   }, [user]);
+
+  useEffect(() => {
+    if (user?.role !== 'admin') return;
+    if (!accessToken) return;
+    if (activeTab === 'users') fetchAdminUsers();
+    if (activeTab === 'feedback') fetchAdminFeedbacks();
+  }, [activeTab, user?.role, accessToken]);
 
   async function fetchPosts() {
     if (!isSupabaseConfigured() || user?.id?.startsWith('demo-')) {
@@ -389,7 +402,8 @@ export default function AdminPage() {
 
     try {
       const { getSupabaseClient } = await import('@/storage/database/supabase-client');
-      const client = getSupabaseClient(user.id);
+      if (!accessToken) throw new Error('Missing access token');
+      const client = getSupabaseClient(accessToken);
       const { data, error } = await client
         .from('blogs')
         .select('*')
@@ -470,7 +484,8 @@ export default function AdminPage() {
       }
 
       const { getSupabaseClient } = await import('@/storage/database/supabase-client');
-      const client = getSupabaseClient(user.id);
+      if (!accessToken) throw new Error('Missing access token');
+      const client = getSupabaseClient(accessToken);
 
       if (editingPost) {
         const { error } = await client
@@ -557,7 +572,8 @@ export default function AdminPage() {
       }
 
       const { getSupabaseClient } = await import('@/storage/database/supabase-client');
-      const client = getSupabaseClient(user.id);
+      if (!accessToken) throw new Error('Missing access token');
+      const client = getSupabaseClient(accessToken);
       const { error } = await client
         .from('blogs')
         .delete()
@@ -601,6 +617,44 @@ export default function AdminPage() {
     saveAiConfig(aiConfig);
     toast.success('AI 算力配置已保存');
     setAiTestResult('');
+  }
+
+  async function fetchAdminUsers() {
+    if (!accessToken) return;
+    setAdminUsersLoading(true);
+    setAdminUsersError('');
+    try {
+      const res = await fetch('/api/admin/users?limit=200', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to load users');
+      setAdminUsers(Array.isArray(data.users) ? data.users : []);
+    } catch (e) {
+      setAdminUsersError(e instanceof Error ? e.message : 'Failed to load users');
+      setAdminUsers([]);
+    } finally {
+      setAdminUsersLoading(false);
+    }
+  }
+
+  async function fetchAdminFeedbacks() {
+    if (!accessToken) return;
+    setAdminFeedbacksLoading(true);
+    setAdminFeedbacksError('');
+    try {
+      const res = await fetch('/api/feedback?limit=200', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to load feedbacks');
+      setAdminFeedbacks(Array.isArray(data.feedbacks) ? data.feedbacks : []);
+    } catch (e) {
+      setAdminFeedbacksError(e instanceof Error ? e.message : 'Failed to load feedbacks');
+      setAdminFeedbacks([]);
+    } finally {
+      setAdminFeedbacksLoading(false);
+    }
   }
   async function handleTestAi() {
     setTestingAi(true);
@@ -677,6 +731,14 @@ export default function AdminPage() {
             <TabsTrigger value="create" className="gap-2">
               <Plus className="h-4 w-4" />
               {editingPost ? 'Edit Post' : t('admin.blog.create')}
+            </TabsTrigger>
+            <TabsTrigger value="users" className="gap-2">
+              <Users className="h-4 w-4" />
+              用户管理
+            </TabsTrigger>
+            <TabsTrigger value="feedback" className="gap-2">
+              <MessageSquare className="h-4 w-4" />
+              用户反馈
             </TabsTrigger>
             <TabsTrigger value="payment" className="gap-2">
               <CreditCard className="h-4 w-4" />
@@ -837,6 +899,92 @@ export default function AdminPage() {
                     </Button>
                   )}
                 </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="users">
+            <Card>
+              <CardHeader>
+                <CardTitle>用户管理</CardTitle>
+                <CardDescription>查看注册用户列表与订阅情况</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {adminUsersLoading ? (
+                  <p className="text-muted-foreground">{t('common.loading')}</p>
+                ) : adminUsersError ? (
+                  <p className="text-sm text-destructive">{adminUsersError}</p>
+                ) : adminUsers.length === 0 ? (
+                  <p className="text-muted-foreground">暂无用户</p>
+                ) : (
+                  <div className="overflow-auto border rounded-lg">
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted/50 text-muted-foreground">
+                        <tr>
+                          <th className="text-left p-3">邮箱</th>
+                          <th className="text-left p-3">地点</th>
+                          <th className="text-left p-3">订阅</th>
+                          <th className="text-left p-3">积分</th>
+                          <th className="text-left p-3">角色</th>
+                          <th className="text-left p-3">注册时间</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {adminUsers.map((u) => {
+                          const sub = Array.isArray(u.subscriptions) ? u.subscriptions[0] : u.subscriptions;
+                          const credits = Array.isArray(u.credits) ? u.credits[0] : u.credits;
+                          const loc = [u.country, u.region, u.city].filter(Boolean).join(' / ');
+                          return (
+                            <tr key={u.id} className="border-t">
+                              <td className="p-3">{u.email}</td>
+                              <td className="p-3">{loc || '-'}</td>
+                              <td className="p-3">{sub?.plan_type || 'free'} · {sub?.status || 'active'}</td>
+                              <td className="p-3">{typeof credits?.balance === 'number' ? credits.balance : '-'}</td>
+                              <td className="p-3">{u.role}</td>
+                              <td className="p-3">{u.created_at ? formatDate(u.created_at) : '-'}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="feedback">
+            <Card>
+              <CardHeader>
+                <CardTitle>用户反馈汇总</CardTitle>
+                <CardDescription>查看用户提交的反馈内容</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {adminFeedbacksLoading ? (
+                  <p className="text-muted-foreground">{t('common.loading')}</p>
+                ) : adminFeedbacksError ? (
+                  <p className="text-sm text-destructive">{adminFeedbacksError}</p>
+                ) : adminFeedbacks.length === 0 ? (
+                  <p className="text-muted-foreground">暂无反馈</p>
+                ) : (
+                  <div className="space-y-3">
+                    {adminFeedbacks.map((fb) => (
+                      <div key={fb.id} className="border rounded-lg p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-sm font-medium truncate">
+                            {fb.users?.email || fb.user_id}
+                          </div>
+                          <div className="text-xs text-muted-foreground flex-shrink-0">
+                            {fb.created_at ? formatDate(fb.created_at) : ''}
+                          </div>
+                        </div>
+                        <div className="text-sm text-muted-foreground mt-2 whitespace-pre-wrap">
+                          {fb.content}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>

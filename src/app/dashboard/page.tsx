@@ -12,6 +12,7 @@ import { useLocale } from '@/lib/locale-context';
 import { useAuth } from '@/lib/auth-context';
 import { useCredits } from '@/lib/credits-context';
 import { useRouter } from 'next/navigation';
+import { Textarea } from '@/components/ui/textarea';
 import {
   CreditCard, Video, History, Settings, ArrowRight, Play, FileVideo,
   Download, ChevronDown, ChevronRight, Image as ImageIcon, Film,
@@ -43,6 +44,27 @@ interface VideoRecord {
   created_at: string;
 }
 
+type DbShortVideoRow = {
+  id: string;
+  url: string;
+  start_time: number | string;
+  end_time: number | string;
+  duration: number | string;
+  highlight_title: string | null;
+  highlight_summary: string | null;
+  thumbnail_url: string | null;
+};
+
+type DbVideoRow = {
+  id: string;
+  original_url: string;
+  source_type: string;
+  title: string | null;
+  status: string;
+  created_at: string;
+  short_videos?: DbShortVideoRow[];
+};
+
 // Demo video storage – keyed per user for isolation
 function getDemoVideosKey(userId: string): string {
   return `vidshorter_demo_videos_${userId}`;
@@ -67,12 +89,72 @@ function fmt(sec: number): string {
 function ClipPlayerDialog({
   clip, open, onClose,
 }: { clip: VideoClip | null; open: boolean; onClose: () => void }) {
-  if (!clip) return null;
+  const { accessToken } = useAuth();
+  const [resolved, setResolved] = useState<string>('');
+  const [resolving, setResolving] = useState(false);
+
+  if (!clip) return null
+
+  useEffect(() => {
+    if (open) return;
+    setResolved(prev => {
+      if (prev && prev.startsWith('blob:')) URL.revokeObjectURL(prev);
+      return '';
+    });
+  }, [open]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function run() {
+      if (!open || !clip) return;
+      if (!clip.videoUrl) {
+        setResolved('');
+        return;
+      }
+
+      if (clip.videoUrl.startsWith('regenerate:')) {
+        if (!accessToken) {
+          setResolved('');
+          return;
+        }
+        setResolving(true);
+        try {
+          const id = clip.videoUrl.slice('regenerate:'.length);
+          const res = await fetch(`/api/short-video/${encodeURIComponent(id)}`, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const blob = await res.blob();
+          if (cancelled) return;
+          const url = URL.createObjectURL(blob);
+          setResolved(prev => {
+            if (prev && prev.startsWith('blob:')) URL.revokeObjectURL(prev);
+            return url;
+          });
+        } catch {
+          if (!cancelled) setResolved('');
+        } finally {
+          if (!cancelled) setResolving(false);
+        }
+        return;
+      }
+
+      setResolved('');
+    }
+
+    run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, clip?.id, clip?.videoUrl, accessToken]);
 
   const resolveUrl = (c: VideoClip) => {
     if (!c.videoUrl) return '';
     if (c.videoUrl.includes('bilibili-fallback')) return 'https://samplelib.com/preview/mp4/sample-5s.mp4';
     if (c.videoUrl.startsWith('data:')) return c.videoUrl;
+    if (c.videoUrl.startsWith('regenerate:')) return resolved;
     if (c.videoUrl.startsWith('/')) return c.videoUrl;
     const q = new URLSearchParams({ url: c.videoUrl, title: c.title });
     return `/api/video-proxy?${q.toString()}`;
@@ -80,6 +162,8 @@ function ClipPlayerDialog({
 
   const downloadUrl = clip.videoUrl?.startsWith('data:')
     ? clip.videoUrl
+    : clip.videoUrl?.startsWith('regenerate:')
+      ? resolved
     : clip.videoUrl?.startsWith('/')
       ? clip.videoUrl
       : clip.videoUrl
@@ -93,7 +177,7 @@ function ClipPlayerDialog({
           <DialogTitle className="text-sm truncate">{clip.title}</DialogTitle>
         </DialogHeader>
         <div className="bg-black">
-          {clip.videoUrl ? (
+          {clip.videoUrl && (!clip.videoUrl.startsWith('regenerate:') || !!resolved) ? (
             <video
               key={clip.id}
               controls
@@ -103,6 +187,10 @@ function ClipPlayerDialog({
             >
               <source src={resolveUrl(clip)} type="video/mp4" />
             </video>
+          ) : resolving ? (
+            <div className="flex items-center justify-center h-48 text-white/40">
+              <Film className="h-12 w-12" />
+            </div>
           ) : (
             <div className="flex items-center justify-center h-48 text-white/40">
               <Film className="h-12 w-12" />
@@ -254,11 +342,15 @@ function VideoRecordRow({ video, formatDate, getStatusBadge }: {
 /* ── Dashboard Page ── */
 export default function DashboardPage() {
   const { t } = useLocale();
-  const { user, loading: authLoading } = useAuth();
+  const { user, accessToken, loading: authLoading } = useAuth();
   const { balance, loading: creditsLoading } = useCredits();
   const router = useRouter();
   const [videos, setVideos] = useState<VideoRecord[]>([]);
   const [videosLoading, setVideosLoading] = useState(true);
+  const [feedbackContent, setFeedbackContent] = useState('');
+  const [feedbackSending, setFeedbackSending] = useState(false);
+  const [feedbackDone, setFeedbackDone] = useState(false);
+  const [feedbackError, setFeedbackError] = useState('');
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -301,9 +393,12 @@ export default function DashboardPage() {
         .limit(20);
 
       if (error) throw error;
-      const mapped: VideoRecord[] = (data || []).map((v: any) => {
-        const clips: VideoClip[] = (v.short_videos || []).map((c: any) => {
-          const url = typeof c.url === 'string' && c.url.startsWith('data-url:') ? null : (c.url || null);
+      const rows = (data || []) as unknown as DbVideoRow[];
+      const mapped: VideoRecord[] = rows.map((v) => {
+        const clips: VideoClip[] = (v.short_videos || []).map((c) => {
+          const url = typeof c.url === 'string' && c.url.startsWith('data-url:')
+            ? `regenerate:${c.id}`
+            : (c.url || null);
           return {
             id: c.id,
             title: c.highlight_title || 'Clip',
@@ -335,6 +430,51 @@ export default function DashboardPage() {
       setVideos(getDemoVideos(user?.id || 'anonymous'));
     } finally {
       setVideosLoading(false);
+    }
+  }
+
+  async function submitFeedback() {
+    if (!user) return;
+    const content = feedbackContent.trim();
+    if (!content) return;
+
+    setFeedbackSending(true);
+    setFeedbackDone(false);
+    setFeedbackError('');
+
+    const useDemoMode =
+      !isSupabaseConfigured()
+      || user?.id === 'demo-admin-id'
+      || user?.id?.startsWith('demo-')
+      || user?.id?.startsWith('google-demo-')
+      || !accessToken;
+
+    try {
+      if (useDemoMode) {
+        const key = `vidshorter_demo_feedbacks_${user.id}`;
+        const stored = typeof window !== 'undefined' ? localStorage.getItem(key) : null;
+        const list = stored ? JSON.parse(stored) : [];
+        list.unshift({ id: `fb-${Date.now()}`, content, created_at: new Date().toISOString() });
+        localStorage.setItem(key, JSON.stringify(list));
+      } else {
+        const res = await fetch('/api/feedback', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ content }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Failed to submit feedback');
+      }
+
+      setFeedbackContent('');
+      setFeedbackDone(true);
+    } catch (e) {
+      setFeedbackError(e instanceof Error ? e.message : 'Failed to submit feedback');
+    } finally {
+      setFeedbackSending(false);
     }
   }
 
@@ -442,6 +582,10 @@ export default function DashboardPage() {
               <Video className="h-4 w-4" />
               处理新视频
             </TabsTrigger>
+            <TabsTrigger value="feedback" className="gap-2">
+              <Settings className="h-4 w-4" />
+              反馈
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="history">
@@ -494,6 +638,35 @@ export default function DashboardPage() {
                     前往视频处理器
                     <ArrowRight className="ml-2 h-4 w-4" />
                   </Link>
+                </Button>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="feedback">
+            <Card>
+              <CardHeader>
+                <CardTitle>用户反馈</CardTitle>
+                <CardDescription>告诉我们你希望改进的功能或遇到的问题</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <Textarea
+                  value={feedbackContent}
+                  onChange={(e) => { setFeedbackContent(e.target.value); setFeedbackError(''); setFeedbackDone(false); }}
+                  placeholder="请输入你的反馈（建议、BUG、功能需求等）"
+                  disabled={feedbackSending}
+                />
+                {feedbackError && (
+                  <p className="text-sm text-destructive">{feedbackError}</p>
+                )}
+                {feedbackDone && (
+                  <p className="text-sm text-green-600">已提交，感谢你的反馈！</p>
+                )}
+                <Button
+                  onClick={submitFeedback}
+                  disabled={feedbackSending || !feedbackContent.trim()}
+                >
+                  {feedbackSending ? t('common.loading') : '提交反馈'}
                 </Button>
               </CardContent>
             </Card>

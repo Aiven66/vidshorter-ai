@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { isSupabaseConfigured } from '@/storage/database/supabase-client';
 import videoClipper from '@/lib/server/video-clipper';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 interface ProcessVideoRequest {
   videoUrl?: string;
@@ -87,7 +88,7 @@ const DEFAULT_BATCH_SIZE =
 export async function POST(request: NextRequest) {
   const body = (await request.json()) as ProcessVideoRequest;
   const videoUrl = body.videoUrl?.trim();
-  const userId = body.userId?.trim();
+  const requestedUserId = body.userId?.trim();
   const sourceType = body.sourceType?.trim() || 'url';
   const jobId = body.jobId?.trim() || `job-${Date.now()}`;
   const clipOffset = clampInt(body.clipOffset, 0, 10_000, 0);
@@ -98,6 +99,8 @@ export async function POST(request: NextRequest) {
   const suppliedTitle = typeof body.title === 'string' ? body.title.trim().slice(0, 120) : '';
   const suppliedVideoId = typeof body.videoId === 'string' ? body.videoId.trim() : '';
   const abortSignal = request.signal;
+  const authHeader = request.headers.get('authorization') || '';
+  const bearerToken = authHeader.toLowerCase().startsWith('bearer ') ? authHeader.slice(7).trim() : '';
 
   if (!videoUrl) {
     return new Response(JSON.stringify({ error: 'Missing video URL' }), {
@@ -113,7 +116,7 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  if (!userId) {
+  if (!requestedUserId && !(isSupabaseConfigured() && bearerToken)) {
     return new Response(JSON.stringify({ error: 'Missing userId' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
@@ -123,6 +126,125 @@ export async function POST(request: NextRequest) {
   const stream = new ReadableStream({
     async start(controller) {
       try {
+        const isSupabaseMode = isSupabaseConfigured() && !!bearerToken && !requestedUserId?.startsWith('demo-');
+        let userId = requestedUserId || '';
+        let userRole = userId === 'demo-admin-id' ? 'admin' : 'user';
+        let supabaseClient: SupabaseClient | null = null;
+
+        const planDailyCredits = (planType: string | null | undefined) => {
+          if (planType === 'basic') return 1000;
+          if (planType === 'pro') return 1_000_000;
+          return 100;
+        };
+
+        const utcMidnightIso = (now: Date) => new Date(Date.UTC(
+          now.getUTCFullYear(),
+          now.getUTCMonth(),
+          now.getUTCDate(),
+          0,
+          0,
+          0,
+          0,
+        )).toISOString();
+
+        const shouldResetUtc = (lastResetAt: string) => {
+          const last = new Date(lastResetAt);
+          const now = new Date();
+          return (
+            now.getUTCFullYear() !== last.getUTCFullYear()
+            || now.getUTCMonth() !== last.getUTCMonth()
+            || now.getUTCDate() !== last.getUTCDate()
+          );
+        };
+
+        if (isSupabaseMode) {
+          const { getSupabaseClient } = await import('@/storage/database/supabase-client');
+          const client = getSupabaseClient(bearerToken);
+          supabaseClient = client;
+          const { data: { user }, error } = await client.auth.getUser();
+          if (error || !user?.id) {
+            sendSSE(controller, {
+              stage: 'error',
+              progress: 0,
+              message: 'Authentication required. Please log in again.',
+              data: { error: true },
+            });
+            return;
+          }
+          userId = user.id;
+          const { data: profile } = await client
+            .from('users')
+            .select('role')
+            .eq('id', userId)
+            .maybeSingle();
+          userRole = profile?.role || 'user';
+
+          if (clipOffset === 0 && userRole !== 'admin') {
+            const { data: sub } = await client
+              .from('subscriptions')
+              .select('plan_type')
+              .eq('user_id', userId)
+              .maybeSingle();
+            const dailyCredits = planDailyCredits(sub?.plan_type);
+            const resetAt = utcMidnightIso(new Date());
+
+            const { data: creditsRow } = await client
+              .from('credits')
+              .select('*')
+              .eq('user_id', userId)
+              .maybeSingle();
+
+            if (!creditsRow) {
+              await client.from('credits').insert({
+                user_id: userId,
+                balance: dailyCredits,
+                last_reset_at: resetAt,
+              });
+            } else if (shouldResetUtc(creditsRow.last_reset_at)) {
+              await client
+                .from('credits')
+                .update({ balance: dailyCredits, last_reset_at: resetAt })
+                .eq('user_id', userId);
+              await client.from('credit_transactions').insert({
+                user_id: userId,
+                amount: dailyCredits,
+                type: 'daily_reset',
+                description: 'Daily credits reset',
+              });
+            }
+
+            const { data: latestCredits } = await client
+              .from('credits')
+              .select('balance')
+              .eq('user_id', userId)
+              .maybeSingle();
+
+            const currentBalance = latestCredits?.balance ?? 0;
+            if (currentBalance < 30) {
+              throw new Error('Insufficient credits. Your credits reset to 100 at 00:00 UTC daily.');
+            }
+
+            await client
+              .from('credits')
+              .update({ balance: currentBalance - 30 })
+              .eq('user_id', userId);
+            await client.from('credit_transactions').insert({
+              user_id: userId,
+              amount: -30,
+              type: 'video_process',
+              description: 'Video processing',
+            });
+          }
+        } else if (!userId) {
+          sendSSE(controller, {
+            stage: 'error',
+            progress: 0,
+            message: 'Missing userId',
+            data: { error: true },
+          });
+          return;
+        }
+
         if (abortSignal.aborted) return;
         if (!sendSSE(controller, {
           stage: 'init',
@@ -197,11 +319,9 @@ export async function POST(request: NextRequest) {
           data: { jobId },
         })) return;
 
-        if (!dbVideoId && isSupabaseConfigured() && !userId.startsWith('demo-')) {
+        if (!dbVideoId && isSupabaseMode) {
           try {
-            const { getSupabaseClient } = await import('@/storage/database/supabase-client');
-            const client = getSupabaseClient();
-            const { data: video } = await client
+            const { data: video } = await supabaseClient!
               .from('videos')
               .insert({
                 user_id: userId,
@@ -271,7 +391,6 @@ export async function POST(request: NextRequest) {
           })) return;
 
           try {
-            let lastError: unknown = null;
             for (let attempt = 0; attempt < 3; attempt += 1) {
               const currentSource = attempt === 0
                 ? source
@@ -289,10 +408,8 @@ export async function POST(request: NextRequest) {
                 draftClip.videoUrl = result.dataUrl || result.publicUrl;
                 draftClip.thumbnailUrl = result.thumbnailUrl || '';
                 draftClip.status = 'completed';
-                lastError = null;
                 break;
               } catch (err) {
-                lastError = err;
                 if (attempt === 2) throw err;
               }
             }
@@ -337,16 +454,13 @@ export async function POST(request: NextRequest) {
           data: { jobId, videoId: dbVideoId || undefined },
         })) return;
 
-        if (dbVideoId && isSupabaseConfigured() && !userId.startsWith('demo-')) {
+        if (dbVideoId && isSupabaseMode) {
           try {
-            const { getSupabaseClient } = await import('@/storage/database/supabase-client');
-            const client = getSupabaseClient();
-
             for (const clip of completedClips) {
               const dbVideoUrl = clip.videoUrl?.startsWith('data:')
                 ? `data-url:${clip.id}`
                 : clip.videoUrl;
-              await client.from('short_videos').insert({
+              await supabaseClient!.from('short_videos').insert({
                 video_id: dbVideoId,
                 user_id: userId,
                 url: dbVideoUrl,
@@ -366,11 +480,9 @@ export async function POST(request: NextRequest) {
         if (abortSignal.aborted) return;
         const nextOffset = clipOffset + highlights.length;
         const done = nextOffset >= allHighlights.length;
-        if (dbVideoId && isSupabaseConfigured() && !userId.startsWith('demo-')) {
+        if (dbVideoId && isSupabaseMode) {
           try {
-            const { getSupabaseClient } = await import('@/storage/database/supabase-client');
-            const client = getSupabaseClient();
-            await client
+            await supabaseClient!
               .from('videos')
               .update({
                 status: done

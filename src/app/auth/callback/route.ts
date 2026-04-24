@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
           // Create credits record
           await client.from('credits').insert({
             user_id: user.id,
-            balance: 300,
+            balance: 100,
           });
 
           // Create subscription record

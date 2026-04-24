@@ -7,7 +7,7 @@ import { useAuth } from './auth-context';
 interface CreditsContextType {
   balance: number;
   loading: boolean;
-  refreshCredits: () => Promise<void>;
+  refreshCredits: () => Promise<number>;
   deductCredits: (amount: number) => Promise<boolean>;
 }
 
@@ -17,17 +17,22 @@ const CreditsContext = createContext<CreditsContextType | undefined>(undefined);
 const DEMO_CREDITS_KEY = 'vidshorter_demo_credits';
 const DEMO_CREDITS_RESET_KEY = 'vidshorter_demo_credits_reset';
 
+const DAILY_FREE_CREDITS = 100;
+const DAILY_BASIC_CREDITS = 1000;
+const DAILY_PRO_CREDITS = 1_000_000;
+const ADMIN_CREDITS = 10_000;
+
 function getDemoCreditsKey(userId?: string): string {
   return userId ? `vidshorter_demo_credits_${userId}` : DEMO_CREDITS_KEY;
 }
 
 function getDemoCredits(userId?: string): number {
-  if (typeof window === 'undefined') return 300;
+  if (typeof window === 'undefined') return DAILY_FREE_CREDITS;
   const stored = localStorage.getItem(getDemoCreditsKey(userId));
   if (stored) return parseInt(stored, 10);
   // Legacy shared key migration
   const legacy = localStorage.getItem(DEMO_CREDITS_KEY);
-  return legacy ? parseInt(legacy, 10) : 300;
+  return legacy ? parseInt(legacy, 10) : DAILY_FREE_CREDITS;
 }
 
 function saveDemoCredits(balance: number, userId?: string) {
@@ -43,11 +48,11 @@ function shouldResetDemoCredits(): boolean {
   const resetDate = new Date(lastReset);
   const now = new Date();
   
-  // Reset at 8 AM
-  const resetTime = new Date(now);
-  resetTime.setHours(8, 0, 0, 0);
-  
-  return now >= resetTime && resetDate < resetTime;
+  return (
+    now.getUTCFullYear() !== resetDate.getUTCFullYear()
+    || now.getUTCMonth() !== resetDate.getUTCMonth()
+    || now.getUTCDate() !== resetDate.getUTCDate()
+  );
 }
 
 function setDemoResetTime() {
@@ -56,26 +61,54 @@ function setDemoResetTime() {
 }
 
 export function CreditsProvider({ children }: { children: ReactNode }) {
-  const { user } = useAuth();
+  const { user, accessToken } = useAuth();
   const [balance, setBalance] = useState(0);
   const [loading, setLoading] = useState(true);
+
+  function planDailyCredits(planType: string | null | undefined) {
+    if (planType === 'basic') return DAILY_BASIC_CREDITS;
+    if (planType === 'pro') return DAILY_PRO_CREDITS;
+    return DAILY_FREE_CREDITS;
+  }
+
+  function utcMidnightIso(now: Date) {
+    return new Date(Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate(),
+      0,
+      0,
+      0,
+      0,
+    )).toISOString();
+  }
+
+  function shouldResetUtc(lastResetAt: string) {
+    const last = new Date(lastResetAt);
+    const now = new Date();
+    return (
+      now.getUTCFullYear() !== last.getUTCFullYear()
+      || now.getUTCMonth() !== last.getUTCMonth()
+      || now.getUTCDate() !== last.getUTCDate()
+    );
+  }
 
   useEffect(() => {
     if (user) {
       // Admin always gets 10000 credits
       const isAdmin = user.role === 'admin';
-      const defaultCredits = isAdmin ? 10000 : 300;
+      const defaultCredits = isAdmin ? ADMIN_CREDITS : DAILY_FREE_CREDITS;
       const useDemoMode = !isSupabaseConfigured() || user.id.startsWith('demo-') || user.id.startsWith('google-demo-');
 
       if (useDemoMode) {
         const existingBalance = getDemoCredits(user.id);
         // Admin: set to 10000 if they don't already have more (or first login)
         if (isAdmin) {
-          const adminBalance = Math.max(existingBalance, 10000);
+          const adminBalance = Math.max(existingBalance, ADMIN_CREDITS);
           // Initialize admin credits if this is first time or they have less than 10000
           if (!localStorage.getItem(getDemoCreditsKey(user.id))) {
-            setBalance(10000);
-            saveDemoCredits(10000, user.id);
+            setBalance(ADMIN_CREDITS);
+            saveDemoCredits(ADMIN_CREDITS, user.id);
           } else {
             setBalance(adminBalance);
             if (adminBalance !== existingBalance) saveDemoCredits(adminBalance, user.id);
@@ -96,13 +129,13 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
       setBalance(0);
       setLoading(false);
     }
-  }, [user]);
+  }, [user, accessToken]);
 
   async function fetchCredits() {
     // Check configuration directly
     if (!isSupabaseConfigured()) {
       const isAdmin = user?.role === 'admin';
-      const defaultCredits = isAdmin ? 10000 : 300;
+      const defaultCredits = isAdmin ? ADMIN_CREDITS : DAILY_FREE_CREDITS;
       if (isAdmin || !shouldResetDemoCredits()) {
         setBalance(getDemoCredits(user?.id));
       } else {
@@ -120,7 +153,20 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
     }
     
     try {
-      const client = getSupabaseClient(user.id);
+      if (!accessToken) {
+        setBalance(getDemoCredits(user.id));
+        setLoading(false);
+        return;
+      }
+
+      const client = getSupabaseClient(accessToken);
+      const { data: sub } = await client
+        .from('subscriptions')
+        .select('plan_type')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      const dailyCredits = user.role === 'admin' ? ADMIN_CREDITS : planDailyCredits(sub?.plan_type);
+
       const { data, error } = await client
         .from('credits')
         .select('*')
@@ -136,16 +182,10 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
       }
       
       if (data) {
-        // Check if we need to reset daily credits
-        const lastReset = new Date(data.last_reset_at);
-        const now = new Date();
-        const hoursSinceReset = (now.getTime() - lastReset.getTime()) / (1000 * 60 * 60);
-        
-        if (hoursSinceReset >= 24) {
-          // Reset credits
+        if (user.role !== 'admin' && shouldResetUtc(data.last_reset_at)) {
           await refreshCredits();
         } else {
-          setBalance(data.balance);
+          setBalance(user.role === 'admin' ? Math.max(data.balance, ADMIN_CREDITS) : data.balance);
         }
       } else {
         // Create credits record for new user
@@ -153,14 +193,14 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
           .from('credits')
           .insert({
             user_id: user.id,
-            balance: 300,
+            balance: dailyCredits,
           })
           .select()
           .single();
         
         if (insertError) {
           console.warn('Credits creation failed, using demo mode');
-          setBalance(300);
+          setBalance(dailyCredits);
         } else if (newCredits) {
           setBalance(newCredits.balance);
         }
@@ -180,23 +220,36 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
     // Demo mode
     if (!isSupabaseConfigured() || user.id.startsWith('demo-') || user.id.startsWith('google-demo-')) {
       const isAdmin = user.role === 'admin';
-      const resetAmount = isAdmin ? 10000 : 300;
+      const resetAmount = isAdmin ? ADMIN_CREDITS : DAILY_FREE_CREDITS;
       setBalance(resetAmount);
       saveDemoCredits(resetAmount, user.id);
       setDemoResetTime();
-      return;
+      return resetAmount;
     }
     
     try {
-      const client = getSupabaseClient(user.id);
-      const now = new Date();
-      now.setHours(8, 0, 0, 0); // Set to 8:00 AM
+      if (!accessToken) return balance;
+      const client = getSupabaseClient(accessToken);
+
+      if (user.role === 'admin') {
+        const adminBalance = Math.max(balance, ADMIN_CREDITS);
+        setBalance(adminBalance);
+        return adminBalance;
+      }
+
+      const { data: sub } = await client
+        .from('subscriptions')
+        .select('plan_type')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      const dailyCredits = planDailyCredits(sub?.plan_type);
+      const resetAt = utcMidnightIso(new Date());
       
       const { data, error } = await client
         .from('credits')
         .update({
-          balance: 300,
-          last_reset_at: now.toISOString(),
+          balance: dailyCredits,
+          last_reset_at: resetAt,
         })
         .eq('user_id', user.id)
         .select()
@@ -204,8 +257,8 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
       
       if (error) {
         console.warn('Credits refresh failed, using local value');
-        setBalance(300);
-        return;
+        setBalance(dailyCredits);
+        return dailyCredits;
       }
       
       if (data) {
@@ -215,22 +268,27 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
         try {
           await client.from('credit_transactions').insert({
             user_id: user.id,
-            amount: 300,
+            amount: dailyCredits,
             type: 'daily_reset',
             description: 'Daily credits reset',
           });
         } catch {
           // Ignore transaction log errors
         }
+        return data.balance;
       }
     } catch (error) {
       console.warn('Credits refresh error, using local value');
-      setBalance(300);
+      setBalance(DAILY_FREE_CREDITS);
+      return DAILY_FREE_CREDITS;
     }
+    return balance;
   }
 
   async function deductCredits(amount: number): Promise<boolean> {
-    if (!user || balance < amount) return false;
+    if (!user) return false;
+    if (user.role === 'admin') return true;
+    if (balance < amount) return false;
 
     // Demo mode
     if (!isSupabaseConfigured() || user.id.startsWith('demo-') || user.id.startsWith('google-demo-')) {
@@ -241,7 +299,8 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
     }
     
     try {
-      const client = getSupabaseClient(user.id);
+      if (!accessToken) return false;
+      const client = getSupabaseClient(accessToken);
       const newBalance = balance - amount;
       
       const { error } = await client

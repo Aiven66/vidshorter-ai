@@ -151,8 +151,8 @@ function mergeClips(prev: VideoClip[], next: VideoClip[]) {
 
 export default function HomePage() {
   const { t } = useLocale();
-  const { user } = useAuth();
-  const { balance, deductCredits } = useCredits();
+  const { user, accessToken } = useAuth();
+  const { balance, refreshCredits } = useCredits();
 
   // State
   const [videoUrl, setVideoUrl] = useState('');
@@ -205,7 +205,8 @@ export default function HomePage() {
       setError('Please enter a valid public http(s) video URL.');
       return;
     }
-    if (balance < 30) { setError('Insufficient credits. You need at least 30 credits.'); return; }
+    const latestBalance = await refreshCredits();
+    if (latestBalance < 30) { setError('Insufficient credits. You need at least 30 credits.'); return; }
 
     setIsProcessing(true);
     setProgress({ stage: 'init', progress: 0, message: 'Starting...' });
@@ -213,9 +214,6 @@ export default function HomePage() {
     setError(null);
 
     try {
-      const ok = await deductCredits(30);
-      if (!ok) throw new Error('Failed to deduct credits');
-
       let allHighlights: NonNullable<SSEData['data']>['highlights'] = [];
       let analysisDuration = 0;
       let analysisTitle: string | null = null;
@@ -229,7 +227,10 @@ export default function HomePage() {
       const runBatch = async (payload: Record<string, unknown>) => {
         const res = await fetch('/api/process-video', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+          },
           body: JSON.stringify(payload),
         });
         if (!res.ok) throw new Error(`Server error: ${res.status}`);
@@ -333,7 +334,7 @@ export default function HomePage() {
     } finally {
       setIsProcessing(false);
     }
-  }, [user, trimmedVideoUrl, balance, deductCredits]);
+  }, [user, trimmedVideoUrl, accessToken, refreshCredits]);
 
   /* ── Download ── */
   const handleDownload = async (clip: VideoClip) => {

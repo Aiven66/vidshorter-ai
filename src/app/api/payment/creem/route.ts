@@ -22,21 +22,18 @@ const CREEM_API_BASE = 'https://api.creem.io/v1';
 
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
-  const { planId, amount, currency = 'USD', userId, config } = body as {
+  const { planId, amount, currency = 'USD', userId } = body as {
     planId?: string;
     amount?: number;    // USD dollars
     currency?: string;
     userId?: string;
-    config?: {
-      creem?: { apiKey?: string; enabled?: boolean };
-    };
   };
 
   if (!planId || !amount) {
     return Response.json({ error: 'planId and amount are required' }, { status: 400 });
   }
 
-  const apiKey = process.env.CREEM_API_KEY || config?.creem?.apiKey;
+  const apiKey = process.env.CREEM_API_KEY;
   const appUrl     = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 
   // ── Demo mode when not configured ──

@@ -8,8 +8,8 @@ const PLAN_TO_TYPE: Record<PlanId, 'basic' | 'pro'> = {
 };
 
 const PLAN_CREDITS: Record<PlanId, number> = {
-  basic: 2000,
-  pro: 10000,
+  basic: 1000,
+  pro: 1000000,
 };
 
 export function isPaidPlan(planId: string | null | undefined): planId is PlanId {
@@ -30,6 +30,16 @@ export async function applyPlanPurchase(input: {
 
   const planType = PLAN_TO_TYPE[input.planId];
   const credits = PLAN_CREDITS[input.planId];
+  const now = new Date();
+  const resetAt = new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+    0,
+    0,
+    0,
+    0,
+  )).toISOString();
 
   const { data: existingSub } = await client
     .from('subscriptions')
@@ -60,13 +70,14 @@ export async function applyPlanPurchase(input: {
   if (existingCredits) {
     await client.from('credits').update({
       balance: Math.max(existingCredits.balance ?? 0, credits),
+      last_reset_at: resetAt,
       updated_at: new Date().toISOString(),
     }).eq('id', existingCredits.id);
   } else {
     await client.from('credits').insert({
       user_id: input.userId,
       balance: credits,
-      last_reset_at: new Date().toISOString(),
+      last_reset_at: resetAt,
     });
   }
 
@@ -79,4 +90,3 @@ export async function applyPlanPurchase(input: {
 
   return true;
 }
-

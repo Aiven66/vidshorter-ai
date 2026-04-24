@@ -206,7 +206,7 @@ export default function PricingPage() {
               },
               {
                 q: 'How does daily credit reset work?',
-                a: "Credits reset to your plan's daily limit at 8:00 AM every day. Unused credits don't carry over.",
+                a: "Credits reset to your plan's daily limit at 00:00 UTC every day. Unused credits don't carry over.",
               },
               {
                 q: 'Can I upgrade or downgrade my plan?',

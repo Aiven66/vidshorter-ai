@@ -136,17 +136,17 @@ const MAX_HIGHLIGHTS = 10;
 const IS_VERCEL = !!process.env.VERCEL;
 // Max clips on Vercel to stay within 300s function timeout
 const VERCEL_MAX_HIGHLIGHTS = 3;
-const VERCEL_CRF = process.env.VERCEL_CLIP_CRF || '30';
-const VERCEL_TARGET_WIDTH = process.env.VERCEL_CLIP_WIDTH || '854';
-const VERCEL_TARGET_HEIGHT = process.env.VERCEL_CLIP_HEIGHT || '480';
+const VERCEL_CRF = process.env.VERCEL_CLIP_CRF || '26';
+const VERCEL_TARGET_WIDTH = process.env.VERCEL_CLIP_WIDTH || '1280';
+const VERCEL_TARGET_HEIGHT = process.env.VERCEL_CLIP_HEIGHT || '720';
 const VERCEL_SCALE = `scale=${VERCEL_TARGET_WIDTH}:${VERCEL_TARGET_HEIGHT}:force_original_aspect_ratio=decrease,pad=${VERCEL_TARGET_WIDTH}:${VERCEL_TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2`;
 // Maximum file size (bytes) we will base64-encode and send inline in the SSE stream
 const MAX_INLINE_BYTES = 25 * 1024 * 1024; // 25 MB
 const LOCAL_MAX_HEIGHT = process.env.CLIP_MAX_HEIGHT || '1080';
 const YOUTUBE_MAX_HEIGHT = parseInt(
-  process.env.YOUTUBE_MAX_HEIGHT || (IS_VERCEL ? '480' : LOCAL_MAX_HEIGHT),
+  process.env.YOUTUBE_MAX_HEIGHT || (IS_VERCEL ? '720' : LOCAL_MAX_HEIGHT),
   10,
-) || (IS_VERCEL ? 480 : 1080);
+) || (IS_VERCEL ? 720 : 1080);
 
 // ── URL helpers ──────────────────────────────────────────────────────────────
 function isYouTubeUrl(videoUrl: string) {
@@ -2124,7 +2124,7 @@ async function createLocalClip(params: {
     ? ['-vf', VERCEL_SCALE]
     : ['-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2'];
   const crf = IS_VERCEL ? VERCEL_CRF : (isRemoteInput ? '20' : '18');
-  const preset = IS_VERCEL ? 'ultrafast' : (isRemoteInput ? 'veryfast' : 'fast');
+  const preset = IS_VERCEL ? 'veryfast' : (isRemoteInput ? 'veryfast' : 'fast');
 
   const seekArgs = (!isRemoteInput || isWorkerStream)
     ? ['-ss', String(params.startTime), '-i', params.inputPath, '-t', String(duration)]
@@ -2180,7 +2180,7 @@ async function createLocalClip(params: {
     let fileSizeBytes = fileBuffer.length;
 
     if (IS_VERCEL && fileSizeBytes > MAX_INLINE_BYTES) {
-      const fallbackCrf = String(Math.min(40, (parseInt(VERCEL_CRF, 10) || 30) + 6));
+      const fallbackCrf = String(Math.min(40, (parseInt(VERCEL_CRF, 10) || 26) + 6));
       const fallbackPath = outputPath.replace(/\.mp4$/, `.small.mp4`);
 
       try {
@@ -2190,7 +2190,7 @@ async function createLocalClip(params: {
           '-c:v', 'libx264',
           '-preset', 'ultrafast',
           '-crf', fallbackCrf,
-          '-vf', 'scale=854:480:force_original_aspect_ratio=decrease,pad=854:480:(ow-iw)/2:(oh-ih)/2',
+          '-vf', `scale=${VERCEL_TARGET_WIDTH}:${VERCEL_TARGET_HEIGHT}:force_original_aspect_ratio=decrease,pad=${VERCEL_TARGET_WIDTH}:${VERCEL_TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2`,
           '-c:a', 'aac',
           '-b:a', '96k',
           '-ar', '44100',

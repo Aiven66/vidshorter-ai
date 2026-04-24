@@ -13,6 +13,7 @@ interface User {
 
 interface AuthContextType {
   user: User | null;
+  accessToken: string | null;
   loading: boolean;
   error: string | null;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
@@ -104,9 +105,19 @@ function clearDemoUser() {
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const [accessToken, setAccessToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [useDemo, setUseDemo] = useState(false);
+
+  async function trackSession(token: string) {
+    try {
+      await fetch('/api/auth/track', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch {}
+  }
 
   useEffect(() => {
     // Check if Supabase is configured
@@ -118,6 +129,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (demoUser) {
         setUser(demoUser);
       }
+      setAccessToken(null);
       setLoading(false);
       return;
     }
@@ -132,6 +144,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { data: { session } } = await client.auth.getSession();
 
       if (session?.user) {
+        setAccessToken(session.access_token || null);
+        if (session.access_token) {
+          trackSession(session.access_token);
+        }
         // Fetch user data from our users table
         const { data: userData } = await client
           .from('users')
@@ -174,7 +190,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             // Create credits record
             await client.from('credits').insert({
               user_id: createdUser.id,
-              balance: 300,
+              balance: 100,
             });
 
             // Create subscription record
@@ -205,6 +221,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(adminUser);
         saveDemoUser(adminUser);
         setUseDemo(true);
+        setAccessToken(null);
         return { error: null };
       }
       // 2. Check registered users store
@@ -220,6 +237,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(demoUser);
         saveDemoUser(demoUser);
         setUseDemo(true);
+        setAccessToken(null);
         return { error: null };
       }
       // 3. Not found
@@ -238,6 +256,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(adminUser);
           saveDemoUser(adminUser);
           setUseDemo(true);
+          setAccessToken(null);
           return { error: null };
         }
         return { error: error.message };
@@ -253,6 +272,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(adminUser);
         saveDemoUser(adminUser);
         setUseDemo(true);
+        setAccessToken(null);
         return { error: null };
       }
       const registered = findRegisteredUser(email, password);
@@ -267,6 +287,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(demoUser);
         saveDemoUser(demoUser);
         setUseDemo(true);
+        setAccessToken(null);
         return { error: null };
       }
       return { error: 'Network error. Please try again later.' };
@@ -298,6 +319,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(demoUser);
       saveDemoUser(demoUser);
       setUseDemo(true);
+      setAccessToken(null);
       return { error: null };
     }
 
@@ -327,6 +349,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(demoUser);
         saveDemoUser(demoUser);
         setUseDemo(true);
+        setAccessToken(null);
         return { error: null };
       }
 
@@ -347,6 +370,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(demoUser);
       saveDemoUser(demoUser);
       setUseDemo(true);
+      setAccessToken(null);
       return { error: null };
     }
   }
@@ -369,6 +393,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(googleUser);
       saveDemoUser(googleUser);
       setUseDemo(true);
+      setAccessToken(null);
       return { error: null };
     }
 
@@ -397,6 +422,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (useDemo) {
       clearDemoUser();
       setUser(null);
+      setAccessToken(null);
       return;
     }
 
@@ -404,13 +430,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const client = getSupabaseClient();
       await client.auth.signOut();
       setUser(null);
+      setAccessToken(null);
     } catch (err) {
       console.error('Sign out error:', err);
     }
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, error, signIn, signUp, signInWithGoogle, signOut }}>
+    <AuthContext.Provider value={{ user, accessToken, loading, error, signIn, signUp, signInWithGoogle, signOut }}>
       {children}
     </AuthContext.Provider>
   );

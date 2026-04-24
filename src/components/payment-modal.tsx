@@ -15,7 +15,7 @@ const PAYMENT_CONFIG_KEY = 'vidshorter_payment_config';
 interface StoredPaymentConfig {
   wechat?: { appId?: string; mchId?: string; apiKey?: string; serialNo?: string; privateKey?: string; notifyUrl?: string; enabled?: boolean };
   alipay?: { appId?: string; privateKey?: string; publicKey?: string; notifyUrl?: string; sandbox?: boolean; enabled?: boolean };
-  creem?: { apiKey?: string; webhookSecret?: string; enabled?: boolean };
+  creem?: { enabled?: boolean };
 }
 
 function getStoredPaymentConfig(): StoredPaymentConfig {
@@ -113,7 +113,7 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
 
   const hasWechat = !!(payConfig.wechat?.enabled && payConfig.wechat?.appId && payConfig.wechat?.mchId && payConfig.wechat?.apiKey && payConfig.wechat?.serialNo && payConfig.wechat?.privateKey);
   const hasAlipay = !!(payConfig.alipay?.enabled && payConfig.alipay?.appId && payConfig.alipay?.privateKey);
-  const hasCreem = !!(payConfig.creem?.enabled && payConfig.creem?.apiKey);
+  const hasCreem = true;
 
   const handlePay = async () => {
     setPaymentError('');
@@ -196,7 +196,7 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
           const res = await fetch('/api/payment/creem', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ planId: plan.id, amount: plan.price.intl, currency: 'USD', userId: user.id, config: payConfig }),
+            body: JSON.stringify({ planId: plan.id, amount: plan.price.intl, currency: 'USD', userId: user.id }),
           });
           const data = await res.json();
           if (data.checkoutUrl) {
