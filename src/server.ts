@@ -7,7 +7,7 @@ const hostname = process.env.HOSTNAME || 'localhost';
 const port = parseInt(process.env.PORT || '5000', 10);
 
 // Create Next.js app
-const app = next({ dev, hostname, port });
+const app = next({ dev, hostname, port, ...(dev ? { webpack: true } : {}) });
 const handle = app.getRequestHandler();
 
 app.prepare().then(() => {
