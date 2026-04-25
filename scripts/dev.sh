@@ -2,41 +2,37 @@
 set -Eeuo pipefail
 
 
-PORT=5000
+PORT="${PORT:-5100}"
 COZE_WORKSPACE_PATH="${COZE_WORKSPACE_PATH:-$(pwd)}"
-DEPLOY_RUN_PORT=5000
+DEPLOY_RUN_PORT="${DEPLOY_RUN_PORT:-$PORT}"
 
 
 cd "${COZE_WORKSPACE_PATH}"
 
-kill_port_if_listening() {
-    local pids
+LOCK_FILE="${COZE_WORKSPACE_PATH}/.next/dev/lock"
+if [[ -f "${LOCK_FILE}" ]] && command -v lsof >/dev/null 2>&1; then
+  lock_pids=$(lsof -ti "${LOCK_FILE}" 2>/dev/null | paste -sd' ' - || true)
+  if [[ -z "${lock_pids}" ]]; then
+    lock_pids=$(lsof -t +D "${COZE_WORKSPACE_PATH}/.next/dev" 2>/dev/null | sort -u | paste -sd' ' - || true)
+  fi
+  if [[ -n "${lock_pids}" ]]; then
+    echo "Next dev lock in use by PIDs: ${lock_pids} (SIGKILL)"
+    echo "${lock_pids}" | xargs -I {} kill -9 {}
+  fi
+fi
+
+is_port_listening() {
+    local p="${1}"
     if command -v lsof >/dev/null 2>&1; then
-      pids=$(lsof -tiTCP:"${DEPLOY_RUN_PORT}" -sTCP:LISTEN 2>/dev/null | paste -sd' ' - || true)
-    else
-      pids=$(ss -H -lntp 2>/dev/null | awk -v port="${DEPLOY_RUN_PORT}" '$4 ~ ":"port"$"' | grep -o 'pid=[0-9]*' | cut -d= -f2 | paste -sd' ' - || true)
+      lsof -tiTCP:"${p}" -sTCP:LISTEN >/dev/null 2>&1
+      return $?
     fi
-    if [[ -z "${pids}" ]]; then
-      echo "Port ${DEPLOY_RUN_PORT} is free."
-      return
-    fi
-    echo "Port ${DEPLOY_RUN_PORT} in use by PIDs: ${pids} (SIGKILL)"
-    echo "${pids}" | xargs -I {} kill -9 {}
-    sleep 1
-    if command -v lsof >/dev/null 2>&1; then
-      pids=$(lsof -tiTCP:"${DEPLOY_RUN_PORT}" -sTCP:LISTEN 2>/dev/null | paste -sd' ' - || true)
-    else
-      pids=$(ss -H -lntp 2>/dev/null | awk -v port="${DEPLOY_RUN_PORT}" '$4 ~ ":"port"$"' | grep -o 'pid=[0-9]*' | cut -d= -f2 | paste -sd' ' - || true)
-    fi
-    if [[ -n "${pids}" ]]; then
-      echo "Warning: port ${DEPLOY_RUN_PORT} still busy after SIGKILL, PIDs: ${pids}"
-    else
-      echo "Port ${DEPLOY_RUN_PORT} cleared."
-    fi
+    ss -H -lnt 2>/dev/null | awk -v port="${p}" '$4 ~ ":"port"$"' | grep -q .
 }
 
-echo "Clearing port ${PORT} before start."
-kill_port_if_listening
-echo "Starting HTTP service on port ${PORT} for dev..."
+while is_port_listening "${DEPLOY_RUN_PORT}"; do
+  DEPLOY_RUN_PORT=$((DEPLOY_RUN_PORT + 1))
+done
+echo "Starting HTTP service on port ${DEPLOY_RUN_PORT} for dev..."
 
-PORT=$PORT pnpm tsx watch src/server.ts
+PORT=${DEPLOY_RUN_PORT} pnpm tsx watch src/server.ts

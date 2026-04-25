@@ -16,6 +16,7 @@ import {
 import { useLocale } from '@/lib/locale-context';
 import { useAuth } from '@/lib/auth-context';
 import { useCredits } from '@/lib/credits-context';
+import { getSupabaseClient } from '@/storage/database/supabase-client';
 import {
   Video, Upload, Link2, Sparkles, Download, Play,
   Film, Scissors, Zap, ArrowRight, CheckCircle,
@@ -156,6 +157,8 @@ export default function HomePage() {
 
   // State
   const [videoUrl, setVideoUrl] = useState('');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState<SSEData | null>(null);
   const [clips, setClips] = useState<VideoClip[]>([]);
@@ -164,7 +167,31 @@ export default function HomePage() {
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const trimmedVideoUrl = videoUrl.trim();
+  const canStart = (!!trimmedVideoUrl && isHttpVideoUrl(trimmedVideoUrl)) || !!selectedFile;
   const completedClips = clips.filter(clip => clip.status === 'completed' && clip.videoUrl);
+
+  const uploadToSupabase = useCallback(async (file: File) => {
+    if (!user) throw new Error('Please sign in to upload a video.');
+    if (!accessToken) throw new Error('Authentication required. Please sign in again.');
+
+    const bucket = process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET || 'uploads';
+    const client = getSupabaseClient(accessToken);
+
+    const safeName = file.name.replace(/[^\w.\-]+/g, '_');
+    const objectPath = `users/${user.id}/${Date.now()}-${safeName}`;
+
+    const uploadRes = await client.storage.from(bucket).upload(objectPath, file, {
+      cacheControl: '3600',
+      upsert: false,
+      contentType: file.type || 'video/mp4',
+    });
+    if (uploadRes.error) throw new Error(uploadRes.error.message);
+
+    const signed = await client.storage.from(bucket).createSignedUrl(objectPath, 60 * 60);
+    if (signed.error || !signed.data?.signedUrl) throw new Error(signed.error?.message || 'Failed to create signed URL.');
+
+    return { signedUrl: signed.data.signedUrl, objectPath, bucket };
+  }, [accessToken, user]);
 
   /* ── Proxy URL builder ── */
   const proxyUrl = (clip: VideoClip, download = false) => {
@@ -200,8 +227,8 @@ export default function HomePage() {
   /* ── Process video ── */
   const handleProcess = useCallback(async () => {
     if (!user) { window.location.href = '/login'; return; }
-    if (!trimmedVideoUrl) { setError('Please enter a video URL'); return; }
-    if (!isHttpVideoUrl(trimmedVideoUrl)) {
+    if (!trimmedVideoUrl && !selectedFile) { setError('Please enter a video URL or upload a local video file.'); return; }
+    if (trimmedVideoUrl && !isHttpVideoUrl(trimmedVideoUrl)) {
       setError('Please enter a valid public http(s) video URL.');
       return;
     }
@@ -214,6 +241,18 @@ export default function HomePage() {
     setError(null);
 
     try {
+      let inputUrl = trimmedVideoUrl;
+      let displayUrl = trimmedVideoUrl;
+
+      if (!inputUrl && selectedFile) {
+        setIsUploading(true);
+        setProgress({ stage: 'init', progress: 1, message: `Uploading "${selectedFile.name}"...` });
+        const uploaded = await uploadToSupabase(selectedFile);
+        inputUrl = uploaded.signedUrl;
+        displayUrl = `upload:${selectedFile.name}`;
+        setIsUploading(false);
+      }
+
       let allHighlights: NonNullable<SSEData['data']>['highlights'] = [];
       let analysisDuration = 0;
       let analysisTitle: string | null = null;
@@ -302,17 +341,17 @@ export default function HomePage() {
       };
 
       await runBatch({
-        videoUrl: trimmedVideoUrl,
+        videoUrl: inputUrl,
         userId: user.id,
-        sourceType: 'url',
+        sourceType: selectedFile ? 'upload' : 'url',
         aiConfig: getAdminAiConfig(),
       });
 
       while (!done && allHighlights && allHighlights.length > 0 && nextOffset < allHighlights.length) {
         await runBatch({
-          videoUrl: trimmedVideoUrl,
+          videoUrl: inputUrl,
           userId: user.id,
-          sourceType: 'url',
+          sourceType: selectedFile ? 'upload' : 'url',
           aiConfig: getAdminAiConfig(),
           highlights: allHighlights,
           duration: analysisDuration,
@@ -326,15 +365,16 @@ export default function HomePage() {
 
       if (done) {
         const videoTitle = analysisTitle || null;
-        saveDemoVideoRecord(trimmedVideoUrl, videoTitle, Array.from(clipMap.values()), user?.id);
+        saveDemoVideoRecord(displayUrl, videoTitle, Array.from(clipMap.values()), user?.id);
       }
     } catch (err) {
       console.error('Processing error:', err);
+      setIsUploading(false);
       setError(err instanceof Error ? err.message : 'Processing failed');
     } finally {
       setIsProcessing(false);
     }
-  }, [user, trimmedVideoUrl, accessToken, refreshCredits]);
+  }, [refreshCredits, selectedFile, trimmedVideoUrl, uploadToSupabase, user]);
 
   /* ── Download ── */
   const handleDownload = async (clip: VideoClip) => {
@@ -374,11 +414,13 @@ export default function HomePage() {
     }
   };
 
-  /* ── File upload (placeholder) ── */
+  /* ── File upload ── */
   const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (f) {
-      setError(`Local upload for "${f.name}" is not wired into the clipping pipeline yet. Please use a direct video URL for now.`);
+      setSelectedFile(f);
+      setVideoUrl('');
+      setError(null);
     }
   };
 
@@ -475,17 +517,17 @@ export default function HomePage() {
                     <Input
                       placeholder="Paste a video URL (MP4, MOV, AVI...)"
                       value={videoUrl}
-                      onChange={e => { setVideoUrl(e.target.value); setError(null); }}
+                      onChange={e => { setVideoUrl(e.target.value); setSelectedFile(null); setError(null); }}
                       className="pl-9"
                       disabled={isProcessing}
                     />
                   </div>
                   <Button
                     onClick={handleProcess}
-                    disabled={!trimmedVideoUrl || isProcessing || !user}
+                    disabled={!canStart || isProcessing || isUploading || !user}
                     className="gap-2 min-w-[140px]"
                   >
-                    {isProcessing ? (
+                    {isProcessing || isUploading ? (
                       <><Scissors className="h-4 w-4 animate-spin" />Processing...</>
                     ) : (
                       <><Sparkles className="h-4 w-4" />Analyze</>
@@ -499,7 +541,9 @@ export default function HomePage() {
                   onClick={() => fileInputRef.current?.click()}
                 >
                   <Upload className="h-6 w-6 mx-auto text-muted-foreground mb-1" />
-                  <p className="text-sm text-muted-foreground">local upload is next; link-based clipping is available now</p>
+                  <p className="text-sm text-muted-foreground">
+                    {selectedFile ? `Selected: ${selectedFile.name}` : 'Upload a local video file (recommended when YouTube link is blocked)'}
+                  </p>
                   <input
                     ref={fileInputRef}
                     type="file"

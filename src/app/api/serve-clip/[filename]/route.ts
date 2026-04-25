@@ -9,6 +9,7 @@ import { createReadStream, statSync } from 'node:fs';
 import path from 'node:path';
 import { access } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
+import { Readable } from 'node:stream';
 
 const CLIP_DIR = '/tmp/generated-clips';
 
@@ -63,15 +64,7 @@ export async function GET(
       const chunkSize = end - start + 1;
 
       const readStream = createReadStream(filePath, { start, end });
-      const chunks: Uint8Array[] = [];
-
-      await new Promise<void>((resolve, reject) => {
-        readStream.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
-        readStream.on('end', resolve);
-        readStream.on('error', reject);
-      });
-
-      const body = Buffer.concat(chunks);
+      const body = Readable.toWeb(readStream) as unknown as ReadableStream;
 
       return new Response(body, {
         status: 206,
@@ -85,17 +78,8 @@ export async function GET(
       });
     }
 
-    // Non-range: stream full file
     const readStream = createReadStream(filePath);
-    const chunks: Uint8Array[] = [];
-
-    await new Promise<void>((resolve, reject) => {
-      readStream.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
-      readStream.on('end', resolve);
-      readStream.on('error', reject);
-    });
-
-    const body = Buffer.concat(chunks);
+    const body = Readable.toWeb(readStream) as unknown as ReadableStream;
 
     return new Response(body, {
       status: 200,

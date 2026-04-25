@@ -159,16 +159,26 @@ const CLIP_MIN_DURATION = 45;
 const CLIP_MAX_DURATION = 65;
 const MAX_HIGHLIGHTS = 10;
 
-// ── Vercel serverless environment: compress aggressively to keep clips small
-// enough for base64 inline transport (no cross-invocation /tmp dependency)
 const IS_VERCEL = !!process.env.VERCEL;
-// Max clips on Vercel to stay within 300s function timeout
 const VERCEL_MAX_HIGHLIGHTS = 3;
-const VERCEL_CRF = process.env.VERCEL_CLIP_CRF || '26';
-const VERCEL_TARGET_WIDTH = process.env.VERCEL_CLIP_WIDTH || '1280';
-const VERCEL_TARGET_HEIGHT = process.env.VERCEL_CLIP_HEIGHT || '720';
+
+function clampInt(value: unknown, min: number, max: number, fallback: number) {
+  const n = typeof value === 'number' ? value : parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(n)));
+}
+
+function ensureEven(n: number) {
+  return n % 2 === 0 ? n : n - 1;
+}
+
+const VERCEL_CRF = String(clampInt(process.env.VERCEL_CLIP_CRF, 22, 40, 26));
+const VERCEL_TARGET_WIDTH_NUM = ensureEven(clampInt(process.env.VERCEL_CLIP_WIDTH, 640, 1280, 1280));
+const VERCEL_TARGET_HEIGHT_NUM = ensureEven(clampInt(process.env.VERCEL_CLIP_HEIGHT, 360, 720, 720));
+const VERCEL_TARGET_WIDTH = String(VERCEL_TARGET_WIDTH_NUM);
+const VERCEL_TARGET_HEIGHT = String(VERCEL_TARGET_HEIGHT_NUM);
 const VERCEL_SCALE = `scale=${VERCEL_TARGET_WIDTH}:${VERCEL_TARGET_HEIGHT}:force_original_aspect_ratio=decrease,pad=${VERCEL_TARGET_WIDTH}:${VERCEL_TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2`;
-// Maximum file size (bytes) we will base64-encode and send inline in the SSE stream
+
 const MAX_INLINE_BYTES = 25 * 1024 * 1024; // 25 MB
 const LOCAL_MAX_HEIGHT = process.env.CLIP_MAX_HEIGHT || '1080';
 const YOUTUBE_MAX_HEIGHT = parseInt(
@@ -2239,30 +2249,46 @@ async function createLocalClip(params: {
     let fileSizeBytes = fileBuffer.length;
 
     if (IS_VERCEL && fileSizeBytes > MAX_INLINE_BYTES) {
-      const fallbackCrf = String(Math.min(40, (parseInt(VERCEL_CRF, 10) || 26) + 6));
-      const fallbackPath = outputPath.replace(/\.mp4$/, `.small.mp4`);
+      const attempts = [
+        { crfDelta: 6, width: VERCEL_TARGET_WIDTH_NUM, height: VERCEL_TARGET_HEIGHT_NUM },
+        { crfDelta: 10, width: 854, height: 480 },
+        { crfDelta: 14, width: 640, height: 360 },
+      ];
 
-      try {
-        await execFile(ffmpegPath, [
-          '-y',
-          '-i', outputPath,
-          '-c:v', 'libx264',
-          '-preset', 'ultrafast',
-          '-crf', fallbackCrf,
-          '-vf', `scale=${VERCEL_TARGET_WIDTH}:${VERCEL_TARGET_HEIGHT}:force_original_aspect_ratio=decrease,pad=${VERCEL_TARGET_WIDTH}:${VERCEL_TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2`,
-          '-c:a', 'aac',
-          '-b:a', '96k',
-          '-ar', '44100',
-          '-movflags', '+faststart',
-          fallbackPath,
-        ], { cwd: CACHE_DIR, timeout: 2 * 60 * 1000, maxBuffer: 20 * 1024 * 1024 });
+      const baseCrf = clampInt(VERCEL_CRF, 22, 40, 26);
+      for (let i = 0; i < attempts.length && fileSizeBytes > MAX_INLINE_BYTES; i += 1) {
+        const t = attempts[i];
+        const fallbackCrf = String(Math.min(40, baseCrf + t.crfDelta));
+        const fallbackW = String(ensureEven(t.width));
+        const fallbackH = String(ensureEven(t.height));
+        const fallbackPath = outputPath.replace(/\.mp4$/, `.small.${i + 1}.mp4`);
 
-        await access(fallbackPath, fsConstants.R_OK);
-        fileBuffer = await readFile(fallbackPath);
-        fileSizeBytes = fileBuffer.length;
+        try {
+          await execFile(ffmpegPath, [
+            '-y',
+            '-i', outputPath,
+            '-c:v', 'libx264',
+            '-preset', 'ultrafast',
+            '-crf', fallbackCrf,
+            '-vf', `scale=${fallbackW}:${fallbackH}:force_original_aspect_ratio=decrease,pad=${fallbackW}:${fallbackH}:(ow-iw)/2:(oh-ih)/2`,
+            '-c:a', 'aac',
+            '-b:a', '96k',
+            '-ar', '44100',
+            '-movflags', '+faststart',
+            fallbackPath,
+          ], { cwd: CACHE_DIR, timeout: 2 * 60 * 1000, maxBuffer: 20 * 1024 * 1024 });
+
+          await access(fallbackPath, fsConstants.R_OK);
+          fileBuffer = await readFile(fallbackPath);
+          fileSizeBytes = fileBuffer.length;
+          await unlink(fallbackPath).catch(() => {});
+        } catch {
+          await unlink(fallbackPath).catch(() => {});
+        }
+      }
+
+      if (fileSizeBytes <= MAX_INLINE_BYTES) {
         unlink(outputPath).catch(() => {});
-      } catch {
-        // ignore
       }
     }
 
