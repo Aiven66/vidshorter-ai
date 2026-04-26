@@ -5,7 +5,7 @@ const CORS = {
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
 };
 
-const MAX_HEIGHT = parseInt(process.env.YOUTUBE_MAX_HEIGHT || '720', 10) || 720;
+const MAX_HEIGHT = parseInt(process.env.YOUTUBE_MAX_HEIGHT || '1080', 10) || 1080;
 const RESOLVE_CACHE_TTL_MS = 5 * 60 * 1000;
 const resolveCache = new Map<string, { value: { url: string; userAgent: string; visitorData: string; xClientName: string; clientVersion: string }; expiresAt: number }>();
 

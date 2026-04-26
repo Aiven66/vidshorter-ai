@@ -17,7 +17,7 @@ if [[ -f "${LOCK_FILE}" ]] && command -v lsof >/dev/null 2>&1; then
   fi
   if [[ -n "${lock_pids}" ]]; then
     echo "Next dev lock in use by PIDs: ${lock_pids} (SIGKILL)"
-    echo "${lock_pids}" | xargs -I {} kill -9 {}
+    echo "${lock_pids}" | xargs -n 1 kill -9
   fi
 fi
 

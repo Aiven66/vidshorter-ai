@@ -36,6 +36,7 @@ const CACHE_DIR = path.join(TMP_DIR, 'video-cache');
 // ── yt-dlp ───────────────────────────────────────────────────────────────────
 const YT_DLP_BIN_PATH = path.join(TMP_DIR, 'yt-dlp');
 const YT_DLP_LINUX_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux';
+const YT_DLP_DARWIN_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos';
 
 // ── ffmpeg (cross-platform via @ffmpeg-installer/ffmpeg) ─────────────────────
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -172,19 +173,19 @@ function ensureEven(n: number) {
   return n % 2 === 0 ? n : n - 1;
 }
 
-const VERCEL_CRF = String(clampInt(process.env.VERCEL_CLIP_CRF, 22, 40, 26));
-const VERCEL_TARGET_WIDTH_NUM = ensureEven(clampInt(process.env.VERCEL_CLIP_WIDTH, 640, 1280, 1280));
-const VERCEL_TARGET_HEIGHT_NUM = ensureEven(clampInt(process.env.VERCEL_CLIP_HEIGHT, 360, 720, 720));
+const VERCEL_CRF = String(clampInt(process.env.VERCEL_CLIP_CRF, 18, 40, 23));
+const VERCEL_TARGET_WIDTH_NUM = ensureEven(clampInt(process.env.VERCEL_CLIP_WIDTH, 640, 1920, 1920));
+const VERCEL_TARGET_HEIGHT_NUM = ensureEven(clampInt(process.env.VERCEL_CLIP_HEIGHT, 360, 1080, 1080));
 const VERCEL_TARGET_WIDTH = String(VERCEL_TARGET_WIDTH_NUM);
 const VERCEL_TARGET_HEIGHT = String(VERCEL_TARGET_HEIGHT_NUM);
-const VERCEL_SCALE = `scale=${VERCEL_TARGET_WIDTH}:${VERCEL_TARGET_HEIGHT}:force_original_aspect_ratio=decrease,pad=${VERCEL_TARGET_WIDTH}:${VERCEL_TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2`;
+const VERCEL_SCALE = `scale=trunc(min(iw\\,${VERCEL_TARGET_WIDTH})/2)*2:trunc(min(ih\\,${VERCEL_TARGET_HEIGHT})/2)*2:force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2`;
 
 const MAX_INLINE_BYTES = 25 * 1024 * 1024; // 25 MB
 const LOCAL_MAX_HEIGHT = process.env.CLIP_MAX_HEIGHT || '1080';
 const YOUTUBE_MAX_HEIGHT = parseInt(
-  process.env.YOUTUBE_MAX_HEIGHT || (IS_VERCEL ? '720' : LOCAL_MAX_HEIGHT),
+  process.env.YOUTUBE_MAX_HEIGHT || (IS_VERCEL ? '1080' : LOCAL_MAX_HEIGHT),
   10,
-) || (IS_VERCEL ? 720 : 1080);
+) || (IS_VERCEL ? 1080 : 1080);
 
 // ── URL helpers ──────────────────────────────────────────────────────────────
 function isYouTubeUrl(videoUrl: string) {
@@ -428,16 +429,32 @@ async function ensureFfmpegAvailable(): Promise<string> {
 let ytDlpCommand: string | null = null;
 let ytDlpUseModule = false;
 
+async function canUsePythonYtDlpModule(): Promise<boolean> {
+  try {
+    const { stdout } = await execFile('python3', ['-c', 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")'], {
+      timeout: 5000,
+      env: { ...process.env, PYTHONWARNINGS: 'ignore' },
+    });
+    const [major, minor] = stdout.trim().split('.').map((x) => parseInt(x, 10));
+    if (!Number.isFinite(major) || !Number.isFinite(minor)) return false;
+    return major > 3 || (major === 3 && minor >= 10);
+  } catch {
+    return false;
+  }
+}
+
 async function ensureYtDlp(): Promise<void> {
   if (ytDlpCommand) return;
   // 1. python3 -m yt_dlp (local macOS)
   try {
-    await execFile('python3', ['-m', 'yt_dlp', '--version'], {
-      timeout: 8000, env: { ...process.env, PYTHONWARNINGS: 'ignore' },
-    });
-    ytDlpCommand = 'python3'; ytDlpUseModule = true;
-    console.log('yt-dlp: using python3 -m yt_dlp');
-    return;
+    if (await canUsePythonYtDlpModule()) {
+      await execFile('python3', ['-m', 'yt_dlp', '--version'], {
+        timeout: 8000, env: { ...process.env, PYTHONWARNINGS: 'ignore' },
+      });
+      ytDlpCommand = 'python3'; ytDlpUseModule = true;
+      console.log('yt-dlp: using python3 -m yt_dlp');
+      return;
+    }
   } catch { /* fall through */ }
   // 2. Standalone binary in PATH
   try {
@@ -454,17 +471,21 @@ async function ensureYtDlp(): Promise<void> {
     console.log(`yt-dlp: using cached binary at ${YT_DLP_BIN_PATH}`);
     return;
   } catch { /* fall through */ }
-  // 4. Download standalone Linux binary
-  if (process.platform === 'linux') {
-    console.log('Downloading yt-dlp Linux binary…');
+  // 4. Download standalone binary
+  const downloadUrl = process.platform === 'linux'
+    ? YT_DLP_LINUX_URL
+    : (process.platform === 'darwin' ? YT_DLP_DARWIN_URL : '');
+
+  if (downloadUrl) {
+    console.log('Downloading yt-dlp binary…');
     try {
-      const res = await fetch(YT_DLP_LINUX_URL);
+      const res = await fetch(downloadUrl);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       await writeFile(YT_DLP_BIN_PATH, Buffer.from(await res.arrayBuffer()));
       await chmod(YT_DLP_BIN_PATH, 0o755);
       await execFile(YT_DLP_BIN_PATH, ['--version'], { timeout: 10000 });
       ytDlpCommand = YT_DLP_BIN_PATH; ytDlpUseModule = false;
-      console.log('yt-dlp: downloaded Linux binary');
+      console.log('yt-dlp: downloaded standalone binary');
       return;
     } catch (err) {
       console.error('Failed to download yt-dlp:', err);
@@ -1155,7 +1176,7 @@ async function getBilibiliStreamUrlDirect(videoUrl: string): Promise<string> {
     : `avid=${aid}&cid=${cid}`;
 
   // qn=32 = 480p, qn=16 = 360p; fnval=1 = old-style FLV/MP4 durl[]
-  for (const qn of [32, 16]) {
+  for (const qn of [80, 64, 32, 16]) {
     try {
       const playRes = await fetch(
         `https://api.bilibili.com/x/player/playurl?${playParams}&qn=${qn}&fnval=1&fnver=0&fourk=0`,
@@ -1529,7 +1550,14 @@ async function analyzeBilibiliVideo(videoUrl: string, workDir: string): Promise<
 
   if (!stdout.trim()) {
     const msg = stderr.trim() || (lastError instanceof Error ? lastError.message : '') || 'yt-dlp failed for Bilibili.';
-    throw new Error(`Failed to analyze Bilibili video: ${msg}`);
+    console.warn(`Bilibili analysis fallback: yt-dlp failed (${msg.slice(0, 120)}), using direct API meta`);
+    try {
+      const { title, duration } = await getBilibiliVideoMeta(videoUrl);
+      return { duration, title, highlights: buildFallbackHighlights(duration) };
+    } catch (err) {
+      console.warn('Bilibili direct API failed:', err instanceof Error ? err.message.slice(0, 100) : err);
+      return { duration: 300, title: 'Bilibili Video', highlights: buildFallbackHighlights(300) };
+    }
   }
 
   const info = parseYtDlpJson(stdout);
@@ -1638,16 +1666,22 @@ async function downloadBilibiliVideo(
 
   const resolvedPath = stdout.split('\n').map((l) => l.trim()).filter(Boolean).pop();
   if (!resolvedPath) {
-    // yt-dlp failed for Bilibili — try cobalt.tools as fallback
     const ytdlpErr = stderr.trim() || (lastError instanceof Error ? lastError.message : '') || 'yt-dlp failed';
-    console.warn(`yt-dlp Bilibili failed (${ytdlpErr.slice(0, 150)}), trying cobalt.tools…`);
+    console.warn(`yt-dlp Bilibili failed (${ytdlpErr.slice(0, 150)}), trying direct API…`);
     try {
-      const cobaltUrl = await getBilibiliStreamViaCobalt(videoUrl);
-      console.log('cobalt.tools Bilibili stream URL obtained, using as ffmpeg input');
-      return cobaltUrl;
-    } catch (cobaltErr) {
-      const cobaltMsg = cobaltErr instanceof Error ? cobaltErr.message.slice(0, 100) : String(cobaltErr);
-      throw new Error(`Failed to download Bilibili video. yt-dlp: ${ytdlpErr.slice(0, 100)}. cobalt.tools: ${cobaltMsg}`);
+      const streamUrl = await getBilibiliStreamUrlDirect(videoUrl);
+      console.log('Bilibili direct API: got stream URL, will pass directly to ffmpeg');
+      return streamUrl;
+    } catch (directErr) {
+      console.warn(`Bilibili direct API failed (${directErr instanceof Error ? directErr.message.slice(0, 120) : String(directErr)}), trying cobalt.tools…`);
+      try {
+        const cobaltUrl = await getBilibiliStreamViaCobalt(videoUrl);
+        console.log('cobalt.tools Bilibili stream URL obtained, using as ffmpeg input');
+        return cobaltUrl;
+      } catch (cobaltErr) {
+        const cobaltMsg = cobaltErr instanceof Error ? cobaltErr.message.slice(0, 100) : String(cobaltErr);
+        throw new Error(`Failed to download Bilibili video. yt-dlp: ${ytdlpErr.slice(0, 100)}. cobalt.tools: ${cobaltMsg}`);
+      }
     }
   }
   return resolvedPath;
@@ -2192,7 +2226,7 @@ async function createLocalClip(params: {
   const videoFilter = IS_VERCEL
     ? ['-vf', VERCEL_SCALE]
     : ['-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2'];
-  const crf = IS_VERCEL ? VERCEL_CRF : (isRemoteInput ? '20' : '18');
+  const crf = IS_VERCEL ? VERCEL_CRF : (isRemoteInput ? '18' : '17');
   const preset = IS_VERCEL ? 'veryfast' : (isRemoteInput ? 'veryfast' : 'fast');
 
   const seekArgs = (!isRemoteInput || isWorkerStream)
@@ -2211,9 +2245,10 @@ async function createLocalClip(params: {
     '-crf', crf,
     '-profile:v', 'high',
     '-level:v', '4.1',
+    '-pix_fmt', 'yuv420p',
     ...videoFilter,
     '-c:a', 'aac',
-    '-b:a', IS_VERCEL ? '96k' : '128k',
+    '-b:a', IS_VERCEL ? '128k' : '160k',
     '-ar', '44100',
     '-movflags', '+faststart',
     outputPath,
@@ -2268,9 +2303,10 @@ async function createLocalClip(params: {
             '-y',
             '-i', outputPath,
             '-c:v', 'libx264',
-            '-preset', 'ultrafast',
+            '-preset', 'veryfast',
             '-crf', fallbackCrf,
             '-vf', `scale=${fallbackW}:${fallbackH}:force_original_aspect_ratio=decrease,pad=${fallbackW}:${fallbackH}:(ow-iw)/2:(oh-ih)/2`,
+            '-pix_fmt', 'yuv420p',
             '-c:a', 'aac',
             '-b:a', '96k',
             '-ar', '44100',
