@@ -813,7 +813,19 @@ async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInf
     signal: AbortSignal.timeout(25_000),
   });
 
-  if (!res.ok) throw new Error(`CF Worker returned HTTP ${res.status}`);
+  if (!res.ok) {
+    let details = '';
+    try {
+      const ct = (res.headers.get('content-type') || '').toLowerCase();
+      if (ct.includes('application/json')) {
+        const d = await res.json() as { error?: string; details?: string };
+        details = [d.error, d.details].filter(Boolean).join(' | ').slice(0, 220);
+      } else {
+        details = (await res.text()).slice(0, 220);
+      }
+    } catch {}
+    throw new Error(`CF Worker returned HTTP ${res.status}${details ? `: ${details}` : ''}`);
+  }
 
   const data = await res.json() as {
     title?: string;

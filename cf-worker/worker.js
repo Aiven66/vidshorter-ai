@@ -119,6 +119,7 @@ const CORS_HEADERS = {
 
 const MAX_HEIGHT = 1080;
 const cache = new Map();
+let playerCache = { jsUrl: '', expiresAt: 0, decipher: null };
 
 export default {
   async fetch(request, env) {
@@ -287,7 +288,9 @@ async function tryClient(videoId, client, maxHeight, cookieHeader) {
   const muxed = videoFormats.filter((f) => f.audioQuality || f.audioChannels || f.audioBitrate);
   const format = pickBest(muxed.length ? muxed : videoFormats, maxHeight);
 
-  if (!format?.url) {
+  const chosen = format || videoFormats[0] || formats[0];
+  const resolvedUrl = await resolveFormatUrl(chosen, videoId, cookieHeader);
+  if (!resolvedUrl) {
     const hasCipher = formats.some((f) => f.signatureCipher || f.cipher);
     throw new Error(`No direct URL${hasCipher ? ' (cipher)' : ''}`);
   }
@@ -295,8 +298,8 @@ async function tryClient(videoId, client, maxHeight, cookieHeader) {
   return {
     title: data.videoDetails?.title ?? 'YouTube Video',
     duration: parseInt(data.videoDetails?.lengthSeconds ?? '300', 10) || 300,
-    streamUrl: format.url,
-    quality: format.qualityLabel ?? format.quality ?? 'unknown',
+    streamUrl: resolvedUrl,
+    quality: chosen?.qualityLabel ?? chosen?.quality ?? 'unknown',
     userAgent: client.userAgent,
     visitorData,
     xClientName: client.xClientName,
@@ -336,6 +339,91 @@ function pickBest(formats, maxHeight) {
   const under = withQ.filter((x) => x.q > 0 && x.q <= limit).sort(sortFn)[0]?.f;
   const any = withQ.sort(sortFn)[0]?.f;
   return under || any || (formats || []).find((f) => f?.url);
+}
+
+async function resolveFormatUrl(format, videoId, cookieHeader) {
+  if (!format) return '';
+  if (format.url) return format.url;
+  const cipher = format.signatureCipher || format.cipher;
+  if (!cipher) return '';
+  const parsed = parseCipher(cipher);
+  if (!parsed?.url || !parsed?.s) return parsed?.url || '';
+  const decipher = await getDecipher(videoId, cookieHeader);
+  if (!decipher) return '';
+  const signature = decipher(parsed.s);
+  const u = new URL(parsed.url);
+  u.searchParams.set(parsed.sp || 'signature', signature);
+  return u.toString();
+}
+
+function parseCipher(cipher) {
+  const params = new URLSearchParams(String(cipher || ''));
+  const url = params.get('url') || '';
+  const s = params.get('s') || '';
+  const sp = params.get('sp') || 'signature';
+  return { url, s, sp };
+}
+
+async function getDecipher(videoId, cookieHeader) {
+  if (playerCache.decipher && playerCache.expiresAt > Date.now()) return playerCache.decipher;
+  const jsUrl = await getPlayerJsUrl(videoId, cookieHeader);
+  if (!jsUrl) return null;
+  const js = await fetchText(jsUrl, cookieHeader);
+  const decipher = buildDecipher(js);
+  if (!decipher) return null;
+  playerCache = { jsUrl, decipher, expiresAt: Date.now() + 6 * 60 * 60 * 1000 };
+  return decipher;
+}
+
+async function getPlayerJsUrl(videoId, cookieHeader) {
+  if (playerCache.jsUrl && playerCache.expiresAt > Date.now()) return playerCache.jsUrl;
+  const html = await fetchText(`https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`, cookieHeader);
+  const m = html.match(/\"jsUrl\":\"([^\"]+)\"/);
+  const raw = m?.[1] ? m[1].replace(/\\u0026/g, '&') : '';
+  if (!raw) return '';
+  const url = raw.startsWith('http') ? raw : `https://www.youtube.com${raw}`;
+  playerCache.jsUrl = url;
+  playerCache.expiresAt = Date.now() + 60 * 60 * 1000;
+  return url;
+}
+
+async function fetchText(url, cookieHeader) {
+  const resp = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+      'Accept': '*/*',
+      'Accept-Language': 'en-US,en;q=0.9',
+      ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+    },
+  });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return await resp.text();
+}
+
+function buildDecipher(playerJs) {
+  const fnMatch =
+    playerJs.match(/([a-zA-Z0-9$]{2})=function\(\w\)\{\w=\w\.split\(\"\"\);[\s\S]*?return \w\.join\(\"\"\)\}/) ||
+    playerJs.match(/function\s+([a-zA-Z0-9$]{2})\(\w\)\{\w=\w\.split\(\"\"\);[\s\S]*?return \w\.join\(\"\"\)\}/);
+  if (!fnMatch) return null;
+
+  const fnName = fnMatch[1];
+  const fnBody = fnMatch[0].startsWith('function') ? fnMatch[0] : `var ${fnMatch[0]};`;
+  const helperNameMatch = fnMatch[0].match(/;([a-zA-Z0-9$]{2})\.[a-zA-Z0-9$]{2}\(\w,\d+\)/) ||
+    fnMatch[0].match(/;([a-zA-Z0-9$]{2})\.[a-zA-Z0-9$]{2}\(\w,\w\)/) ||
+    fnMatch[0].match(/;([a-zA-Z0-9$]{2})\.[a-zA-Z0-9$]{2}\(\w\)/);
+  const helperName = helperNameMatch?.[1] || '';
+  if (!helperName) return null;
+  const helperRe = new RegExp(`var ${helperName}=\\{[\\s\\S]*?\\};`);
+  const helperMatch = playerJs.match(helperRe);
+  if (!helperMatch) return null;
+  const helperBody = helperMatch[0];
+
+  try {
+    const f = new Function(`${helperBody}\n${fnBody}\nreturn ${fnName};`)();
+    return (sig) => String(f(String(sig)));
+  } catch {
+    return null;
+  }
 }
 
 async function resolveCached(videoId, maxHeight, cookieHeader) {
