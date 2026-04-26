@@ -82,8 +82,7 @@ function getCobaltInstances() {
 
 function getCfWorkerUrl() {
   const raw = String(process.env['CF_WORKER_URL'] || process.env.CF_WORKER_URL || '').trim();
-  if (raw) return raw.replace(/\/$/, '');
-  return IS_VERCEL ? 'https://youtube-proxy.vidshorter-ai.workers.dev' : '';
+  return raw ? raw.replace(/\/$/, '') : '';
 }
 
 function getCfWorkerMaxHeight() {
@@ -1308,10 +1307,10 @@ async function analyzeYouTubeViaPipedAndTranscript(videoUrl: string): Promise<Vi
   let cues: CaptionCue[] = [];
 
   // Try each proxy in order for title/duration/subtitles.
-  // Priority: CF Worker (if set) > Edge Function (CDN IPs, reliable) > DirectInnerTube > YouTube.js > Invidious > Piped
+  // Priority: Edge Function (CDN IPs, reliable) > CF Worker (if set) > DirectInnerTube > YouTube.js > Invidious > Piped
   const metaGetters = [
-    ...(getCfWorkerUrl() ? [() => getYouTubeInfoViaCFWorker(videoId)] : []),
     ...(getAppBaseUrl() ? [() => getYouTubeInfoViaEdgeFunction(videoId)] : []),
+    ...(getCfWorkerUrl() ? [() => getYouTubeInfoViaCFWorker(videoId)] : []),
     () => getYouTubeInfoViaDirectInnerTube(videoId),
     () => getYouTubeInfoViaYouTubeJs(videoId),
     () => getYouTubeInfoViaInvidious(videoId),
@@ -1737,17 +1736,17 @@ async function downloadBilibiliVideo(
 
 // ── YouTube stream URL retrieval with all fallbacks ───────────────────────────
 // Used directly on Vercel (skips yt-dlp) and as fallback after yt-dlp fails.
-// Priority: CF Worker > Edge Function (CDN IPs) > cobalt.tools (age-restricted OK) > DirectInnerTube > YouTube.js > Invidious > Piped
+// Priority: Edge Function (CDN IPs) > CF Worker > cobalt.tools (age-restricted OK) > DirectInnerTube > YouTube.js > Invidious > Piped
 async function getYouTubeStreamUrlWithFallbacks(videoId: string): Promise<string> {
   const allowCobalt = true;
   const startedAt = Date.now();
   const budgetMs = IS_VERCEL ? 120_000 : 180_000;
   const streamGetters = IS_VERCEL
     ? [
-        ...(getCfWorkerUrl() ? [{ name: 'CF Worker', fn: () => getYouTubeInfoViaCFWorker(videoId) }] : []),
         ...(getAppBaseUrl()
           ? [{ name: 'EdgeFunction', fn: () => getYouTubeInfoViaEdgeFunction(videoId) }]
           : []),
+        ...(getCfWorkerUrl() ? [{ name: 'CF Worker', fn: () => getYouTubeInfoViaCFWorker(videoId) }] : []),
         ...(allowCobalt ? [{ name: 'cobalt', fn: () => getYouTubeInfoViaCobalt(videoId) }] : []),
         { name: 'DirectInnerTube', fn: () => getYouTubeInfoViaDirectInnerTube(videoId) },
         { name: 'YouTube.js', fn: () => getYouTubeInfoViaYouTubeJs(videoId) },
@@ -1755,10 +1754,10 @@ async function getYouTubeStreamUrlWithFallbacks(videoId: string): Promise<string
         { name: 'Piped', fn: () => getYouTubeInfoViaPiped(videoId) },
       ]
     : [
-        ...(getCfWorkerUrl() ? [{ name: 'CF Worker', fn: () => getYouTubeInfoViaCFWorker(videoId) }] : []),
         ...(getAppBaseUrl()
           ? [{ name: 'EdgeFunction', fn: () => getYouTubeInfoViaEdgeFunction(videoId) }]
           : []),
+        ...(getCfWorkerUrl() ? [{ name: 'CF Worker', fn: () => getYouTubeInfoViaCFWorker(videoId) }] : []),
         { name: 'cobalt', fn: () => getYouTubeInfoViaCobalt(videoId) },
         { name: 'DirectInnerTube', fn: () => getYouTubeInfoViaDirectInnerTube(videoId) },
         { name: 'YouTube.js', fn: () => getYouTubeInfoViaYouTubeJs(videoId) },

@@ -162,8 +162,7 @@ async function testYtDlpGetUrl(videoId: string): Promise<TestResult> {
 
 export async function GET(request: NextRequest) {
   const videoId = new URL(request.url).searchParams.get('videoId') || 'dQw4w9WgXcQ';
-  const cfWorkerUrlEnv = String(process.env['CF_WORKER_URL'] || process.env.CF_WORKER_URL || '').trim();
-  const cfWorkerUrl = cfWorkerUrlEnv || (process.env.VERCEL ? 'https://youtube-proxy.vidshorter-ai.workers.dev' : '');
+  const cfWorkerUrl = String(process.env['CF_WORKER_URL'] || process.env.CF_WORKER_URL || '').trim();
 
   const [innerTubeResults, ytdlpResult, cfWorkerResults] = await Promise.allSettled([
     testInnerTubeClients(videoId),

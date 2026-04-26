@@ -121,6 +121,34 @@ const MAX_HEIGHT = 1080;
 const cache = new Map();
 let playerCache = { jsUrl: '', expiresAt: 0, decipher: null };
 
+function resolveCacheRequest(videoId, maxHeight) {
+  const u = new URL('https://cache.youtube-proxy.local/resolve');
+  u.searchParams.set('videoId', videoId);
+  u.searchParams.set('maxHeight', String(maxHeight || MAX_HEIGHT));
+  return new Request(u.toString(), { method: 'GET' });
+}
+
+async function cacheGetResolved(videoId, maxHeight) {
+  try {
+    const req = resolveCacheRequest(videoId, maxHeight);
+    const hit = await caches.default.match(req);
+    if (!hit) return null;
+    return await hit.json();
+  } catch {
+    return null;
+  }
+}
+
+async function cachePutResolved(videoId, maxHeight, resolved) {
+  try {
+    const req = resolveCacheRequest(videoId, maxHeight);
+    const resp = new Response(JSON.stringify(resolved), {
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=600' },
+    });
+    await caches.default.put(req, resp);
+  } catch {}
+}
+
 export default {
   async fetch(request, env) {
     if (request.method === 'OPTIONS') {
@@ -146,10 +174,9 @@ export default {
 
     if (mode === 'stream') {
       try {
-        const cacheKey = `${videoId}|${String(maxHeight || MAX_HEIGHT)}`;
+        const effectiveMaxHeight = maxHeight || MAX_HEIGHT;
+        const cacheKey = `${videoId}|${String(effectiveMaxHeight)}`;
         const range = request.headers.get('Range') || request.headers.get('range') || 'bytes=0-';
-        const cached = cache.get(cacheKey);
-        const isCachedValid = cached && cached.expiresAt > Date.now() && cached.value?.streamUrl;
 
         const doFetch = (resolved) => fetch(resolved.streamUrl, {
           headers: {
@@ -168,20 +195,27 @@ export default {
 
         const errors = [];
 
-        if (isCachedValid) {
-          const resolved = cached.value;
+        const cachedLocal = cache.get(cacheKey);
+        const localResolved = cachedLocal && cachedLocal.expiresAt > Date.now() && cachedLocal.value?.streamUrl ? cachedLocal.value : null;
+        const globalResolved = localResolved ? null : await cacheGetResolved(videoId, effectiveMaxHeight);
+        const cachedResolved = localResolved || globalResolved;
+
+        if (cachedResolved?.streamUrl) {
+          const resolved = cachedResolved;
           const upstream = await doFetch(resolved);
           if (upstream.status === 200 || upstream.status === 206) {
+            if (!localResolved) cache.set(cacheKey, { value: resolved, expiresAt: Date.now() + 10 * 60 * 1000 });
             return passthroughStream(upstream);
           }
           const body = await upstream.text().catch(() => '');
           errors.push(`cached: HTTP ${upstream.status} ${body.slice(0, 120)}`);
           cache.delete(cacheKey);
+          try { await caches.default.delete(resolveCacheRequest(videoId, effectiveMaxHeight)); } catch {}
         }
 
         for (const client of CLIENTS) {
           try {
-            const info = await tryClient(videoId, client, maxHeight, cookieHeader);
+            const info = await tryClient(videoId, client, effectiveMaxHeight, cookieHeader);
             const resolved = {
               streamUrl: info.streamUrl,
               userAgent: info.userAgent,
@@ -191,7 +225,8 @@ export default {
             };
             const upstream = await doFetch(resolved);
             if (upstream.status === 200 || upstream.status === 206) {
-              cache.set(cacheKey, { value: resolved, expiresAt: Date.now() + 5 * 60 * 1000 });
+              cache.set(cacheKey, { value: resolved, expiresAt: Date.now() + 10 * 60 * 1000 });
+              await cachePutResolved(videoId, effectiveMaxHeight, resolved);
               return passthroughStream(upstream);
             }
             const body = await upstream.text().catch(() => '');
@@ -212,7 +247,16 @@ export default {
     for (const client of CLIENTS) {
       try {
         const result = await tryClient(videoId, client, maxHeight, cookieHeader);
-        if (result) return json({ ...result, client: client.name });
+        if (result) {
+          await cachePutResolved(videoId, maxHeight, {
+            streamUrl: result.streamUrl,
+            userAgent: result.userAgent,
+            visitorData: result.visitorData,
+            xClientName: result.xClientName,
+            clientVersion: result.clientVersion,
+          });
+          return json({ ...result, client: client.name });
+        }
         errors.push(`${client.name}: no stream URL`);
       } catch (e) {
         const msg = (e instanceof Error ? e.message : String(e)).slice(0, 150);
