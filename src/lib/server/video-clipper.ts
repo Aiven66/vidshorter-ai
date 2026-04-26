@@ -85,6 +85,11 @@ function getCfWorkerUrl() {
   return typeof value === 'string' ? value : '';
 }
 
+function getCfWorkerMaxHeight() {
+  const fallback = IS_VERCEL ? 720 : YOUTUBE_MAX_HEIGHT;
+  return clampInt(process.env.CF_WORKER_MAX_HEIGHT, 144, 1080, fallback);
+}
+
 function getAppBaseUrl() {
   const raw =
     (process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || '').trim();
@@ -796,11 +801,12 @@ async function getYouTubeInfoViaCobalt(videoId: string): Promise<PipedVideoInfo>
 async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInfo> {
   const cfWorkerUrl = getCfWorkerUrl();
   if (!cfWorkerUrl) throw new Error('CF_WORKER_URL not configured');
+  const maxHeight = getCfWorkerMaxHeight();
 
   const u = new URL(cfWorkerUrl);
   u.pathname = `${u.pathname.replace(/\/$/, '')}/resolve`;
   u.searchParams.set('videoId', videoId);
-  u.searchParams.set('maxHeight', String(YOUTUBE_MAX_HEIGHT));
+  u.searchParams.set('maxHeight', String(maxHeight));
   const endpoint = u.toString();
   const res = await fetch(endpoint, {
     headers: { 'Accept': 'application/json' },
@@ -823,7 +829,7 @@ async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInf
   const streamEndpoint = new URL(cfWorkerUrl);
   streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
   streamEndpoint.searchParams.set('videoId', videoId);
-  streamEndpoint.searchParams.set('maxHeight', String(YOUTUBE_MAX_HEIGHT));
+  streamEndpoint.searchParams.set('maxHeight', String(maxHeight));
 
   console.log(`CF Worker success: "${(data.title ?? '').slice(0, 50)}", client=${data.client}, quality=${data.quality}`);
   return {
@@ -2020,7 +2026,8 @@ async function downloadYouTubeOrGenericVideo(
     if (cfWorkerUrl) {
       try {
         const localPath = path.join(path.dirname(outputTemplate), 'source.mp4');
-        const heights = Array.from(new Set([YOUTUBE_MAX_HEIGHT, 720, 480, 360, 240, 144].filter(Boolean)));
+        const preferred = getCfWorkerMaxHeight();
+        const heights = Array.from(new Set([preferred, 720, 480, 360, 240, 144].filter(Boolean)));
         let remoteCandidate = '';
         for (const h of heights) {
           const u = new URL(cfWorkerUrl);
