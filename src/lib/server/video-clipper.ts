@@ -81,8 +81,9 @@ function getCobaltInstances() {
 }
 
 function getCfWorkerUrl() {
-  const value = process.env['CF_WORKER_URL'] || process.env.CF_WORKER_URL;
-  return typeof value === 'string' ? value : '';
+  const raw = String(process.env['CF_WORKER_URL'] || process.env.CF_WORKER_URL || '').trim();
+  if (raw) return raw.replace(/\/$/, '');
+  return IS_VERCEL ? 'https://youtube-proxy.vidshorter-ai.workers.dev' : '';
 }
 
 function getCfWorkerMaxHeight() {

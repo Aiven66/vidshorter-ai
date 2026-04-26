@@ -287,25 +287,58 @@ function buildDecipher(playerJs: string) {
     playerJs.match(/function\s+([a-zA-Z0-9$]{2})\(\w\)\{\w=\w\.split\(\"\"\);[\s\S]*?return \w\.join\(\"\"\)\}/);
   if (!fnMatch) return null;
 
-  const fnName = fnMatch[1];
-  const fnBody = fnMatch[0].startsWith('function') ? fnMatch[0] : `var ${fnMatch[0]};`;
+  const fnText = fnMatch[0];
   const helperNameMatch =
-    fnMatch[0].match(/;([a-zA-Z0-9$]{2})\.[a-zA-Z0-9$]{2}\(\w,\d+\)/) ||
-    fnMatch[0].match(/;([a-zA-Z0-9$]{2})\.[a-zA-Z0-9$]{2}\(\w,\w\)/) ||
-    fnMatch[0].match(/;([a-zA-Z0-9$]{2})\.[a-zA-Z0-9$]{2}\(\w\)/);
+    fnText.match(/;([a-zA-Z0-9$]{2})\.[a-zA-Z0-9$]{2}\(\w,\d+\)/) ||
+    fnText.match(/;([a-zA-Z0-9$]{2})\.[a-zA-Z0-9$]{2}\(\w,\w\)/) ||
+    fnText.match(/;([a-zA-Z0-9$]{2})\.[a-zA-Z0-9$]{2}\(\w\)/);
   const helperName = helperNameMatch?.[1] || '';
   if (!helperName) return null;
-  const helperRe = new RegExp(`var ${helperName}=\\{[\\s\\S]*?\\};`);
-  const helperMatch = playerJs.match(helperRe);
-  if (!helperMatch) return null;
-  const helperBody = helperMatch[0];
 
-  try {
-    const f = new Function(`${helperBody}\n${fnBody}\nreturn ${fnName};`)();
-    return (sig: string) => String(f(String(sig)));
-  } catch {
-    return null;
+  const helperRe = new RegExp(`var\\s+${helperName}=\\{([\\s\\S]*?)\\};`);
+  const helperMatch = playerJs.match(helperRe);
+  const helperBody = helperMatch?.[1] || '';
+  if (!helperBody) return null;
+
+  type OpType = 'reverse' | 'slice' | 'splice' | 'swap';
+  const opForMethod = new Map<string, OpType>();
+  const methodRe = /([a-zA-Z0-9$]+):function\(\w,(?:\w)?\)\{([\s\S]*?)\}/g;
+  for (const m of helperBody.matchAll(methodRe)) {
+    const name = m[1];
+    const body = m[2] || '';
+    if (body.includes('.reverse(')) opForMethod.set(name, 'reverse');
+    else if (body.includes('.splice(')) opForMethod.set(name, 'splice');
+    else if (body.includes('.slice(')) opForMethod.set(name, 'slice');
+    else if (/\[0\]=\w\[\w%?\w?\.length\]/.test(body) || /var\s+\w=\w\[0\]/.test(body)) opForMethod.set(name, 'swap');
   }
+
+  const callsRe = new RegExp(`${helperName}\\.([a-zA-Z0-9$]+)\\(\\w,(\\d+)\\)`, 'g');
+  const ops: Array<{ t: OpType; n: number }> = [];
+  for (const m of fnText.matchAll(callsRe)) {
+    const method = m[1];
+    const n = parseInt(m[2], 10);
+    const t = opForMethod.get(method);
+    if (!t || !Number.isFinite(n)) continue;
+    ops.push({ t, n });
+  }
+  if (!ops.length) return null;
+
+  return (sig: string) => {
+    let a = String(sig).split('');
+    for (const op of ops) {
+      if (!a.length) break;
+      if (op.t === 'reverse') a.reverse();
+      else if (op.t === 'slice') a = a.slice(op.n);
+      else if (op.t === 'splice') a.splice(0, op.n);
+      else if (op.t === 'swap') {
+        const i = op.n % a.length;
+        const tmp = a[0];
+        a[0] = a[i];
+        a[i] = tmp;
+      }
+    }
+    return a.join('');
+  };
 }
 
 export async function OPTIONS() {
