@@ -71,8 +71,14 @@ const INVIDIOUS_INSTANCES = [
 const COBALT_INSTANCES = [
   'https://cobalt.ggtyler.dev/',
   'https://cobalt.api.timelessnesses.me/',
-  'https://api.cobalt.tools/',  // auth now required on main instance — kept as last resort
 ];
+
+function getCobaltInstances() {
+  const urls = [...COBALT_INSTANCES];
+  const token = (process.env.COBALT_API_TOKEN || process.env.COBALT_TOKEN || process.env.COBALT_API_KEY || '').trim();
+  if (token) urls.push('https://api.cobalt.tools/');
+  return urls;
+}
 
 function getCfWorkerUrl() {
   const value = process.env['CF_WORKER_URL'] || process.env.CF_WORKER_URL;
@@ -526,6 +532,29 @@ async function runYtDlp(args: string[], isBilibili = false) {
   });
 }
 
+async function getYouTubeStreamUrlViaYtDlp(videoId: string): Promise<string> {
+  const videoUrl = `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
+  const maxH = Math.max(144, Math.min(720, YOUTUBE_MAX_HEIGHT));
+  const proxyUrl = await detectProxy();
+  const proxyArg = proxyUrl ? ['--proxy', proxyUrl] : [];
+  const args = [
+    ...proxyArg,
+    '--no-playlist',
+    '--extractor-args', 'youtube:player_client=android',
+    '-f', `best[ext=mp4][height<=${maxH}]/best[height<=${maxH}]/best`,
+    '-g',
+    videoUrl,
+  ];
+
+  const r = await runYtDlp(args, false);
+  const lines = String(r.stdout || '').split('\n').map((l) => l.trim()).filter(Boolean);
+  const url = lines.find((l) => /^https?:\/\//i.test(l)) || '';
+  if (!url) {
+    throw new Error('yt-dlp did not return a stream URL');
+  }
+  return url;
+}
+
 // ── Piped proxy (YouTube stream URLs, bypasses bot detection) ────────────────
 async function getYouTubeInfoViaPiped(videoId: string): Promise<PipedVideoInfo> {
   let lastError = 'No Piped instance reachable';
@@ -718,7 +747,7 @@ async function getYouTubeInfoViaCobalt(videoId: string): Promise<PipedVideoInfo>
   });
   let lastError = 'no instances tried';
 
-  for (const instance of COBALT_INSTANCES) {
+  for (const instance of getCobaltInstances()) {
     try {
       const res = await fetch(instance, {
         method: 'POST',
@@ -1102,7 +1131,7 @@ async function getBilibiliStreamViaCobalt(videoUrl: string): Promise<string> {
   const body = JSON.stringify({ url: videoUrl, videoQuality: '480', audioBitrate: '128' });
   let lastError = 'no instances tried';
 
-  for (const instance of COBALT_INSTANCES) {
+  for (const instance of getCobaltInstances()) {
     try {
       const res = await fetch(instance, {
         method: 'POST',
@@ -1693,7 +1722,7 @@ async function downloadBilibiliVideo(
 async function getYouTubeStreamUrlWithFallbacks(videoId: string): Promise<string> {
   const allowCobalt = true;
   const startedAt = Date.now();
-  const budgetMs = IS_VERCEL ? 60_000 : 120_000;
+  const budgetMs = IS_VERCEL ? 120_000 : 180_000;
   const streamGetters = IS_VERCEL
     ? [
         ...(getCfWorkerUrl() ? [{ name: 'CF Worker', fn: () => getYouTubeInfoViaCFWorker(videoId) }] : []),
@@ -1729,6 +1758,18 @@ async function getYouTubeStreamUrlWithFallbacks(videoId: string): Promise<string
       const msg = err instanceof Error ? err.message.slice(0, 150) : String(err);
       errors.push(`${getter.name}: ${msg}`);
       console.warn(`${getter.name} failed: ${msg}`);
+    }
+  }
+
+  if (Date.now() - startedAt <= budgetMs) {
+    try {
+      const streamUrl = await getYouTubeStreamUrlViaYtDlp(videoId);
+      console.log(`Stream URL obtained via yt-dlp for videoId=${videoId}`);
+      return streamUrl;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message.slice(0, 150) : String(err);
+      errors.push(`yt-dlp: ${msg}`);
+      console.warn(`yt-dlp failed: ${msg}`);
     }
   }
 
@@ -1979,7 +2020,7 @@ async function downloadYouTubeOrGenericVideo(
     if (cfWorkerUrl) {
       try {
         const localPath = path.join(path.dirname(outputTemplate), 'source.mp4');
-        const heights = Array.from(new Set([YOUTUBE_MAX_HEIGHT, 360, 240, 144].filter(Boolean)));
+        const heights = Array.from(new Set([YOUTUBE_MAX_HEIGHT, 720, 480, 360, 240, 144].filter(Boolean)));
         let remoteCandidate = '';
         for (const h of heights) {
           const u = new URL(cfWorkerUrl);
