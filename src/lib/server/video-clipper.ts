@@ -1192,6 +1192,7 @@ async function getBilibiliStreamUrlDirect(videoUrl: string): Promise<string> {
     'Referer': 'https://www.bilibili.com/',
     'Origin': 'https://www.bilibili.com',
     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    ...(process.env.BILIBILI_COOKIE ? { Cookie: process.env.BILIBILI_COOKIE } : {}),
   };
 
   // Step 1: Get video CID
@@ -1526,6 +1527,7 @@ async function getBilibiliVideoMeta(videoUrl: string): Promise<{ title: string; 
     headers: {
       'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
       'Referer': 'https://www.bilibili.com/',
+      ...(process.env.BILIBILI_COOKIE ? { Cookie: process.env.BILIBILI_COOKIE } : {}),
     },
     signal: AbortSignal.timeout(10_000),
   });

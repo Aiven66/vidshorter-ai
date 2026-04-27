@@ -172,6 +172,7 @@ async function tryClient(videoId: string, client: Client): Promise<{
       'X-Youtube-Client-Name': client.xClientName,
       'X-Youtube-Client-Version': client.clientVersion,
       ...client.extraHeaders,
+      ...(process.env.YOUTUBE_COOKIES ? { Cookie: netscapeCookiesToHeader(process.env.YOUTUBE_COOKIES) } : {}),
     },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(12_000), // 12s per client × 6 clients = 72s max

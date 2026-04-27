@@ -3,6 +3,10 @@ import { isSupabaseConfigured } from '@/storage/database/supabase-client';
 import videoClipper from '@/lib/server/video-clipper';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+export const maxDuration = 300;
+
 interface ProcessVideoRequest {
   videoUrl?: string;
   userId?: string;
@@ -94,7 +98,7 @@ function hasPlayableUrl(clip: ClipResult): clip is ClipResult & { videoUrl: stri
 
 const DEFAULT_BATCH_SIZE =
   clampInt(process.env.PROCESS_VIDEO_BATCH_SIZE, 1, 10, 0) ||
-  (process.env.VERCEL ? 3 : 10);
+  (process.env.VERCEL ? 1 : 10);
 
 export async function POST(request: NextRequest) {
   const body = (await request.json()) as ProcessVideoRequest;
@@ -102,6 +106,7 @@ export async function POST(request: NextRequest) {
   const requestedUserId = body.userId?.trim();
   const sourceType = body.sourceType?.trim() || 'url';
   const jobId = body.jobId?.trim() || `job-${Date.now()}`;
+  const isContinuation = !!body.jobId?.trim();
   const clipOffset = clampInt(body.clipOffset, 0, 10_000, 0);
   const clipLimitFromRequest = clampInt(body.clipLimit, 1, 10, 0);
   const desiredClipCountFromRequest = clampInt(body.desiredClipCount, 1, 10, 0);
@@ -143,7 +148,9 @@ export async function POST(request: NextRequest) {
       };
       const heartbeat = setInterval(() => {
         if (abortSignal.aborted) return;
-        if (lastSsePayload) sendSSE(controller, lastSsePayload);
+        try {
+          controller.enqueue(sseEncoder.encode(':\n\n'));
+        } catch {}
       }, 15_000);
 
       try {
@@ -201,7 +208,7 @@ export async function POST(request: NextRequest) {
             .maybeSingle();
           userRole = profile?.role || 'user';
 
-          if (clipOffset === 0 && userRole !== 'admin') {
+          if (!isContinuation && clipOffset === 0 && userRole !== 'admin') {
             const { data: sub } = await client
               .from('subscriptions')
               .select('plan_type')
@@ -316,37 +323,7 @@ export async function POST(request: NextRequest) {
 
         let dbVideoId = suppliedVideoId || '';
 
-        if (!send({
-          stage: 'analysis_complete',
-          progress: 45,
-          message: `Found ${allHighlights.length} highlight moments in "${analysis.title}".`,
-          data: {
-            jobId,
-            highlights: allHighlights,
-            estimatedDuration: analysis.duration,
-            title: analysis.title,
-            clipOffset,
-            clipLimit: batchLimit,
-            totalHighlights: allHighlights.length,
-            recommendedClipCount: recommendedCount,
-            videoId: dbVideoId || undefined,
-          },
-        })) return;
-
-        const clips: ClipResult[] = [];
-        let source: { inputPath: string; ffmpegHeaders?: string } | null = null;
-
-        if (abortSignal.aborted) return;
-        if (!send({
-          stage: 'generating_clip',
-          progress: 48,
-          message: isBilibili
-            ? 'Connecting to Bilibili video stream...'
-            : 'Connecting to video stream...',
-          data: { jobId },
-        })) return;
-
-        if (!dbVideoId && isSupabaseMode) {
+        if (!dbVideoId && isSupabaseMode && clipOffset === 0) {
           try {
             const { data: video } = await supabaseClient!
               .from('videos')
@@ -364,6 +341,46 @@ export async function POST(request: NextRequest) {
             if (video?.id) dbVideoId = String(video.id);
           } catch {}
         }
+
+        if (!send({
+          stage: 'analysis_complete',
+          progress: 45,
+          message: `Found ${allHighlights.length} highlight moments in "${analysis.title}".`,
+          data: {
+            jobId,
+            highlights: allHighlights,
+            estimatedDuration: analysis.duration,
+            title: analysis.title,
+            clipOffset,
+            clipLimit: batchLimit || DEFAULT_BATCH_SIZE,
+            totalHighlights: allHighlights.length,
+            recommendedClipCount: recommendedCount,
+            videoId: dbVideoId || undefined,
+            nextOffset: suppliedHighlights && suppliedHighlights.length > 0 ? clipOffset : 0,
+            done: false,
+          },
+        })) return;
+
+        if (!suppliedHighlights || suppliedHighlights.length === 0) {
+          clearInterval(heartbeat);
+          try {
+            controller.close();
+          } catch {}
+          return;
+        }
+
+        const clips: ClipResult[] = [];
+        let source: { inputPath: string; ffmpegHeaders?: string } | null = null;
+
+        if (abortSignal.aborted) return;
+        if (!send({
+          stage: 'generating_clip',
+          progress: 48,
+          message: isBilibili
+            ? 'Connecting to Bilibili video stream...'
+            : 'Connecting to video stream...',
+          data: { jobId },
+        })) return;
 
         if (dbVideoId) {
           send({
@@ -572,7 +589,6 @@ export async function POST(request: NextRequest) {
     headers: {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
     },
   });
 }
