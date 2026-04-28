@@ -2095,14 +2095,31 @@ async function downloadYouTubeOrGenericVideo(
           u.pathname = `${u.pathname.replace(/\/$/, '')}/resolve`;
           u.searchParams.set('videoId', videoId);
           u.searchParams.set('maxHeight', String(h));
-          const resolved = await fetch(u.toString(), {
-            headers: { Accept: 'application/json' },
-            signal: AbortSignal.timeout(25_000),
-          }).then((r) => r.json() as Promise<{ streamUrl?: string; userAgent?: string; error?: string }>);
+          let resolved: { streamUrl?: string; userAgent?: string; error?: string } | null = null;
+          let resolveError = '';
+          for (let attempt = 0; attempt < 3; attempt += 1) {
+            try {
+              const res = await fetch(u.toString(), {
+                headers: { Accept: 'application/json' },
+                signal: AbortSignal.timeout(25_000),
+              });
+              if (!res.ok) {
+                let details = '';
+                try { details = (await res.text()).slice(0, 220); } catch {}
+                throw new Error(`HTTP ${res.status}${details ? `: ${details}` : ''}`);
+              }
+              resolved = await res.json() as { streamUrl?: string; userAgent?: string; error?: string };
+              if (resolved?.streamUrl) break;
+              resolveError = resolved?.error || 'Missing streamUrl';
+            } catch (e) {
+              resolveError = e instanceof Error ? e.message.slice(0, 220) : String(e).slice(0, 220);
+            }
+            await new Promise<void>((r) => setTimeout(r, 500 * (attempt + 1)));
+          }
 
           const streamUrl = resolved?.streamUrl || '';
           if (!streamUrl) {
-            console.warn(`CF Worker /resolve failed for maxHeight=${h}${resolved?.error ? `: ${resolved.error.slice(0, 120)}` : ''}`);
+            console.warn(`CF Worker /resolve failed for maxHeight=${h}: ${resolveError}`);
             continue;
           }
 
