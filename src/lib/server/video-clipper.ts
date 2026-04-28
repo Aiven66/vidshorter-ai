@@ -810,10 +810,19 @@ async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInf
   u.searchParams.set('videoId', videoId);
   u.searchParams.set('maxHeight', String(maxHeight));
   const endpoint = u.toString();
-  const res = await fetch(endpoint, {
+  const fetchResolved = async () => fetch(endpoint, {
     headers: { 'Accept': 'application/json' },
     signal: AbortSignal.timeout(25_000),
   });
+
+  let res: Response | null = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    res = await fetchResolved();
+    if (res.ok) break;
+    if (![429, 500, 502, 503, 504].includes(res.status)) break;
+    await new Promise<void>((r) => setTimeout(r, 600 * (attempt + 1)));
+  }
+  if (!res) throw new Error('CF Worker: empty response');
 
   if (!res.ok) {
     let details = '';
@@ -1310,15 +1319,25 @@ async function analyzeYouTubeViaPipedAndTranscript(videoUrl: string): Promise<Vi
   let cues: CaptionCue[] = [];
 
   // Try each proxy in order for title/duration/subtitles.
-  // Priority: Edge Function (CDN IPs, reliable) > CF Worker (if set) > DirectInnerTube > YouTube.js > Invidious > Piped
-  const metaGetters = [
-    ...(getAppBaseUrl() ? [() => getYouTubeInfoViaEdgeFunction(videoId)] : []),
-    ...(getCfWorkerUrl() ? [() => getYouTubeInfoViaCFWorker(videoId)] : []),
-    () => getYouTubeInfoViaDirectInnerTube(videoId),
-    () => getYouTubeInfoViaYouTubeJs(videoId),
-    () => getYouTubeInfoViaInvidious(videoId),
-    () => getYouTubeInfoViaPiped(videoId),
-  ];
+  // On Vercel we avoid DirectInnerTube / YouTube.js because datacenter IPs often
+  // trigger LOGIN_REQUIRED and poison subsequent attempts. Prefer CF Worker / Edge.
+  // Priority (Vercel): CF Worker > Edge Function > Invidious > Piped
+  // Priority (non-Vercel): CF Worker > Edge Function > DirectInnerTube > YouTube.js > Invidious > Piped
+  const metaGetters = IS_VERCEL
+    ? [
+        ...(getCfWorkerUrl() ? [() => getYouTubeInfoViaCFWorker(videoId)] : []),
+        ...(getAppBaseUrl() ? [() => getYouTubeInfoViaEdgeFunction(videoId)] : []),
+        () => getYouTubeInfoViaInvidious(videoId),
+        () => getYouTubeInfoViaPiped(videoId),
+      ]
+    : [
+        ...(getCfWorkerUrl() ? [() => getYouTubeInfoViaCFWorker(videoId)] : []),
+        ...(getAppBaseUrl() ? [() => getYouTubeInfoViaEdgeFunction(videoId)] : []),
+        () => getYouTubeInfoViaDirectInnerTube(videoId),
+        () => getYouTubeInfoViaYouTubeJs(videoId),
+        () => getYouTubeInfoViaInvidious(videoId),
+        () => getYouTubeInfoViaPiped(videoId),
+      ];
 
   for (const getter of metaGetters) {
     try {
@@ -1747,21 +1766,19 @@ async function getYouTubeStreamUrlWithFallbacks(videoId: string): Promise<string
   const budgetMs = IS_VERCEL ? 120_000 : 180_000;
   const streamGetters = IS_VERCEL
     ? [
+        ...(getCfWorkerUrl() ? [{ name: 'CF Worker', fn: () => getYouTubeInfoViaCFWorker(videoId) }] : []),
         ...(getAppBaseUrl()
           ? [{ name: 'EdgeFunction', fn: () => getYouTubeInfoViaEdgeFunction(videoId) }]
           : []),
-        ...(getCfWorkerUrl() ? [{ name: 'CF Worker', fn: () => getYouTubeInfoViaCFWorker(videoId) }] : []),
         ...(allowCobalt ? [{ name: 'cobalt', fn: () => getYouTubeInfoViaCobalt(videoId) }] : []),
-        { name: 'DirectInnerTube', fn: () => getYouTubeInfoViaDirectInnerTube(videoId) },
-        { name: 'YouTube.js', fn: () => getYouTubeInfoViaYouTubeJs(videoId) },
         { name: 'Invidious', fn: () => getYouTubeInfoViaInvidious(videoId) },
         { name: 'Piped', fn: () => getYouTubeInfoViaPiped(videoId) },
       ]
     : [
+        ...(getCfWorkerUrl() ? [{ name: 'CF Worker', fn: () => getYouTubeInfoViaCFWorker(videoId) }] : []),
         ...(getAppBaseUrl()
           ? [{ name: 'EdgeFunction', fn: () => getYouTubeInfoViaEdgeFunction(videoId) }]
           : []),
-        ...(getCfWorkerUrl() ? [{ name: 'CF Worker', fn: () => getYouTubeInfoViaCFWorker(videoId) }] : []),
         { name: 'cobalt', fn: () => getYouTubeInfoViaCobalt(videoId) },
         { name: 'DirectInnerTube', fn: () => getYouTubeInfoViaDirectInnerTube(videoId) },
         { name: 'YouTube.js', fn: () => getYouTubeInfoViaYouTubeJs(videoId) },
@@ -1841,9 +1858,10 @@ async function downloadStreamToLocalFile(url: string, outputPath: string): Promi
           throw new Error('Download timed out');
         }
         const end = offset + chunkSize - 1;
-        const res = await fetch(url, {
+        const rangeValue = `bytes=${offset}-${end}`;
+        const fetchChunk = async () => fetch(url, {
           headers: {
-            Range: `bytes=${offset}-${end}`,
+            Range: rangeValue,
             ...getBypassHeadersForUrl(url),
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
             'Accept': '*/*',
@@ -1851,6 +1869,17 @@ async function downloadStreamToLocalFile(url: string, outputPath: string): Promi
           },
           signal: AbortSignal.timeout(60_000),
         });
+
+        let res: Response | null = null;
+        const retries = isWorkerStreamUrl ? 3 : 1;
+        for (let attempt = 0; attempt < retries; attempt += 1) {
+          res = await fetchChunk();
+          if (res.status === 200 || res.status === 206 || res.status === 416) break;
+          if (!isWorkerStreamUrl) break;
+          if (![429, 500, 502, 503, 504].includes(res.status)) break;
+          await new Promise<void>((r) => setTimeout(r, 500 * (attempt + 1)));
+        }
+        if (!res) throw new Error('Empty response');
 
         if (res.status === 416) break;
         if (res.status !== 206 && res.status !== 200) {
@@ -2005,26 +2034,42 @@ async function downloadStreamToLocalFile(url: string, outputPath: string): Promi
 }
 
 async function preflightStream(url: string): Promise<boolean> {
-  try {
-    const res = await fetch(url, {
-      headers: {
-        Range: 'bytes=0-1',
-        ...getBypassHeadersForUrl(url),
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
-        'Accept': '*/*',
-        'Accept-Encoding': 'identity',
-      },
-      signal: AbortSignal.timeout(12_000),
-    });
-    const type = (res.headers.get('content-type') || '').toLowerCase();
-    res.body?.cancel();
-    const statusOk = res.status === 200 || res.status === 206;
-    const typeOk = !type || type.startsWith('video/') || type.includes('octet-stream') || type.includes('application/mp4') || type.includes('application/vnd.apple.mpegurl');
-    const looksBad = type.includes('text/html') || type.includes('application/json');
-    return statusOk && typeOk && !looksBad;
-  } catch {
-    return false;
+  const isWorker = (() => {
+    try {
+      const u = new URL(url);
+      return u.hostname.endsWith('.workers.dev') || u.hostname.includes('youtube-proxy');
+    } catch {
+      return false;
+    }
+  })();
+
+  const attempts = isWorker ? 3 : 1;
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      const res = await fetch(url, {
+        headers: {
+          Range: 'bytes=0-1',
+          ...getBypassHeadersForUrl(url),
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+          'Accept': '*/*',
+          'Accept-Encoding': 'identity',
+        },
+        signal: AbortSignal.timeout(12_000),
+      });
+      const type = (res.headers.get('content-type') || '').toLowerCase();
+      res.body?.cancel();
+      const statusOk = res.status === 200 || res.status === 206;
+      const typeOk = !type || type.startsWith('video/') || type.includes('octet-stream') || type.includes('application/mp4') || type.includes('application/vnd.apple.mpegurl');
+      const looksBad = type.includes('text/html') || type.includes('application/json');
+      if (statusOk && typeOk && !looksBad) return true;
+      if (!isWorker) return false;
+      if (![429, 500, 502, 503, 504].includes(res.status)) return false;
+    } catch {
+      if (!isWorker) return false;
+    }
+    await new Promise<void>((r) => setTimeout(r, 400 * (i + 1)));
   }
+  return false;
 }
 
 async function downloadYouTubeOrGenericVideo(

@@ -222,6 +222,10 @@ export default {
               visitorData: info.visitorData,
               xClientName: info.xClientName,
               clientVersion: info.clientVersion,
+              title: info.title,
+              duration: info.duration,
+              quality: info.quality,
+              client: client.name,
             };
             const upstream = await doFetch(resolved);
             if (upstream.status === 200 || upstream.status === 206) {
@@ -244,17 +248,25 @@ export default {
     }
 
     const errors = [];
+    const cached = await cacheGetResolved(videoId, maxHeight || MAX_HEIGHT);
+    if (cached?.streamUrl) {
+      return json({
+        title: cached.title || 'YouTube Video',
+        duration: cached.duration || 300,
+        streamUrl: cached.streamUrl,
+        quality: cached.quality || 'cached',
+        userAgent: cached.userAgent,
+        visitorData: cached.visitorData,
+        xClientName: cached.xClientName,
+        clientVersion: cached.clientVersion,
+        client: cached.client || 'cached',
+      });
+    }
     for (const client of CLIENTS) {
       try {
         const result = await tryClient(videoId, client, maxHeight, cookieHeader);
         if (result) {
-          await cachePutResolved(videoId, maxHeight, {
-            streamUrl: result.streamUrl,
-            userAgent: result.userAgent,
-            visitorData: result.visitorData,
-            xClientName: result.xClientName,
-            clientVersion: result.clientVersion,
-          });
+          await cachePutResolved(videoId, maxHeight, { ...result, client: client.name });
           return json({ ...result, client: client.name });
         }
         errors.push(`${client.name}: no stream URL`);
