@@ -121,6 +121,11 @@ const MAX_HEIGHT = 1080;
 const cache = new Map();
 let playerCache = { jsUrl: '', expiresAt: 0, decipher: null };
 
+const COBALT_INSTANCES = [
+  'https://cobalt.ggtyler.dev/',
+  'https://cobalt.api.timelessnesses.me/',
+];
+
 function resolveCacheRequest(videoId, maxHeight) {
   const u = new URL('https://cache.youtube-proxy.local/resolve');
   u.searchParams.set('videoId', videoId);
@@ -178,20 +183,25 @@ export default {
         const cacheKey = `${videoId}|${String(effectiveMaxHeight)}`;
         const range = request.headers.get('Range') || request.headers.get('range') || 'bytes=0-';
 
-        const doFetch = (resolved) => fetch(resolved.streamUrl, {
-          headers: {
-            Range: range,
-            'User-Agent': resolved.userAgent,
-            'Accept': '*/*',
-            'Accept-Encoding': 'identity',
-            'Origin': 'https://www.youtube.com',
-            'Referer': 'https://www.youtube.com/',
-            ...(resolved.visitorData ? { 'X-Goog-Visitor-Id': resolved.visitorData } : {}),
-            'X-Youtube-Client-Name': resolved.xClientName,
-            'X-Youtube-Client-Version': resolved.clientVersion,
-            ...(cookieHeader ? { Cookie: cookieHeader } : {}),
-          },
-        });
+        const doFetch = (resolved) => {
+          const isCobalt = resolved?.client === 'cobalt';
+          return fetch(resolved.streamUrl, {
+            headers: {
+              Range: range,
+              'User-Agent': resolved.userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+              'Accept': '*/*',
+              'Accept-Encoding': 'identity',
+              ...(!isCobalt ? {
+                'Origin': 'https://www.youtube.com',
+                'Referer': 'https://www.youtube.com/',
+                ...(resolved.visitorData ? { 'X-Goog-Visitor-Id': resolved.visitorData } : {}),
+                'X-Youtube-Client-Name': resolved.xClientName,
+                'X-Youtube-Client-Version': resolved.clientVersion,
+                ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+              } : {}),
+            },
+          });
+        };
 
         const errors = [];
 
@@ -240,6 +250,31 @@ export default {
           }
         }
 
+        try {
+          const cobaltUrl = await getYouTubeStreamViaCobalt(videoId, effectiveMaxHeight);
+          const resolved = {
+            streamUrl: cobaltUrl,
+            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+            visitorData: '',
+            xClientName: '1',
+            clientVersion: '2.20240101.00.00',
+            title: 'YouTube Video',
+            duration: 300,
+            quality: 'cobalt',
+            client: 'cobalt',
+          };
+          const upstream = await doFetch(resolved);
+          if (upstream.status === 200 || upstream.status === 206) {
+            cache.set(cacheKey, { value: resolved, expiresAt: Date.now() + 10 * 60 * 1000 });
+            await cachePutResolved(videoId, effectiveMaxHeight, resolved);
+            return passthroughStream(upstream);
+          }
+          const body = await upstream.text().catch(() => '');
+          errors.push(`cobalt: HTTP ${upstream.status} ${body.slice(0, 120)}`);
+        } catch (e) {
+          errors.push(`cobalt: ${(e instanceof Error ? e.message : String(e)).slice(0, 120)}`);
+        }
+
         return json({ error: 'All clients failed to stream', details: errors.slice(0, 10).join(' | ') }, 502);
 
       } catch (e) {
@@ -274,6 +309,26 @@ export default {
         const msg = (e instanceof Error ? e.message : String(e)).slice(0, 150);
         errors.push(`${client.name}: ${msg}`);
       }
+    }
+
+    try {
+      const cobaltUrl = await getYouTubeStreamViaCobalt(videoId, maxHeight || MAX_HEIGHT);
+      const result = {
+        title: 'YouTube Video',
+        duration: 300,
+        streamUrl: cobaltUrl,
+        quality: 'cobalt',
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+        visitorData: '',
+        xClientName: '1',
+        clientVersion: '2.20240101.00.00',
+        client: 'cobalt',
+      };
+      await cachePutResolved(videoId, maxHeight, result);
+      return json(result);
+    } catch (e) {
+      const msg = (e instanceof Error ? e.message : String(e)).slice(0, 150);
+      errors.push(`cobalt: ${msg}`);
     }
 
     return json({ error: `All clients failed: ${errors.join(' | ')}` }, 502);
@@ -526,4 +581,35 @@ function passthroughStream(upstream) {
     if (v) headers.set(key, v);
   }
   return new Response(upstream.body, { status: upstream.status, headers });
+}
+
+async function getYouTubeStreamViaCobalt(videoId, maxHeight) {
+  const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const body = JSON.stringify({
+    url: videoUrl,
+    videoQuality: String(Math.min(parseInt(String(maxHeight || 720), 10) || 720, 1080)),
+    youtubeVideoCodec: 'h264',
+    audioBitrate: '128',
+  });
+
+  let lastError = 'no instances tried';
+  for (const instance of COBALT_INSTANCES) {
+    try {
+      const res = await fetch(instance, {
+        method: 'POST',
+        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+        body,
+      });
+      if (!res.ok) { lastError = `${instance}: HTTP ${res.status}`; continue; }
+      const data = await res.json();
+      if (data?.status === 'error' || !data?.url) {
+        lastError = `${instance}: ${data?.error?.code || data?.status || 'no url'}`;
+        continue;
+      }
+      return data.url;
+    } catch (e) {
+      lastError = `${instance}: ${(e instanceof Error ? e.message : String(e)).slice(0, 120)}`;
+    }
+  }
+  throw new Error(`All cobalt instances failed. Last: ${lastError}`);
 }
