@@ -48,16 +48,25 @@ export async function GET(request: Request) {
   }
 
   const key = String(process.env.CF_WORKER_KEY || process.env.CF_SECRET_KEY || '').trim();
-  const streamEndpoint = new URL(cfWorkerUrl);
-  streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
-  streamEndpoint.searchParams.set('videoId', videoId);
-  streamEndpoint.searchParams.set('maxHeight', String(maxHeight));
-  if (key) streamEndpoint.searchParams.set('key', key);
+  const resolveEndpoint = new URL(cfWorkerUrl);
+  resolveEndpoint.pathname = `${resolveEndpoint.pathname.replace(/\/$/, '')}/resolve`;
+  resolveEndpoint.searchParams.set('videoId', videoId);
+  resolveEndpoint.searchParams.set('maxHeight', String(maxHeight));
+  if (key) resolveEndpoint.searchParams.set('key', key);
+
+  const resolved = await fetch(resolveEndpoint.toString(), {
+    headers: { 'Accept': 'application/json' },
+  }).then((r) => r.json() as Promise<{ streamUrl?: string; userAgent?: string; error?: string }>);
+
+  if (!resolved?.streamUrl) {
+    return Response.json({ error: resolved?.error || 'Worker resolve failed' }, { status: 502, headers: corsHeaders });
+  }
 
   const range = request.headers.get('range') || request.headers.get('Range') || 'bytes=0-';
-  const upstream = await fetch(streamEndpoint.toString(), {
+  const upstream = await fetch(resolved.streamUrl, {
     headers: {
       Range: range,
+      ...(resolved.userAgent ? { 'User-Agent': resolved.userAgent } : {}),
       'Accept': '*/*',
       'Accept-Encoding': 'identity',
     },
