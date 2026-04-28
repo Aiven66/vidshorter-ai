@@ -173,6 +173,8 @@ const MAX_HIGHLIGHTS = 10;
 
 const IS_VERCEL = !!process.env.VERCEL;
 const VERCEL_MAX_HIGHLIGHTS = 3;
+const SHOULD_INLINE_CLIPS = IS_VERCEL || process.env.INLINE_CLIPS === '1';
+const FORCE_YOUTUBE_STREAM_FALLBACKS = IS_VERCEL || process.env.PREFER_EDGE_YOUTUBE === '1' || process.env.FORCE_YOUTUBE_STREAM === '1';
 
 function clampInt(value: unknown, min: number, max: number, fallback: number) {
   const n = typeof value === 'number' ? value : parseInt(String(value ?? ''), 10);
@@ -1447,7 +1449,7 @@ async function analyzeYouTubeVideo(videoUrl: string, workDir: string): Promise<V
   // On Vercel, yt-dlp cannot solve YouTube's JS signature challenges and
   // its repeated failed requests trigger YouTube rate-limiting (LOGIN_REQUIRED).
   // Skip yt-dlp entirely on Vercel and go straight to proxy-based analysis.
-  if (process.env.VERCEL) {
+  if (FORCE_YOUTUBE_STREAM_FALLBACKS) {
     console.log('Vercel environment detected: skipping yt-dlp analysis, using proxy+transcript');
     return analyzeYouTubeViaPipedAndTranscript(videoUrl);
   }
@@ -2032,7 +2034,7 @@ async function downloadYouTubeOrGenericVideo(
   // More critically: each yt-dlp attempt makes YouTube API requests that accumulate
   // on the same datacenter IP and trigger LOGIN_REQUIRED ("Sign in to confirm you're not a bot")
   // by the time we reach DirectInnerTube. Skip yt-dlp entirely on Vercel for YouTube.
-  if (process.env.VERCEL && isYouTubeUrl(videoUrl)) {
+  if (FORCE_YOUTUBE_STREAM_FALLBACKS && isYouTubeUrl(videoUrl)) {
     const videoId = extractYouTubeVideoId(videoUrl);
     if (!videoId) throw new Error('Invalid YouTube URL');
 
@@ -2285,11 +2287,11 @@ async function createLocalClip(params: {
 
   // On Vercel: use aggressive compression to keep output small for base64 inline transport.
   // 360p + CRF 28 + ultrafast → typically 1.5-4 MB for a 30-60s clip.
-  const videoFilter = IS_VERCEL
+  const videoFilter = SHOULD_INLINE_CLIPS
     ? ['-vf', VERCEL_SCALE]
     : ['-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2'];
-  const crf = IS_VERCEL ? VERCEL_CRF : (isRemoteInput ? '18' : '17');
-  const preset = IS_VERCEL ? 'veryfast' : (isRemoteInput ? 'veryfast' : 'fast');
+  const crf = SHOULD_INLINE_CLIPS ? VERCEL_CRF : (isRemoteInput ? '18' : '17');
+  const preset = SHOULD_INLINE_CLIPS ? 'veryfast' : (isRemoteInput ? 'veryfast' : 'fast');
 
   const seekArgs = (!isRemoteInput || isWorkerStream)
     ? ['-ss', String(params.startTime), '-i', params.inputPath, '-t', String(duration)]
@@ -2345,7 +2347,7 @@ async function createLocalClip(params: {
     let fileBuffer = await readFile(outputPath);
     let fileSizeBytes = fileBuffer.length;
 
-    if (IS_VERCEL && fileSizeBytes > MAX_INLINE_BYTES) {
+    if (SHOULD_INLINE_CLIPS && fileSizeBytes > MAX_INLINE_BYTES) {
       const attempts = [
         { crfDelta: 6, width: VERCEL_TARGET_WIDTH_NUM, height: VERCEL_TARGET_HEIGHT_NUM },
         { crfDelta: 10, width: 854, height: 480 },
@@ -2390,7 +2392,7 @@ async function createLocalClip(params: {
       }
     }
 
-    if (fileSizeBytes <= MAX_INLINE_BYTES) {
+    if (SHOULD_INLINE_CLIPS && fileSizeBytes <= MAX_INLINE_BYTES) {
       dataUrl = `data:video/mp4;base64,${fileBuffer.toString('base64')}`;
       console.log(`Clip inlined as data URL: ${Math.round(fileSizeBytes / 1024)}KB`);
       if (dataUrl) {

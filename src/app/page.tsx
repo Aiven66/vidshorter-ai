@@ -263,6 +263,50 @@ export default function HomePage() {
       let batchLimit = 3;
       const clipMap = new Map<string, VideoClip>();
 
+      const useAgent = typeof window !== 'undefined' && window.location.hostname === 'localhost';
+      if (useAgent && inputUrl) {
+        const res = await fetch('/api/agent/jobs', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+          },
+          body: JSON.stringify({ videoUrl: inputUrl, userId: user.id }),
+        });
+        if (!res.ok) throw new Error(`Server error: ${res.status}`);
+        const created = await res.json() as { job: { id: string } };
+        const createdAt = Date.now();
+        const poll = async () => {
+          const jobRes = await fetch(`/api/agent/jobs/${encodeURIComponent(created.job.id)}`);
+          if (!jobRes.ok) throw new Error(`Job fetch failed: ${jobRes.status}`);
+          const { job } = await jobRes.json() as { job: {
+            status: string;
+            stage: string;
+            progress: number;
+            message: string;
+            result?: { clips?: VideoClip[] };
+            error?: string;
+          } };
+          setProgress({ stage: job.stage, progress: job.progress, message: job.message, data: {} });
+          if (job.result?.clips) {
+            for (const clip of job.result.clips) clipMap.set(clip.id, clip);
+            setClips(prev => mergeClips(prev, job.result!.clips!));
+          }
+          if (job.status === 'failed') {
+            throw new Error(job.error || job.message || 'Agent processing failed');
+          }
+          if (job.status === 'completed') return;
+          if (Date.now() - createdAt > 30_000 && job.status === 'queued') {
+            throw new Error('Local Agent is not running. Start it with: pnpm agent');
+          }
+          await new Promise<void>((r) => setTimeout(r, 1000));
+          await poll();
+        };
+        await poll();
+        saveDemoVideoRecord(displayUrl, null, Array.from(clipMap.values()), user?.id);
+        return;
+      }
+
       const runBatch = async (payload: Record<string, unknown>) => {
         const res = await fetch('/api/process-video', {
           method: 'POST',
