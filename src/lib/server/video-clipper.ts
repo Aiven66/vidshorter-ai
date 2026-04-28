@@ -2092,27 +2092,43 @@ async function downloadYouTubeOrGenericVideo(
         let remoteCandidate = '';
         for (const h of heights) {
           const u = new URL(cfWorkerUrl);
-          u.pathname = `${u.pathname.replace(/\/$/, '')}/stream`;
+          u.pathname = `${u.pathname.replace(/\/$/, '')}/resolve`;
           u.searchParams.set('videoId', videoId);
           u.searchParams.set('maxHeight', String(h));
-          const streamProxyUrl = u.toString();
-          const ok = await preflightStream(streamProxyUrl);
-          if (!ok) {
-            console.warn(`CF Worker /stream preflight failed for maxHeight=${h}, trying next…`);
+          const resolved = await fetch(u.toString(), {
+            headers: { Accept: 'application/json' },
+            signal: AbortSignal.timeout(25_000),
+          }).then((r) => r.json() as Promise<{ streamUrl?: string; userAgent?: string; error?: string }>);
+
+          const streamUrl = resolved?.streamUrl || '';
+          if (!streamUrl) {
+            console.warn(`CF Worker /resolve failed for maxHeight=${h}${resolved?.error ? `: ${resolved.error.slice(0, 120)}` : ''}`);
             continue;
           }
-          const downloaded = await downloadStreamToLocalFile(streamProxyUrl, localPath);
+
+          const ok = await preflightStream(streamUrl);
+          if (!ok) {
+            console.warn(`CF Worker resolved stream preflight failed for maxHeight=${h}, trying next…`);
+            continue;
+          }
+          const downloaded = await downloadStreamToLocalFile(streamUrl, localPath);
           if (downloaded) {
             console.log('Vercel environment: using locally cached YouTube source for ffmpeg input');
             return { inputPath: localPath };
           }
-          remoteCandidate = streamProxyUrl;
+          remoteCandidate = streamUrl;
         }
         if (remoteCandidate) {
-          console.log('Vercel environment: using CF Worker stream proxy directly as ffmpeg input (no local cache)');
-          return { inputPath: remoteCandidate };
+          console.log('Vercel environment: using resolved YouTube stream URL directly as ffmpeg input (no local cache)');
+          const ffmpegHeaders =
+            'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36\r\n' +
+            'Referer: https://www.youtube.com/\r\n' +
+            'Origin: https://www.youtube.com\r\n' +
+            'Accept: */*\r\n' +
+            'Accept-Encoding: identity\r\n';
+          return { inputPath: remoteCandidate, ffmpegHeaders };
         }
-        throw new Error('CF Worker stream is unavailable');
+        throw new Error('CF Worker resolve is unavailable');
       } catch (e) {
         console.warn(
           'CF Worker stream URL build failed, trying Vercel edge proxy…',
