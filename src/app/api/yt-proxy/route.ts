@@ -1,438 +1,85 @@
-export const runtime = 'edge';
-
-const CORS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, OPTIONS',
-};
-
-const MAX_HEIGHT = parseInt(process.env.YOUTUBE_MAX_HEIGHT || '1080', 10) || 1080;
-const RESOLVE_CACHE_TTL_MS = 5 * 60 * 1000;
-const resolveCache = new Map<string, { value: { url: string; userAgent: string; visitorData: string; xClientName: string; clientVersion: string }; expiresAt: number }>();
-let playerCache: { jsUrl: string; expiresAt: number; decipher: ((sig: string) => string) | null } = { jsUrl: '', expiresAt: 0, decipher: null };
-
-function parseQuality(value?: string) {
-  const m = value?.match(/(\d{3,4})/);
-  return m ? parseInt(m[1], 10) : 0;
-}
-
-function normalizeMaxHeight(value?: string) {
-  const n = parseInt(String(value || ''), 10);
-  if (!Number.isFinite(n)) return MAX_HEIGHT;
-  if (n < 144) return 144;
-  if (n > MAX_HEIGHT) return MAX_HEIGHT;
-  return n;
-}
-
-function netscapeCookiesToHeader(text: string) {
-  const pairs: string[] = [];
-  for (const line of text.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const parts = trimmed.split('\t');
-    if (parts.length < 7) continue;
-    const name = parts[5]?.trim();
-    const value = parts[6]?.trim();
-    if (!name) continue;
-    pairs.push(`${name}=${value ?? ''}`);
-  }
-  return pairs.join('; ');
-}
-
-function extractVideoId(input: string) {
-  if (/^[a-zA-Z0-9_-]{7,15}$/.test(input)) return input;
-  try {
-    const u = new URL(input);
-    if (u.hostname.includes('youtu.be')) {
-      const id = u.pathname.replace('/', '').trim();
-      return /^[a-zA-Z0-9_-]{7,15}$/.test(id) ? id : null;
-    }
-    const v = u.searchParams.get('v');
-    return v && /^[a-zA-Z0-9_-]{7,15}$/.test(v) ? v : null;
-  } catch {
-    return null;
-  }
-}
-
-const CLIENTS = [
-  {
-    name: 'TV',
-    clientName: 'TVHTML5',
-    clientVersion: '7.20250312.16.00',
-    userAgent: 'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/24.0.0',
-    xClientName: '7',
-    extra: { clientScreen: 'TV' },
-    extraHeaders: {},
-  },
-  {
-    name: 'ANDROID_VR',
-    clientName: 'ANDROID_VR',
-    clientVersion: '1.57.29',
-    userAgent: 'com.google.android.apps.youtube.vr.oculus/1.57.29 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
-    xClientName: '28',
-    extra: { androidSdkVersion: 32 },
-    extraHeaders: {},
-  },
-  {
-    name: 'IOS_v20',
-    clientName: 'IOS',
-    clientVersion: '20.03.03',
-    userAgent: 'com.google.ios.youtube/20.03.03 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)',
-    xClientName: '5',
-    extra: {
-      deviceMake: 'Apple',
-      deviceModel: 'iPhone16,2',
-      osName: 'iPhone',
-      osVersion: '18.3.2.22D82',
-      clientFormFactor: 'SMALL_FORM_FACTOR',
-    },
-    extraHeaders: {},
-  },
-  {
-    name: 'ANDROID_v20',
-    clientName: 'ANDROID',
-    clientVersion: '20.03.03',
-    userAgent: 'com.google.android.youtube/20.03.03 (Linux; U; Android 14) gzip',
-    xClientName: '3',
-    extra: { androidSdkVersion: 34, clientFormFactor: 'SMALL_FORM_FACTOR' },
-    extraHeaders: {},
-  },
-  {
-    name: 'WEB_EMBEDDED',
-    clientName: 'WEB_EMBEDDED_PLAYER',
-    clientVersion: '2.20240101.00.00',
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
-    xClientName: '56',
-    extra: { clientScreen: 'EMBED' },
-    extraHeaders: {
-      'Referer': 'https://www.youtube.com/',
-      'Origin': 'https://www.youtube.com',
-    },
-  },
-  {
-    name: 'ANDROID_TESTSUITE',
-    clientName: 'ANDROID_TESTSUITE',
-    clientVersion: '1.9',
-    userAgent: 'com.google.android.youtube/1.9 (Linux; U; Android 11) gzip',
-    xClientName: '30',
-    extra: { androidSdkVersion: 30 },
-    extraHeaders: {},
-  },
-] as const;
-
-type Client = (typeof CLIENTS)[number];
-
-interface Format {
-  url?: string;
-  mimeType?: string;
-  qualityLabel?: string;
-  quality?: string;
-  audioQuality?: string;
-  audioChannels?: number;
-}
-
-interface InnerTubeResponse {
-  playabilityStatus?: { status?: string; reason?: string };
-  responseContext?: { visitorData?: string };
-  streamingData?: {
-    formats?: Format[];
-    adaptiveFormats?: Format[];
-  };
-}
-
-async function resolveStreamUrl(videoId: string, client: Client, maxHeight: number) {
-  const isEmbedClient = client.clientName === 'TVHTML5_SIMPLY_EMBEDDED_PLAYER' || client.clientName === 'WEB_EMBEDDED_PLAYER';
-  const body: Record<string, unknown> = {
-    videoId,
-    contentCheckOk: true,
-    racyCheckOk: true,
-    context: {
-      client: {
-        clientName: client.clientName,
-        clientVersion: client.clientVersion,
-        hl: 'en',
-        gl: 'US',
-        ...client.extra,
-      },
-      ...(isEmbedClient ? { thirdParty: { embedUrl: 'https://www.youtube.com/' } } : {}),
-    },
-    playbackContext: { contentPlaybackContext: { html5Preference: 'HTML5_PREF_WANTS' } },
-  };
-
-  const res = await fetch('https://www.youtube.com/youtubei/v1/player?prettyPrint=false', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'User-Agent': client.userAgent,
-      'Origin': 'https://www.youtube.com',
-      'Referer': 'https://www.youtube.com/',
-      'X-Youtube-Client-Name': client.xClientName,
-      'X-Youtube-Client-Version': client.clientVersion,
-      ...client.extraHeaders,
-      ...(process.env.YOUTUBE_COOKIES ? { Cookie: netscapeCookiesToHeader(process.env.YOUTUBE_COOKIES) } : {}),
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(12_000),
-  });
-
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const data = await res.json() as InnerTubeResponse;
-  const ps = data.playabilityStatus?.status;
-  if (ps && ps !== 'OK') throw new Error(`${ps}: ${data.playabilityStatus?.reason ?? ''}`);
-
-  const formats: Format[] = [
-    ...(data.streamingData?.formats ?? []),
-    ...(data.streamingData?.adaptiveFormats ?? []),
-  ];
-  if (!formats.length) throw new Error('No formats in response');
-
-  const combined = formats.filter(f =>
-    f.url && f.mimeType?.startsWith('video/mp4') && (f.audioQuality || f.audioChannels)
-  );
-
-  const pick =
-    combined
-      .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
-      .filter(item => item.q > 0 && item.q <= maxHeight)
-      .sort((a, b) => b.q - a.q)[0]?.f
-    || combined
-      .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
-      .sort((a, b) => b.q - a.q)[0]?.f
-    || combined[0]
-    || formats.find(f => f.url);
-
-  const cookieHeader = process.env.YOUTUBE_COOKIES ? netscapeCookiesToHeader(process.env.YOUTUBE_COOKIES) : '';
-  const resolvedUrl = await resolveFormatUrl(pick, videoId, cookieHeader);
-  if (!resolvedUrl) throw new Error('No direct URL');
-  return {
-    url: resolvedUrl,
-    userAgent: client.userAgent,
-    visitorData: data.responseContext?.visitorData || '',
-    xClientName: client.xClientName,
-    clientVersion: client.clientVersion,
-  };
-}
-
-async function resolveFormatUrl(
-  format: Format | undefined,
-  videoId: string,
-  cookieHeader: string,
-) {
-  if (!format) return '';
-  if (format.url) return format.url;
-  const cipher = (format as unknown as { signatureCipher?: string; cipher?: string }).signatureCipher
-    || (format as unknown as { signatureCipher?: string; cipher?: string }).cipher;
-  if (!cipher) return '';
-  const parsed = parseCipher(cipher);
-  if (!parsed.url) return '';
-  if (!parsed.s) return parsed.url;
-  const decipher = await getDecipher(videoId, cookieHeader);
-  if (!decipher) return '';
-  const signature = decipher(parsed.s);
-  const u = new URL(parsed.url);
-  u.searchParams.set(parsed.sp || 'signature', signature);
-  return u.toString();
-}
-
-function parseCipher(cipher: string) {
-  const params = new URLSearchParams(String(cipher || ''));
-  const url = params.get('url') || '';
-  const s = params.get('s') || '';
-  const sp = params.get('sp') || 'signature';
-  return { url, s, sp };
-}
-
-async function getDecipher(videoId: string, cookieHeader: string) {
-  if (playerCache.decipher && playerCache.expiresAt > Date.now()) return playerCache.decipher;
-  const jsUrl = await getPlayerJsUrl(videoId, cookieHeader);
-  if (!jsUrl) return null;
-  const js = await fetchText(jsUrl, cookieHeader);
-  const decipher = buildDecipher(js);
-  if (!decipher) return null;
-  playerCache = { jsUrl, decipher, expiresAt: Date.now() + 6 * 60 * 60 * 1000 };
-  return decipher;
-}
-
-async function getPlayerJsUrl(videoId: string, cookieHeader: string) {
-  if (playerCache.jsUrl && playerCache.expiresAt > Date.now()) return playerCache.jsUrl;
-  const html = await fetchText(`https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`, cookieHeader);
-  const m = html.match(/\"jsUrl\":\"([^\"]+)\"/);
-  const raw = m?.[1] ? m[1].replace(/\\u0026/g, '&') : '';
-  if (!raw) return '';
-  const url = raw.startsWith('http') ? raw : `https://www.youtube.com${raw}`;
-  playerCache.jsUrl = url;
-  playerCache.expiresAt = Date.now() + 60 * 60 * 1000;
-  return url;
-}
-
-async function fetchText(url: string, cookieHeader: string) {
-  const resp = await fetch(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
-      'Accept': '*/*',
-      'Accept-Language': 'en-US,en;q=0.9',
-      ...(cookieHeader ? { Cookie: cookieHeader } : {}),
-    },
-  });
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-  return await resp.text();
-}
-
-function buildDecipher(playerJs: string) {
-  const fnMatch =
-    playerJs.match(/([a-zA-Z0-9$]{2})=function\(\w\)\{\w=\w\.split\(\"\"\);[\s\S]*?return \w\.join\(\"\"\)\}/) ||
-    playerJs.match(/function\s+([a-zA-Z0-9$]{2})\(\w\)\{\w=\w\.split\(\"\"\);[\s\S]*?return \w\.join\(\"\"\)\}/);
-  if (!fnMatch) return null;
-
-  const fnText = fnMatch[0];
-  const helperNameMatch =
-    fnText.match(/;([a-zA-Z0-9$]{2})\.[a-zA-Z0-9$]{2}\(\w,\d+\)/) ||
-    fnText.match(/;([a-zA-Z0-9$]{2})\.[a-zA-Z0-9$]{2}\(\w,\w\)/) ||
-    fnText.match(/;([a-zA-Z0-9$]{2})\.[a-zA-Z0-9$]{2}\(\w\)/);
-  const helperName = helperNameMatch?.[1] || '';
-  if (!helperName) return null;
-
-  const helperRe = new RegExp(`var\\s+${helperName}=\\{([\\s\\S]*?)\\};`);
-  const helperMatch = playerJs.match(helperRe);
-  const helperBody = helperMatch?.[1] || '';
-  if (!helperBody) return null;
-
-  type OpType = 'reverse' | 'slice' | 'splice' | 'swap';
-  const opForMethod = new Map<string, OpType>();
-  const methodRe = /([a-zA-Z0-9$]+):function\(\w,(?:\w)?\)\{([\s\S]*?)\}/g;
-  for (const m of helperBody.matchAll(methodRe)) {
-    const name = m[1];
-    const body = m[2] || '';
-    if (body.includes('.reverse(')) opForMethod.set(name, 'reverse');
-    else if (body.includes('.splice(')) opForMethod.set(name, 'splice');
-    else if (body.includes('.slice(')) opForMethod.set(name, 'slice');
-    else if (/\[0\]=\w\[\w%?\w?\.length\]/.test(body) || /var\s+\w=\w\[0\]/.test(body)) opForMethod.set(name, 'swap');
-  }
-
-  const callsRe = new RegExp(`${helperName}\\.([a-zA-Z0-9$]+)\\(\\w,(\\d+)\\)`, 'g');
-  const ops: Array<{ t: OpType; n: number }> = [];
-  for (const m of fnText.matchAll(callsRe)) {
-    const method = m[1];
-    const n = parseInt(m[2], 10);
-    const t = opForMethod.get(method);
-    if (!t || !Number.isFinite(n)) continue;
-    ops.push({ t, n });
-  }
-  if (!ops.length) return null;
-
-  return (sig: string) => {
-    let a = String(sig).split('');
-    for (const op of ops) {
-      if (!a.length) break;
-      if (op.t === 'reverse') a.reverse();
-      else if (op.t === 'slice') a = a.slice(op.n);
-      else if (op.t === 'splice') a.splice(0, op.n);
-      else if (op.t === 'swap') {
-        const i = op.n % a.length;
-        const tmp = a[0];
-        a[0] = a[i];
-        a[i] = tmp;
-      }
-    }
-    return a.join('');
-  };
-}
-
-async function resolveStreamUrlCached(videoId: string, maxHeight: number) {
-  const cacheKey = `${videoId}|${String(maxHeight)}`;
-  const cached = resolveCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return cached.value;
-
-  let lastErr = '';
-  for (const c of CLIENTS) {
-    try {
-      const stream = await resolveStreamUrl(videoId, c, maxHeight);
-      const value = {
-        url: stream.url,
-        userAgent: stream.userAgent,
-        visitorData: stream.visitorData,
-        xClientName: stream.xClientName,
-        clientVersion: stream.clientVersion,
-      };
-      resolveCache.set(cacheKey, { value, expiresAt: Date.now() + RESOLVE_CACHE_TTL_MS });
-      return value;
-    } catch (e) {
-      lastErr = `${c.name}: ${e instanceof Error ? e.message : String(e)}`;
-    }
-  }
-
-  throw new Error(`All clients failed: ${lastErr}`);
-}
-
 export async function OPTIONS() {
-  return new Response(null, { status: 204, headers: CORS });
+  return new Response(null, {
+    status: 204,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    },
+  });
 }
 
 export async function GET(request: Request) {
+  const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  };
+
   const reqUrl = new URL(request.url);
-  const videoId = extractVideoId(reqUrl.searchParams.get('videoId') || reqUrl.searchParams.get('url') || '');
+  const videoId = (() => {
+    const raw = (reqUrl.searchParams.get('videoId') || reqUrl.searchParams.get('url') || '').trim();
+    if (/^[a-zA-Z0-9_-]{7,15}$/.test(raw)) return raw;
+    try {
+      const u = new URL(raw);
+      if (u.hostname.includes('youtu.be')) {
+        const id = u.pathname.replace('/', '').trim();
+        return /^[a-zA-Z0-9_-]{7,15}$/.test(id) ? id : null;
+      }
+      const v = u.searchParams.get('v');
+      return v && /^[a-zA-Z0-9_-]{7,15}$/.test(v) ? v : null;
+    } catch {
+      return null;
+    }
+  })();
 
   if (!videoId) {
-    return Response.json({ error: 'Missing or invalid videoId/url' }, { status: 400, headers: CORS });
+    return Response.json({ error: 'Missing or invalid videoId/url' }, { status: 400, headers: corsHeaders });
   }
 
-  const maxHeight = normalizeMaxHeight(reqUrl.searchParams.get('maxHeight') || undefined);
+  const maxHeight = (() => {
+    const maxEnv = parseInt(process.env.YOUTUBE_MAX_HEIGHT || '1080', 10) || 1080;
+    const n = parseInt(String(reqUrl.searchParams.get('maxHeight') || ''), 10);
+    const v = Number.isFinite(n) ? n : maxEnv;
+    return Math.max(144, Math.min(maxEnv, v));
+  })();
+
+  const cfWorkerUrl = String(process.env.CF_WORKER_URL || '').trim().replace(/\/$/, '');
+  if (!cfWorkerUrl) {
+    return Response.json({ error: 'CF_WORKER_URL not configured' }, { status: 500, headers: corsHeaders });
+  }
+
+  const key = String(process.env.CF_WORKER_KEY || process.env.CF_SECRET_KEY || '').trim();
+  const streamEndpoint = new URL(cfWorkerUrl);
+  streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
+  streamEndpoint.searchParams.set('videoId', videoId);
+  streamEndpoint.searchParams.set('maxHeight', String(maxHeight));
+  if (key) streamEndpoint.searchParams.set('key', key);
+
   const range = request.headers.get('range') || request.headers.get('Range') || 'bytes=0-';
-  const cookieHeader = process.env.YOUTUBE_COOKIES ? netscapeCookiesToHeader(process.env.YOUTUBE_COOKIES) : '';
-
-  const doFetch = (stream: { url: string; userAgent: string; visitorData: string; xClientName: string; clientVersion: string }) =>
-    fetch(stream.url, {
-      headers: {
-        Range: range,
-        'User-Agent': stream.userAgent,
-        'Accept': '*/*',
-        'Accept-Encoding': 'identity',
-        'Origin': 'https://www.youtube.com',
-        'Referer': 'https://www.youtube.com/',
-        'Accept-Language': 'en-US,en;q=0.9',
-        ...(stream.visitorData ? { 'X-Goog-Visitor-Id': stream.visitorData } : {}),
-        'X-Youtube-Client-Name': stream.xClientName,
-        'X-Youtube-Client-Version': stream.clientVersion,
-        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
-      },
-    });
-
-  const cacheKey = `${videoId}|${String(maxHeight)}`;
-  let resolved: { url: string; userAgent: string; visitorData: string; xClientName: string; clientVersion: string };
-  try {
-    resolved = await resolveStreamUrlCached(videoId, maxHeight);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return Response.json({ error: `Failed to resolve stream URL. ${msg}` }, { status: 502, headers: CORS });
-  }
-
-  let upstream = await doFetch(resolved);
-  if (upstream.status !== 200 && upstream.status !== 206) {
-    resolveCache.delete(cacheKey);
-    try {
-      resolved = await resolveStreamUrlCached(videoId, maxHeight);
-      upstream = await doFetch(resolved);
-    } catch {}
-  }
+  const upstream = await fetch(streamEndpoint.toString(), {
+    headers: {
+      Range: range,
+      'Accept': '*/*',
+      'Accept-Encoding': 'identity',
+    },
+  });
 
   if (upstream.status !== 200 && upstream.status !== 206) {
-    return Response.json({ error: `Failed to fetch upstream stream. HTTP ${upstream.status}` }, { status: 502, headers: CORS });
+    let details = '';
+    try { details = (await upstream.text()).slice(0, 220); } catch {}
+    return Response.json(
+      { error: `Worker stream failed. HTTP ${upstream.status}${details ? `: ${details}` : ''}` },
+      { status: 502, headers: corsHeaders },
+    );
   }
 
   const headers = new Headers();
   headers.set('Cache-Control', 'no-store');
   headers.set('Access-Control-Allow-Origin', '*');
 
-  const passthrough = [
-    'content-type',
-    'content-length',
-    'content-range',
-    'accept-ranges',
-    'etag',
-    'last-modified',
-  ];
-  for (const key of passthrough) {
-    const v = upstream.headers.get(key);
-    if (v) headers.set(key, v);
+  const passthrough = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'etag', 'last-modified'];
+  for (const k of passthrough) {
+    const v = upstream.headers.get(k);
+    if (v) headers.set(k, v);
   }
 
   return new Response(upstream.body, { status: upstream.status, headers });

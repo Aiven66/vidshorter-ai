@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
 /**
  * Diagnostic endpoint — tests multiple YouTube stream access methods from Vercel.
  * GET /api/yt-test?videoId=dQw4w9WgXcQ
@@ -247,5 +250,5 @@ export async function GET(request: NextRequest) {
     recommendation: allResults.some(r => r.success)
       ? 'Some methods work! Use the working ones.'
       : 'All methods failed. Deploy CF Worker (see /cf-worker/README.md) and set CF_WORKER_URL in Vercel env vars.',
-  });
+  }, { headers: { 'Cache-Control': 'no-store' } });
 }
