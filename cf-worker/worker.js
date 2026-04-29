@@ -120,6 +120,7 @@ const CORS_HEADERS = {
 const MAX_HEIGHT = 1080;
 const cache = new Map();
 let playerCache = { jsUrl: '', expiresAt: 0, decipher: null };
+const BUILD_ID = '2026-04-29-worker-1';
 
 const COBALT_INSTANCES = [
   'https://cobalt-api.meowing.de/',
@@ -436,7 +437,11 @@ async function tryClient(videoId, client, maxHeight, cookieHeader) {
 }
 
 function json(data, status = 200) {
-  return new Response(JSON.stringify(data), {
+  const payload =
+    data && typeof data === 'object' && !Array.isArray(data)
+      ? { build: BUILD_ID, ...data }
+      : data;
+  return new Response(JSON.stringify(payload), {
     status,
     headers: { 'Content-Type': 'application/json', ...CORS_HEADERS, 'Cache-Control': 'no-store' },
   });
