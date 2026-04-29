@@ -122,6 +122,13 @@ const cache = new Map();
 let playerCache = { jsUrl: '', expiresAt: 0, decipher: null };
 
 const COBALT_INSTANCES = [
+  'https://cobalt-api.meowing.de/',
+  'https://cobalt-backend.canine.tools/',
+  'https://capi.3kh0.net/',
+  'https://kityune.imput.net/',
+  'https://nachos.imput.net/',
+  'https://sunny.imput.net/',
+  'https://blossom.imput.net/',
   'https://cobalt.ggtyler.dev/',
   'https://cobalt.api.timelessnesses.me/',
 ];
@@ -287,55 +294,61 @@ export default {
     }
 
     const errors = [];
-    const cached = await cacheGetResolved(videoId, maxHeight || MAX_HEIGHT);
-    if (cached?.streamUrl) {
-      return json({
-        title: cached.title || 'YouTube Video',
-        duration: cached.duration || 300,
-        streamUrl: cached.streamUrl,
-        quality: cached.quality || 'cached',
-        userAgent: cached.userAgent,
-        visitorData: cached.visitorData,
-        xClientName: cached.xClientName,
-        clientVersion: cached.clientVersion,
-        client: cached.client || 'cached',
-      });
-    }
-    for (const client of CLIENTS) {
-      try {
-        const result = await tryClient(videoId, client, maxHeight, cookieHeader);
-        if (result) {
-          await cachePutResolved(videoId, maxHeight, { ...result, client: client.name });
-          return json({ ...result, client: client.name });
+    const requestedMaxHeight = maxHeight || MAX_HEIGHT;
+    const heights = Array.from(new Set([requestedMaxHeight, 720, 480, 360, 240, 144].filter(Boolean)));
+
+    for (const h of heights) {
+      const cached = await cacheGetResolved(videoId, h);
+      if (cached?.streamUrl) {
+        return json({
+          title: cached.title || 'YouTube Video',
+          duration: cached.duration || 300,
+          streamUrl: cached.streamUrl,
+          quality: cached.quality || 'cached',
+          userAgent: cached.userAgent,
+          visitorData: cached.visitorData,
+          xClientName: cached.xClientName,
+          clientVersion: cached.clientVersion,
+          client: cached.client || 'cached',
+        });
+      }
+
+      for (const client of CLIENTS) {
+        try {
+          const result = await tryClient(videoId, client, h, cookieHeader);
+          if (result) {
+            await cachePutResolved(videoId, h, { ...result, client: client.name });
+            return json({ ...result, client: client.name });
+          }
+          errors.push(`${client.name}@${h}: no stream URL`);
+        } catch (e) {
+          const msg = (e instanceof Error ? e.message : String(e)).slice(0, 150);
+          errors.push(`${client.name}@${h}: ${msg}`);
         }
-        errors.push(`${client.name}: no stream URL`);
+      }
+
+      try {
+        const cobaltUrl = await getYouTubeStreamViaCobalt(videoId, h);
+        const result = {
+          title: 'YouTube Video',
+          duration: 300,
+          streamUrl: cobaltUrl,
+          quality: 'cobalt',
+          userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+          visitorData: '',
+          xClientName: '1',
+          clientVersion: '2.20240101.00.00',
+          client: 'cobalt',
+        };
+        await cachePutResolved(videoId, h, result);
+        return json(result);
       } catch (e) {
         const msg = (e instanceof Error ? e.message : String(e)).slice(0, 150);
-        errors.push(`${client.name}: ${msg}`);
+        errors.push(`cobalt@${h}: ${msg}`);
       }
     }
 
-    try {
-      const cobaltUrl = await getYouTubeStreamViaCobalt(videoId, maxHeight || MAX_HEIGHT);
-      const result = {
-        title: 'YouTube Video',
-        duration: 300,
-        streamUrl: cobaltUrl,
-        quality: 'cobalt',
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
-        visitorData: '',
-        xClientName: '1',
-        clientVersion: '2.20240101.00.00',
-        client: 'cobalt',
-      };
-      await cachePutResolved(videoId, maxHeight, result);
-      return json(result);
-    } catch (e) {
-      const msg = (e instanceof Error ? e.message : String(e)).slice(0, 150);
-      errors.push(`cobalt: ${msg}`);
-    }
-
-    return json({ error: `All clients failed: ${errors.join(' | ')}` }, 502);
+    return json({ error: `All clients failed: ${errors.slice(0, 14).join(' | ')}` }, 502);
   },
 };
 
