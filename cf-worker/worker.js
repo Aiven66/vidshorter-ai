@@ -180,7 +180,6 @@ export default {
     if (mode === 'stream') {
       try {
         const effectiveMaxHeight = maxHeight || MAX_HEIGHT;
-        const cacheKey = `${videoId}|${String(effectiveMaxHeight)}`;
         const range = request.headers.get('Range') || request.headers.get('range') || 'bytes=0-';
 
         const doFetch = (resolved) => {
@@ -204,78 +203,83 @@ export default {
         };
 
         const errors = [];
+        const heights = Array.from(new Set([effectiveMaxHeight, 720, 480, 360, 240, 144].filter(Boolean)));
 
-        const cachedLocal = cache.get(cacheKey);
-        const localResolved = cachedLocal && cachedLocal.expiresAt > Date.now() && cachedLocal.value?.streamUrl ? cachedLocal.value : null;
-        const globalResolved = localResolved ? null : await cacheGetResolved(videoId, effectiveMaxHeight);
-        const cachedResolved = localResolved || globalResolved;
+        for (const h of heights) {
+          const cacheKey = `${videoId}|${String(h)}`;
 
-        if (cachedResolved?.streamUrl) {
-          const resolved = cachedResolved;
-          const upstream = await doFetch(resolved);
-          if (upstream.status === 200 || upstream.status === 206) {
-            if (!localResolved) cache.set(cacheKey, { value: resolved, expiresAt: Date.now() + 10 * 60 * 1000 });
-            return passthroughStream(upstream);
+          const cachedLocal = cache.get(cacheKey);
+          const localResolved = cachedLocal && cachedLocal.expiresAt > Date.now() && cachedLocal.value?.streamUrl ? cachedLocal.value : null;
+          const globalResolved = localResolved ? null : await cacheGetResolved(videoId, h);
+          const cachedResolved = localResolved || globalResolved;
+
+          if (cachedResolved?.streamUrl) {
+            const resolved = cachedResolved;
+            const upstream = await doFetch(resolved);
+            if (upstream.status === 200 || upstream.status === 206) {
+              if (!localResolved) cache.set(cacheKey, { value: resolved, expiresAt: Date.now() + 10 * 60 * 1000 });
+              return passthroughStream(upstream);
+            }
+            const body = await upstream.text().catch(() => '');
+            errors.push(`cached@${h}: HTTP ${upstream.status} ${body.slice(0, 120)}`);
+            cache.delete(cacheKey);
+            try { await caches.default.delete(resolveCacheRequest(videoId, h)); } catch {}
           }
-          const body = await upstream.text().catch(() => '');
-          errors.push(`cached: HTTP ${upstream.status} ${body.slice(0, 120)}`);
-          cache.delete(cacheKey);
-          try { await caches.default.delete(resolveCacheRequest(videoId, effectiveMaxHeight)); } catch {}
-        }
 
-        for (const client of CLIENTS) {
+          for (const client of CLIENTS) {
+            try {
+              const info = await tryClient(videoId, client, h, cookieHeader);
+              const resolved = {
+                streamUrl: info.streamUrl,
+                userAgent: info.userAgent,
+                visitorData: info.visitorData,
+                xClientName: info.xClientName,
+                clientVersion: info.clientVersion,
+                title: info.title,
+                duration: info.duration,
+                quality: info.quality,
+                client: client.name,
+              };
+              const upstream = await doFetch(resolved);
+              if (upstream.status === 200 || upstream.status === 206) {
+                cache.set(cacheKey, { value: resolved, expiresAt: Date.now() + 10 * 60 * 1000 });
+                await cachePutResolved(videoId, h, resolved);
+                return passthroughStream(upstream);
+              }
+              const body = await upstream.text().catch(() => '');
+              errors.push(`${client.name}@${h}: HTTP ${upstream.status} ${body.slice(0, 120)}`);
+            } catch (e) {
+              errors.push(`${client.name}@${h}: ${(e instanceof Error ? e.message : String(e)).slice(0, 120)}`);
+            }
+          }
+
           try {
-            const info = await tryClient(videoId, client, effectiveMaxHeight, cookieHeader);
+            const cobaltUrl = await getYouTubeStreamViaCobalt(videoId, h);
             const resolved = {
-              streamUrl: info.streamUrl,
-              userAgent: info.userAgent,
-              visitorData: info.visitorData,
-              xClientName: info.xClientName,
-              clientVersion: info.clientVersion,
-              title: info.title,
-              duration: info.duration,
-              quality: info.quality,
-              client: client.name,
+              streamUrl: cobaltUrl,
+              userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+              visitorData: '',
+              xClientName: '1',
+              clientVersion: '2.20240101.00.00',
+              title: 'YouTube Video',
+              duration: 300,
+              quality: 'cobalt',
+              client: 'cobalt',
             };
             const upstream = await doFetch(resolved);
             if (upstream.status === 200 || upstream.status === 206) {
               cache.set(cacheKey, { value: resolved, expiresAt: Date.now() + 10 * 60 * 1000 });
-              await cachePutResolved(videoId, effectiveMaxHeight, resolved);
+              await cachePutResolved(videoId, h, resolved);
               return passthroughStream(upstream);
             }
             const body = await upstream.text().catch(() => '');
-            errors.push(`${client.name}: HTTP ${upstream.status} ${body.slice(0, 120)}`);
+            errors.push(`cobalt@${h}: HTTP ${upstream.status} ${body.slice(0, 120)}`);
           } catch (e) {
-            errors.push(`${client.name}: ${(e instanceof Error ? e.message : String(e)).slice(0, 120)}`);
+            errors.push(`cobalt@${h}: ${(e instanceof Error ? e.message : String(e)).slice(0, 120)}`);
           }
         }
 
-        try {
-          const cobaltUrl = await getYouTubeStreamViaCobalt(videoId, effectiveMaxHeight);
-          const resolved = {
-            streamUrl: cobaltUrl,
-            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
-            visitorData: '',
-            xClientName: '1',
-            clientVersion: '2.20240101.00.00',
-            title: 'YouTube Video',
-            duration: 300,
-            quality: 'cobalt',
-            client: 'cobalt',
-          };
-          const upstream = await doFetch(resolved);
-          if (upstream.status === 200 || upstream.status === 206) {
-            cache.set(cacheKey, { value: resolved, expiresAt: Date.now() + 10 * 60 * 1000 });
-            await cachePutResolved(videoId, effectiveMaxHeight, resolved);
-            return passthroughStream(upstream);
-          }
-          const body = await upstream.text().catch(() => '');
-          errors.push(`cobalt: HTTP ${upstream.status} ${body.slice(0, 120)}`);
-        } catch (e) {
-          errors.push(`cobalt: ${(e instanceof Error ? e.message : String(e)).slice(0, 120)}`);
-        }
-
-        return json({ error: 'All clients failed to stream', details: errors.slice(0, 10).join(' | ') }, 502);
+        return json({ error: 'All clients failed to stream', details: errors.slice(0, 12).join(' | ') }, 502);
 
       } catch (e) {
         return json({ error: e instanceof Error ? e.message : String(e) }, 502);
