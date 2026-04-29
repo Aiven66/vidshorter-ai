@@ -1851,6 +1851,14 @@ async function downloadStreamToLocalFile(url: string, outputPath: string): Promi
     let total: number | null = null;
     const startedAt = Date.now();
     const budgetMs = IS_VERCEL ? 150_000 : 300_000;
+    const youtubeHeaderHint = (() => {
+      try {
+        const u = new URL(url);
+        return u.hostname.includes('googlevideo.com') || u.hostname.includes('youtube.com');
+      } catch {
+        return false;
+      }
+    })();
 
     try {
       while (downloadedBytes < maxBytes) {
@@ -1864,6 +1872,7 @@ async function downloadStreamToLocalFile(url: string, outputPath: string): Promi
             Range: rangeValue,
             ...getBypassHeadersForUrl(url),
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+            ...(youtubeHeaderHint ? { Referer: 'https://www.youtube.com/', Origin: 'https://www.youtube.com' } : {}),
             'Accept': '*/*',
             'Accept-Encoding': 'identity',
           },
@@ -2042,6 +2051,14 @@ async function preflightStream(url: string): Promise<boolean> {
       return false;
     }
   })();
+  const youtubeHeaderHint = (() => {
+    try {
+      const u = new URL(url);
+      return u.hostname.includes('googlevideo.com') || u.hostname.includes('youtube.com');
+    } catch {
+      return false;
+    }
+  })();
 
   const attempts = isWorker ? 3 : 1;
   for (let i = 0; i < attempts; i += 1) {
@@ -2051,6 +2068,7 @@ async function preflightStream(url: string): Promise<boolean> {
           Range: 'bytes=0-1',
           ...getBypassHeadersForUrl(url),
           'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+          ...(youtubeHeaderHint ? { Referer: 'https://www.youtube.com/', Origin: 'https://www.youtube.com' } : {}),
           'Accept': '*/*',
           'Accept-Encoding': 'identity',
         },

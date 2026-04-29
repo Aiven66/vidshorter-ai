@@ -67,6 +67,8 @@ export async function GET(request: Request) {
     headers: {
       Range: range,
       ...(resolved.userAgent ? { 'User-Agent': resolved.userAgent } : {}),
+      'Referer': 'https://www.youtube.com/',
+      'Origin': 'https://www.youtube.com',
       'Accept': '*/*',
       'Accept-Encoding': 'identity',
     },
