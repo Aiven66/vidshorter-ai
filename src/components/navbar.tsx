@@ -45,9 +45,12 @@ export function Navbar() {
 
   const toggleTheme = () => setTheme(theme === 'dark' ? 'light' : 'dark');
 
-  // 桌面模式下只保留首页
+  // 桌面模式下显示首页和订阅
   const navItems = isDesktop
-    ? [{ href: '/', label: t('nav.home') }]
+    ? [
+        { href: '/', label: t('nav.home') },
+        { href: `${process.env.NEXT_PUBLIC_APP_URL || 'https://vidshorterai.vercel.app'}/pricing`, label: t('nav.pricing'), external: true },
+      ]
     : [
         { href: '/', label: t('nav.home') },
         { href: '/blog', label: t('nav.blog') },
@@ -81,17 +84,29 @@ export function Navbar() {
 
           {/* Desktop Navigation */}
           <div className="hidden md:flex items-center gap-6">
-            {navItems.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`text-sm font-medium transition-colors hover:text-primary ${
-                  isActive(item.href) ? 'text-primary' : 'text-muted-foreground'
-                }`}
-              >
-                {item.label}
-              </Link>
-            ))}
+            {navItems.map((item) =>
+              item.external ? (
+                <a
+                  key={item.href}
+                  href={item.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm font-medium text-muted-foreground transition-colors hover:text-primary"
+                >
+                  {item.label}
+                </a>
+              ) : (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={`text-sm font-medium transition-colors hover:text-primary ${
+                    isActive(item.href) ? 'text-primary' : 'text-muted-foreground'
+                  }`}
+                >
+                  {item.label}
+                </Link>
+              )
+            )}
           </div>
 
           {/* Right Side */}
@@ -226,18 +241,31 @@ export function Navbar() {
                 </div>
 
                 {/* Nav Items */}
-                {navItems.map((item) => (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    onClick={() => setMobileOpen(false)}
-                    className={`text-lg font-medium py-2 ${
-                      isActive(item.href) ? 'text-primary' : 'text-muted-foreground'
-                    }`}
-                  >
-                    {item.label}
-                  </Link>
-                ))}
+                {navItems.map((item) =>
+                  item.external ? (
+                    <a
+                      key={item.href}
+                      href={item.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={() => setMobileOpen(false)}
+                      className="text-lg font-medium py-2 text-muted-foreground"
+                    >
+                      {item.label}
+                    </a>
+                  ) : (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      onClick={() => setMobileOpen(false)}
+                      className={`text-lg font-medium py-2 ${
+                        isActive(item.href) ? 'text-primary' : 'text-muted-foreground'
+                      }`}
+                    >
+                      {item.label}
+                    </Link>
+                  )
+                )}
 
                 <hr className="my-2" />
 
