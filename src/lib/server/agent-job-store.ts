@@ -93,11 +93,15 @@ export async function createAgentJob(params: {
   return withWriteLock(async () => {
     const store = await readStore();
     const now = new Date().toISOString();
+    const desiredClipCount =
+      typeof params.desiredClipCount === 'number' && Number.isFinite(params.desiredClipCount)
+        ? Math.floor(params.desiredClipCount)
+        : 0;
     const job: AgentJob = {
       id: `job-${randomUUID()}`,
       videoUrl: params.videoUrl,
       userId: params.userId,
-      desiredClipCount: Math.max(1, Math.min(10, params.desiredClipCount || 3)),
+      desiredClipCount: desiredClipCount > 0 ? Math.max(1, Math.min(10, desiredClipCount)) : 0,
       createdAt: now,
       updatedAt: now,
       status: 'queued',
@@ -144,4 +148,3 @@ export async function updateAgentJob(jobId: string, patch: Partial<AgentJob>): P
     return job;
   });
 }
-

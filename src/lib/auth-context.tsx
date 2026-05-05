@@ -40,7 +40,13 @@ interface RegisteredUser {
 function getRegisteredUsers(): RegisteredUser[] {
   if (typeof window === 'undefined') return [];
   const stored = localStorage.getItem(DEMO_REGISTERED_USERS_KEY);
-  return stored ? JSON.parse(stored) : [];
+  if (!stored) return [];
+  try {
+    return JSON.parse(stored);
+  } catch {
+    localStorage.removeItem(DEMO_REGISTERED_USERS_KEY);
+    return [];
+  }
 }
 
 function saveRegisteredUser(user: RegisteredUser) {
@@ -88,7 +94,13 @@ function getDemoAdminUser(email: string): User {
 function getDemoUser(): User | null {
   if (typeof window === 'undefined') return null;
   const stored = localStorage.getItem(DEMO_USER_KEY);
-  return stored ? JSON.parse(stored) : null;
+  if (!stored) return null;
+  try {
+    return JSON.parse(stored);
+  } catch {
+    localStorage.removeItem(DEMO_USER_KEY);
+    return null;
+  }
 }
 
 // Save demo user to localStorage
@@ -120,6 +132,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
+    try {
+      const desktop = (window as any)?.vidshorterDesktop;
+      if (desktop) {
+        setUseDemo(true);
+        setUser({
+          id: 'demo-desktop-admin',
+          email: 'desktop@vidshorter.local',
+          name: 'Desktop',
+          role: 'admin',
+          avatarUrl: null,
+        });
+        setAccessToken(null);
+        setLoading(false);
+        return;
+      }
+    } catch {}
+
     // Check if Supabase is configured
     if (!isSupabaseConfigured()) {
       console.warn('Supabase not configured. Using demo mode.');

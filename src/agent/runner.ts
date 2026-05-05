@@ -35,8 +35,24 @@ async function postJson<T>(url: string, body: unknown, headers: Record<string, s
   return (await res.json()) as T;
 }
 
+async function reportWithRetry(serverUrl: string, headers: Record<string, string>, payload: Record<string, unknown>) {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    try {
+      await postJson(`${serverUrl}/api/agent/jobs/report`, payload, headers);
+      return;
+    } catch (err) {
+      lastErr = err;
+      const delay = Math.min(4000, 300 * Math.pow(2, attempt));
+      await sleep(delay);
+    }
+  }
+  const msg = lastErr instanceof Error ? lastErr.message.slice(0, 200) : String(lastErr).slice(0, 200);
+  throw new Error(`report failed after retries: ${msg}`);
+}
+
 async function report(serverUrl: string, headers: Record<string, string>, payload: Record<string, unknown>) {
-  await postJson(`${serverUrl}/api/agent/jobs/report`, payload, headers);
+  await reportWithRetry(serverUrl, headers, payload);
 }
 
 async function processJob(serverUrl: string, headers: Record<string, string>, job: AgentJob) {
@@ -49,7 +65,21 @@ async function processJob(serverUrl: string, headers: Record<string, string>, jo
   });
 
   const analysis = await videoClipper.analyzeVideo(job.videoUrl);
-  const highlights = (analysis.highlights as AgentHighlight[]).slice(0, Math.max(1, Math.min(10, job.desiredClipCount || 3)));
+  const autoCount = (() => {
+    const d = Math.max(0, Math.floor(Number(analysis.duration) || 0));
+    if (d >= 2 * 60 * 60) return 10;
+    if (d >= 90 * 60) return 9;
+    if (d >= 60 * 60) return 8;
+    if (d >= 40 * 60) return 7;
+    if (d >= 25 * 60) return 6;
+    if (d >= 15 * 60) return 5;
+    if (d >= 8 * 60) return 4;
+    return 3;
+  })();
+  const desired = typeof job.desiredClipCount === 'number' && job.desiredClipCount > 0
+    ? Math.max(1, Math.min(10, Math.floor(job.desiredClipCount)))
+    : autoCount;
+  const highlights = (analysis.highlights as AgentHighlight[]).slice(0, desired);
 
   await report(serverUrl, headers, {
     jobId: job.id,
@@ -100,6 +130,7 @@ async function processJob(serverUrl: string, headers: Record<string, string>, jo
     try {
       const result = await videoClipper.createLocalClip({
         inputPath: source.inputPath,
+        audioInputPath: source.audioInputPath,
         inputHeaders: source.ffmpegHeaders,
         startTime: start,
         endTime: end,
@@ -152,8 +183,10 @@ async function main() {
   const headers = secret ? { 'x-agent-secret': secret } : {};
 
   process.env.APP_BASE_URL = serverUrl;
-  process.env.PREFER_EDGE_YOUTUBE = '1';
-  process.env.INLINE_CLIPS = '1';
+  if (!process.env.PREFER_EDGE_YOUTUBE) process.env.PREFER_EDGE_YOUTUBE = '0';
+  if (!process.env.INLINE_CLIPS) process.env.INLINE_CLIPS = '0';
+
+  console.log(`agent runner started: agentId=${agentId} server=${serverUrl}`);
 
   for (;;) {
     try {
@@ -166,12 +199,18 @@ async function main() {
         await sleep(2000);
         continue;
       }
+      console.log(`job claimed: ${job.id}`);
       await processJob(serverUrl, headers, job);
+      console.log(`job done: ${job.id}`);
     } catch (err) {
+      const msg = err instanceof Error ? err.message.slice(0, 400) : String(err).slice(0, 400);
+      console.warn(`agent loop error: ${msg}`);
       await sleep(1500);
     }
   }
 }
 
-main();
-
+main().catch((err) => {
+  const msg = err instanceof Error ? err.message.slice(0, 400) : String(err).slice(0, 400);
+  console.error(`agent fatal error: ${msg}`);
+});

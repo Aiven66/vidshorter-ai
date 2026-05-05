@@ -1,0 +1,44 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>VidShorter Agent</title>
+    <style>
+      body { font-family: -apple-system, system-ui, sans-serif; margin: 0; padding: 16px; }
+      h1 { font-size: 16px; margin: 0 0 12px; }
+      .row { display: flex; gap: 8px; margin-bottom: 10px; }
+      label { width: 110px; font-size: 12px; color: #333; padding-top: 8px; }
+      input { flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 8px; font-size: 12px; }
+      button { padding: 8px 10px; border: 1px solid #ddd; border-radius: 10px; background: #fff; cursor: pointer; font-size: 12px; }
+      button.primary { background: #111; color: #fff; border-color: #111; }
+      .muted { color: #666; font-size: 12px; }
+      .logs { height: 260px; overflow: auto; border: 1px solid #eee; border-radius: 10px; padding: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; background: #fafafa; white-space: pre-wrap; }
+      .actions { display: flex; gap: 8px; margin-top: 10px; }
+    </style>
+  </head>
+  <body>
+    <h1>VidShorter Agent Settings</h1>
+    <div class="row">
+      <label>Server URL</label>
+      <input id="serverUrl" />
+    </div>
+    <div class="row">
+      <label>Agent ID</label>
+      <input id="agentId" />
+    </div>
+    <div class="row">
+      <label>AGENT_SECRET</label>
+      <input id="secret" placeholder="Optional" />
+    </div>
+    <div class="actions">
+      <button id="save" class="primary">Save</button>
+      <button id="logs">Open Logs</button>
+      <button id="copy">Copy Logs</button>
+    </div>
+    <p class="muted">主界面在 VidShorter 窗口（Web UI）。这里仅用于配置本机 Agent。</p>
+    <p class="muted" id="logPath"></p>
+    <div class="logs" id="logBox"></div>
+    <script src="./renderer.js"></script>
+  </body>
+</html>

@@ -27,7 +27,15 @@ function sign(payloadB64: string, secret: string) {
 }
 
 function getSecret() {
-  return process.env.EMAIL_OTP_SECRET || process.env.NEXTAUTH_SECRET || '';
+  const explicit = process.env.EMAIL_OTP_SECRET || process.env.NEXTAUTH_SECRET;
+  if (explicit) return explicit;
+
+  const providerSeed = process.env.RESEND_API_KEY || process.env.SMTP_PASS || process.env.GMAIL_PASS;
+  if (!providerSeed) return '';
+
+  return createHash('sha256')
+    .update(`vidshorter_email_otp:${providerSeed}`)
+    .digest('hex');
 }
 
 /* ── Send email via Resend HTTP API (no extra npm package, just fetch) ── */
@@ -88,10 +96,25 @@ async function sendViaResend(to: string, code: string): Promise<{ ok: boolean; r
 
 /* ── Send email via SMTP (nodemailer) ── */
 async function sendViaSMTP(to: string, code: string): Promise<{ ok: boolean; reason?: string }> {
-  const smtpHost = process.env.SMTP_HOST;
-  const smtpUser = process.env.SMTP_USER;
-  const smtpPass = process.env.SMTP_PASS;
-  const smtpFrom = process.env.SMTP_FROM || smtpUser;
+  // Check for Gmail configuration first
+  const gmailUser = process.env.GMAIL_USER;
+  const gmailPass = process.env.GMAIL_PASS;
+  
+  let smtpHost = process.env.SMTP_HOST;
+  let smtpUser = process.env.SMTP_USER;
+  let smtpPass = process.env.SMTP_PASS;
+  let smtpPort = Number(process.env.SMTP_PORT || 587);
+  let smtpSecure = process.env.SMTP_SECURE === 'true';
+  
+  // Auto-configure for Gmail if Gmail credentials are provided
+  if (gmailUser && gmailPass) {
+    smtpHost = 'smtp.gmail.com';
+    smtpUser = gmailUser;
+    smtpPass = gmailPass;
+    smtpPort = 587;
+    smtpSecure = false;
+    console.log('[SMTP] Using Gmail configuration');
+  }
 
   if (!smtpHost || !smtpUser || !smtpPass) return { ok: false, reason: 'missing_smtp_config' };
 
@@ -99,12 +122,12 @@ async function sendViaSMTP(to: string, code: string): Promise<{ ok: boolean; rea
     const nodemailer = await import('nodemailer');
     const transporter = nodemailer.default.createTransport({
       host: smtpHost,
-      port: Number(process.env.SMTP_PORT || 587),
-      secure: process.env.SMTP_SECURE === 'true',
+      port: smtpPort,
+      secure: smtpSecure,
       auth: { user: smtpUser, pass: smtpPass },
     });
     await transporter.sendMail({
-      from: `"VidShorter AI" <${smtpFrom}>`,
+      from: `"VidShorter AI" <${smtpUser}>`,
       to,
       subject: '【VidShorter AI】邮箱验证码',
       html: `
@@ -121,7 +144,7 @@ async function sendViaSMTP(to: string, code: string): Promise<{ ok: boolean; rea
     console.log('[SMTP] Email sent to', to);
     return { ok: true };
   } catch (err) {
-    console.warn('[SMTP] Send failed, falling back to demo mode:', err);
+    console.warn('[SMTP] Send failed:', err);
     return { ok: false, reason: 'smtp_send_failed' };
   }
 }
@@ -142,7 +165,8 @@ export async function POST(request: NextRequest) {
   if (
     process.env.NODE_ENV === 'production' &&
     !process.env.RESEND_API_KEY &&
-    !(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS)
+    !(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) &&
+    !(process.env.GMAIL_USER && process.env.GMAIL_PASS)
   ) {
     return Response.json({ error: 'Email provider not configured' }, { status: 500 });
   }
@@ -150,9 +174,26 @@ export async function POST(request: NextRequest) {
   const code = generateCode();
   const expiresAt = Date.now() + 5 * 60 * 1000;
 
-  // ── Priority 1: Resend API (free, no extra packages) ──
-  const resendResult = await sendViaResend(email, code);
-  if (resendResult.ok) {
+  const prefer = (process.env.EMAIL_PROVIDER || '').toLowerCase();
+  // If Gmail is configured, prefer it
+  const hasGmail = !!(process.env.GMAIL_USER && process.env.GMAIL_PASS);
+  const order: Array<'smtp' | 'resend'> = prefer === 'smtp' || hasGmail ? ['smtp', 'resend'] : ['resend', 'smtp'];
+
+  let provider: 'smtp' | 'resend' | '' = '';
+  let smtpResult: { ok: boolean; reason?: string } = { ok: false };
+  let resendResult: { ok: boolean; reason?: string } = { ok: false };
+
+  for (const p of order) {
+    if (p === 'smtp') {
+      smtpResult = await sendViaSMTP(email, code);
+      if (smtpResult.ok) { provider = 'smtp'; break; }
+    } else {
+      resendResult = await sendViaResend(email, code);
+      if (resendResult.ok) { provider = 'resend'; break; }
+    }
+  }
+
+  if (provider) {
     const payload = {
       email,
       expiresAt,
@@ -161,7 +202,7 @@ export async function POST(request: NextRequest) {
     };
     const payloadB64 = base64url(JSON.stringify(payload));
     const token = `${payloadB64}.${sign(payloadB64, secret)}`;
-    const res = Response.json({ success: true, provider: 'resend' });
+    const res = Response.json({ success: true, provider });
     res.headers.append(
       'Set-Cookie',
       `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=300${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`,
@@ -169,8 +210,6 @@ export async function POST(request: NextRequest) {
     return res;
   }
 
-  // ── Priority 2: SMTP (nodemailer) ──
-  const smtpResult = await sendViaSMTP(email, code);
   if (smtpResult.ok) {
     const payload = {
       email,

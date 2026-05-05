@@ -74,9 +74,22 @@ function getDemoVideos(userId: string): VideoRecord[] {
   if (typeof window === 'undefined') return [];
   const userKey = getDemoVideosKey(userId);
   const stored = localStorage.getItem(userKey);
-  if (stored) return JSON.parse(stored);
+  if (stored) {
+    try {
+      return JSON.parse(stored);
+    } catch {
+      localStorage.removeItem(userKey);
+      return [];
+    }
+  }
   const legacy = localStorage.getItem('vidshorter_demo_videos');
-  return legacy ? JSON.parse(legacy) : [];
+  if (!legacy) return [];
+  try {
+    return JSON.parse(legacy);
+  } catch {
+    localStorage.removeItem('vidshorter_demo_videos');
+    return [];
+  }
 }
 
 function fmt(sec: number): string {
@@ -156,6 +169,7 @@ function ClipPlayerDialog({
     if (c.videoUrl.startsWith('data:')) return c.videoUrl;
     if (c.videoUrl.startsWith('regenerate:')) return resolved;
     if (c.videoUrl.startsWith('/')) return c.videoUrl;
+    if (c.videoUrl.startsWith('http://127.0.0.1') || c.videoUrl.startsWith('http://localhost')) return c.videoUrl;
     const q = new URLSearchParams({ url: c.videoUrl, title: c.title });
     return `/api/video-proxy?${q.toString()}`;
   };
@@ -166,6 +180,8 @@ function ClipPlayerDialog({
       ? resolved
     : clip.videoUrl?.startsWith('/')
       ? clip.videoUrl
+      : clip.videoUrl?.startsWith('http://127.0.0.1') || clip.videoUrl?.startsWith('http://localhost')
+        ? clip.videoUrl
       : clip.videoUrl
         ? `/api/video-proxy?${new URLSearchParams({ url: clip.videoUrl, title: clip.title, download: 'true' })}`
         : '';

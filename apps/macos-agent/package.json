@@ -1,0 +1,84 @@
+{
+  "name": "vidshorter-macos-agent",
+  "private": true,
+  "version": "0.7.22",
+  "main": "main.js",
+  "scripts": {
+    "prepare:runner": "node scripts/prepare-runner.js",
+    "dev": "pnpm prepare:runner && electron .",
+    "dist": "bash scripts/build-dmg.sh"
+  },
+  "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "1.1.0",
+    "https-proxy-agent": "7.0.6",
+    "next": "16.1.1",
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  },
+  "devDependencies": {
+    "electron": "33.4.11",
+    "electron-builder": "25.1.8"
+  },
+  "build": {
+    "appId": "com.vidshorter.agent",
+    "productName": "VidShorter Agent",
+    "artifactName": "VidShorter-Agent-${version}-${arch}.${ext}",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "local-highlights.js",
+      "ytdlp.js",
+      "media-server.js",
+      "bin/**",
+      "embedded-web/**",
+      "preload.js",
+      "preload-web.js",
+      "runner.js",
+      "renderer/**",
+      "package.json",
+      "node_modules/**"
+    ],
+    "asarUnpack": [
+      "node_modules/@ffmpeg-installer/**",
+      "node_modules/next/**",
+      "node_modules/react/**",
+      "node_modules/react-dom/**",
+      "bin/**",
+      "embedded-web/**"
+    ],
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.video",
+      "identity": null,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
+    },
+    "protocols": [
+      {
+        "name": "VidShorter Agent",
+        "schemes": [
+          "vidshorter"
+        ]
+      }
+    ],
+    "dmg": {
+      "contents": [
+        {
+          "x": 130,
+          "y": 220,
+          "type": "file"
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    }
+  }
+}

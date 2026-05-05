@@ -80,6 +80,17 @@ interface SSEData {
   };
 }
 
+interface VidShorterDesktopBridge {
+  getMediaBaseUrl?: () => Promise<string>;
+  openAuth?: () => Promise<{ ok?: boolean }>;
+}
+
+declare global {
+  interface Window {
+    vidshorterDesktop?: VidShorterDesktopBridge;
+  }
+}
+
 /* ── Helpers ───────────────────────────────────── */
 
 function fmt(sec: number): string {
@@ -156,6 +167,7 @@ export default function HomePage() {
   const { balance, refreshCredits } = useCredits();
 
   // State
+  const [useAgent, setUseAgent] = useState(false);
   const [videoUrl, setVideoUrl] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -169,6 +181,15 @@ export default function HomePage() {
   const trimmedVideoUrl = videoUrl.trim();
   const canStart = (!!trimmedVideoUrl && isHttpVideoUrl(trimmedVideoUrl)) || !!selectedFile;
   const completedClips = clips.filter(clip => clip.status === 'completed' && clip.videoUrl);
+
+  useEffect(() => {
+    try {
+      const q = new URLSearchParams(window.location.search);
+      const enabledByQuery = q.get('agent') === '1';
+      const enabledByStorage = localStorage.getItem('vidshorter_use_agent') === '1';
+      setUseAgent(enabledByQuery || enabledByStorage);
+    } catch {}
+  }, []);
 
   const uploadToSupabase = useCallback(async (file: File) => {
     if (!user) throw new Error('Please sign in to upload a video.');
@@ -193,6 +214,23 @@ export default function HomePage() {
     return { signedUrl: signed.data.signedUrl, objectPath, bucket };
   }, [accessToken, user]);
 
+  const getLocalMediaBaseUrl = useCallback(async () => {
+    const desktop = window.vidshorterDesktop;
+    if (desktop?.getMediaBaseUrl) {
+      const baseUrl = await desktop.getMediaBaseUrl();
+      if (typeof baseUrl === 'string' && baseUrl.trim()) return baseUrl.replace(/\/$/, '');
+    }
+
+    try {
+      const stored = localStorage.getItem('vidshorter_desktop_media_base') || '';
+      if (stored.startsWith('http://127.0.0.1') || stored.startsWith('http://localhost')) {
+        return stored.replace(/\/$/, '');
+      }
+    } catch {}
+
+    return '';
+  }, []);
+
   /* ── Proxy URL builder ── */
   const proxyUrl = (clip: VideoClip, download = false) => {
     if (!clip || !clip.videoUrl) return '';
@@ -211,6 +249,10 @@ export default function HomePage() {
     // Handle local paths
     if (clip.videoUrl.startsWith('/')) {
       console.log('Local path detected:', clip.videoUrl);
+      return clip.videoUrl;
+    }
+
+    if (clip.videoUrl.startsWith('http://127.0.0.1') || clip.videoUrl.startsWith('http://localhost')) {
       return clip.videoUrl;
     }
     
@@ -247,10 +289,38 @@ export default function HomePage() {
       if (!inputUrl && selectedFile) {
         setIsUploading(true);
         setProgress({ stage: 'init', progress: 1, message: `Uploading "${selectedFile.name}"...` });
-        const uploaded = await uploadToSupabase(selectedFile);
-        inputUrl = uploaded.signedUrl;
-        displayUrl = `upload:${selectedFile.name}`;
-        setIsUploading(false);
+        try {
+          const baseUrl = await getLocalMediaBaseUrl();
+          if (!baseUrl) throw new Error('Local uploader unavailable');
+
+          const res = await fetch(`${baseUrl}/api/upload`, {
+            method: 'POST',
+            headers: {
+              'x-filename': encodeURIComponent(selectedFile.name),
+              'content-type': selectedFile.type || 'application/octet-stream',
+            },
+            body: selectedFile,
+          });
+          if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+          const uploaded = await res.json() as { url?: string };
+          if (!uploaded.url) throw new Error('Upload failed');
+          inputUrl = uploaded.url;
+          displayUrl = `upload:${selectedFile.name}`;
+          setIsUploading(false);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          setIsUploading(false);
+          const localBase = await getLocalMediaBaseUrl();
+          if (localBase) {
+            throw new Error(msg || 'Local upload failed. Please restart the Mac client and try again.');
+          }
+          if (!accessToken) {
+            throw new Error('Local upload failed. Please restart the Mac client and try again.');
+          }
+          const uploaded = await uploadToSupabase(selectedFile);
+          inputUrl = uploaded.signedUrl;
+          displayUrl = `upload:${selectedFile.name}`;
+        }
       }
 
       let allHighlights: NonNullable<SSEData['data']>['highlights'] = [];
@@ -263,8 +333,21 @@ export default function HomePage() {
       let batchLimit = 3;
       const clipMap = new Map<string, VideoClip>();
 
-      const useAgent = typeof window !== 'undefined' && window.location.hostname === 'localhost';
-      if (useAgent && inputUrl) {
+      const isLocalMediaUrl = (url: string) => {
+        try {
+          const u = new URL(url);
+          return u.hostname === '127.0.0.1' || u.hostname === 'localhost';
+        } catch { return false; }
+      };
+
+      // When inputUrl is a local media server URL, always use local processing
+      const desktop = (window as any)?.vidshorterDesktop;
+      const isDesktop = !!desktop?.getMediaBaseUrl;
+      const shouldUseLocalProcessing = isDesktop || isLocalMediaUrl(inputUrl);
+
+      if (useAgent && inputUrl && !shouldUseLocalProcessing) {
+        // When shouldUseLocalProcessing is true, we use runBatch instead (local media server)
+        // Only use agent jobs API when NOT using local media processing
         const res = await fetch('/api/agent/jobs', {
           method: 'POST',
           headers: {
@@ -297,7 +380,7 @@ export default function HomePage() {
           }
           if (job.status === 'completed') return;
           if (Date.now() - createdAt > 30_000 && job.status === 'queued') {
-            throw new Error('Local Agent is not running. Start it with: pnpm agent');
+            throw new Error('Local Agent is not running. Start VidShorter Agent and keep it running.');
           }
           await new Promise<void>((r) => setTimeout(r, 1000));
           await poll();
@@ -305,18 +388,37 @@ export default function HomePage() {
         await poll();
         saveDemoVideoRecord(displayUrl, null, Array.from(clipMap.values()), user?.id);
         return;
+      } else if (shouldUseLocalProcessing) {
+        // Local media URL detected - will use runBatch which is intercepted by fetch patch
+        console.log('[HandleProcess] Using local media server for:', inputUrl);
       }
 
       const runBatch = async (payload: Record<string, unknown>) => {
-        const res = await fetch('/api/process-video', {
+        console.log('[runBatch] Starting with payload videoUrl:', payload.videoUrl);
+        let processUrl = '/api/process-video';
+        if (shouldUseLocalProcessing) {
+          if (isDesktop) {
+            const base = await desktop.getMediaBaseUrl();
+            if (!base) throw new Error('Local processor unavailable');
+            processUrl = `${String(base).replace(/\/$/, '')}/api/process-video`;
+          } else {
+            processUrl = `${new URL(inputUrl).origin}/api/process-video`;
+          }
+        }
+        const res = await fetch(processUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+            ...(!shouldUseLocalProcessing && accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
           },
           body: JSON.stringify(payload),
         });
-        if (!res.ok) throw new Error(`Server error: ${res.status}`);
+        console.log('[runBatch] Response status:', res.status, 'ok:', res.ok);
+        if (!res.ok) {
+          const text = await res.text().catch(() => '');
+          console.error('[runBatch] HTTP error response:', text);
+          throw new Error(`Server error: ${res.status}${text ? ' - ' + text.slice(0, 100) : ''}`);
+        }
 
         const reader = res.body?.getReader();
         if (!reader) throw new Error('No response stream');
@@ -354,8 +456,13 @@ export default function HomePage() {
                 clipMap.set(d.data.clip.id, d.data.clip);
                 setClips(prev => mergeClips(prev, [d.data!.clip!]));
               }
-              if (d.data?.error) setError(d.message);
-            } catch {}
+              if (d.data?.error) {
+                setError(d.message);
+                done = true; // Stop processing on error
+              }
+            } catch (e) {
+              console.error('SSE parse error:', e, 'line:', line);
+            }
           }
         }
 
@@ -379,9 +486,16 @@ export default function HomePage() {
               clipMap.set(d.data.clip.id, d.data.clip);
               setClips(prev => mergeClips(prev, [d.data!.clip!]));
             }
-            if (d.data?.error) setError(d.message);
-          } catch {}
+            if (d.data?.error) {
+              setError(d.message);
+              done = true; // Stop processing on error
+            }
+          } catch (e) {
+            console.error('SSE parse error (buf):', e, 'buf:', buf);
+          }
         }
+
+        if (shouldUseLocalProcessing) return;
       };
 
       await runBatch({
@@ -390,6 +504,8 @@ export default function HomePage() {
         sourceType: selectedFile ? 'upload' : 'url',
         aiConfig: getAdminAiConfig(),
       });
+
+      if (error) return; // Stop if error occurred
 
       while (!done && allHighlights && allHighlights.length > 0 && nextOffset < allHighlights.length) {
         await runBatch({
@@ -405,9 +521,10 @@ export default function HomePage() {
           jobId,
           videoId,
         });
+        if (error) break; // Stop if error occurred
       }
 
-      if (done) {
+      if (done && !error) {
         const videoTitle = analysisTitle || null;
         saveDemoVideoRecord(displayUrl, videoTitle, Array.from(clipMap.values()), user?.id);
       }
@@ -418,7 +535,7 @@ export default function HomePage() {
     } finally {
       setIsProcessing(false);
     }
-  }, [refreshCredits, selectedFile, trimmedVideoUrl, uploadToSupabase, user]);
+  }, [accessToken, error, getLocalMediaBaseUrl, refreshCredits, selectedFile, trimmedVideoUrl, uploadToSupabase, useAgent, user]);
 
   /* ── Download ── */
   const handleDownload = async (clip: VideoClip) => {
@@ -500,6 +617,12 @@ export default function HomePage() {
                 <Play className="mr-2 h-5 w-5" />
                 {t('home.hero.secondary')}
               </Button>
+              <Button size="lg" variant="outline" className="text-lg px-8" asChild>
+                <Link href="/download">
+                  <Download className="mr-2 h-5 w-5" />
+                  Download Mac App
+                </Link>
+              </Button>
             </div>
           </div>
         </div>
@@ -548,7 +671,20 @@ export default function HomePage() {
                     </span>
                   ) : (
                     <span className="mt-2">
-                      <Link href="/login" className="text-primary hover:underline">Sign in</Link> to start processing videos
+                      <a
+                        href="/login"
+                        className="text-primary hover:underline"
+                        onClick={(e) => {
+                          const d = window.vidshorterDesktop;
+                          if (d && typeof d.openAuth === 'function') {
+                            e.preventDefault();
+                            d.openAuth();
+                          }
+                        }}
+                      >
+                        Sign in
+                      </a>{' '}
+                      to start processing videos
                     </span>
                   )}
                 </CardDescription>
@@ -578,6 +714,20 @@ export default function HomePage() {
                     )}
                   </Button>
                 </div>
+
+                <label className="flex items-center gap-2 text-xs text-muted-foreground select-none">
+                  <input
+                    type="checkbox"
+                    checked={useAgent}
+                    onChange={(e) => {
+                      const v = e.target.checked;
+                      setUseAgent(v);
+                      try { localStorage.setItem('vidshorter_use_agent', v ? '1' : '0'); } catch {}
+                    }}
+                    disabled={isProcessing || isUploading}
+                  />
+                  Use local Mac Agent (recommended for stable YouTube)
+                </label>
 
                 {/* File upload (secondary) */}
                 <div
@@ -788,7 +938,6 @@ export default function HomePage() {
                 key={previewClip.id}
                 src={proxyUrl(previewClip)}
                 controls
-                autoPlay
                 playsInline
                 preload="metadata"
                 className="w-full aspect-video"

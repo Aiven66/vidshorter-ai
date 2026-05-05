@@ -118,6 +118,11 @@ function getBypassFfmpegHeaderString() {
   return secret ? `x-vercel-protection-bypass: ${secret}\r\n` : '';
 }
 
+function getLocalMediaBaseUrl() {
+  const raw = String(process.env.VIDSHORTER_LOCAL_MEDIA_BASE_URL || '').trim();
+  return raw ? raw.replace(/\/$/, '') : '';
+}
+
 // Cookie files (local macOS dev only)
 const COOKIE_FILE_PATH = path.join(CACHE_DIR, 'yt-cookies.txt');
 const CHROME_COOKIE_DB = path.join(
@@ -155,6 +160,7 @@ interface ClipResult {
 
 interface PreparedSource {
   inputPath: string;
+  audioInputPath?: string;
   ffmpegHeaders?: string;
 }
 
@@ -186,12 +192,21 @@ function ensureEven(n: number) {
   return n % 2 === 0 ? n : n - 1;
 }
 
+function clipDurations(duration: number) {
+  const d = Math.max(0, Math.floor(duration));
+  if (d <= 8 * 60) return { target: 35, min: 20, max: 45 };
+  if (d <= 20 * 60) return { target: 50, min: 35, max: 60 };
+  return { target: CLIP_TARGET_DURATION, min: CLIP_MIN_DURATION, max: CLIP_MAX_DURATION };
+}
+
 const VERCEL_CRF = String(clampInt(process.env.VERCEL_CLIP_CRF, 18, 40, 23));
 const VERCEL_TARGET_WIDTH_NUM = ensureEven(clampInt(process.env.VERCEL_CLIP_WIDTH, 640, 1920, 1920));
 const VERCEL_TARGET_HEIGHT_NUM = ensureEven(clampInt(process.env.VERCEL_CLIP_HEIGHT, 360, 1080, 1080));
 const VERCEL_TARGET_WIDTH = String(VERCEL_TARGET_WIDTH_NUM);
 const VERCEL_TARGET_HEIGHT = String(VERCEL_TARGET_HEIGHT_NUM);
 const VERCEL_SCALE = `scale=trunc(min(iw\\,${VERCEL_TARGET_WIDTH})/2)*2:trunc(min(ih\\,${VERCEL_TARGET_HEIGHT})/2)*2:force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2`;
+const INLINE_CRF = IS_VERCEL ? VERCEL_CRF : String(clampInt(process.env.LOCAL_INLINE_CRF, 16, 32, 20));
+const INLINE_PRESET = IS_VERCEL ? 'veryfast' : String(process.env.LOCAL_INLINE_PRESET || 'fast');
 
 const MAX_INLINE_BYTES = 25 * 1024 * 1024; // 25 MB
 const LOCAL_MAX_HEIGHT = process.env.CLIP_MAX_HEIGHT || '1080';
@@ -260,6 +275,10 @@ async function normalizeVideoUrl(videoUrl: string): Promise<string> {
   if (!trimmed) return trimmed;
   try {
     const u = new URL(trimmed);
+    if (isYouTubeUrl(trimmed)) {
+      const id = extractYouTubeVideoId(trimmed);
+      if (id) return `https://www.youtube.com/watch?v=${id}`;
+    }
     if (u.hostname.includes('b23.tv')) {
       return await resolveFinalUrl(trimmed);
     }
@@ -308,8 +327,35 @@ function cleanCueText(value: string) {
   return value.replace(/<[^>]+>/g, ' ').replace(/\[[^\]]+\]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+function buildHighlightReason(text: string, score: number) {
+  const t = (text || '').toLowerCase();
+  const hasPunct = /[!?！？]/.test(text);
+  const hasKeyword = [
+    'important', 'secret', 'best', 'amazing', 'crazy', 'must', 'mistake', 'learn',
+    '关键', '重点', '一定', '震惊', '厉害', '方法', '秘诀', '技巧',
+  ].some((k) => t.includes(k.toLowerCase()));
+  const dense = text.length >= 160;
+  if (hasPunct || score >= 8 || hasKeyword) {
+    return {
+      zh: '该片段信息密度高且包含关键表达，适合作为高光展示。',
+      en: 'High information density with key moments, making it a strong highlight.',
+    };
+  }
+  if (dense) {
+    return {
+      zh: '该片段内容连贯且信息量较高，适合作为高光摘要。',
+      en: 'Clear, content-rich segment selected as a concise highlight.',
+    };
+  }
+  return {
+    zh: '该片段代表视频中的典型片段，适合作为高光回顾。',
+    en: 'Representative moment selected to summarize the video.',
+  };
+}
+
 function normalizeHighlights(input: Highlight[], duration: number) {
   const safeDuration = Math.max(duration, 60);
+  const cfg = clipDurations(safeDuration);
   const normalized = input
     .filter((item) => item && typeof item === 'object')
     .map((item, index) => {
@@ -317,25 +363,27 @@ function normalizeHighlights(input: Highlight[], duration: number) {
         typeof item.title === 'string' && item.title.trim()
           ? item.title.trim().slice(0, 80)
           : `Highlight ${index + 1}`;
-      const summary =
-        typeof item.summary === 'string' && item.summary.trim()
-          ? item.summary.trim().slice(0, 160)
-          : 'Automatically selected highlight from the source video.';
       const score = Number.isFinite(item.engagement_score)
         ? Math.max(1, Math.min(10, Math.round(item.engagement_score)))
         : 7;
+      const baseText =
+        typeof item.summary === 'string' && item.summary.trim()
+          ? item.summary.trim().slice(0, 220)
+          : title;
+      const reason = buildHighlightReason(baseText, score);
+      const summary = `${reason.zh} ${reason.en}`;
 
       let start = Number.isFinite(item.start_time) ? Math.floor(item.start_time) : 0;
       let end = Number.isFinite(item.end_time)
         ? Math.ceil(item.end_time)
-        : start + CLIP_TARGET_DURATION;
+        : start + cfg.target;
 
-      start = Math.max(0, Math.min(start, Math.max(0, safeDuration - CLIP_MIN_DURATION)));
-      end = Math.max(start + CLIP_MIN_DURATION, Math.min(end, safeDuration));
-      if (end - start > CLIP_MAX_DURATION) end = start + CLIP_MAX_DURATION;
+      start = Math.max(0, Math.min(start, Math.max(0, safeDuration - cfg.min)));
+      end = Math.max(start + cfg.min, Math.min(end, safeDuration));
+      if (end - start > cfg.max) end = start + cfg.max;
       if (end > safeDuration) {
         end = safeDuration;
-        start = Math.max(0, end - CLIP_TARGET_DURATION);
+        start = Math.max(0, end - cfg.target);
       }
       return { title, summary, engagement_score: score, start_time: start, end_time: end };
     })
@@ -346,30 +394,31 @@ function normalizeHighlights(input: Highlight[], duration: number) {
     const prev = deduped[deduped.length - 1];
     if (!prev) { deduped.push(h); continue; }
     const adjustedStart = Math.max(h.start_time, prev.end_time);
-    const adjustedEnd = Math.min(safeDuration, Math.max(adjustedStart + CLIP_MIN_DURATION, h.end_time));
-    if (adjustedEnd - adjustedStart < CLIP_MIN_DURATION) continue;
+    const adjustedEnd = Math.min(safeDuration, Math.max(adjustedStart + cfg.min, h.end_time));
+    if (adjustedEnd - adjustedStart < cfg.min) continue;
     deduped.push({
       ...h,
       start_time: adjustedStart,
-      end_time: Math.min(adjustedEnd, adjustedStart + CLIP_MAX_DURATION),
+      end_time: Math.min(adjustedEnd, adjustedStart + cfg.max),
     });
   }
   return deduped.slice(0, MAX_HIGHLIGHTS);
 }
 
 function buildFallbackHighlights(duration: number) {
-  const safeDuration = Math.max(duration, 120);
-  const maxClips = Math.min(MAX_HIGHLIGHTS, Math.floor(safeDuration / (CLIP_MIN_DURATION + 10)));
-  const clipCount = Math.max(2, maxClips);
+  const safeDuration = Math.max(duration, 60);
+  const cfg = clipDurations(safeDuration);
+  const maxClips = Math.min(MAX_HIGHLIGHTS, Math.floor(safeDuration / (cfg.min + 8)));
+  const clipCount = Math.max(3, Math.min(MAX_HIGHLIGHTS, maxClips));
   const spacing = Math.floor(safeDuration / (clipCount + 1));
   return normalizeHighlights(
     Array.from({ length: clipCount }, (_, i) => {
-      const start = Math.max(0, spacing * (i + 1) - Math.floor(CLIP_TARGET_DURATION / 2));
+      const start = Math.max(0, spacing * (i + 1) - Math.floor(cfg.target / 2));
       return {
         title: `Highlight ${i + 1}`,
         start_time: start,
-        end_time: Math.min(start + CLIP_TARGET_DURATION, safeDuration),
-        summary: `Automatically selected highlight ${i + 1}`,
+        end_time: Math.min(start + cfg.target, safeDuration),
+        summary: 'AI 自动从视频中均匀选取的代表性片段。AI-selected representative segment sampled across the video.',
         engagement_score: 7,
       };
     }),
@@ -381,12 +430,13 @@ function buildHeuristicHighlights(cues: CaptionCue[], duration: number) {
   if (cues.length === 0) return buildFallbackHighlights(duration);
   const windows: Highlight[] = [];
   const step = 20;
-  const len = CLIP_TARGET_DURATION;
+  const cfg = clipDurations(duration);
+  const len = cfg.target;
   const keywords = [
     'important', 'secret', 'best', 'amazing', 'crazy', 'must', 'mistake', 'learn',
     '关键', '重点', '一定', '震惊', '厉害', '方法', '秘诀', '技巧',
   ];
-  for (let start = 0; start < Math.max(duration - CLIP_MIN_DURATION, 1); start += step) {
+  for (let start = 0; start < Math.max(duration - cfg.min, 1); start += step) {
     const end = Math.min(duration, start + len);
     const text = cues
       .filter((c) => c.end >= start && c.start <= end)
@@ -404,7 +454,7 @@ function buildHeuristicHighlights(cues: CaptionCue[], duration: number) {
     windows.push({ title: title.slice(0, 80), start_time: start, end_time: end, summary: text.slice(0, 140), engagement_score: Math.min(10, score) });
   }
   windows.sort((a, b) => b.engagement_score - a.engagement_score);
-  const targetCount = Math.min(MAX_HIGHLIGHTS, Math.max(5, Math.round(duration / 90)));
+  const targetCount = Math.min(MAX_HIGHLIGHTS, Math.max(3, Math.min(10, Math.round(duration / 600) + 3)));
   const selected: Highlight[] = [];
   for (const c of windows) {
     if (!selected.some(
@@ -541,14 +591,14 @@ async function runYtDlp(args: string[], isBilibili = false) {
 
 async function getYouTubeStreamUrlViaYtDlp(videoId: string): Promise<string> {
   const videoUrl = `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
-  const maxH = Math.max(144, Math.min(720, YOUTUBE_MAX_HEIGHT));
+  const maxH = Math.max(144, Math.min(2160, YOUTUBE_MAX_HEIGHT));
   const proxyUrl = await detectProxy();
   const proxyArg = proxyUrl ? ['--proxy', proxyUrl] : [];
   const args = [
     ...proxyArg,
     '--no-playlist',
     '--extractor-args', 'youtube:player_client=android',
-    '-f', `best[ext=mp4][height<=${maxH}]/best[height<=${maxH}]/best`,
+    '-f', `best[ext=mp4][height<=${maxH}][acodec!=none][vcodec!=none]/best[height<=${maxH}][acodec!=none][vcodec!=none]/best`,
     '-g',
     videoUrl,
   ];
@@ -560,6 +610,26 @@ async function getYouTubeStreamUrlViaYtDlp(videoId: string): Promise<string> {
     throw new Error('yt-dlp did not return a stream URL');
   }
   return url;
+}
+
+async function getYouTubeAvStreamUrlsViaYtDlp(videoId: string): Promise<{ videoUrl: string; audioUrl: string | null }> {
+  const pageUrl = `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
+  const maxH = Math.max(144, Math.min(2160, YOUTUBE_MAX_HEIGHT));
+  const proxyUrl = await detectProxy();
+  const proxyArg = proxyUrl ? ['--proxy', proxyUrl] : [];
+  const args = [
+    ...proxyArg,
+    '--no-playlist',
+    '--extractor-args', 'youtube:player_client=android',
+    '-f', `bestvideo[height<=${maxH}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${maxH}]+bestaudio/best`,
+    '-g',
+    pageUrl,
+  ];
+  const r = await runYtDlp(args, false);
+  const lines = String(r.stdout || '').split('\n').map((l) => l.trim()).filter(Boolean).filter((l) => /^https?:\/\//i.test(l));
+  if (lines.length === 0) throw new Error('yt-dlp did not return stream URLs');
+  if (lines.length === 1) return { videoUrl: lines[0], audioUrl: null };
+  return { videoUrl: lines[0], audioUrl: lines[1] };
 }
 
 // ── Piped proxy (YouTube stream URLs, bypasses bot detection) ────────────────
@@ -1644,6 +1714,9 @@ async function downloadSourceVideo(
   options?: { forceRefresh?: boolean },
 ): Promise<PreparedSource> {
   const normalizedUrl = await normalizeVideoUrl(videoUrl);
+  if (normalizedUrl.startsWith('http://127.0.0.1') || normalizedUrl.startsWith('http://localhost')) {
+    return { inputPath: normalizedUrl };
+  }
   await ensureDirectories();
   const sourceDir = path.join(CACHE_DIR, sourceId(normalizedUrl));
   await mkdir(sourceDir, { recursive: true });
@@ -2188,6 +2261,24 @@ async function downloadYouTubeOrGenericVideo(
     return { inputPath: streamUrl, ffmpegHeaders };
   }
 
+  if (isYouTubeUrl(videoUrl)) {
+    const videoId = extractYouTubeVideoId(videoUrl);
+    if (videoId) {
+      try {
+        const av = await getYouTubeAvStreamUrlsViaYtDlp(videoId);
+        const ffmpegHeaders =
+          'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36\r\n' +
+          'Referer: https://www.youtube.com/\r\n' +
+          'Origin: https://www.youtube.com\r\n' +
+          'Accept: */*\r\n' +
+          'Accept-Encoding: identity\r\n';
+        return { inputPath: av.videoUrl, audioInputPath: av.audioUrl || undefined, ffmpegHeaders };
+      } catch (e) {
+        console.warn('yt-dlp stream URL failed, falling back to download:', e instanceof Error ? e.message.slice(0, 120) : e);
+      }
+    }
+  }
+
   const baseArgs = [
     '--no-playlist', '--restrict-filenames',
     '--print', 'after_move:filepath',
@@ -2284,12 +2375,17 @@ async function generateThumbnail(clipPath: string, clipDuration: number): Promis
 
   try {
     await tryThumb(seekTime);
-    return `/api/serve-clip/${fileName}`;
+    const thumbBuffer = await readFile(thumbPath);
+    unlink(thumbPath).catch(() => {});
+    return `data:image/jpeg;base64,${thumbBuffer.toString('base64')}`;
   } catch {
     try {
       await tryThumb(1);
-      return `/api/serve-clip/${fileName}`;
+      const thumbBuffer = await readFile(thumbPath);
+      unlink(thumbPath).catch(() => {});
+      return `data:image/jpeg;base64,${thumbBuffer.toString('base64')}`;
     } catch {
+      unlink(thumbPath).catch(() => {});
       return '';
     }
   }
@@ -2298,6 +2394,7 @@ async function generateThumbnail(clipPath: string, clipDuration: number): Promis
 // ── Clip creation ──────────────────────────────────────────────────────────────
 async function createLocalClip(params: {
   inputPath: string;  // local file path OR remote HTTPS URL (ffmpeg supports both)
+  audioInputPath?: string;
   inputHeaders?: string;
   startTime: number;
   endTime: number;
@@ -2353,20 +2450,40 @@ async function createLocalClip(params: {
   const videoFilter = SHOULD_INLINE_CLIPS
     ? ['-vf', VERCEL_SCALE]
     : ['-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2'];
-  const crf = SHOULD_INLINE_CLIPS ? VERCEL_CRF : (isRemoteInput ? '18' : '17');
-  const preset = SHOULD_INLINE_CLIPS ? 'veryfast' : (isRemoteInput ? 'veryfast' : 'fast');
+  const crf = SHOULD_INLINE_CLIPS ? INLINE_CRF : (isRemoteInput ? '16' : '17');
+  const preset = SHOULD_INLINE_CLIPS ? INLINE_PRESET : (isRemoteInput ? 'medium' : 'fast');
 
-  const seekArgs = (!isRemoteInput || isWorkerStream)
-    ? ['-ss', String(params.startTime), '-i', params.inputPath, '-t', String(duration)]
-    : ['-i', params.inputPath, '-ss', String(params.startTime), '-t', String(duration)];
+  const fastSeek = !isRemoteInput || isWorkerStream || params.inputPath.includes('googlevideo.com');
+  const hasAudioInput = typeof params.audioInputPath === 'string' && params.audioInputPath.length > 0;
+  const audioIsRemote = hasAudioInput && params.audioInputPath!.startsWith('http');
+  const audioHeaders = (audioIsRemote && inputHeaders) ? ['-headers', inputHeaders] : [];
+
+  const seekArgs = (() => {
+    const t = ['-t', String(duration)];
+    if (!hasAudioInput) {
+      return fastSeek
+        ? ['-ss', String(params.startTime), ...ffmpegInputHeaders, '-i', params.inputPath, ...t]
+        : [...ffmpegInputHeaders, '-i', params.inputPath, '-ss', String(params.startTime), ...t];
+    }
+    return fastSeek
+      ? [
+          '-ss', String(params.startTime), ...ffmpegInputHeaders, '-i', params.inputPath,
+          '-ss', String(params.startTime), ...audioHeaders, '-i', params.audioInputPath!,
+          ...t,
+        ]
+      : [
+          ...ffmpegInputHeaders, '-i', params.inputPath,
+          ...audioHeaders, '-i', params.audioInputPath!,
+          '-ss', String(params.startTime), ...t,
+        ];
+  })();
 
   const args = [
     '-y',
-    ...ffmpegInputHeaders,
     ...httpInputFlags,
     ...seekArgs,
     '-map', '0:v:0',
-    '-map', '0:a:0?',
+    ...(hasAudioInput ? ['-map', '1:a:0?'] : ['-map', '0:a:0?']),
     '-c:v', 'libx264',
     '-preset', preset,
     '-crf', crf,
@@ -2398,6 +2515,16 @@ async function createLocalClip(params: {
   const thumbnailUrl = await generateThumbnail(outputPath, duration);
   console.log(`Clip created: ${outputPath}, thumbnail: ${thumbnailUrl || '(none)'}`);
 
+  const localBase = getLocalMediaBaseUrl();
+  if (localBase) {
+    return {
+      outputPath,
+      publicUrl: `${localBase}/api/serve-clip/${fileName}`,
+      dataUrl: '',
+      thumbnailUrl,
+    };
+  }
+
   // ── Convert clip to base64 data URL for reliable cross-Lambda transport ──────
   // On Vercel, /tmp is NOT shared across Lambda invocations.
   // If the client fetches /api/serve-clip/[filename] later, it may hit a different
@@ -2415,6 +2542,7 @@ async function createLocalClip(params: {
         { crfDelta: 6, width: VERCEL_TARGET_WIDTH_NUM, height: VERCEL_TARGET_HEIGHT_NUM },
         { crfDelta: 10, width: 854, height: 480 },
         { crfDelta: 14, width: 640, height: 360 },
+        { crfDelta: 18, width: 426, height: 240 },
       ];
 
       const baseCrf = clampInt(VERCEL_CRF, 22, 40, 26);
@@ -2515,6 +2643,7 @@ async function downloadYouTubeClip(params: {
   const source = await downloadSourceVideo(params.videoUrl);
   return createLocalClip({
     inputPath: source.inputPath,
+    audioInputPath: source.audioInputPath,
     inputHeaders: source.ffmpegHeaders,
     startTime: params.startTime,
     endTime: params.endTime,

@@ -32,7 +32,15 @@ export default function LoginPage() {
       setError(result.error);
       setLoading(false);
     } else {
-      router.push('/dashboard');
+      const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+      const desktop = params?.get('desktop') === '1';
+      const redirectUri = params?.get('redirect_uri') || '';
+      const state = params?.get('state') || '';
+      if (desktop && redirectUri) {
+        router.push(`/desktop/callback?redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`);
+      } else {
+        router.push('/dashboard');
+      }
     }
   };
 

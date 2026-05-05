@@ -107,7 +107,15 @@ export default function RegisterPage() {
       setLoading(false);
     } else {
       setStep('done');
-      setTimeout(() => router.push('/dashboard'), 1500);
+      const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+      const desktop = params?.get('desktop') === '1';
+      const redirectUri = params?.get('redirect_uri') || '';
+      const state = params?.get('state') || '';
+      if (desktop && redirectUri) {
+        setTimeout(() => router.push(`/desktop/callback?redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`), 300);
+      } else {
+        setTimeout(() => router.push('/dashboard'), 1500);
+      }
     }
   };
 

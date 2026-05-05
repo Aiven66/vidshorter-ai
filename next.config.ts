@@ -1,6 +1,7 @@
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
+  ...(process.env.NEXT_STANDALONE === '1' ? { output: 'standalone' } : {}),
   allowedDevOrigins: ['*.dev.coze.site'],
   // Allow building even when youtubei.js transitive deps have missing @types
   typescript: {
