@@ -37,6 +37,9 @@ export default function LoginPage() {
       const redirectUri = params?.get('redirect_uri') || '';
       const state = params?.get('state') || '';
       if (desktop && redirectUri) {
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('vidshorter_desktop_login', 'true');
+        }
         router.push(`/desktop/callback?redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`);
       } else {
         router.push('/dashboard');

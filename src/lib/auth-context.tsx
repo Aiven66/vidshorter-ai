@@ -24,11 +24,9 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Demo user storage key (currently logged-in user)
 const DEMO_USER_KEY = 'vidshorter_demo_user';
-
-// Registered users store (all accounts that have signed up)
 const DEMO_REGISTERED_USERS_KEY = 'vidshorter_registered_users';
+const DESKTOP_TOKEN_KEY = 'vidshorter_desktop_token';
 
 interface RegisteredUser {
   id: string;
@@ -68,7 +66,6 @@ function findRegisteredUser(email: string, password: string): RegisteredUser | n
   ) || null;
 }
 
-// Admin credentials in demo mode
 const DEMO_ADMINS: Record<string, { password: string; name: string; email: string }> = {
   'admin@126.com': { password: 'admin123', name: 'Admin', email: 'admin@126.com' },
   'admin': { password: 'admin123', name: 'Admin', email: 'admin@vidshorter.ai' },
@@ -90,7 +87,6 @@ function getDemoAdminUser(email: string): User {
   };
 }
 
-// Get demo user from localStorage
 function getDemoUser(): User | null {
   if (typeof window === 'undefined') return null;
   const stored = localStorage.getItem(DEMO_USER_KEY);
@@ -103,16 +99,48 @@ function getDemoUser(): User | null {
   }
 }
 
-// Save demo user to localStorage
 function saveDemoUser(user: User) {
   if (typeof window === 'undefined') return;
   localStorage.setItem(DEMO_USER_KEY, JSON.stringify(user));
 }
 
-// Clear demo user
 function clearDemoUser() {
   if (typeof window === 'undefined') return;
   localStorage.removeItem(DEMO_USER_KEY);
+}
+
+async function verifyTokenAndFetchUser(token: string): Promise<User | null> {
+  try {
+    const client = getSupabaseClient(token);
+    const { data: { user: authUser } } = await client.auth.getUser();
+    if (!authUser) return null;
+    
+    const { data: userData } = await client
+      .from('users')
+      .select('*')
+      .eq('id', authUser.id)
+      .maybeSingle();
+    
+    if (userData) {
+      return {
+        id: userData.id,
+        email: userData.email,
+        name: userData.name,
+        role: userData.role,
+        avatarUrl: userData.avatar_url,
+      };
+    }
+    
+    return {
+      id: authUser.id,
+      email: authUser.email || '',
+      name: authUser.user_metadata?.name || null,
+      role: 'user',
+      avatarUrl: authUser.user_metadata?.avatar_url || null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -122,62 +150,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [useDemo, setUseDemo] = useState(false);
 
-  async function trackSession(token: string) {
-    try {
-      await fetch('/api/auth/track', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-    } catch {}
-  }
-
   useEffect(() => {
+    checkAuthState();
+  }, []);
+
+  async function checkAuthState() {
     try {
       const desktop = (window as any)?.vidshorterDesktop;
       if (desktop) {
-        setUseDemo(true);
-        setUser({
-          id: 'demo-desktop-admin',
-          email: 'desktop@vidshorter.local',
-          name: 'Desktop',
-          role: 'admin',
-          avatarUrl: null,
-        });
+        const token = await window.api?.getAuthToken?.();
+        if (token) {
+          const userData = await verifyTokenAndFetchUser(token);
+          if (userData) {
+            setAccessToken(token);
+            setUser(userData);
+            setLoading(false);
+            return;
+          }
+        }
+      }
+      
+      if (!isSupabaseConfigured()) {
+        const demoUser = getDemoUser();
+        if (demoUser) {
+          setUser(demoUser);
+          setUseDemo(true);
+        }
         setAccessToken(null);
         setLoading(false);
         return;
       }
-    } catch {}
 
-    // Check if Supabase is configured
-    if (!isSupabaseConfigured()) {
-      console.warn('Supabase not configured. Using demo mode.');
-      setUseDemo(true);
-      // Check for existing demo user
-      const demoUser = getDemoUser();
-      if (demoUser) {
-        setUser(demoUser);
-      }
-      setAccessToken(null);
-      setLoading(false);
-      return;
-    }
-
-    // Check for existing session
-    checkSession();
-  }, []);
-
-  async function checkSession() {
-    try {
       const client = getSupabaseClient();
       const { data: { session } } = await client.auth.getSession();
 
       if (session?.user) {
         setAccessToken(session.access_token || null);
-        if (session.access_token) {
-          trackSession(session.access_token);
-        }
-        // Fetch user data from our users table
         const { data: userData } = await client
           .from('users')
           .select('*')
@@ -193,47 +201,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             avatarUrl: userData.avatar_url,
           });
         } else {
-          // User exists in auth but not in our table - create profile
-          const newUser = {
+          setUser({
             id: session.user.id,
-            email: session.user.email!,
-            name: session.user.user_metadata?.name || session.user.email?.split('@')[0],
+            email: session.user.email || '',
+            name: session.user.user_metadata?.name || null,
             role: 'user',
-          };
-
-          const { data: createdUser } = await client
-            .from('users')
-            .insert(newUser)
-            .select()
-            .single();
-
-          if (createdUser) {
-            setUser({
-              id: createdUser.id,
-              email: createdUser.email,
-              name: createdUser.name,
-              role: createdUser.role,
-              avatarUrl: createdUser.avatar_url,
-            });
-
-            // Create credits record
-            await client.from('credits').insert({
-              user_id: createdUser.id,
-              balance: 100,
-            });
-
-            // Create subscription record
-            await client.from('subscriptions').insert({
-              user_id: createdUser.id,
-              plan_type: 'free',
-              status: 'active',
-            });
-          }
+            avatarUrl: session.user.user_metadata?.avatar_url || null,
+          });
+        }
+      } else {
+        const demoUser = getDemoUser();
+        if (demoUser) {
+          setUser(demoUser);
+          setUseDemo(true);
         }
       }
-    } catch (err) {
-      console.error('Session check error:', err);
-      setError('Failed to connect to authentication service');
+    } catch {
+      const demoUser = getDemoUser();
+      if (demoUser) {
+        setUser(demoUser);
+        setUseDemo(true);
+      }
     } finally {
       setLoading(false);
     }
@@ -242,9 +230,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function signIn(email: string, password: string) {
     setError(null);
 
-    // ── Demo Mode (no Supabase) ──
     if (!isSupabaseConfigured() || useDemo) {
-      // 1. Admin bypass
       if (isDemoAdmin(email, password)) {
         const adminUser = getDemoAdminUser(email);
         setUser(adminUser);
@@ -253,7 +239,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setAccessToken(null);
         return { error: null };
       }
-      // 2. Check registered users store
       const registered = findRegisteredUser(email, password);
       if (registered) {
         const demoUser: User = {
@@ -269,17 +254,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setAccessToken(null);
         return { error: null };
       }
-      // 3. Not found
       return { error: 'Invalid email or password. Please register an account first.' };
     }
 
-    // ── Supabase Mode ──
     try {
       const client = getSupabaseClient();
-      const { error } = await client.auth.signInWithPassword({ email, password });
+      const { error: authError } = await client.auth.signInWithPassword({ email, password });
 
-      if (error) {
-        // Admin bypass even when Supabase is configured
+      if (authError) {
         if (isDemoAdmin(email, password)) {
           const adminUser = getDemoAdminUser(email);
           setUser(adminUser);
@@ -288,14 +270,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setAccessToken(null);
           return { error: null };
         }
-        return { error: error.message };
+        return { error: authError.message };
       }
 
-      await checkSession();
+      const { data: { session } } = await client.auth.getSession();
+      if (session) {
+        setAccessToken(session.access_token || null);
+        const userData = await verifyTokenAndFetchUser(session.access_token!);
+        if (userData) {
+          setUser(userData);
+        }
+      }
+      
       return { error: null };
-    } catch (err) {
-      console.error('Sign in error:', err);
-      // Network fallback: allow admin or registered users only
+    } catch {
       if (isDemoAdmin(email, password)) {
         const adminUser = getDemoAdminUser(email);
         setUser(adminUser);
@@ -326,9 +314,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function signUp(email: string, password: string, name: string) {
     setError(null);
 
-    // ── Demo Mode ──
     if (!isSupabaseConfigured() || useDemo) {
-      // Check if email already registered
       const existingUsers = getRegisteredUsers();
       const existing = existingUsers.find(u => u.email.toLowerCase() === email.toLowerCase());
       if (existing) {
@@ -343,7 +329,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         role: 'user',
         avatarUrl: null,
       };
-      // Persist to registered users store
       saveRegisteredUser({ id: userId, email, password, name });
       setUser(demoUser);
       saveDemoUser(demoUser);
@@ -352,10 +337,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { error: null };
     }
 
-    // ── Supabase Mode ──
     try {
       const client = getSupabaseClient();
-      const { error } = await client.auth.signUp({
+      const { error: authError } = await client.auth.signUp({
         email,
         password,
         options: {
@@ -363,9 +347,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         },
       });
 
-      if (error) {
-        // If Supabase fails, fall back to demo mode
-        console.warn('Supabase signup failed, falling back to demo mode:', error.message);
+      if (authError) {
+        console.warn('Supabase signup failed, falling back to demo mode:', authError.message);
         const userId = `demo-${Date.now()}`;
         const demoUser: User = {
           id: userId,
@@ -382,11 +365,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return { error: null };
       }
 
-      await checkSession();
+      const { data: { session } } = await client.auth.getSession();
+      if (session) {
+        setAccessToken(session.access_token || null);
+        const userData = await verifyTokenAndFetchUser(session.access_token!);
+        if (userData) {
+          setUser(userData);
+        }
+      }
+      
       return { error: null };
-    } catch (err) {
-      console.error('Sign up error:', err);
-      // Network fallback
+    } catch {
       const userId = `demo-${Date.now()}`;
       const demoUser: User = {
         id: userId,
@@ -407,7 +396,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function signInWithGoogle() {
     setError(null);
 
-    // ── Demo Mode: mock Google sign-in ──
     if (!isSupabaseConfigured() || useDemo) {
       const googleId = `google-demo-${Date.now()}`;
       const googleUser: User = {
@@ -417,7 +405,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         role: 'user',
         avatarUrl: 'https://lh3.googleusercontent.com/a/default-user',
       };
-      // Register this Google user so they can "sign in" again via email fallback
       saveRegisteredUser({ id: googleId, email: googleUser.email, password: '', name: 'Google User' });
       setUser(googleUser);
       saveDemoUser(googleUser);
@@ -426,7 +413,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { error: null };
     }
 
-    // ── Supabase Mode ──
     try {
       const client = getSupabaseClient();
       const { error } = await client.auth.signInWithOAuth({
@@ -441,8 +427,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       return { error: null };
-    } catch (err) {
-      console.error('Google sign in error:', err);
+    } catch {
       return { error: 'Failed to connect to authentication service.' };
     }
   }
@@ -456,12 +441,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
+      const desktop = (window as any)?.vidshorterDesktop;
+      if (desktop) {
+        await window.api?.clearAuthToken?.();
+      }
+      
       const client = getSupabaseClient();
       await client.auth.signOut();
       setUser(null);
       setAccessToken(null);
-    } catch (err) {
-      console.error('Sign out error:', err);
+    } catch {
     }
   }
 

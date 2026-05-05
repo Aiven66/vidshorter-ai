@@ -25,6 +25,7 @@ let mediaReady = null;
 let lastWebUrl = '';
 let embeddedWebProc = null;
 let embeddedWebUrl = '';
+let authToken = '';
 
 process.on('uncaughtException', (err) => {
   try { appendLog('[UncaughtException] ' + (err && err.stack ? err.stack : String(err))); } catch {}
@@ -221,6 +222,7 @@ async function loadConfig() {
     const parsed = JSON.parse(raw || '{}');
     const cfg = { ...defaultConfig(), ...parsed };
     if (!cfg.agentId) cfg.agentId = `agent-${randomUUID()}`;
+    authToken = cfg.authToken || '';
     return cfg;
   } catch {
     const cfg = defaultConfig();
@@ -233,6 +235,7 @@ async function saveConfig(cfg) {
   const p = configPath();
   await fs.mkdir(path.dirname(p), { recursive: true });
   await fs.writeFile(p, JSON.stringify(cfg, null, 2), 'utf8');
+  authToken = cfg.authToken || '';
 }
 
 async function openAuthFlow() {
@@ -256,6 +259,20 @@ async function handleDeepLink(rawUrl) {
     return;
   }
   if (u.protocol !== 'vidshorter:') return;
+
+  // Handle auth/complete redirect
+  if (u.pathname === '/auth/complete' || u.pathname === '//auth/complete' || rawUrl === 'vidshorter://auth/complete') {
+    // Just focus the window and reload
+    if (webWindow && !webWindow.isDestroyed()) {
+      webWindow.focus();
+      await webWindow.webContents.reload();
+    } else {
+      await ensureWebWindow();
+    }
+    return;
+  }
+
+  // Handle auth/callback with token
   const token = u.searchParams.get('access_token') || '';
   const state = u.searchParams.get('state') || '';
   if (!token) return;
@@ -264,6 +281,13 @@ async function handleDeepLink(rawUrl) {
   if (cfg.authState && state && cfg.authState !== state) return;
   const next = { ...cfg, authToken: token, authState: '', updatedAt: nowIso() };
   await saveConfig(next);
+  
+  try {
+    if (webWindow && !webWindow.isDestroyed()) {
+      await webWindow.webContents.reload();
+    }
+  } catch {}
+  
   try {
     await dialog.showMessageBox({
       type: 'info',
@@ -511,9 +535,9 @@ async function ensureWebWindow() {
       allowRunningInsecureContent: true,
     },
   });
-  webWindow.webContents.on('did-fail-load', async (_evt, code, desc, validatedURL) => {
+  webWindow.webContents.on('did-fail-load', async (_evt, code, desc, validatedUrl) => {
     try {
-      const html = `<html><head><meta charset="utf-8"><title>VidShorter Agent</title><style>body{font-family:-apple-system,system-ui,Segoe UI,Roboto,sans-serif;margin:40px}h1{font-size:22px}pre{white-space:pre-wrap;background:#f7f7f7;padding:12px;border-radius:10px}</style></head><body><h1>Page failed to load</h1><pre>code: ${code}\n${String(desc || '')}\nurl: ${String(validatedURL || '')}</pre><p>Open menu → Copy Logs to share details.</p></body></html>`;
+      const html = `<html><head><meta charset="utf-8"><title>VidShorter Agent</title><style>body{font-family:-apple-system,system-ui,Segoe UI,Roboto,sans-serif;margin:40px}h1{font-size:22px}pre{white-space:pre-wrap;background:#f7f7f7;padding:12px;border-radius:10px}</style></head><body><h1>Page failed to load</h1><pre>code: ${code}\n${String(desc || '')}\nurl: ${String(validatedUrl || '')}</pre><p>Open menu → Copy Logs to share details.</p></body></html>`;
       await webWindow?.loadURL(`data:text/html,${encodeURIComponent(html)}`);
     } catch {}
   });
@@ -562,25 +586,35 @@ async function ensureWebWindow() {
     (async () => {
       try {
         startMediaServer();
-        return;
-        if (mediaReady) await mediaReady;
         const base = mediaBaseUrl;
         if (!base) return;
+        
         await webWindow.webContents.executeJavaScript(
-          `try {
-            localStorage.setItem('vidshorter_use_agent', '0');
-            localStorage.setItem('vidshorter_desktop_media_base', ${JSON.stringify(base)});
-          } catch {}`,
+          `
+try {
+  window.vidshorterDesktop = true;
+  window.api = {
+    getAuthToken: async () => {
+      return await window.electronAPI.getAuthToken();
+    },
+    clearAuthToken: async () => {
+      return await window.electronAPI.clearAuthToken();
+    },
+    requestAuth: async () => {
+      return await window.electronAPI.openAuth();
+    }
+  };
+} catch (e) {
+  console.log('Failed to inject desktop API:', e);
+}
+          `,
           true,
         ).catch(() => {});
 
-        const script = `
+        await webWindow.webContents.executeJavaScript(
+          `
 (() => {
   const baseUrl = ${JSON.stringify(base)};
-  try {
-    localStorage.setItem('vidshorter_use_agent', '0');
-    localStorage.setItem('vidshorter_desktop_media_base', baseUrl);
-  } catch {}
 
   if (!window.__vidshorterFetchPatched) {
     window.__vidshorterFetchPatched = true;
@@ -588,7 +622,7 @@ async function ensureWebWindow() {
     window.fetch = (input, init) => {
       try {
         const u = typeof input === 'string' ? input : (input && typeof input.url === 'string' ? input.url : '');
-        if (u === '/api/process-video' || u.endsWith('/api/process-video') || /\/api\/process-video(\?|$)/.test(u)) {
+        if (u === '/api/process-video' || u.endsWith('/api/process-video') || /\\/api\\/process-video(\\?|$)/.test(u)) {
           const next = baseUrl + '/api/process-video';
           return origFetch(next, init);
         }
@@ -683,7 +717,7 @@ async function ensureWebWindow() {
         const chunk = await reader.read();
         if (chunk.done) break;
         buf += decoder.decode(chunk.value, { stream: true });
-        const lines = buf.split('\n');
+        const lines = buf.split('\\n');
         buf = lines.pop() || '';
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue;
@@ -781,9 +815,7 @@ async function ensureWebWindow() {
       if (!window.__vidshorterPasteHackAttached) {
         window.__vidshorterPasteHackAttached = true;
 
-        // Find the URL input by multiple strategies
         const findUrlInput = () => {
-          // Strategy 1: Find by placeholder
           const byPlaceholder = Array.from(document.querySelectorAll('input')).find((el) => {
             try {
               const ph = el.getAttribute('placeholder') || '';
@@ -792,7 +824,6 @@ async function ensureWebWindow() {
           });
           if (byPlaceholder) return byPlaceholder;
 
-          // Strategy 2: Find by id or name containing 'url' or 'video'
           const byName = Array.from(document.querySelectorAll('input')).find((el) => {
             try {
               const id = (el.id || '').toLowerCase();
@@ -802,11 +833,9 @@ async function ensureWebWindow() {
           });
           if (byName) return byName;
 
-          // Strategy 3: Return first text input
           return Array.from(document.querySelectorAll('input[type="text"]'))[0] || null;
         };
 
-        // Handle paste via multiple methods
         window.addEventListener('paste', (evt) => {
           const u = findUrlInput();
           if (!u) {
@@ -814,7 +843,7 @@ async function ensureWebWindow() {
             return;
           }
 
-          const text = evt.clipboardData?.getData?.('text/plain') || '';
+          const text = evt.clipboardData?.getData('text/plain') || '';
           if (!text) {
             console.log('[PasteHack] No text in clipboard');
             return;
@@ -822,13 +851,10 @@ async function ensureWebWindow() {
 
           console.log('[PasteHack] Pasting:', text.slice(0, 80));
 
-          // Method 1: Try document.execCommand('paste') - most reliable in Electron
           try {
             const focused = document.activeElement;
             if (focused === u || focused === document.body || focused === document.documentElement) {
-              // Focus the input first
               u.focus();
-              // Use execCommand for paste - bypasses React's event handling
               const result = document.execCommand('insertText', false, text);
               console.log('[PasteHack] execCommand insertText result:', result);
               if (result) {
@@ -841,15 +867,12 @@ async function ensureWebWindow() {
             console.log('[PasteHack] execCommand error:', e);
           }
 
-          // Method 2: Try native setter + input event
           const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
           if (setter) {
             try {
               setter.call(u, text);
-              // Dispatch multiple events to ensure React catches it
               u.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
               u.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
-              u.dispatchEvent(new Event('blur', { bubbles: true, cancelable: true }));
               u.focus();
               evt.preventDefault();
               evt.stopPropagation();
@@ -858,7 +881,6 @@ async function ensureWebWindow() {
             } catch {}
           }
 
-          // Method 3: Direct value assignment
           try {
             u.value = text;
             u.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
@@ -870,9 +892,8 @@ async function ensureWebWindow() {
           } catch (e) {
             console.log('[PasteHack] Error:', e);
           }
-        }, true); // Capture phase
+        }, true);
 
-        // Also intercept Ctrl+V / Cmd+V globally
         window.addEventListener('keydown', (evt) => {
           const isPasteKey = (evt.key === 'v' || evt.key === 'V') && (evt.metaKey || evt.ctrlKey);
           if (!isPasteKey) return;
@@ -883,8 +904,7 @@ async function ensureWebWindow() {
           evt.preventDefault();
           evt.stopPropagation();
 
-          // Use clipboard API to get text
-          const text = navigator.clipboard?.readText?.() || (window.clipboardData?.getData?.('text/plain') || '');
+          const text = navigator.clipboard?.readText?.() || (window.clipboardData?.getData('text/plain') || '');
           if (!text) return;
 
           console.log('[PasteHack] Ctrl+V pasting:', text.slice(0, 80));
@@ -899,7 +919,7 @@ async function ensureWebWindow() {
               console.log('[PasteHack] Ctrl+V via setter');
             } catch {}
           }
-        }, true); // Capture phase
+        }, true);
       }
     } catch (e) {
       console.log('[PasteHack] Attach error:', e);
@@ -915,8 +935,9 @@ async function ensureWebWindow() {
     obs.observe(document.documentElement || document.body, { subtree: true, childList: true, attributes: true });
   } catch {}
 })();
-        `;
-        await webWindow.webContents.executeJavaScript(script, true);
+          `,
+          true,
+        );
       } catch {}
     })();
   });
@@ -955,9 +976,17 @@ ipcMain.handle('open-auth', async () => {
   return { ok: true };
 });
 
-ipcMain.handle('get-auth-token', async () => {
+ipcMain.handle('getAuthToken', async () => {
   const cfg = await loadConfig();
-  return { token: cfg.authToken || '' };
+  authToken = cfg.authToken || '';
+  return { token: authToken };
+});
+
+ipcMain.handle('clearAuthToken', async () => {
+  const cfg = await loadConfig();
+  await saveConfig({ ...cfg, authToken: '', authState: '' });
+  authToken = '';
+  return { ok: true };
 });
 
 ipcMain.handle('save-config', async (_evt, payload) => {
@@ -1028,6 +1057,9 @@ ipcMain.handle('open-settings', async () => {
 });
 
 async function applyMenu() {
+  const cfg = await loadConfig();
+  const isLoggedIn = !!cfg.authToken;
+  
   const template = [
     {
       label: app.getName(),
@@ -1042,9 +1074,26 @@ async function applyMenu() {
           },
         },
         {
-          label: 'Sign In',
+          label: isLoggedIn ? 'Sign Out' : 'Sign In',
           click: async () => {
-            await openAuthFlow();
+            if (isLoggedIn) {
+              const config = await loadConfig();
+              await saveConfig({ ...config, authToken: '', authState: '' });
+              authToken = '';
+              if (webWindow && !webWindow.isDestroyed()) {
+                await webWindow.webContents.reload();
+              }
+              try {
+                await dialog.showMessageBox({
+                  type: 'info',
+                  message: 'Signed out successfully',
+                  buttons: ['OK'],
+                });
+              } catch {}
+              await applyMenu();
+            } else {
+              await openAuthFlow();
+            }
           },
         },
         {
@@ -1097,6 +1146,22 @@ app.on('ready', async () => {
   startMediaServer();
   await applyMenu();
   await ensureWebWindow();
+  
+  const cfg = await loadConfig();
+  if (!cfg.authToken) {
+    try {
+      const result = await dialog.showMessageBox({
+        type: 'info',
+        message: 'Welcome to VidShorter Agent',
+        detail: 'To use the application, please sign in with your VidShorter account.',
+        buttons: ['Sign In', 'Continue Without Signing In'],
+        defaultId: 0,
+      });
+      if (result.response === 0) {
+        await openAuthFlow();
+      }
+    } catch {}
+  }
 });
 
 app.on('window-all-closed', () => {

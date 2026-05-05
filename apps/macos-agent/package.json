@@ -1,7 +1,7 @@
 {
   "name": "vidshorter-macos-agent",
   "private": true,
-  "version": "0.7.22",
+  "version": "0.7.24",
   "main": "main.js",
   "scripts": {
     "prepare:runner": "node scripts/prepare-runner.js",
@@ -53,6 +53,7 @@
         "dmg"
       ],
       "category": "public.app-category.video",
+      "icon": "icon.png",
       "identity": null,
       "hardenedRuntime": false,
       "gatekeeperAssess": false

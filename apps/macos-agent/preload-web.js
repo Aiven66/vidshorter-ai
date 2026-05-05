@@ -32,8 +32,22 @@ contextBridge.exposeInMainWorld('vidshorterDesktop', {
     const r = await ipcRenderer.invoke('get-auth-token');
     return r?.token || '';
   },
+  clearAuthToken: async () => {
+    return await ipcRenderer.invoke('clearAuthToken');
+  },
   getMediaBaseUrl: async () => {
     const r = await ipcRenderer.invoke('get-media-base-url');
     return r?.baseUrl || '';
   },
+});
+
+contextBridge.exposeInMainWorld('electronAPI', {
+  getAuthToken: async () => {
+    const r = await ipcRenderer.invoke('get-auth-token');
+    return r?.token || '';
+  },
+  clearAuthToken: async () => {
+    return await ipcRenderer.invoke('clearAuthToken');
+  },
+  openAuth: () => ipcRenderer.invoke('open-auth'),
 });

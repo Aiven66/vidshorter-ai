@@ -164,7 +164,7 @@ function mergeClips(prev: VideoClip[], next: VideoClip[]) {
 export default function HomePage() {
   const { t } = useLocale();
   const { user, accessToken } = useAuth();
-  const { balance, refreshCredits } = useCredits();
+  const { balance, refreshCredits, deductCredits } = useCredits();
 
   // State
   const [useAgent, setUseAgent] = useState(false);
@@ -527,6 +527,10 @@ export default function HomePage() {
       if (done && !error) {
         const videoTitle = analysisTitle || null;
         saveDemoVideoRecord(displayUrl, videoTitle, Array.from(clipMap.values()), user?.id);
+        
+        if (user && user.role !== 'admin') {
+          await deductCredits(30);
+        }
       }
     } catch (err) {
       console.error('Processing error:', err);

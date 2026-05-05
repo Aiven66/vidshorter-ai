@@ -367,12 +367,29 @@ export default function DashboardPage() {
   const [feedbackSending, setFeedbackSending] = useState(false);
   const [feedbackDone, setFeedbackDone] = useState(false);
   const [feedbackError, setFeedbackError] = useState('');
+  const [isFromDesktop, setIsFromDesktop] = useState(false);
 
   useEffect(() => {
     if (!authLoading && !user) {
       router.push('/login');
     }
   }, [user, authLoading, router]);
+
+  useEffect(() => {
+    const check = () => {
+      const fromDesktop = localStorage.getItem('vidshorter_desktop_login') === 'true';
+      setIsFromDesktop(fromDesktop);
+    };
+    check();
+  }, []);
+
+  const handleReturnToDesktop = () => {
+    try {
+      window.location.href = 'vidshorter://auth/complete';
+    } catch (e) {
+      console.error('Failed to redirect to desktop app', e);
+    }
+  };
 
   useEffect(() => {
     if (user) {
@@ -531,6 +548,19 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-muted/30">
       <div className="container mx-auto px-4 py-8">
         <div className="mb-8">
+          {isFromDesktop && (
+            <div className="mb-4 p-4 border border-primary/30 bg-primary/5 rounded-lg">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-medium">Detected Desktop App Login</h3>
+                  <p className="text-sm text-muted-foreground">Click the button below to return to VidShorter Agent</p>
+                </div>
+                <Button onClick={handleReturnToDesktop}>
+                  Return to VidShorter Agent
+                </Button>
+              </div>
+            </div>
+          )}
           <h1 className="text-3xl font-bold">{t('dashboard.title')}</h1>
           <p className="text-muted-foreground">Welcome back, {user.name || user.email}!</p>
         </div>
