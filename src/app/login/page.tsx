@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,7 +13,7 @@ import Link from 'next/link';
 import { Video } from 'lucide-react';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
 
-export default function LoginPage() {
+function LoginContent() {
   const { t } = useLocale();
   const { signIn, signInWithGoogle } = useAuth();
   const router = useRouter();
@@ -36,13 +36,11 @@ export default function LoginPage() {
       return;
     }
 
-    // 获取查询参数
     const desktop = sp.get('desktop') === '1';
     const redirectUri = sp.get('redirect_uri') || '';
     const state = sp.get('state') || '';
 
     if (desktop && redirectUri) {
-      // 桌面端登录流程：确保token已保存
       try {
         const client = getSupabaseClient();
         const { data } = await client.auth.getSession();
@@ -156,5 +154,28 @@ export default function LoginPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-muted/30 py-12 px-4">
+        <Card className="w-full max-w-md">
+          <CardHeader className="text-center">
+            <div className="flex items-center justify-center gap-2 font-bold text-xl mb-4">
+              <Video className="h-6 w-6 text-primary" />
+              <span>VidShorter AI</span>
+            </div>
+            <CardTitle>Sign In</CardTitle>
+          </CardHeader>
+          <CardContent className="text-center">
+            <p className="text-sm text-muted-foreground">Loading...</p>
+          </CardContent>
+        </Card>
+      </div>
+    }>
+      <LoginContent />
+    </Suspense>
   );
 }
