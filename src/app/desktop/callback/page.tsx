@@ -4,19 +4,48 @@ import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { useAuth } from '@/lib/auth-context';
-import { CheckCircle2, AlertCircle, Monitor, ExternalLink } from 'lucide-react';
+import { CheckCircle2, AlertCircle, Monitor, ExternalLink, RefreshCw } from 'lucide-react';
+import { getSupabaseClient } from '@/storage/database/supabase-client';
 
 function DesktopCallbackContent() {
   const sp = useSearchParams();
   const router = useRouter();
-  const { accessToken, user } = useAuth();
   const [status, setStatus] = useState<'checking' | 'ready' | 'needs_login' | 'error'>('checking');
   const [msg, setMsg] = useState('Checking authentication status...');
   const [redirectUrl, setRedirectUrl] = useState('');
 
   const redirectUri = useMemo(() => sp.get('redirect_uri') || '', [sp]);
   const state = useMemo(() => sp.get('state') || '', [sp]);
+
+  const checkAuthAndGetToken = async () => {
+    let token = '';
+    
+    // 来源1: localStorage - 登录页面保存的token
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('vidshorter_access_token');
+      if (stored) {
+        token = stored;
+        console.log('[DesktopCallback] Got token from localStorage');
+      }
+    }
+    
+    // 来源2: Supabase session
+    if (!token) {
+      try {
+        const client = getSupabaseClient();
+        const { data } = await client.auth.getSession();
+        if (data?.session?.access_token) {
+          token = data.session.access_token;
+          localStorage.setItem('vidshorter_access_token', token);
+          console.log('[DesktopCallback] Got token from Supabase session');
+        }
+      } catch (e) {
+        console.error('[DesktopCallback] Failed to get session:', e);
+      }
+    }
+    
+    return token;
+  };
 
   useEffect(() => {
     if (!redirectUri) {
@@ -27,25 +56,9 @@ function DesktopCallbackContent() {
 
     const checkAuth = async () => {
       try {
-        // 尝试从多个来源获取token
-        let token = '';
+        const token = await checkAuthAndGetToken();
         
-        // 来源1: auth context
-        if (accessToken) {
-          token = accessToken;
-          console.log('[DesktopCallback] Got token from auth context');
-        }
-        
-        // 来源2: localStorage
-        if (!token && typeof window !== 'undefined') {
-          const stored = localStorage.getItem('vidshorter_access_token');
-          if (stored) {
-            token = stored;
-            console.log('[DesktopCallback] Got token from localStorage');
-          }
-        }
-        
-        if (token && user) {
+        if (token) {
           // 构建深度链接
           const url = new URL(redirectUri);
           url.searchParams.set('state', state);
@@ -63,7 +76,6 @@ function DesktopCallbackContent() {
             }
           }, 1500);
         } else {
-          // 没有登录，需要先登录
           setStatus('needs_login');
           setMsg('Please sign in first to continue');
         }
@@ -75,7 +87,7 @@ function DesktopCallbackContent() {
     };
 
     checkAuth();
-  }, [redirectUri, state, accessToken, user]);
+  }, [redirectUri, state]);
 
   const handleOpenDesktop = () => {
     if (!redirectUrl) return;
@@ -92,6 +104,31 @@ function DesktopCallbackContent() {
     params.set('redirect_uri', redirectUri);
     params.set('state', state);
     router.push(`/login?${params.toString()}`);
+  };
+
+  const handleRetry = async () => {
+    setStatus('checking');
+    setMsg('Checking authentication status...');
+    
+    try {
+      const token = await checkAuthAndGetToken();
+      
+      if (token) {
+        const url = new URL(redirectUri);
+        url.searchParams.set('state', state);
+        url.searchParams.set('access_token', token);
+        setRedirectUrl(url.toString());
+        setStatus('ready');
+        setMsg('Authentication successful!');
+      } else {
+        setStatus('needs_login');
+        setMsg('Please sign in first to continue');
+      }
+    } catch (e) {
+      console.error('[DesktopCallback] Retry failed:', e);
+      setStatus('error');
+      setMsg('Retry failed, please try again');
+    }
   };
 
   return (
@@ -141,6 +178,15 @@ function DesktopCallbackContent() {
             <div className="space-y-4">
               <Button 
                 size="lg" 
+                variant="outline" 
+                className="w-full" 
+                onClick={handleRetry}
+              >
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Retry Check
+              </Button>
+              <Button 
+                size="lg" 
                 className="w-full" 
                 onClick={handleGoToLogin}
               >
@@ -155,6 +201,15 @@ function DesktopCallbackContent() {
           
           {status === 'error' && (
             <div className="space-y-4">
+              <Button 
+                size="lg" 
+                variant="outline" 
+                className="w-full" 
+                onClick={handleRetry}
+              >
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Retry
+              </Button>
               <Button 
                 size="lg" 
                 variant="outline" 
