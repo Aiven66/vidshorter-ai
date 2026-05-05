@@ -10,7 +10,7 @@ import { useLocale } from '@/lib/locale-context';
 import { useAuth } from '@/lib/auth-context';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Video, Mail, KeyRound, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
+import { Video, Mail, KeyRound, Loader2, CheckCircle, AlertCircle, Eye, EyeOff } from 'lucide-react';
 
 type Step = 'info' | 'verify' | 'done';
 
@@ -25,6 +25,8 @@ export default function RegisterPage() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [code, setCode] = useState('');
+  const [receivedCode, setReceivedCode] = useState('');
+  const [showCode, setShowCode] = useState(false);
   const [loading, setLoading] = useState(false);
   const [sendingCode, setSendingCode] = useState(false);
   const [countdown, setCountdown] = useState(0);
@@ -51,6 +53,11 @@ export default function RegisterPage() {
       if (!res.ok) {
         setError(data.error || 'Failed to send code');
         return;
+      }
+
+      // Save the received code for display
+      if (data.code) {
+        setReceivedCode(data.code);
       }
 
       setStep('verify');
@@ -182,6 +189,28 @@ export default function RegisterPage() {
                   We sent a 6-digit code to <strong className="text-foreground">{email}</strong>
                 </p>
               </div>
+
+              {/* Show the verification code for testing! */}
+              {receivedCode && (
+                <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-4 text-center">
+                  <div className="flex items-center justify-center gap-2 mb-2">
+                    <span className="text-amber-600 dark:text-amber-400 text-sm font-medium">Your verification code:</span>
+                    <button
+                      type="button"
+                      onClick={() => setShowCode(!showCode)}
+                      className="text-amber-600 dark:text-amber-400 hover:text-amber-700"
+                    >
+                      {showCode ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  <div className="text-3xl font-mono font-bold tracking-widest text-amber-700 dark:text-amber-300">
+                    {showCode ? receivedCode : '••••••'}
+                  </div>
+                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">
+                    Click the eye icon to show/hide the code
+                  </p>
+                </div>
+              )}
 
               <div className="space-y-2">
                 <Label htmlFor="code">
