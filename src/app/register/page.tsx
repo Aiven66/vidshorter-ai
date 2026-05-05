@@ -41,6 +41,19 @@ export default function RegisterPage() {
     setError('');
 
     try {
+      // Check if email is already registered
+      const checkRes = await fetch('/api/check-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      const checkData = await checkRes.json();
+
+      if (checkData.exists) {
+        setError('This email is already registered. Please log in instead.');
+        return;
+      }
+
       const res = await fetch('/api/send-verification-code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
