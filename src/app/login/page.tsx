@@ -8,14 +8,16 @@ import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { useLocale } from '@/lib/locale-context';
 import { useAuth } from '@/lib/auth-context';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Video } from 'lucide-react';
+import { getSupabaseClient } from '@/storage/database/supabase-client';
 
 export default function LoginPage() {
   const { t } = useLocale();
   const { signIn, signInWithGoogle } = useAuth();
   const router = useRouter();
+  const sp = useSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -31,19 +33,30 @@ export default function LoginPage() {
     if (result.error) {
       setError(result.error);
       setLoading(false);
-    } else {
-      const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
-      const desktop = params?.get('desktop') === '1';
-      const redirectUri = params?.get('redirect_uri') || '';
-      const state = params?.get('state') || '';
-      if (desktop && redirectUri) {
-        if (typeof window !== 'undefined') {
+      return;
+    }
+
+    // 获取查询参数
+    const desktop = sp.get('desktop') === '1';
+    const redirectUri = sp.get('redirect_uri') || '';
+    const state = sp.get('state') || '';
+
+    if (desktop && redirectUri) {
+      // 桌面端登录流程：确保token已保存
+      try {
+        const client = getSupabaseClient();
+        const { data } = await client.auth.getSession();
+        if (data?.session?.access_token) {
+          localStorage.setItem('vidshorter_access_token', data.session.access_token);
           localStorage.setItem('vidshorter_desktop_login', 'true');
         }
-        router.push(`/desktop/callback?redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`);
-      } else {
-        router.push('/dashboard');
+      } catch (e) {
+        console.error('Failed to save token:', e);
       }
+      
+      router.push(`/desktop/callback?redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`);
+    } else {
+      router.push('/dashboard');
     }
   };
 
