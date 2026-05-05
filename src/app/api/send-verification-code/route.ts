@@ -31,10 +31,7 @@ function getSecret() {
   if (explicit) return explicit;
 
   const providerSeed = process.env.RESEND_API_KEY || process.env.SMTP_PASS || process.env.GMAIL_PASS;
-  if (!providerSeed) {
-    // Fallback secret for development/demo
-    return 'vidshorter-demo-secret-key-2024';
-  }
+  if (!providerSeed) return '';
 
   return createHash('sha256')
     .update(`vidshorter_email_otp:${providerSeed}`)
@@ -213,66 +210,65 @@ export async function POST(request: NextRequest) {
   const secret = getSecret();
   console.log('[send-verification-code] Secret available:', !!secret);
 
-  // Always use demo mode to show code directly - for testing convenience!
+  if (!secret && process.env.NODE_ENV === 'production') {
+    console.log('[send-verification-code] Verification service not configured');
+    return Response.json({ error: 'Verification service not configured' }, { status: 500 });
+  }
+
   const code = generateCode();
   console.log('[send-verification-code] Generated code:', code);
   const expiresAt = Date.now() + 5 * 60 * 1000;
 
-  // Try to send email, but even if it fails, return the code for testing
-  let emailSent = false;
-  let emailError = '';
-  
-  try {
-    const prefer = (process.env.EMAIL_PROVIDER || '').toLowerCase();
-    const hasGmailConfig = !!(process.env.GMAIL_USER && process.env.GMAIL_PASS);
-    const order: Array<'smtp' | 'resend'> = prefer === 'smtp' || hasGmailConfig ? ['smtp', 'resend'] : ['resend', 'smtp'];
+  const prefer = (process.env.EMAIL_PROVIDER || '').toLowerCase();
+  const hasGmailConfig = !!(process.env.GMAIL_USER && process.env.GMAIL_PASS);
+  const order: Array<'smtp' | 'resend'> = prefer === 'smtp' || hasGmailConfig ? ['smtp', 'resend'] : ['resend', 'smtp'];
 
-    for (const p of order) {
-      if (p === 'smtp') {
-        const result = await sendViaSMTP(email, code);
-        if (result.ok) {
-          emailSent = true;
-          break;
-        } else {
-          emailError = result.reason || '';
-        }
-      } else {
-        const result = await sendViaResend(email, code);
-        if (result.ok) {
-          emailSent = true;
-          break;
-        } else {
-          emailError = result.reason || '';
-        }
-      }
+  let sentResult: { ok: boolean; reason?: string } | undefined;
+
+  for (const p of order) {
+    if (p === 'smtp') {
+      sentResult = await sendViaSMTP(email, code);
+    } else {
+      sentResult = await sendViaResend(email, code);
     }
-  } catch (err) {
-    console.error('[send-verification-code] Email send failed completely:', err);
-    emailError = err instanceof Error ? err.message : String(err);
+
+    if (sentResult.ok) break;
   }
 
-  // Always return success with the code for testing!
-  const payload = {
-    email,
-    expiresAt,
-    attempts: 0,
-    codeHash: sha256(`${code}:${secret}`),
-  };
-  const payloadB64 = base64url(JSON.stringify(payload));
-  const token = `${payloadB64}.${sign(payloadB64, secret)}`;
-  const res = Response.json({ 
-    success: true, 
-    provider: emailSent ? (emailError ? 'smtp-with-fallback' : 'smtp') : 'demo',
-    code: code, // Always return code for testing!
-    message: emailSent ? 'Verification code sent to email.' : 'Demo mode - use this code: ' + code
-  });
-  res.headers.append(
-    'Set-Cookie',
-    `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=300${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`,
-  );
-  
-  console.log('[send-verification-code] Returning code:', code);
-  return res;
+  if (sentResult?.ok) {
+    const payload = {
+      email,
+      expiresAt,
+      attempts: 0,
+      codeHash: sha256(`${code}:${secret}`),
+    };
+    const payloadB64 = base64url(JSON.stringify(payload));
+    const token = `${payloadB64}.${sign(payloadB64, secret)}`;
+    const res = Response.json({ success: true });
+    res.headers.append(
+      'Set-Cookie',
+      `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=300${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`,
+    );
+    return res;
+  }
+
+  if (process.env.NODE_ENV !== 'production') {
+    const payload = {
+      email,
+      expiresAt,
+      attempts: 0,
+      codeHash: sha256(`${code}:${secret || 'dev'}`),
+    };
+    const payloadB64 = base64url(JSON.stringify(payload));
+    const token = `${payloadB64}.${sign(payloadB64, secret || 'dev')}`;
+    const res = Response.json({ success: true, provider: 'demo' });
+    res.headers.append('Set-Cookie', `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=300`);
+    return res;
+  }
+
+  console.log('[send-verification-code] All providers failed');
+  const errorMessage = sentResult?.reason ? `Failed to send verification code: ${sentResult.reason}` : 'Failed to send verification code';
+  return Response.json({ error: errorMessage }, { status: 500 });
 }
 
 export async function PUT(request: NextRequest) {
