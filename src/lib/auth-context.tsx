@@ -26,7 +26,6 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const DEMO_USER_KEY = 'vidshorter_demo_user';
 const DEMO_REGISTERED_USERS_KEY = 'vidshorter_registered_users';
-const DESKTOP_TOKEN_KEY = 'vidshorter_desktop_token';
 
 interface RegisteredUser {
   id: string;
@@ -156,20 +155,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function checkAuthState() {
     try {
-      const desktop = (window as any)?.vidshorterDesktop;
-      if (desktop) {
-        const token = await window.api?.getAuthToken?.();
-        if (token) {
-          const userData = await verifyTokenAndFetchUser(token);
-          if (userData) {
-            setAccessToken(token);
-            setUser(userData);
-            setLoading(false);
-            return;
+      // 检查是否是桌面端
+      const isDesktop = !!(window as any)?.vidshorterDesktop || !!(window as any)?.electronAPI;
+      
+      if (isDesktop) {
+        // 尝试获取桌面端token
+        try {
+          if (window.api?.getAuthToken) {
+            const token = await window.api.getAuthToken();
+            if (token) {
+              const userData = await verifyTokenAndFetchUser(token);
+              if (userData) {
+                setAccessToken(token);
+                setUser(userData);
+                setLoading(false);
+                return;
+              }
+            }
+          } else if (window.electronAPI?.getAuthToken) {
+            const tokenResult = await window.electronAPI.getAuthToken();
+            if (tokenResult?.token) {
+              const userData = await verifyTokenAndFetchUser(tokenResult.token);
+              if (userData) {
+                setAccessToken(tokenResult.token);
+                setUser(userData);
+                setLoading(false);
+                return;
+              }
+            }
           }
+        } catch (err) {
+          console.log('Desktop token verification failed:', err);
         }
       }
       
+      // 检查是否配置了Supabase
       if (!isSupabaseConfigured()) {
         const demoUser = getDemoUser();
         if (demoUser) {
@@ -216,7 +236,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUseDemo(true);
         }
       }
-    } catch {
+    } catch (err) {
+      console.log('Auth check failed:', err);
       const demoUser = getDemoUser();
       if (demoUser) {
         setUser(demoUser);
@@ -441,9 +462,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      const desktop = (window as any)?.vidshorterDesktop;
-      if (desktop) {
-        await window.api?.clearAuthToken?.();
+      const isDesktop = !!(window as any)?.vidshorterDesktop || !!(window as any)?.electronAPI;
+      if (isDesktop) {
+        if (window.api?.clearAuthToken) {
+          await window.api.clearAuthToken();
+        } else if (window.electronAPI?.clearAuthToken) {
+          await window.electronAPI.clearAuthToken();
+        }
       }
       
       const client = getSupabaseClient();
