@@ -369,6 +369,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
 
       if (authError) {
+        // Check if error indicates user already exists
+        if (
+          authError.message.includes('already registered') ||
+          authError.message.includes('user already exists') ||
+          authError.message.includes('email already in use')
+        ) {
+          return { error: 'This email is already registered. Please sign in.' };
+        }
+        
         console.warn('Supabase signup failed, falling back to demo mode:', authError.message);
         const userId = `demo-${Date.now()}`;
         const demoUser: User = {
