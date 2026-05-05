@@ -296,7 +296,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       const { data: { session } } = await client.auth.getSession();
       if (session) {
-        setAccessToken(session.access_token || null);
+        const token = session.access_token || null;
+        setAccessToken(token);
+        if (token && typeof window !== 'undefined') {
+          localStorage.setItem('vidshorter_access_token', token);
+        }
         const userData = await verifyTokenAndFetchUser(session.access_token!);
         if (userData) {
           setUser(userData);
@@ -397,7 +401,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       const { data: { session } } = await client.auth.getSession();
       if (session) {
-        setAccessToken(session.access_token || null);
+        const token = session.access_token || null;
+        setAccessToken(token);
+        if (token && typeof window !== 'undefined') {
+          localStorage.setItem('vidshorter_access_token', token);
+        }
         const userData = await verifyTokenAndFetchUser(session.access_token!);
         if (userData) {
           setUser(userData);

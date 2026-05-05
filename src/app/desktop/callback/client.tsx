@@ -1,10 +1,11 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { getSupabaseClient, isSupabaseConfigured } from '@/storage/database/supabase-client';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useAuth } from '@/lib/auth-context';
 import { CheckCircle2, AlertCircle, ExternalLink, Monitor } from 'lucide-react';
 
 function buildRedirectUrl(redirectUri: string, params: Record<string, string>) {
@@ -15,6 +16,8 @@ function buildRedirectUrl(redirectUri: string, params: Record<string, string>) {
 
 export default function DesktopCallbackClient() {
   const sp = useSearchParams();
+  const router = useRouter();
+  const { accessToken, user } = useAuth();
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [msg, setMsg] = useState('Preparing your session...');
   const [token, setToken] = useState('');
@@ -23,10 +26,8 @@ export default function DesktopCallbackClient() {
   const redirectUri = useMemo(() => sp.get('redirect_uri') || '', [sp]);
   const state = useMemo(() => sp.get('state') || '', [sp]);
 
-  // 无论什么情况，先构建一个默认的 redirectUrl
   useEffect(() => {
     if (redirectUri) {
-      // 即使还没有token，也先准备一个基础的重定向URL
       const defaultUrl = buildRedirectUrl(redirectUri, { state, access_token: '' });
       setRedirectUrl(defaultUrl);
     }
@@ -42,54 +43,94 @@ export default function DesktopCallbackClient() {
       }
       
       try {
-        let accessToken = '';
+        let accessTokenValue = '';
         
-        // 先尝试获取session
-        if (isSupabaseConfigured()) {
-          try {
-            const client = getSupabaseClient();
-            const { data } = await client.auth.getSession();
-            accessToken = data?.session?.access_token || '';
-          } catch {
-            // 忽略错误，继续尝试
+        // 方法1: 从Auth Context获取token（如果已经初始化）
+        if (accessToken) {
+          accessTokenValue = accessToken;
+          console.log('[DesktopCallback] Token from Auth Context');
+        }
+        
+        // 方法2: 从localStorage获取
+        if (!accessTokenValue && typeof window !== 'undefined') {
+          const storedToken = localStorage.getItem('vidshorter_access_token');
+          if (storedToken) {
+            accessTokenValue = storedToken;
+            console.log('[DesktopCallback] Token from localStorage');
           }
         }
         
-        // 构建最终的重定向URL
+        // 方法3: 尝试从Supabase session获取
+        if (!accessTokenValue && isSupabaseConfigured()) {
+          try {
+            const client = getSupabaseClient();
+            const { data } = await client.auth.getSession();
+            if (data?.session?.access_token) {
+              accessTokenValue = data.session.access_token;
+              console.log('[DesktopCallback] Token from Supabase session');
+              // 保存到localStorage供后续使用
+              if (typeof window !== 'undefined') {
+                localStorage.setItem('vidshorter_access_token', accessTokenValue);
+              }
+            }
+          } catch (e) {
+            console.log('[DesktopCallback] Failed to get session:', e);
+          }
+        }
+        
+        // 方法4: 如果有用户但没有token，尝试刷新session
+        if (!accessTokenValue && user && isSupabaseConfigured()) {
+          try {
+            const client = getSupabaseClient();
+            const { error } = await client.auth.refreshSession();
+            if (!error) {
+              const { data } = await client.auth.getSession();
+              if (data?.session?.access_token) {
+                accessTokenValue = data.session.access_token;
+                console.log('[DesktopCallback] Token from refreshed session');
+                if (typeof window !== 'undefined') {
+                  localStorage.setItem('vidshorter_access_token', accessTokenValue);
+                }
+              }
+            }
+          } catch (e) {
+            console.log('[DesktopCallback] Failed to refresh session:', e);
+          }
+        }
+        
         const url = buildRedirectUrl(redirectUri, { 
           state, 
-          access_token: accessToken 
+          access_token: accessTokenValue 
         });
         
-        setToken(accessToken);
+        setToken(accessTokenValue);
         setRedirectUrl(url);
         
-        if (accessToken) {
+        if (accessTokenValue) {
           localStorage.setItem('vidshorter_desktop_login', 'true');
           setStatus('ready');
           setMsg('You are signed in successfully!');
           
-          // Try to auto-redirect after 2 seconds
           setTimeout(() => {
             if (cancelled) return;
             try {
               window.location.href = url;
             } catch {
-              // Auto-redirect failed, user needs to click manually
+              // Auto-redirect failed
             }
           }, 2000);
         } else {
-          // 即使没有token，也让用户尝试打开桌面端
           setStatus('error');
           setMsg('Please try opening the desktop app manually');
         }
-      } catch {
+      } catch (e) {
+        console.error('[DesktopCallback] Unexpected error:', e);
         setStatus('error');
         setMsg('Please try opening the desktop app manually');
       }
     })();
     return () => { cancelled = true; };
-  }, [redirectUri, state]);
+  }, [redirectUri, state, accessToken, user]);
 
   const handleOpenDesktop = () => {
     if (!redirectUrl) return;
@@ -100,7 +141,13 @@ export default function DesktopCallbackClient() {
     }
   };
 
-  // 始终显示按钮
+  const handleRetry = () => {
+    setStatus('loading');
+    setMsg('Retrying...');
+    // 刷新页面重新获取token
+    router.refresh();
+  };
+
   const shouldShowOpenButton = redirectUrl && redirectUri;
 
   return (
@@ -126,6 +173,12 @@ export default function DesktopCallbackClient() {
         <CardContent className="text-center space-y-6">
           <p className="text-sm text-muted-foreground">{msg}</p>
           
+          {status === 'loading' && (
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">Getting your session token...</p>
+            </div>
+          )}
+          
           {shouldShowOpenButton && (
             <div className="space-y-4">
               <Button 
@@ -142,8 +195,16 @@ export default function DesktopCallbackClient() {
             </div>
           )}
           
-          {!shouldShowOpenButton && (
+          {status === 'error' && !shouldShowOpenButton && (
             <div className="space-y-4">
+              <Button 
+                size="lg" 
+                variant="outline" 
+                className="w-full" 
+                onClick={handleRetry}
+              >
+                Retry
+              </Button>
               <Button 
                 size="lg" 
                 variant="outline" 
