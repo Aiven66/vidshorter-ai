@@ -1,7 +1,7 @@
 {
   "name": "vidshorter-macos-agent",
   "private": true,
-  "version": "0.7.26",
+  "version": "0.7.27",
   "main": "main.js",
   "scripts": {
     "prepare:runner": "node scripts/prepare-runner.js",

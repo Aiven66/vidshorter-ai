@@ -161,31 +161,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (isDesktop) {
         // 尝试获取桌面端token
         try {
-          if (window.api?.getAuthToken) {
-            const token = await window.api.getAuthToken();
-            if (token) {
-              const userData = await verifyTokenAndFetchUser(token);
-              if (userData) {
-                setAccessToken(token);
-                setUser(userData);
-                setLoading(false);
-                return;
-              }
+          let token: string | null = null;
+          
+          // 尝试1: 通过electronAPI
+          if ((window as any).electronAPI?.getAuthToken) {
+            token = await (window as any).electronAPI.getAuthToken();
+            console.log('[AuthContext] Got token via electronAPI:', !!token);
+          }
+          
+          // 尝试2: 通过vidshorterDesktop
+          if (!token && (window as any).vidshorterDesktop?.getAuthToken) {
+            token = await (window as any).vidshorterDesktop.getAuthToken();
+            console.log('[AuthContext] Got token via vidshorterDesktop:', !!token);
+          }
+          
+          // 尝试3: 通过window.api
+          if (!token && (window as any).api?.getAuthToken) {
+            token = await (window as any).api.getAuthToken();
+            console.log('[AuthContext] Got token via window.api:', !!token);
+          }
+          
+          if (token) {
+            const userData = await verifyTokenAndFetchUser(token);
+            if (userData) {
+              console.log('[AuthContext] User verified successfully');
+              setAccessToken(token);
+              setUser(userData);
+              setLoading(false);
+              return;
+            } else {
+              console.log('[AuthContext] Token invalid, could not verify user');
             }
-          } else if (window.electronAPI?.getAuthToken) {
-            const tokenResult = await window.electronAPI.getAuthToken();
-            if (tokenResult?.token) {
-              const userData = await verifyTokenAndFetchUser(tokenResult.token);
-              if (userData) {
-                setAccessToken(tokenResult.token);
-                setUser(userData);
-                setLoading(false);
-                return;
-              }
-            }
+          } else {
+            console.log('[AuthContext] No token found in desktop');
           }
         } catch (err) {
-          console.log('Desktop token verification failed:', err);
+          console.log('[AuthContext] Desktop token verification failed:', err);
         }
       }
       
