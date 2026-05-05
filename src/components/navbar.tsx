@@ -25,9 +25,19 @@ export function Navbar() {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(false);
 
   useEffect(() => {
     setMounted(true);
+    // 检查是否是桌面模式
+    const checkDesktop = () => {
+      const desktop = !!(
+        (typeof window !== 'undefined' && (window as any).vidshorterDesktop) ||
+        process.env.NEXT_PUBLIC_DESKTOP === '1'
+      );
+      setIsDesktop(desktop);
+    };
+    checkDesktop();
   }, []);
 
   const showUser = mounted && !!user;
@@ -35,11 +45,27 @@ export function Navbar() {
 
   const toggleTheme = () => setTheme(theme === 'dark' ? 'light' : 'dark');
 
-  const navItems = [
-    { href: '/', label: t('nav.home') },
-    { href: '/blog', label: t('nav.blog') },
-    { href: '/pricing', label: t('nav.pricing') },
-  ];
+  // 桌面模式下只保留首页
+  const navItems = isDesktop
+    ? [{ href: '/', label: t('nav.home') }]
+    : [
+        { href: '/', label: t('nav.home') },
+        { href: '/blog', label: t('nav.blog') },
+        { href: '/pricing', label: t('nav.pricing') },
+      ];
+
+  // 桌面模式下请求认证
+  const handleDesktopAuth = async () => {
+    try {
+      if (window.api?.requestAuth) {
+        await window.api.requestAuth();
+      } else if ((window as any).electronAPI?.openAuth) {
+        await (window as any).electronAPI.openAuth();
+      }
+    } catch (e) {
+      console.error('Failed to open auth flow:', e);
+    }
+  };
 
   const isActive = (path: string) => pathname === path;
 
@@ -135,12 +161,25 @@ export function Navbar() {
               </>
             ) : (
               <div className="flex items-center gap-2">
-                <Button variant="ghost" asChild>
-                  <Link href="/login">{t('nav.login')}</Link>
-                </Button>
-                <Button asChild>
-                  <Link href="/register">{t('nav.register')}</Link>
-                </Button>
+                {isDesktop ? (
+                  <>
+                    <Button variant="ghost" onClick={handleDesktopAuth}>
+                      {t('nav.login')}
+                    </Button>
+                    <Button onClick={handleDesktopAuth}>
+                      {t('nav.register')}
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button variant="ghost" asChild>
+                      <Link href="/login">{t('nav.login')}</Link>
+                    </Button>
+                    <Button asChild>
+                      <Link href="/register">{t('nav.register')}</Link>
+                    </Button>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -244,16 +283,40 @@ export function Navbar() {
                   </>
                 ) : (
                   <div className="flex flex-col gap-2 mt-4">
-                    <Button variant="outline" asChild>
-                      <Link href="/login" onClick={() => setMobileOpen(false)}>
-                        {t('nav.login')}
-                      </Link>
-                    </Button>
-                    <Button asChild>
-                      <Link href="/register" onClick={() => setMobileOpen(false)}>
-                        {t('nav.register')}
-                      </Link>
-                    </Button>
+                    {isDesktop ? (
+                      <>
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            setMobileOpen(false);
+                            handleDesktopAuth();
+                          }}
+                        >
+                          {t('nav.login')}
+                        </Button>
+                        <Button
+                          onClick={() => {
+                            setMobileOpen(false);
+                            handleDesktopAuth();
+                          }}
+                        >
+                          {t('nav.register')}
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <Button variant="outline" asChild>
+                          <Link href="/login" onClick={() => setMobileOpen(false)}>
+                            {t('nav.login')}
+                          </Link>
+                        </Button>
+                        <Button asChild>
+                          <Link href="/register" onClick={() => setMobileOpen(false)}>
+                            {t('nav.register')}
+                          </Link>
+                        </Button>
+                      </>
+                    )}
                   </div>
                 )}
               </div>

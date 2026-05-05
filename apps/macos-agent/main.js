@@ -26,7 +26,7 @@ let embeddedWebUrl = '';
 let currentAuthState = '';
 
 // 服务器URL
-const SERVER_URL = 'https://projects-pi-kohl.vercel.app';
+const SERVER_URL = 'https://vidshorterai.vercel.app';
 
 process.on('uncaughtException', (err) => {
   try { appendLog('[UncaughtException] ' + (err && err.stack ? err.stack : String(err))); } catch {}
