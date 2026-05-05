@@ -1,16 +1,16 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuth } from '@/lib/auth-context';
 import { CheckCircle2, AlertCircle, Monitor, ExternalLink } from 'lucide-react';
 
-export default function DesktopCallbackPage() {
+function DesktopCallbackContent() {
   const sp = useSearchParams();
   const router = useRouter();
-  const { accessToken, user, signIn } = useAuth();
+  const { accessToken, user } = useAuth();
   const [status, setStatus] = useState<'checking' | 'ready' | 'needs_login' | 'error'>('checking');
   const [msg, setMsg] = useState('Checking authentication status...');
   const [redirectUrl, setRedirectUrl] = useState('');
@@ -168,5 +168,29 @@ export default function DesktopCallbackPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+export default function DesktopCallbackPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-muted/30 py-12 px-4">
+        <Card className="w-full max-w-md">
+          <CardHeader className="text-center">
+            <div className="flex justify-center mb-4">
+              <div className="p-3 bg-primary/10 rounded-full">
+                <div className="w-8 h-8 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
+              </div>
+            </div>
+            <CardTitle className="text-2xl">VidShorter Agent</CardTitle>
+          </CardHeader>
+          <CardContent className="text-center">
+            <p className="text-sm text-muted-foreground">Loading...</p>
+          </CardContent>
+        </Card>
+      </div>
+    }>
+      <DesktopCallbackContent />
+    </Suspense>
   );
 }
