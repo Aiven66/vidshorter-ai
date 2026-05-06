@@ -5,7 +5,14 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { CheckCircle2, AlertCircle, Monitor, ExternalLink, RefreshCw } from 'lucide-react';
-import { getSupabaseClient } from '@/storage/database/supabase-client';
+
+interface LoginStatus {
+  loggedIn: boolean;
+  userId?: string;
+  email?: string;
+  accessToken?: string;
+  error?: string;
+}
 
 function DesktopCallbackContent() {
   const sp = useSearchParams();
@@ -13,75 +20,23 @@ function DesktopCallbackContent() {
   const [status, setStatus] = useState<'checking' | 'ready' | 'needs_login' | 'error'>('checking');
   const [msg, setMsg] = useState('Checking authentication status...');
   const [redirectUrl, setRedirectUrl] = useState('');
-  const [userId, setUserId] = useState('');
   const [email, setEmail] = useState('');
 
   const redirectUri = useMemo(() => sp.get('redirect_uri') || '', [sp]);
   const state = useMemo(() => sp.get('state') || '', [sp]);
 
-  const checkAuthAndGetToken = async () => {
-    let token = '';
-    let userEmail = '';
-    let userId = '';
-    
-    // 来源1: URL参数 - 登录页面直接传递的token
-    const urlToken = sp.get('access_token');
-    if (urlToken) {
-      token = urlToken;
-      console.log('[DesktopCallback] Got token from URL parameter');
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('vidshorter_access_token', token);
-      }
-      
-      // 验证token并获取用户信息
-      try {
-        const client = getSupabaseClient();
-        const { data } = await client.auth.getUser(token);
-        if (data.user) {
-          userEmail = data.user.email || '';
-          userId = data.user.id;
-        }
-      } catch (e) {
-        console.error('[DesktopCallback] Failed to verify token:', e);
-      }
-      return { token, email: userEmail, userId };
-    }
-    
-    // 来源2: 直接调用Supabase getUser() - 最可靠的方式
+  const checkLoginStatus = async (): Promise<LoginStatus> => {
     try {
-      const client = getSupabaseClient();
-      const { data: userData, error: userError } = await client.auth.getUser();
-      
-      if (!userError && userData?.user) {
-        userEmail = userData.user.email || '';
-        userId = userData.user.id;
-        
-        // 获取session获取token
-        const { data: sessionData } = await client.auth.getSession();
-        if (sessionData?.session?.access_token) {
-          token = sessionData.session.access_token;
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('vidshorter_access_token', token);
-          }
-          console.log('[DesktopCallback] Got token from active session');
-        }
-      } else {
-        console.log('[DesktopCallback] No active user session:', userError?.message);
-      }
+      const response = await fetch('/api/check-login', {
+        method: 'GET',
+        credentials: 'include'
+      });
+      const data = await response.json();
+      return data;
     } catch (e) {
-      console.error('[DesktopCallback] Failed to check user session:', e);
+      console.error('Failed to check login status:', e);
+      return { loggedIn: false, error: 'Failed to check login' };
     }
-    
-    // 来源3: localStorage
-    if (!token && typeof window !== 'undefined') {
-      const stored = localStorage.getItem('vidshorter_access_token');
-      if (stored) {
-        token = stored;
-        console.log('[DesktopCallback] Got token from localStorage');
-      }
-    }
-    
-    return { token, email: userEmail, userId };
   };
 
   useEffect(() => {
@@ -93,15 +48,14 @@ function DesktopCallbackContent() {
 
     const checkAuth = async () => {
       try {
-        const { token, email: userEmail, userId: userIdValue } = await checkAuthAndGetToken();
+        const loginStatus = await checkLoginStatus();
         
-        if (token) {
-          setEmail(userEmail);
-          setUserId(userIdValue);
+        if (loginStatus.loggedIn && loginStatus.accessToken) {
+          setEmail(loginStatus.email || '');
           
           const url = new URL(redirectUri);
           url.searchParams.set('state', state);
-          url.searchParams.set('access_token', token);
+          url.searchParams.set('access_token', loginStatus.accessToken);
           setRedirectUrl(url.toString());
           setStatus('ready');
           setMsg('Authentication successful!');
@@ -115,7 +69,7 @@ function DesktopCallbackContent() {
           }, 1500);
         } else {
           setStatus('needs_login');
-          setMsg('Please sign in first to continue');
+          setMsg(loginStatus.error || 'Please sign in first to continue');
         }
       } catch (e) {
         console.error('[DesktopCallback] Error', e);
@@ -149,21 +103,20 @@ function DesktopCallbackContent() {
     setMsg('Checking authentication status...');
     
     try {
-      const { token, email: userEmail, userId: userIdValue } = await checkAuthAndGetToken();
+      const loginStatus = await checkLoginStatus();
       
-      if (token) {
-        setEmail(userEmail);
-        setUserId(userIdValue);
+      if (loginStatus.loggedIn && loginStatus.accessToken) {
+        setEmail(loginStatus.email || '');
         
         const url = new URL(redirectUri);
         url.searchParams.set('state', state);
-        url.searchParams.set('access_token', token);
+        url.searchParams.set('access_token', loginStatus.accessToken);
         setRedirectUrl(url.toString());
         setStatus('ready');
         setMsg('Authentication successful!');
       } else {
         setStatus('needs_login');
-        setMsg('Please sign in first to continue');
+        setMsg(loginStatus.error || 'Please sign in first to continue');
       }
     } catch (e) {
       console.error('[DesktopCallback] Retry failed:', e);
