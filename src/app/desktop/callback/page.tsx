@@ -13,14 +13,18 @@ function DesktopCallbackContent() {
   const [status, setStatus] = useState<'checking' | 'ready' | 'needs_login' | 'error'>('checking');
   const [msg, setMsg] = useState('Checking authentication status...');
   const [redirectUrl, setRedirectUrl] = useState('');
+  const [userId, setUserId] = useState('');
+  const [email, setEmail] = useState('');
 
   const redirectUri = useMemo(() => sp.get('redirect_uri') || '', [sp]);
   const state = useMemo(() => sp.get('state') || '', [sp]);
 
   const checkAuthAndGetToken = async () => {
     let token = '';
+    let userEmail = '';
+    let userId = '';
     
-    // 来源1: URL参数 - 登录页面直接传递的token（最可靠）
+    // 来源1: URL参数 - 登录页面直接传递的token
     const urlToken = sp.get('access_token');
     if (urlToken) {
       token = urlToken;
@@ -28,10 +32,47 @@ function DesktopCallbackContent() {
       if (typeof window !== 'undefined') {
         localStorage.setItem('vidshorter_access_token', token);
       }
-      return token;
+      
+      // 验证token并获取用户信息
+      try {
+        const client = getSupabaseClient();
+        const { data } = await client.auth.getUser(token);
+        if (data.user) {
+          userEmail = data.user.email || '';
+          userId = data.user.id;
+        }
+      } catch (e) {
+        console.error('[DesktopCallback] Failed to verify token:', e);
+      }
+      return { token, email: userEmail, userId };
     }
     
-    // 来源2: localStorage - 登录页面保存的token
+    // 来源2: 直接调用Supabase getUser() - 最可靠的方式
+    try {
+      const client = getSupabaseClient();
+      const { data: userData, error: userError } = await client.auth.getUser();
+      
+      if (!userError && userData?.user) {
+        userEmail = userData.user.email || '';
+        userId = userData.user.id;
+        
+        // 获取session获取token
+        const { data: sessionData } = await client.auth.getSession();
+        if (sessionData?.session?.access_token) {
+          token = sessionData.session.access_token;
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('vidshorter_access_token', token);
+          }
+          console.log('[DesktopCallback] Got token from active session');
+        }
+      } else {
+        console.log('[DesktopCallback] No active user session:', userError?.message);
+      }
+    } catch (e) {
+      console.error('[DesktopCallback] Failed to check user session:', e);
+    }
+    
+    // 来源3: localStorage
     if (!token && typeof window !== 'undefined') {
       const stored = localStorage.getItem('vidshorter_access_token');
       if (stored) {
@@ -40,24 +81,7 @@ function DesktopCallbackContent() {
       }
     }
     
-    // 来源3: Supabase session
-    if (!token) {
-      try {
-        const client = getSupabaseClient();
-        const { data } = await client.auth.getSession();
-        if (data?.session?.access_token) {
-          token = data.session.access_token;
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('vidshorter_access_token', token);
-          }
-          console.log('[DesktopCallback] Got token from Supabase session');
-        }
-      } catch (e) {
-        console.error('[DesktopCallback] Failed to get session:', e);
-      }
-    }
-    
-    return token;
+    return { token, email: userEmail, userId };
   };
 
   useEffect(() => {
@@ -69,10 +93,12 @@ function DesktopCallbackContent() {
 
     const checkAuth = async () => {
       try {
-        const token = await checkAuthAndGetToken();
+        const { token, email: userEmail, userId: userIdValue } = await checkAuthAndGetToken();
         
         if (token) {
-          // 构建深度链接
+          setEmail(userEmail);
+          setUserId(userIdValue);
+          
           const url = new URL(redirectUri);
           url.searchParams.set('state', state);
           url.searchParams.set('access_token', token);
@@ -80,7 +106,6 @@ function DesktopCallbackContent() {
           setStatus('ready');
           setMsg('Authentication successful!');
           
-          // 尝试自动打开桌面客户端
           setTimeout(() => {
             try {
               window.location.href = url.toString();
@@ -124,9 +149,12 @@ function DesktopCallbackContent() {
     setMsg('Checking authentication status...');
     
     try {
-      const token = await checkAuthAndGetToken();
+      const { token, email: userEmail, userId: userIdValue } = await checkAuthAndGetToken();
       
       if (token) {
+        setEmail(userEmail);
+        setUserId(userIdValue);
+        
         const url = new URL(redirectUri);
         url.searchParams.set('state', state);
         url.searchParams.set('access_token', token);
@@ -173,6 +201,11 @@ function DesktopCallbackContent() {
           
           {status === 'ready' && (
             <div className="space-y-4">
+              {email && (
+                <p className="text-sm text-foreground">
+                  Signed in as: <span className="font-medium">{email}</span>
+                </p>
+              )}
               <Button 
                 size="lg" 
                 className="w-full" 
