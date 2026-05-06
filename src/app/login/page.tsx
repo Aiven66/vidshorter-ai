@@ -41,36 +41,22 @@ function LoginContent() {
     const state = sp.get('state') || '';
 
     if (desktop && redirectUri) {
-      let token = '';
-      let userEmail = '';
-      
-      try {
-        const client = getSupabaseClient();
-        const { data } = await client.auth.getSession();
-        if (data?.session?.access_token) {
-          token = data.session.access_token;
-          userEmail = data.session.user?.email || '';
-        }
-      } catch (e) {
-        console.error('Failed to get token:', e);
-      }
-      
-      if (!token) {
+      if (!result.token) {
         setError('Failed to get authentication token. Please try again.');
         setLoading(false);
         return;
       }
       
-      // 直接构建完整的深度链接，不依赖回调页面的任何验证
+      // 直接构建完整的深度链接，使用从 signIn 返回的 token
       const url = new URL(redirectUri);
       url.searchParams.set('state', state);
-      url.searchParams.set('access_token', token);
+      url.searchParams.set('access_token', result.token);
       
       // 将完整的深度链接和用户信息一起传递给回调页面
       const callbackParams = new URLSearchParams();
       callbackParams.set('deeplink', url.toString());
-      if (userEmail) {
-        callbackParams.set('email', userEmail);
+      if (result.email) {
+        callbackParams.set('email', result.email);
       }
       
       router.push(`/desktop/callback?${callbackParams.toString()}`);

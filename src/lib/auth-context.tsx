@@ -269,7 +269,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         saveDemoUser(adminUser);
         setUseDemo(true);
         setAccessToken(null);
-        return { error: null };
+        return { error: null, token: null };
       }
       const registered = findRegisteredUser(email, password);
       if (registered) {
@@ -284,14 +284,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         saveDemoUser(demoUser);
         setUseDemo(true);
         setAccessToken(null);
-        return { error: null };
+        return { error: null, token: null };
       }
-      return { error: 'Invalid email or password. Please register an account first.' };
+      return { error: 'Invalid email or password. Please register an account first.', token: null };
     }
 
     try {
       const client = getSupabaseClient();
-      const { error: authError } = await client.auth.signInWithPassword({ email, password });
+      const { data, error: authError } = await client.auth.signInWithPassword({ email, password });
 
       if (authError) {
         if (isDemoAdmin(email, password)) {
@@ -300,25 +300,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           saveDemoUser(adminUser);
           setUseDemo(true);
           setAccessToken(null);
-          return { error: null };
+          return { error: null, token: null };
         }
-        return { error: authError.message };
+        return { error: authError.message, token: null };
       }
 
-      const { data: { session } } = await client.auth.getSession();
-      if (session) {
-        const token = session.access_token || null;
+      if (data.session) {
+        const token = data.session.access_token || null;
         setAccessToken(token);
         if (token && typeof window !== 'undefined') {
           localStorage.setItem('vidshorter_access_token', token);
         }
-        const userData = await verifyTokenAndFetchUser(session.access_token!);
+        const userData = await verifyTokenAndFetchUser(data.session.access_token!);
         if (userData) {
           setUser(userData);
         }
+        return { error: null, token, email: data.session.user?.email };
       }
       
-      return { error: null };
+      return { error: null, token: null };
     } catch {
       if (isDemoAdmin(email, password)) {
         const adminUser = getDemoAdminUser(email);
