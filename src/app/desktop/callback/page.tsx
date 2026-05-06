@@ -20,8 +20,19 @@ function DesktopCallbackContent() {
   const checkAuthAndGetToken = async () => {
     let token = '';
     
-    // 来源1: localStorage - 登录页面保存的token
-    if (typeof window !== 'undefined') {
+    // 来源1: URL参数 - 登录页面直接传递的token（最可靠）
+    const urlToken = sp.get('access_token');
+    if (urlToken) {
+      token = urlToken;
+      console.log('[DesktopCallback] Got token from URL parameter');
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('vidshorter_access_token', token);
+      }
+      return token;
+    }
+    
+    // 来源2: localStorage - 登录页面保存的token
+    if (!token && typeof window !== 'undefined') {
       const stored = localStorage.getItem('vidshorter_access_token');
       if (stored) {
         token = stored;
@@ -29,14 +40,16 @@ function DesktopCallbackContent() {
       }
     }
     
-    // 来源2: Supabase session
+    // 来源3: Supabase session
     if (!token) {
       try {
         const client = getSupabaseClient();
         const { data } = await client.auth.getSession();
         if (data?.session?.access_token) {
           token = data.session.access_token;
-          localStorage.setItem('vidshorter_access_token', token);
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('vidshorter_access_token', token);
+          }
           console.log('[DesktopCallback] Got token from Supabase session');
         }
       } catch (e) {

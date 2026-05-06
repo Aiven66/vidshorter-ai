@@ -41,18 +41,27 @@ function LoginContent() {
     const state = sp.get('state') || '';
 
     if (desktop && redirectUri) {
+      let token = '';
       try {
         const client = getSupabaseClient();
         const { data } = await client.auth.getSession();
         if (data?.session?.access_token) {
-          localStorage.setItem('vidshorter_access_token', data.session.access_token);
+          token = data.session.access_token;
+          localStorage.setItem('vidshorter_access_token', token);
           localStorage.setItem('vidshorter_desktop_login', 'true');
         }
       } catch (e) {
         console.error('Failed to save token:', e);
       }
       
-      router.push(`/desktop/callback?redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`);
+      // 直接将token作为URL参数传递，确保可靠性
+      const params = new URLSearchParams();
+      params.set('redirect_uri', redirectUri);
+      params.set('state', state);
+      if (token) {
+        params.set('access_token', token);
+      }
+      router.push(`/desktop/callback?${params.toString()}`);
     } else {
       router.push('/dashboard');
     }
