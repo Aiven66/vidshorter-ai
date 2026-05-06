@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useState } from 'react';
+import { Suspense, useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,13 +15,42 @@ import { getSupabaseClient } from '@/storage/database/supabase-client';
 
 function LoginContent() {
   const { t } = useLocale();
-  const { signIn, signInWithGoogle } = useAuth();
+  const { signIn, signInWithGoogle, user, accessToken, loading: authLoading } = useAuth();
   const router = useRouter();
   const sp = useSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // 检查用户是否已经登录
+  useEffect(() => {
+    if (authLoading) return;
+    
+    if (user && accessToken) {
+      const desktop = sp.get('desktop') === '1';
+      const redirectUri = sp.get('redirect_uri') || '';
+      const state = sp.get('state') || '';
+      
+      if (desktop && redirectUri) {
+        // 如果是桌面登录，并且用户已经登录，直接跳转到回调页面
+        const url = new URL(redirectUri);
+        url.searchParams.set('state', state);
+        url.searchParams.set('access_token', accessToken);
+        
+        const callbackParams = new URLSearchParams();
+        callbackParams.set('deeplink', url.toString());
+        if (user.email) {
+          callbackParams.set('email', user.email);
+        }
+        
+        router.push(`/desktop/callback?${callbackParams.toString()}`);
+      } else {
+        // 普通登录，跳转到 dashboard
+        router.push('/dashboard');
+      }
+    }
+  }, [user, accessToken, authLoading, router, sp]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,22 +70,40 @@ function LoginContent() {
     const state = sp.get('state') || '';
 
     if (desktop && redirectUri) {
-      if (!result.token) {
+      // 先尝试使用从 signIn 返回的 token
+      let token = result.token;
+      let userEmail = result.email;
+      
+      // 如果没有获取到 token，尝试直接从 Supabase 获取
+      if (!token) {
+        try {
+          const client = getSupabaseClient();
+          const { data } = await client.auth.getSession();
+          if (data?.session?.access_token) {
+            token = data.session.access_token;
+            userEmail = data.session.user?.email || '';
+          }
+        } catch (e) {
+          console.error('Failed to get token from getSession:', e);
+        }
+      }
+      
+      if (!token) {
         setError('Failed to get authentication token. Please try again.');
         setLoading(false);
         return;
       }
       
-      // 直接构建完整的深度链接，使用从 signIn 返回的 token
+      // 直接构建完整的深度链接
       const url = new URL(redirectUri);
       url.searchParams.set('state', state);
-      url.searchParams.set('access_token', result.token);
+      url.searchParams.set('access_token', token);
       
       // 将完整的深度链接和用户信息一起传递给回调页面
       const callbackParams = new URLSearchParams();
       callbackParams.set('deeplink', url.toString());
-      if (result.email) {
-        callbackParams.set('email', result.email);
+      if (userEmail) {
+        callbackParams.set('email', userEmail);
       }
       
       router.push(`/desktop/callback?${callbackParams.toString()}`);
