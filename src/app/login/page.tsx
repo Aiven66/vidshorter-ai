@@ -42,26 +42,38 @@ function LoginContent() {
 
     if (desktop && redirectUri) {
       let token = '';
+      let userEmail = '';
+      
       try {
         const client = getSupabaseClient();
         const { data } = await client.auth.getSession();
         if (data?.session?.access_token) {
           token = data.session.access_token;
-          localStorage.setItem('vidshorter_access_token', token);
-          localStorage.setItem('vidshorter_desktop_login', 'true');
+          userEmail = data.session.user?.email || '';
         }
       } catch (e) {
-        console.error('Failed to save token:', e);
+        console.error('Failed to get token:', e);
       }
       
-      // 直接将token作为URL参数传递，确保可靠性
-      const params = new URLSearchParams();
-      params.set('redirect_uri', redirectUri);
-      params.set('state', state);
-      if (token) {
-        params.set('access_token', token);
+      if (!token) {
+        setError('Failed to get authentication token. Please try again.');
+        setLoading(false);
+        return;
       }
-      router.push(`/desktop/callback?${params.toString()}`);
+      
+      // 直接构建完整的深度链接，不依赖回调页面的任何验证
+      const url = new URL(redirectUri);
+      url.searchParams.set('state', state);
+      url.searchParams.set('access_token', token);
+      
+      // 将完整的深度链接和用户信息一起传递给回调页面
+      const callbackParams = new URLSearchParams();
+      callbackParams.set('deeplink', url.toString());
+      if (userEmail) {
+        callbackParams.set('email', userEmail);
+      }
+      
+      router.push(`/desktop/callback?${callbackParams.toString()}`);
     } else {
       router.push('/dashboard');
     }
