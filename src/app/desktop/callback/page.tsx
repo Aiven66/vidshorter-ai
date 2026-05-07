@@ -5,6 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { CheckCircle2, AlertCircle, Monitor, ExternalLink, RefreshCw } from 'lucide-react';
+import { getSupabaseClient } from '@/storage/database/supabase-client';
 
 function DesktopCallbackContent() {
   const sp = useSearchParams();
@@ -14,34 +15,57 @@ function DesktopCallbackContent() {
   const [deeplink, setDeeplink] = useState('');
   const [email, setEmail] = useState('');
 
-  // 直接从 URL 参数获取完整的深度链接
-  const deeplinkParam = useMemo(() => sp.get('deeplink') || '', [sp]);
+  const redirectUri = useMemo(() => sp.get('redirect_uri') || '', [sp]);
+  const state = useMemo(() => sp.get('state') || '', [sp]);
   const emailParam = useMemo(() => sp.get('email') || '', [sp]);
 
   useEffect(() => {
-    if (deeplinkParam) {
-      // 有完整的深度链接，直接显示成功状态
-      setDeeplink(deeplinkParam);
-      if (emailParam) {
-        setEmail(emailParam);
-      }
-      setStatus('ready');
-      setMsg('Authentication successful!');
-      
-      // 尝试自动打开桌面客户端
-      setTimeout(() => {
-        try {
-          window.location.href = deeplinkParam;
-        } catch (e) {
-          console.error('Auto-open failed', e);
-        }
-      }, 1500);
-    } else {
-      // 没有深度链接，说明没有从登录页面跳转过来
-      setStatus('needs_login');
-      setMsg('Please sign in first to continue');
+    if (!redirectUri) {
+      setStatus('error');
+      setMsg('Missing redirect_uri parameter');
+      return;
     }
-  }, [deeplinkParam, emailParam]);
+
+    const checkAuth = async () => {
+      try {
+        // 直接从 Supabase 获取 session
+        const client = getSupabaseClient();
+        const { data } = await client.auth.getSession();
+        
+        if (data.session?.access_token) {
+          const token = data.session.access_token;
+          const userEmail = data.session.user?.email || emailParam;
+          
+          setEmail(userEmail);
+          
+          const url = new URL(redirectUri);
+          url.searchParams.set('state', state);
+          url.searchParams.set('access_token', token);
+          setDeeplink(url.toString());
+          setStatus('ready');
+          setMsg('Authentication successful!');
+          
+          // 尝试自动打开桌面客户端
+          setTimeout(() => {
+            try {
+              window.location.href = url.toString();
+            } catch (e) {
+              console.error('Auto-open failed', e);
+            }
+          }, 1500);
+        } else {
+          setStatus('needs_login');
+          setMsg('Please sign in first to continue');
+        }
+      } catch (e) {
+        console.error('[DesktopCallback] Error', e);
+        setStatus('error');
+        setMsg('Something went wrong');
+      }
+    };
+
+    checkAuth();
+  }, [redirectUri, state, emailParam]);
 
   const handleOpenDesktop = () => {
     if (!deeplink) return;
@@ -53,7 +77,42 @@ function DesktopCallbackContent() {
   };
 
   const handleGoToLogin = () => {
-    router.push('/');
+    const params = new URLSearchParams();
+    params.set('desktop', '1');
+    params.set('redirect_uri', redirectUri);
+    params.set('state', state);
+    router.push(`/login?${params.toString()}`);
+  };
+
+  const handleRetry = async () => {
+    setStatus('checking');
+    setMsg('Checking authentication status...');
+    
+    try {
+      const client = getSupabaseClient();
+      const { data } = await client.auth.getSession();
+      
+      if (data.session?.access_token) {
+        const token = data.session.access_token;
+        const userEmail = data.session.user?.email || emailParam;
+        
+        setEmail(userEmail);
+        
+        const url = new URL(redirectUri);
+        url.searchParams.set('state', state);
+        url.searchParams.set('access_token', token);
+        setDeeplink(url.toString());
+        setStatus('ready');
+        setMsg('Authentication successful!');
+      } else {
+        setStatus('needs_login');
+        setMsg('Please sign in first to continue');
+      }
+    } catch (e) {
+      console.error('[DesktopCallback] Retry failed:', e);
+      setStatus('error');
+      setMsg('Retry failed, please try again');
+    }
   };
 
   return (
@@ -80,7 +139,7 @@ function DesktopCallbackContent() {
           <p className="text-sm text-muted-foreground">{msg}</p>
           
           {status === 'checking' && (
-            <p className="text-xs text-muted-foreground">Please wait...</p>
+            <p className="text-xs text-muted-foreground">Please wait while we verify your session...</p>
           )}
           
           {status === 'ready' && (
@@ -108,15 +167,46 @@ function DesktopCallbackContent() {
             <div className="space-y-4">
               <Button 
                 size="lg" 
+                variant="outline" 
+                className="w-full" 
+                onClick={handleRetry}
+              >
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Retry Check
+              </Button>
+              <Button 
+                size="lg" 
                 className="w-full" 
                 onClick={handleGoToLogin}
               >
                 <ExternalLink className="w-4 h-4 mr-2" />
-                Go to Home
+                Sign In First
               </Button>
               <p className="text-xs text-muted-foreground">
-                Please use desktop app to login
+                Please sign in before returning to the desktop app
               </p>
+            </div>
+          )}
+          
+          {status === 'error' && (
+            <div className="space-y-4">
+              <Button 
+                size="lg" 
+                variant="outline" 
+                className="w-full" 
+                onClick={handleRetry}
+              >
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Retry
+              </Button>
+              <Button 
+                size="lg" 
+                variant="outline" 
+                className="w-full" 
+                onClick={() => window.location.href = '/'}
+              >
+                Go Home
+              </Button>
             </div>
           )}
         </CardContent>
