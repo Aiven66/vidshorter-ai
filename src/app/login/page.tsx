@@ -15,42 +15,56 @@ import { getSupabaseClient } from '@/storage/database/supabase-client';
 
 function LoginContent() {
   const { t } = useLocale();
-  const { signIn, signInWithGoogle, user, accessToken, loading: authLoading } = useAuth();
+  const { signIn, signInWithGoogle } = useAuth();
   const router = useRouter();
   const sp = useSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [checkedSession, setCheckedSession] = useState(false);
 
-  // 检查用户是否已经登录
+  // 直接从 Supabase 检查 session，不依赖 auth context
   useEffect(() => {
-    if (authLoading) return;
-    
-    if (user && accessToken) {
-      const desktop = sp.get('desktop') === '1';
-      const redirectUri = sp.get('redirect_uri') || '';
-      const state = sp.get('state') || '';
+    const checkSession = async () => {
+      if (checkedSession) return;
       
-      if (desktop && redirectUri) {
-        // 如果是桌面登录，并且用户已经登录，直接跳转到回调页面
-        const url = new URL(redirectUri);
-        url.searchParams.set('state', state);
-        url.searchParams.set('access_token', accessToken);
+      try {
+        const client = getSupabaseClient();
+        const { data } = await client.auth.getSession();
         
-        const callbackParams = new URLSearchParams();
-        callbackParams.set('deeplink', url.toString());
-        if (user.email) {
-          callbackParams.set('email', user.email);
+        if (data.session?.access_token) {
+          const desktop = sp.get('desktop') === '1';
+          const redirectUri = sp.get('redirect_uri') || '';
+          const state = sp.get('state') || '';
+          
+          if (desktop && redirectUri) {
+            // 如果是桌面登录，并且用户已经登录，直接跳转到回调页面
+            const url = new URL(redirectUri);
+            url.searchParams.set('state', state);
+            url.searchParams.set('access_token', data.session.access_token);
+            
+            const callbackParams = new URLSearchParams();
+            callbackParams.set('deeplink', url.toString());
+            if (data.session.user?.email) {
+              callbackParams.set('email', data.session.user.email);
+            }
+            
+            router.push(`/desktop/callback?${callbackParams.toString()}`);
+          } else {
+            // 普通登录，跳转到 dashboard
+            router.push('/dashboard');
+          }
         }
-        
-        router.push(`/desktop/callback?${callbackParams.toString()}`);
-      } else {
-        // 普通登录，跳转到 dashboard
-        router.push('/dashboard');
+      } catch (e) {
+        console.error('Failed to check session:', e);
       }
-    }
-  }, [user, accessToken, authLoading, router, sp]);
+      
+      setCheckedSession(true);
+    };
+    
+    checkSession();
+  }, [router, sp, checkedSession]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
