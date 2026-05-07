@@ -5,7 +5,6 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { CheckCircle2, AlertCircle, Monitor, ExternalLink, RefreshCw } from 'lucide-react';
-import { getSupabaseClient } from '@/storage/database/supabase-client';
 
 function DesktopCallbackContent() {
   const sp = useSearchParams();
@@ -28,15 +27,28 @@ function DesktopCallbackContent() {
 
     const checkAuth = async () => {
       try {
-        // 直接从 Supabase 获取 session
-        const client = getSupabaseClient();
-        const { data } = await client.auth.getSession();
+        // 方法1: 从 localStorage 获取 token
+        let token = '';
+        if (typeof window !== 'undefined') {
+          token = localStorage.getItem('vidshorter_access_token') || '';
+        }
         
-        if (data.session?.access_token) {
-          const token = data.session.access_token;
-          const userEmail = data.session.user?.email || emailParam;
-          
-          setEmail(userEmail);
+        // 方法2: 如果 localStorage 没有，尝试从 Supabase 获取
+        if (!token) {
+          try {
+            const { getSupabaseClient } = await import('@/storage/database/supabase-client');
+            const client = getSupabaseClient();
+            const { data } = await client.auth.getSession();
+            if (data.session?.access_token) {
+              token = data.session.access_token;
+            }
+          } catch (e) {
+            console.error('Failed to get session from Supabase:', e);
+          }
+        }
+        
+        if (token) {
+          setEmail(emailParam);
           
           const url = new URL(redirectUri);
           url.searchParams.set('state', state);
@@ -89,14 +101,27 @@ function DesktopCallbackContent() {
     setMsg('Checking authentication status...');
     
     try {
-      const client = getSupabaseClient();
-      const { data } = await client.auth.getSession();
+      // 从 localStorage 获取 token
+      let token = '';
+      if (typeof window !== 'undefined') {
+        token = localStorage.getItem('vidshorter_access_token') || '';
+      }
       
-      if (data.session?.access_token) {
-        const token = data.session.access_token;
-        const userEmail = data.session.user?.email || emailParam;
-        
-        setEmail(userEmail);
+      if (!token) {
+        try {
+          const { getSupabaseClient } = await import('@/storage/database/supabase-client');
+          const client = getSupabaseClient();
+          const { data } = await client.auth.getSession();
+          if (data.session?.access_token) {
+            token = data.session.access_token;
+          }
+        } catch (e) {
+          console.error('Failed to get session:', e);
+        }
+      }
+      
+      if (token) {
+        setEmail(emailParam);
         
         const url = new URL(redirectUri);
         url.searchParams.set('state', state);
