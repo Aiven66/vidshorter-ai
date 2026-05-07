@@ -13,13 +13,17 @@ function DesktopCallbackContent() {
   const redirectUri = useMemo(() => sp.get('redirect_uri') || '', [sp]);
   const state = useMemo(() => sp.get('state') || '', [sp]);
   const email = useMemo(() => sp.get('email') || '', [sp]);
+  const accessToken = useMemo(() => sp.get('access_token') || '', [sp]);
 
   const handleOpenDesktop = () => {
     if (!redirectUri) return;
     
-    // 构建深度链接，不包含 token（让桌面客户端自己获取）
+    // 构建深度链接，包含 token
     const url = new URL(redirectUri);
     url.searchParams.set('state', state);
+    if (accessToken) {
+      url.searchParams.set('access_token', accessToken);
+    }
     
     try {
       window.location.href = url.toString();

@@ -40,11 +40,14 @@ function LoginContent() {
     const state = sp.get('state') || '';
 
     if (desktop && redirectUri) {
-      // 直接跳转到回调页面，让回调页面处理 token
+      // 将 token 和相关信息传递给回调页面
       const callbackParams = new URLSearchParams();
       callbackParams.set('redirect_uri', redirectUri);
       callbackParams.set('state', state);
       callbackParams.set('email', email);
+      if (result.token) {
+        callbackParams.set('access_token', result.token);
+      }
       
       router.push(`/desktop/callback?${callbackParams.toString()}`);
     } else {

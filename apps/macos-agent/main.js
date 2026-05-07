@@ -250,25 +250,24 @@ async function handleDeepLink(rawUrl) {
     const token = url.searchParams.get('access_token') || '';
     const state = url.searchParams.get('state') || '';
     
-    if (!token) {
-      appendLog('No token received in deeplink');
-      return;
-    }
-    
     // 验证 state
     if (currentAuthState && state && currentAuthState !== state) {
       appendLog('Invalid state parameter');
       return;
     }
     
-    appendLog('Received auth token, saving...');
-    
-    // 保存token
-    const cfg = await loadConfig();
-    cfg.authToken = token;
-    await saveConfig(cfg);
-    
-    appendLog('Token saved. Refreshing webview...');
+    if (token) {
+      appendLog('Received auth token, saving...');
+      
+      // 保存token
+      const cfg = await loadConfig();
+      cfg.authToken = token;
+      await saveConfig(cfg);
+      
+      appendLog('Token saved. Refreshing webview...');
+    } else {
+      appendLog('No token in deeplink, refreshing webview anyway...');
+    }
     
     // 聚焦并刷新
     if (webWindow && !webWindow.isDestroyed()) {
