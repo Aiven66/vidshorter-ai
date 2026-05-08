@@ -137,9 +137,38 @@ async function verifyTokenAndFetchUser(token: string): Promise<User | null> {
       role: 'user',
       avatarUrl: authUser.user_metadata?.avatar_url || null,
     };
+  } catch (e) {
+    console.log('[AuthContext] verifyTokenAndFetchUser error:', e);
+    return null;
+  }
+}
+
+function decodeJwtPayload(token: string): Record<string, any> | null {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const payload = parts[1];
+    const padded = payload + '='.repeat((4 - payload.length % 4) % 4);
+    const decoded = atob(padded);
+    return JSON.parse(decoded);
   } catch {
     return null;
   }
+}
+
+function createUserFromJwt(token: string): User | null {
+  const payload = decodeJwtPayload(token);
+  if (!payload) return null;
+  const email = payload.email || '';
+  const sub = payload.sub || '';
+  if (!sub) return null;
+  return {
+    id: sub,
+    email,
+    name: payload.user_metadata?.name || payload.full_name || email.split('@')[0],
+    role: payload.role || 'user',
+    avatarUrl: payload.user_metadata?.avatar_url || payload.avatar_url || null,
+  };
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -151,47 +180,70 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     checkAuthState();
+
+    const handleAuthChange = () => {
+      console.log('[AuthContext] Received vidshorter-auth-change event');
+      checkAuthState();
+    };
+    window.addEventListener('vidshorter-auth-change', handleAuthChange);
+    return () => {
+      window.removeEventListener('vidshorter-auth-change', handleAuthChange);
+    };
   }, []);
 
   async function checkAuthState() {
     try {
-      // 检查是否是桌面端
       const isDesktop = !!(window as any)?.vidshorterDesktop || !!(window as any)?.electronAPI;
       
       if (isDesktop) {
-        // 尝试获取桌面端token
         try {
           let token: string | null = null;
+
+          if ((window as any).__vidshorterDesktopToken) {
+            token = (window as any).__vidshorterDesktopToken;
+            console.log('[AuthContext] Got token via __vidshorterDesktopToken');
+          }
+
+          if (!token && typeof window !== 'undefined' && window.localStorage) {
+            const storedToken = localStorage.getItem('vidshorter_access_token');
+            if (storedToken) {
+              token = storedToken;
+              console.log('[AuthContext] Got token via localStorage');
+            }
+          }
           
-          // 尝试1: 通过electronAPI
-          if ((window as any).electronAPI?.getAuthToken) {
+          if (!token && (window as any).electronAPI?.getAuthToken) {
             token = await (window as any).electronAPI.getAuthToken();
             console.log('[AuthContext] Got token via electronAPI:', !!token);
           }
           
-          // 尝试2: 通过vidshorterDesktop
-          if (!token && (window as any).vidshorterDesktop?.getAuthToken) {
-            token = await (window as any).vidshorterDesktop.getAuthToken();
-            console.log('[AuthContext] Got token via vidshorterDesktop:', !!token);
-          }
-          
-          // 尝试3: 通过window.api
           if (!token && (window as any).api?.getAuthToken) {
             token = await (window as any).api.getAuthToken();
             console.log('[AuthContext] Got token via window.api:', !!token);
           }
           
           if (token) {
+            console.log('[AuthContext] Token found, attempting verification...');
             const userData = await verifyTokenAndFetchUser(token);
             if (userData) {
-              console.log('[AuthContext] User verified successfully');
+              console.log('[AuthContext] User verified via Supabase API');
               setAccessToken(token);
               setUser(userData);
               setLoading(false);
               return;
-            } else {
-              console.log('[AuthContext] Token invalid, could not verify user');
             }
+
+            console.log('[AuthContext] Supabase API failed, falling back to JWT decode');
+            const jwtUser = createUserFromJwt(token);
+            if (jwtUser) {
+              console.log('[AuthContext] User created from JWT:', jwtUser.email);
+              setAccessToken(token);
+              setUser(jwtUser);
+              setLoading(false);
+              return;
+            }
+
+            console.log('[AuthContext] JWT decode also failed');
           } else {
             console.log('[AuthContext] No token found in desktop');
           }
@@ -200,7 +252,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       }
       
-      // 检查是否配置了Supabase
       if (!isSupabaseConfigured()) {
         const demoUser = getDemoUser();
         if (demoUser) {
