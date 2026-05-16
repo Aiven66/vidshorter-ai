@@ -1,0 +1,97 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>VidShorter Agent - Debug</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { font-family: -apple-system, system-ui, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }
+      h1 { font-size: 18px; margin: 0 0 16px; }
+      h2 { font-size: 14px; margin: 16px 0 8px; color: #333; }
+      .card { background: #fff; border-radius: 12px; padding: 16px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+      .row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+      .row label { width: 120px; font-size: 12px; color: #666; }
+      .value { flex: 1; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; padding: 8px 10px; background: #fafafa; border-radius: 8px; border: 1px solid #eee; word-break: break-all; }
+      button { padding: 10px 14px; border: 1px solid #ddd; border-radius: 10px; background: #fff; cursor: pointer; font-size: 13px; }
+      button.primary { background: #111; color: #fff; border-color: #111; }
+      button.danger { background: #fee; color: #b22; border-color: #faa; }
+      .logs { height: 400px; overflow: auto; border: 1px solid #eee; border-radius: 10px; padding: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; background: #111; color: #0f0; white-space: pre-wrap; line-height: 1.5; }
+      .logs .time { color: #888; }
+      .logs .info { color: #8cf; }
+      .logs .success { color: #0f0; }
+      .logs .error { color: #f44; }
+      .status { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+      .status .dot { width: 10px; height: 10px; border-radius: 50%; background: #aaa; }
+      .status .dot.active { background: #0f0; }
+      .status .dot.error { background: #f44; }
+    </style>
+  </head>
+  <body>
+    <h1>🔍 VidShorter Agent Debug Console</h1>
+
+    <div class="card">
+      <h2>🔌 状态</h2>
+      <div class="status">
+        <div class="dot" id="deepLinkStatus"></div>
+        <span>Deep Link Handler</span>
+      </div>
+      <div class="status">
+        <div class="dot" id="tokenStatus"></div>
+        <span>Token Saved</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>📥 最近的 Deep Link</h2>
+      <div class="row">
+        <label>URL:</label>
+        <div class="value" id="lastDeepLink">(none)</div>
+      </div>
+      <div class="row">
+        <label>Token:</label>
+        <div class="value" id="parsedToken">(none)</div>
+      </div>
+      <div class="row">
+        <label>Email:</label>
+        <div class="value" id="parsedEmail">(none)</div>
+      </div>
+      <div class="row">
+        <label>UserId:</label>
+        <div class="value" id="parsedUserId">(none)</div>
+      </div>
+      <div class="row">
+        <label>Name:</label>
+        <div class="value" id="parsedName">(none)</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>💾 保存的 Auth</h2>
+      <div class="row">
+        <label>Token:</label>
+        <div class="value" id="savedToken">(none)</div>
+      </div>
+      <div class="row">
+        <label>Email:</label>
+        <div class="value" id="savedEmail">(none)</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>🧪 测试</h2>
+      <div class="row">
+        <button id="testDeepLink" class="primary">Test Deep Link (模拟)</button>
+        <button id="clearAuth" class="danger">Clear Auth</button>
+        <button id="refreshSaved">Refresh</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>📜 日志</h2>
+      <div class="logs" id="logBox"></div>
+    </div>
+
+    <script src="./renderer.js"></script>
+  </body>
+</html>
