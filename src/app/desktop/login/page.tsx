@@ -16,14 +16,14 @@ export default function DesktopLoginPage() {
   useEffect(() => {
     const checkLoginStatus = async () => {
       try {
-        const desktopToken = await window.vidshorterDesktop?.getAuthToken?.();
+        const desktopToken = await window.clipopDesktop?.getAuthToken?.();
         if (desktopToken) {
-          window.dispatchEvent(new Event('vidshorter-auth-change'));
+          window.dispatchEvent(new Event('clipop-auth-change'));
           window.location.href = '/';
           return;
         }
 
-        const response = await fetch('https://vidshorterai.vercel.app/api/check-login', {
+        const response = await fetch('https://clipopai.vercel.app/api/check-login', {
           credentials: 'include',
           mode: 'cors'
         });
@@ -43,12 +43,12 @@ export default function DesktopLoginPage() {
 
   const handleOpenWebLogin = async () => {
     setRedirecting(true);
-    if (typeof window.vidshorterDesktop !== 'undefined' && window.vidshorterDesktop.openWebLogin) {
-      await window.vidshorterDesktop.openWebLogin();
+    if (typeof window.clipopDesktop !== 'undefined' && window.clipopDesktop.openWebLogin) {
+      await window.clipopDesktop.openWebLogin();
     } else if (typeof window.agent !== 'undefined' && window.agent.openWebLogin) {
       await window.agent.openWebLogin();
     } else {
-      window.open('https://vidshorterai.vercel.app/login?from=desktop', '_blank');
+      window.open('https://clipopai.vercel.app/login?from=desktop', '_blank');
     }
     setTimeout(() => {
       window.location.href = '/';
@@ -62,7 +62,7 @@ export default function DesktopLoginPage() {
           <CardHeader className="text-center">
             <div className="flex items-center justify-center gap-2 font-bold text-xl mb-4">
               <Video className="h-6 w-6 text-primary" />
-              <span>VidShorter AI</span>
+              <span>Clipop AI</span>
             </div>
             <CardTitle>Checking login status...</CardTitle>
           </CardHeader>
@@ -81,7 +81,7 @@ export default function DesktopLoginPage() {
           <CardHeader className="text-center">
             <div className="flex items-center justify-center gap-2 font-bold text-xl mb-4">
               <Video className="h-6 w-6 text-primary" />
-              <span>VidShorter AI</span>
+              <span>Clipop AI</span>
             </div>
             <CardTitle>Opening web login...</CardTitle>
             <CardDescription>Please complete login in your browser</CardDescription>
@@ -89,7 +89,7 @@ export default function DesktopLoginPage() {
           <CardContent className="flex flex-col items-center gap-4">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
             <p className="text-sm text-muted-foreground">
-              After logging in, click &quot;Return to VidShorter Agent&quot; in your browser
+              After logging in, click &quot;Return to Clipop Agent&quot; in your browser
             </p>
             <Button 
               variant="outline" 
@@ -109,7 +109,7 @@ export default function DesktopLoginPage() {
         <CardHeader className="text-center">
           <div className="flex items-center justify-center gap-2 font-bold text-xl mb-4">
             <Video className="h-6 w-6 text-primary" />
-            <span>VidShorter AI</span>
+            <span>Clipop AI</span>
           </div>
           <CardTitle>{t('auth.login.title')}</CardTitle>
           <CardDescription>{t('auth.login.subtitle')}</CardDescription>
@@ -129,7 +129,7 @@ export default function DesktopLoginPage() {
           <div className="bg-muted rounded-lg p-4 mb-6">
             <p className="text-sm text-muted-foreground text-center">
               For security reasons, please log in through our web platform. 
-              After login, click &quot;Return to VidShorter Agent&quot; to sync your account.
+              After login, click &quot;Return to Clipop Agent&quot; to sync your account.
             </p>
           </div>
 

@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
     // Build fetch headers — forward the Range header for seeking support
     const fetchHeaders: Record<string, string> = {
       'Accept': 'video/*, */*',
-      'User-Agent': 'VidShorterAI/1.0',
+      'User-Agent': 'ClipopAI/1.0',
     };
 
     const rangeHeader = request.headers.get('range');

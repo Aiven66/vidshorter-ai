@@ -62,7 +62,7 @@ function LoginContent() {
 
     try {
       console.log('[DesktopAuth] Method 2: Deep link');
-      const deepLink = `vidshorter://login-success?token=${encodeURIComponent(token)}&email=${encodeURIComponent(user?.email || email)}&userId=${encodeURIComponent(user?.id || '')}&name=${encodeURIComponent(user?.name || '')}`;
+      const deepLink = `clipop://login-success?token=${encodeURIComponent(token)}&email=${encodeURIComponent(user?.email || email)}&userId=${encodeURIComponent(user?.id || '')}&name=${encodeURIComponent(user?.name || '')}`;
       console.log('[DesktopAuth] Deep link URL:', deepLink);
       window.location.href = deepLink;
     } catch (e) {
@@ -123,7 +123,7 @@ function LoginContent() {
   const handleReturnToDesktop = () => {
     const token = currentToken || accessToken;
     
-    const deepLink = `vidshorter://login-success?token=${encodeURIComponent(token || '')}&email=${encodeURIComponent(user?.email || email)}&userId=${encodeURIComponent(user?.id || '')}&name=${encodeURIComponent(user?.name || '')}`;
+    const deepLink = `clipop://login-success?token=${encodeURIComponent(token || '')}&email=${encodeURIComponent(user?.email || email)}&userId=${encodeURIComponent(user?.id || '')}&name=${encodeURIComponent(user?.name || '')}`;
     console.log('[DesktopAuth] Button clicked - Opening deep link:', deepLink);
     
     const startTime = Date.now();
@@ -150,7 +150,7 @@ function LoginContent() {
           <CardHeader className="text-center">
             <div className="flex items-center justify-center gap-2 font-bold text-xl mb-4">
               <Video className="h-6 w-6 text-primary" />
-              <span>VidShorter AI</span>
+              <span>Clipop AI</span>
             </div>
             <CardTitle>Login Successful!</CardTitle>
           </CardHeader>
@@ -164,10 +164,10 @@ function LoginContent() {
               </p>
             </div>
             <Button className="w-full h-12 text-lg" onClick={handleReturnToDesktop}>
-              Return to VidShorter Agent
+              Return to Clipop Agent
             </Button>
             <p className="text-center text-sm text-muted-foreground">
-              If the desktop app doesn't open automatically, please make sure VidShorter Agent is running.
+              If the desktop app doesn't open automatically, please make sure Clipop Agent is running.
             </p>
           </CardContent>
         </Card>
@@ -181,7 +181,7 @@ function LoginContent() {
         <CardHeader className="text-center">
           <div className="flex items-center justify-center gap-2 font-bold text-xl mb-4">
             <Video className="h-6 w-6 text-primary" />
-            <span>VidShorter AI</span>
+            <span>Clipop AI</span>
           </div>
           <CardTitle>{t('login.title')}</CardTitle>
           <CardDescription>{t('login.description')}</CardDescription>

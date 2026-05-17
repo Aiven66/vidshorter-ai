@@ -1,0 +1,160 @@
+{
+  "jobs": [
+    {
+      "id": "job-7222803e-63c6-44a1-aea5-acbfcdfd63ef",
+      "videoUrl": "https://www.youtube.com/watch?v=tm09cMTBTSU",
+      "userId": "demo-admin-id",
+      "desiredClipCount": 3,
+      "createdAt": "2026-04-28T16:05:23.757Z",
+      "updatedAt": "2026-04-28T16:14:39.022Z",
+      "status": "completed",
+      "stage": "complete",
+      "progress": 100,
+      "message": "Generated 3 clips.",
+      "claimedBy": "agent-3cd10261-cb83-4f19-8b9b-3f3946e2e993",
+      "result": {
+        "title": "一口气了解稳定币",
+        "duration": 1715,
+        "highlights": [
+          {
+            "title": "Highlight 1",
+            "summary": "Automatically selected highlight 1",
+            "engagement_score": 7,
+            "start_time": 125,
+            "end_time": 185
+          },
+          {
+            "title": "Highlight 2",
+            "summary": "Automatically selected highlight 2",
+            "engagement_score": 7,
+            "start_time": 280,
+            "end_time": 340
+          },
+          {
+            "title": "Highlight 3",
+            "summary": "Automatically selected highlight 3",
+            "engagement_score": 7,
+            "start_time": 435,
+            "end_time": 495
+          }
+        ],
+        "clips": [
+          {
+            "id": "job-7222803e-63c6-44a1-aea5-acbfcdfd63ef-clip-0",
+            "title": "Highlight 1",
+            "startTime": 125,
+            "endTime": 185,
+            "duration": 60,
+            "summary": "Automatically selected highlight 1",
+            "engagementScore": 7,
+            "thumbnailUrl": "/api/serve-clip/highlight-1-80e76f84-db17-4f87-acfe-25cae5e87b36.jpg",
+            "videoUrl": "/api/serve-clip/highlight-1-80e76f84-db17-4f87-acfe-25cae5e87b36.mp4",
+            "status": "completed"
+          },
+          {
+            "id": "job-7222803e-63c6-44a1-aea5-acbfcdfd63ef-clip-1",
+            "title": "Highlight 2",
+            "startTime": 280,
+            "endTime": 340,
+            "duration": 60,
+            "summary": "Automatically selected highlight 2",
+            "engagementScore": 7,
+            "thumbnailUrl": "/api/serve-clip/highlight-2-ea4f4824-a863-4e40-aae7-cb44348f2254.jpg",
+            "videoUrl": "/api/serve-clip/highlight-2-ea4f4824-a863-4e40-aae7-cb44348f2254.mp4",
+            "status": "completed"
+          },
+          {
+            "id": "job-7222803e-63c6-44a1-aea5-acbfcdfd63ef-clip-2",
+            "title": "Highlight 3",
+            "startTime": 435,
+            "endTime": 495,
+            "duration": 60,
+            "summary": "Automatically selected highlight 3",
+            "engagementScore": 7,
+            "thumbnailUrl": "/api/serve-clip/highlight-3-0a5ed2cf-df61-451e-a912-ec3bd9902ff1.jpg",
+            "videoUrl": "/api/serve-clip/highlight-3-0a5ed2cf-df61-451e-a912-ec3bd9902ff1.mp4",
+            "status": "completed"
+          }
+        ]
+      }
+    },
+    {
+      "id": "job-7902654a-1a9f-4ee5-8921-4d94d9279f40",
+      "videoUrl": "https://www.youtube.com/watch?v=1fqsNZ9HGU8",
+      "userId": "demo-admin-id",
+      "desiredClipCount": 3,
+      "createdAt": "2026-04-28T15:55:41.959Z",
+      "updatedAt": "2026-04-28T15:56:00.748Z",
+      "status": "completed",
+      "stage": "complete",
+      "progress": 100,
+      "message": "Generated 3 clips.",
+      "claimedBy": "agent-3cd10261-cb83-4f19-8b9b-3f3946e2e993",
+      "result": {
+        "title": "人民币疯涨，为什么？背后有什么秘密？",
+        "duration": 1344,
+        "highlights": [
+          {
+            "title": "Highlight 1",
+            "summary": "Automatically selected highlight 1",
+            "engagement_score": 7,
+            "start_time": 92,
+            "end_time": 152
+          },
+          {
+            "title": "Highlight 2",
+            "summary": "Automatically selected highlight 2",
+            "engagement_score": 7,
+            "start_time": 214,
+            "end_time": 274
+          },
+          {
+            "title": "Highlight 3",
+            "summary": "Automatically selected highlight 3",
+            "engagement_score": 7,
+            "start_time": 336,
+            "end_time": 396
+          }
+        ],
+        "clips": [
+          {
+            "id": "job-7902654a-1a9f-4ee5-8921-4d94d9279f40-clip-0",
+            "title": "Highlight 1",
+            "startTime": 92,
+            "endTime": 152,
+            "duration": 60,
+            "summary": "Automatically selected highlight 1",
+            "engagementScore": 7,
+            "thumbnailUrl": "/api/serve-clip/highlight-1-97b6dbf9-118d-405a-9000-0230a4d653bc.jpg",
+            "videoUrl": "/api/serve-clip/highlight-1-97b6dbf9-118d-405a-9000-0230a4d653bc.mp4",
+            "status": "completed"
+          },
+          {
+            "id": "job-7902654a-1a9f-4ee5-8921-4d94d9279f40-clip-1",
+            "title": "Highlight 2",
+            "startTime": 214,
+            "endTime": 274,
+            "duration": 60,
+            "summary": "Automatically selected highlight 2",
+            "engagementScore": 7,
+            "thumbnailUrl": "/api/serve-clip/highlight-2-5daa02b2-24fc-44a2-8d5a-8083f3a2d1f1.jpg",
+            "videoUrl": "/api/serve-clip/highlight-2-5daa02b2-24fc-44a2-8d5a-8083f3a2d1f1.mp4",
+            "status": "completed"
+          },
+          {
+            "id": "job-7902654a-1a9f-4ee5-8921-4d94d9279f40-clip-2",
+            "title": "Highlight 3",
+            "startTime": 336,
+            "endTime": 396,
+            "duration": 60,
+            "summary": "Automatically selected highlight 3",
+            "engagementScore": 7,
+            "thumbnailUrl": "/api/serve-clip/highlight-3-f92bb2ae-a626-4208-b20d-14f89456a4bc.jpg",
+            "videoUrl": "/api/serve-clip/highlight-3-f92bb2ae-a626-4208-b20d-14f89456a4bc.mp4",
+            "status": "completed"
+          }
+        ]
+      }
+    }
+  ]
+}

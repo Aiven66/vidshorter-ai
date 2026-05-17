@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
 
   // Check demo mode registered users
   if (!isSupabaseConfigured()) {
-    const DEMO_REGISTERED_USERS_KEY = 'vidshorter_registered_users';
+    const DEMO_REGISTERED_USERS_KEY = 'clipop_registered_users';
     const usersJson = request.cookies.get(DEMO_REGISTERED_USERS_KEY)?.value || '';
     if (usersJson) {
       try {

@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { CheckCircle, Loader2, QrCode, CreditCard, Globe, Smartphone, ExternalLink } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 
-const PAYMENT_CONFIG_KEY = 'vidshorter_payment_config';
+const PAYMENT_CONFIG_KEY = 'clipop_payment_config';
 
 interface StoredPaymentConfig {
   wechat?: { appId?: string; mchId?: string; apiKey?: string; serialNo?: string; privateKey?: string; notifyUrl?: string; enabled?: boolean };

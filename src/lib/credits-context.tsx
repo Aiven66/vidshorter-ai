@@ -14,8 +14,8 @@ interface CreditsContextType {
 const CreditsContext = createContext<CreditsContextType | undefined>(undefined);
 
 // Demo mode credits storage – keyed per user
-const DEMO_CREDITS_KEY = 'vidshorter_demo_credits';
-const DEMO_CREDITS_RESET_KEY = 'vidshorter_demo_credits_reset';
+const DEMO_CREDITS_KEY = 'clipop_demo_credits';
+const DEMO_CREDITS_RESET_KEY = 'clipop_demo_credits_reset';
 
 const DAILY_FREE_CREDITS = 100;
 const DAILY_BASIC_CREDITS = 1000;
@@ -23,7 +23,7 @@ const DAILY_PRO_CREDITS = 1_000_000;
 const ADMIN_CREDITS = 10_000;
 
 function getDemoCreditsKey(userId?: string): string {
-  return userId ? `vidshorter_demo_credits_${userId}` : DEMO_CREDITS_KEY;
+  return userId ? `clipop_demo_credits_${userId}` : DEMO_CREDITS_KEY;
 }
 
 function getDemoCredits(userId?: string): number {

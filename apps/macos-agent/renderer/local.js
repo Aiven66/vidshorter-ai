@@ -108,7 +108,7 @@ async function processFile(file) {
   $('file').disabled = true;
   try {
     const baseUrl = await window.vidshorterDesktop.getMediaBaseUrl();
-    if (!baseUrl) throw new Error('Local media server is not ready. Please restart VidShorter Agent.');
+    if (!baseUrl) throw new Error('Local media server is not ready. Please restart Clipop Agent.');
 
     setStatus('Uploading selected video to this Mac...', 2);
     const res = await fetch(`${baseUrl}/api/upload`, {

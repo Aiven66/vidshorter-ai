@@ -21,7 +21,7 @@ export async function POST(request: NextRequest) {
 
     // Create admin auth user
     const { data: authData, error: authError } = await client.auth.signUp({
-      email: 'admin@vidshorter.ai',
+      email: 'admin@clipop.ai',
       password: 'admin123',
       options: {
         data: { name: 'Admin' },
@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
       // If user already exists in auth, try to sign in
       if (authError.message.includes('already registered')) {
         const { data: signInData, error: signInError } = await client.auth.signInWithPassword({
-          email: 'admin@vidshorter.ai',
+          email: 'admin@clipop.ai',
           password: 'admin123',
         });
 
@@ -51,7 +51,7 @@ export async function POST(request: NextRequest) {
 
           return NextResponse.json({ 
             message: 'Admin role updated successfully',
-            credentials: { email: 'admin@vidshorter.ai', password: 'admin123' }
+            credentials: { email: 'admin@clipop.ai', password: 'admin123' }
           });
         }
       }
@@ -88,7 +88,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ 
       message: 'Admin account created successfully',
-      credentials: { email: 'admin@vidshorter.ai', password: 'admin123' }
+      credentials: { email: 'admin@clipop.ai', password: 'admin123' }
     });
 
   } catch (error) {

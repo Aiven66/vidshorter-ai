@@ -90,7 +90,7 @@ function label() {
 function paths() {
   const home = os.homedir();
   const plistPath = path.join(home, 'Library', 'LaunchAgents', `${label()}.plist`);
-  const logDir = path.join(home, 'Library', 'Logs', 'VidShorterAgent');
+  const logDir = path.join(home, 'Library', 'Logs', 'ClipopAgent');
   const stdoutPath = path.join(logDir, 'out.log');
   const stderrPath = path.join(logDir, 'err.log');
   return { plistPath, logDir, stdoutPath, stderrPath };

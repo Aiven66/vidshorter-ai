@@ -11,12 +11,12 @@ function tryParseAndFix(key) {
 }
 
 try {
-  tryParseAndFix('vidshorter_demo_user');
-  tryParseAndFix('vidshorter_registered_users');
-  tryParseAndFix('vidshorter_demo_videos');
+  tryParseAndFix('clipop_demo_user');
+  tryParseAndFix('clipop_registered_users');
+  tryParseAndFix('clipop_demo_videos');
   const keys = Object.keys(localStorage);
   for (const k of keys) {
-    if (k.startsWith('vidshorter_demo_videos_')) tryParseAndFix(k);
+    if (k.startsWith('clipop_demo_videos_')) tryParseAndFix(k);
   }
 } catch {}
 

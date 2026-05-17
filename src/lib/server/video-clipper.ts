@@ -638,7 +638,7 @@ async function getYouTubeInfoViaPiped(videoId: string): Promise<PipedVideoInfo> 
   for (const instance of PIPED_INSTANCES) {
     try {
       const res = await fetch(`${instance}/streams/${videoId}`, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; VidShorter/1.0)' },
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Clipop/1.0)' },
         signal: AbortSignal.timeout(12000),
       });
       if (!res.ok) { lastError = `${instance}: HTTP ${res.status}`; continue; }
@@ -696,7 +696,7 @@ async function getYouTubeInfoViaInvidious(videoId: string): Promise<PipedVideoIn
       const res = await fetch(
         `${instance}/api/v1/videos/${videoId}?fields=title,lengthSeconds,formatStreams`,
         {
-          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; VidShorter/1.0)' },
+          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Clipop/1.0)' },
           signal: AbortSignal.timeout(12000),
         },
       );
@@ -2307,14 +2307,22 @@ async function downloadYouTubeOrGenericVideo(
       } catch { /* ignore cookie write errors */ }
     }
 
+    // ============================================================
+    // IMPORTANT: Cookie strategies MUST come first for YouTube
+    // Cookies from Chrome browser are the most reliable method
+    // ============================================================
+    if (cookieFileArg.length) strategies.push([...proxyArg, ...cookieFileArg, '--extractor-args', 'youtube:player_client=tv_embedded', ...baseArgs, '-f', `bestvideo[height<=${LOCAL_MAX_HEIGHT}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${LOCAL_MAX_HEIGHT}]+bestaudio/best`, videoUrl]);
+    if (cookieBrowserArg.length) strategies.push([...proxyArg, ...cookieBrowserArg, '--extractor-args', 'youtube:player_client=tv_embedded', ...baseArgs, '-f', `bestvideo[height<=${LOCAL_MAX_HEIGHT}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${LOCAL_MAX_HEIGHT}]+bestaudio/best`, videoUrl]);
+    if (cookieFileArg.length) strategies.push([...proxyArg, ...cookieFileArg, '--extractor-args', 'youtube:player_client=mweb', ...baseArgs, '-f', `bestvideo[height<=${LOCAL_MAX_HEIGHT}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${LOCAL_MAX_HEIGHT}]+bestaudio/best`, videoUrl]);
+    if (cookieBrowserArg.length) strategies.push([...proxyArg, ...cookieBrowserArg, '--extractor-args', 'youtube:player_client=mweb', ...baseArgs, '-f', `bestvideo[height<=${LOCAL_MAX_HEIGHT}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${LOCAL_MAX_HEIGHT}]+bestaudio/best`, videoUrl]);
+
+    // Non-cookie strategies (fallbacks)
     strategies.push([...proxyArg, '--extractor-args', 'youtube:player_client=mweb', ...baseArgs, '-f', `best[height<=${LOCAL_MAX_HEIGHT}]/best`, videoUrl]);
     strategies.push([...proxyArg, '--extractor-args', 'youtube:player_client=android_testsuite', ...baseArgs, '-f', `bestvideo[height<=${LOCAL_MAX_HEIGHT}]+bestaudio/best`, videoUrl]);
     strategies.push([...proxyArg, '--extractor-args', 'youtube:player_client=tv_embedded', ...baseArgs, '-f', `bestvideo[height<=${LOCAL_MAX_HEIGHT}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${LOCAL_MAX_HEIGHT}]+bestaudio/best`, videoUrl]);
     strategies.push([...proxyArg, '--extractor-args', 'youtube:player_client=android_embedded', ...baseArgs, '-f', `bestvideo[height<=${LOCAL_MAX_HEIGHT}]+bestaudio/best`, videoUrl]);
     strategies.push([...proxyArg, '--extractor-args', 'youtube:player_client=ios', ...baseArgs, '-f', `best[height<=${LOCAL_MAX_HEIGHT}]/best`, videoUrl]);
     strategies.push([...proxyArg, '--extractor-args', 'youtube:player_client=android', ...baseArgs, '-f', `bestvideo[height<=${LOCAL_MAX_HEIGHT}]+bestaudio/best`, videoUrl]);
-    if (cookieFileArg.length) strategies.push([...proxyArg, ...cookieFileArg, '--extractor-args', 'youtube:player_client=tv_embedded', ...baseArgs, '-f', `bestvideo[height<=${LOCAL_MAX_HEIGHT}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${LOCAL_MAX_HEIGHT}]+bestaudio/best`, videoUrl]);
-    if (cookieBrowserArg.length) strategies.push([...proxyArg, ...cookieBrowserArg, '--extractor-args', 'youtube:player_client=tv_embedded', ...baseArgs, '-f', `bestvideo[height<=${LOCAL_MAX_HEIGHT}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${LOCAL_MAX_HEIGHT}]+bestaudio/best`, videoUrl]);
     strategies.push([...proxyArg, ...baseArgs, '-f', '18', videoUrl]);
     strategies.push(['--extractor-args', 'youtube:player_client=tv_embedded', ...baseArgs, '-f', 'best', videoUrl]);
     strategies.push([...baseArgs, '-f', 'best', videoUrl]);

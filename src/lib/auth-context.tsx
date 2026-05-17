@@ -24,8 +24,8 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const DEMO_USER_KEY = 'vidshorter_demo_user';
-const DEMO_REGISTERED_USERS_KEY = 'vidshorter_registered_users';
+const DEMO_USER_KEY = 'clipop_demo_user';
+const DEMO_REGISTERED_USERS_KEY = 'clipop_registered_users';
 
 interface RegisteredUser {
   id: string;
@@ -67,7 +67,7 @@ function findRegisteredUser(email: string, password: string): RegisteredUser | n
 
 const DEMO_ADMINS: Record<string, { password: string; name: string; email: string }> = {
   'admin@126.com': { password: 'admin123', name: 'Admin', email: 'admin@126.com' },
-  'admin': { password: 'admin123', name: 'Admin', email: 'admin@vidshorter.ai' },
+  'admin': { password: 'admin123', name: 'Admin', email: 'admin@clipop.ai' },
 };
 
 function isDemoAdmin(email: string, password: string): boolean {
@@ -158,7 +158,7 @@ function generateDemoToken(user: User): string {
     name: user.name,
     role: user.role,
     avatar_url: user.avatarUrl,
-    iss: 'vidshorter-demo',
+    iss: 'clipop-demo',
     exp: Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60,
   }));
   const signature = 'demo-signature';
@@ -222,7 +222,7 @@ function applyDesktopToken(
   console.log('[DEBUG-AUTH] applyDesktopToken called, token:', !!token);
   if (!token) return;
   
-  localStorage.setItem('vidshorter_access_token', token);
+  localStorage.setItem('clipop_access_token', token);
   
   if (isDemoToken(token)) {
     console.log('[DEBUG-AUTH] It\'s a Demo token');
@@ -268,7 +268,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const checkAuthState = useCallback(async () => {
     console.log('[DEBUG-AUTH] checkAuthState called');
     try {
-      const isDesktop = !!(window.vidshorterDesktop || window.electronAPI);
+      const isDesktop = !!(window.clipopDesktop || window.electronAPI);
       console.log('[DEBUG-AUTH] isDesktop:', isDesktop);
 
       if (isDesktop) {
@@ -277,16 +277,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         let token: string | null = null;
 
         if (typeof window !== 'undefined' && window.localStorage) {
-          const storedToken = localStorage.getItem('vidshorter_access_token');
+          const storedToken = localStorage.getItem('clipop_access_token');
           if (storedToken) {
             token = storedToken;
             console.log('[DEBUG-AUTH] Got token from localStorage');
           }
         }
 
-        if (!token && (window as any).__vidshorterDesktopToken) {
-          token = (window as any).__vidshorterDesktopToken;
-          console.log('[DEBUG-AUTH] Got token from __vidshorterDesktopToken');
+        if (!token && (window as any).__clipopDesktopToken) {
+            token = (window as any).__clipopDesktopToken;
+          console.log('[DEBUG-AUTH] Got token from __clipopDesktopToken');
         }
         
         if (!token && window.electronAPI?.getAuthToken) {
@@ -405,7 +405,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const handleDesktopLogin = (event: Event) => {
       console.log('[DEBUG-AUTH] ========================================');
-      console.log('[DEBUG-AUTH] vidshorter-desktop-login event RECEIVED!');
+      console.log('[DEBUG-AUTH] clipop-desktop-login event RECEIVED!');
       const detail = event instanceof CustomEvent ? event.detail : null;
       console.log('[DEBUG-AUTH] Event detail:', detail);
       console.log('[DEBUG-AUTH] ========================================');
@@ -420,15 +420,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       checkAuthState();
     };
 
-    window.addEventListener('vidshorter-desktop-login', handleDesktopLogin);
-    window.addEventListener('vidshorter-auth-change', handleAuthChange);
+    window.addEventListener('clipop-desktop-login', handleDesktopLogin);
+    window.addEventListener('clipop-auth-change', handleAuthChange);
 
     console.log('[DEBUG-AUTH] Event listeners added');
 
     return () => {
       console.log('[DEBUG-AUTH] Cleanup: removing event listeners');
-      window.removeEventListener('vidshorter-desktop-login', handleDesktopLogin);
-      window.removeEventListener('vidshorter-auth-change', handleAuthChange);
+      window.removeEventListener('clipop-desktop-login', handleDesktopLogin);
+      window.removeEventListener('clipop-auth-change', handleAuthChange);
     };
   }, [checkAuthState]);
 
@@ -444,7 +444,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUseDemo(true);
         setAccessToken(demoToken);
         if (typeof window !== 'undefined') {
-          localStorage.setItem('vidshorter_access_token', demoToken);
+          localStorage.setItem('clipop_access_token', demoToken);
         }
         return { error: null, token: demoToken, email: adminUser.email };
       }
@@ -463,7 +463,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUseDemo(true);
         setAccessToken(demoToken);
         if (typeof window !== 'undefined') {
-          localStorage.setItem('vidshorter_access_token', demoToken);
+          localStorage.setItem('clipop_access_token', demoToken);
         }
         return { error: null, token: demoToken, email: demoUser.email };
       }
@@ -490,7 +490,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const token = data.session.access_token || null;
         setAccessToken(token);
         if (token && typeof window !== 'undefined') {
-          localStorage.setItem('vidshorter_access_token', token);
+          localStorage.setItem('clipop_access_token', token);
         }
         const userData = await verifyTokenAndFetchUser(data.session.access_token!);
         if (userData) {
@@ -553,7 +553,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUseDemo(true);
       setAccessToken(demoToken);
       if (typeof window !== 'undefined') {
-        localStorage.setItem('vidshorter_access_token', demoToken);
+        localStorage.setItem('clipop_access_token', demoToken);
       }
       return { error: null, token: demoToken, email: demoUser.email };
     }
@@ -599,7 +599,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const token = session.access_token || null;
         setAccessToken(token);
         if (token && typeof window !== 'undefined') {
-          localStorage.setItem('vidshorter_access_token', token);
+          localStorage.setItem('clipop_access_token', token);
         }
         const userData = await verifyTokenAndFetchUser(session.access_token!);
         if (userData) {
@@ -613,7 +613,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const token = signInData.session.access_token || null;
         setAccessToken(token);
         if (token && typeof window !== 'undefined') {
-          localStorage.setItem('vidshorter_access_token', token);
+          localStorage.setItem('clipop_access_token', token);
         }
         const userData = await verifyTokenAndFetchUser(signInData.session.access_token!);
         if (userData) {
@@ -660,7 +660,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUseDemo(true);
       setAccessToken(demoToken);
       if (typeof window !== 'undefined') {
-        localStorage.setItem('vidshorter_access_token', demoToken);
+        localStorage.setItem('clipop_access_token', demoToken);
       }
       return { error: null };
     }
@@ -697,14 +697,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      const isDesktop = !!(window.vidshorterDesktop || window.electronAPI);
+      const isDesktop = !!(window.clipopDesktop || window.electronAPI);
       if (isDesktop) {
         if ((window as any).api?.clearAuthToken) {
           await (window as any).api.clearAuthToken();
         } else if (window.electronAPI?.clearAuthToken) {
           await window.electronAPI.clearAuthToken();
         }
-        localStorage.removeItem('vidshorter_access_token');
+        localStorage.removeItem('clipop_access_token');
       }
       
       const client = getSupabaseClient();

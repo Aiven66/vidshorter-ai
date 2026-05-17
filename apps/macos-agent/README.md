@@ -1,4 +1,4 @@
-# VidShorter Agent (macOS)
+# Clipop Agent (macOS)
 
 ## Build DMG
 
@@ -13,7 +13,7 @@ ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/" pnpm dist
 
 ## Install
 
-1) 打开 dmg，把 `VidShorter Agent.app` 拖到 `/Applications`  
+1) 打开 dmg，把 `Clipop Agent.app` 拖到 `/Applications`  
 2) 首次运行打开设置页，确认：
    - Server URL：默认 `https://projects-pi-kohl.vercel.app`
    - Agent ID：默认 `agent-mac-1`

@@ -17,7 +17,7 @@ function DesktopCallbackContent() {
   const [resolvedUserId, setResolvedUserId] = useState('');
   const [resolvedName, setResolvedName] = useState('');
 
-  const redirectUri = useMemo(() => sp.get('redirect_uri') || 'vidshorter://login-success', [sp]);
+  const redirectUri = useMemo(() => sp.get('redirect_uri') || 'clipop://login-success', [sp]);
   const state = useMemo(() => sp.get('state') || '', [sp]);
   const email = useMemo(() => sp.get('email') || '', [sp]);
   const accessToken = useMemo(() => sp.get('access_token') || '', [sp]);
@@ -98,7 +98,7 @@ function DesktopCallbackContent() {
               <Monitor className="w-8 h-8 text-primary" />
             </div>
           </div>
-          <CardTitle className="text-2xl">VidShorter Agent</CardTitle>
+          <CardTitle className="text-2xl">Clipop Agent</CardTitle>
           <CardDescription>
             {opened ? 'Opening desktop app...' : loading ? 'Completing sign-in...' : 'Complete the sign-in process'}
           </CardDescription>
@@ -123,7 +123,7 @@ function DesktopCallbackContent() {
                 disabled={loading || !resolvedToken}
               >
                 <Monitor className="w-4 h-4 mr-2" />
-                Open VidShorter Agent
+                Open Clipop Agent
               </Button>
               <p className="text-xs text-muted-foreground">
                 Click the button to return to the desktop app
@@ -161,7 +161,7 @@ export default function DesktopCallbackPage() {
                 <Monitor className="w-8 h-8 text-primary" />
               </div>
             </div>
-            <CardTitle className="text-2xl">VidShorter Agent</CardTitle>
+            <CardTitle className="text-2xl">Clipop Agent</CardTitle>
           </CardHeader>
           <CardContent className="text-center">
             <p className="text-sm text-muted-foreground">Loading...</p>

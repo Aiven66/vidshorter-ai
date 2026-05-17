@@ -184,41 +184,88 @@ async function ensureBundledYtDlpInstalled() {
 
 let ytDlpCommand = null;
 let ytDlpUseModule = false;
+let nodeJsPath = null;
+
+async function findNodeJs() {
+  if (nodeJsPath) return nodeJsPath;
+  const candidates = [
+    process.execPath,
+    '/usr/local/bin/node',
+    '/opt/homebrew/bin/node',
+    '/Users/aiven/.deskclaw/node/bin/node',
+    '/Users/aiven/.nvm/versions/node/*/bin/node',
+  ];
+  for (const c of candidates) {
+    try {
+      if (c.includes('*')) continue;
+      await fs.access(c, fsSync.constants.X_OK);
+      nodeJsPath = c;
+      return c;
+    } catch {}
+  }
+  try {
+    const { stdout } = await execFileAsync('which', ['node'], { timeout: 5000 });
+    const p = stdout.trim();
+    if (p) {
+      nodeJsPath = p;
+      return p;
+    }
+  } catch {}
+  return null;
+}
+
+async function canUseSystemYtDlp() {
+  const candidates = [
+    '/Users/aiven/.local/bin/yt-dlp',
+    '/usr/local/bin/yt-dlp',
+    '/opt/homebrew/bin/yt-dlp',
+  ];
+  for (const c of candidates) {
+    try {
+      const { stdout } = await execFileAsync(c, ['--version'], { timeout: 10_000 });
+      if (stdout && stdout.trim()) {
+        ytDlpCommand = c;
+        ytDlpUseModule = false;
+        return true;
+      }
+    } catch {}
+  }
+  try {
+    const { stdout } = await execFileAsync('yt-dlp', ['--version'], { timeout: 10_000 });
+    if (stdout && stdout.trim()) {
+      ytDlpCommand = 'yt-dlp';
+      ytDlpUseModule = false;
+      return true;
+    }
+  } catch {}
+  return false;
+}
 
 async function canUsePythonYtDlpModule() {
-  try {
-    const { stdout } = await execFileAsync('python3', ['-c', 'import sys; print(f\"{sys.version_info[0]}.{sys.version_info[1]}\")'], {
-      timeout: 5000,
-      env: { ...process.env, PYTHONWARNINGS: 'ignore' },
-    });
-    const [major, minor] = String(stdout || '').trim().split('.').map((x) => parseInt(x, 10));
-    if (!Number.isFinite(major) || !Number.isFinite(minor)) return false;
-    return major > 3 || (major === 3 && minor >= 10);
-  } catch {
-    return false;
+  const pythonPaths = ['/usr/bin/python3', '/usr/local/bin/python3', 'python3'];
+  for (const pythonPath of pythonPaths) {
+    try {
+      await execFileAsync(pythonPath, ['-m', 'yt_dlp', '--version'], {
+        timeout: 10_000,
+        env: { ...process.env, PYTHONWARNINGS: 'ignore' },
+      });
+      ytDlpCommand = pythonPath;
+      ytDlpUseModule = true;
+      return true;
+    } catch {}
   }
+  return false;
 }
 
 async function ensureYtDlp() {
   if (ytDlpCommand) return;
 
   try {
-    if (await canUsePythonYtDlpModule()) {
-      await execFileAsync('python3', ['-m', 'yt_dlp', '--version'], {
-        timeout: 20_000,
-        env: { ...process.env, PYTHONWARNINGS: 'ignore' },
-      });
-      ytDlpCommand = 'python3';
-      ytDlpUseModule = true;
-      return;
-    }
+    if (await canUseSystemYtDlp()) return;
   } catch {}
 
   try {
-    await execFileAsync('yt-dlp', ['--version'], { timeout: 10_000 });
-    ytDlpCommand = 'yt-dlp';
-    ytDlpUseModule = false;
-    return;
+    if (await canUsePythonYtDlpModule()) return;
   } catch {}
 
   await tryDequarantine(resolveAppBundlePath());
@@ -283,34 +330,119 @@ async function ensureYtDlp() {
   ytDlpUseModule = false;
 }
 
+function isYouTubeUrl(url) {
+  return url && (url.includes('youtube.com') || url.includes('youtu.be'));
+}
+
 async function runYtDlp(args) {
   await ensureYtDlp();
   const proxy = await resolveHttpProxy();
   const proxyArgs = proxy ? ['--proxy', proxy] : [];
-  const commonArgs = [
-    '--no-check-certificate',
-    '--ignore-errors',
-    '--socket-timeout', '30',
-    '--retries', '3',
-    '--fragment-retries', '3',
-    ...proxyArgs,
-  ];
 
-  const [cmd, cmdArgs] = ytDlpUseModule
-    ? ['python3', ['-m', 'yt_dlp', ...commonArgs, ...args]]
-    : [ytDlpCommand, [...commonArgs, ...args]];
+  const nodePath = await findNodeJs();
+  const jsRuntimeArgs = nodePath && !ytDlpUseModule ? ['--js-runtimes', `node:${nodePath}`] : [];
 
-  try {
-    return await execFileAsync(cmd, cmdArgs, {
-      maxBuffer: 30 * 1024 * 1024,
-      timeout: 15 * 60_000,
-      env: { ...process.env, PYTHONWARNINGS: 'ignore' },
-    });
-  } catch (e) {
-    const stderr = e && typeof e.stderr === 'string' ? e.stderr.trim() : '';
-    const msg = e && e.message ? String(e.message) : 'yt-dlp failed';
-    throw new Error(`${msg}${stderr ? '\n' + stderr.slice(0, 500) : ''}`);
+  const videoUrl = args.find(a => a.startsWith('http'));
+  const isYT = isYouTubeUrl(videoUrl);
+
+  const ytClientStrategies = isYT ? [
+    { name: 'cookies+web', extraArgs: [], useCookies: true },
+    { name: 'cookies+android', extraArgs: ['--extractor-args', 'youtube:player_client=android'], useCookies: true },
+    { name: 'cookies+ios', extraArgs: ['--extractor-args', 'youtube:player_client=ios'], useCookies: true },
+    { name: 'android', extraArgs: ['--extractor-args', 'youtube:player_client=android'], useCookies: false },
+    { name: 'ios', extraArgs: ['--extractor-args', 'youtube:player_client=ios'], useCookies: false },
+    { name: 'mweb', extraArgs: ['--extractor-args', 'youtube:player_client=mweb'], useCookies: false },
+  ] : [];
+
+  const browsers = ['chrome', 'firefox'];
+
+  const allStrategies = [];
+
+  for (const strategy of ytClientStrategies) {
+    if (strategy.useCookies) {
+      for (const browser of browsers) {
+        allStrategies.push({
+          name: `${browser}+${strategy.name}`,
+          cookieBrowser: browser,
+          extraArgs: strategy.extraArgs,
+        });
+      }
+    } else {
+      allStrategies.push({
+        name: strategy.name,
+        cookieBrowser: null,
+        extraArgs: strategy.extraArgs,
+      });
+    }
   }
+
+  if (!isYT) {
+    for (const browser of browsers) {
+      allStrategies.push({
+        name: `cookies-${browser}`,
+        cookieBrowser: browser,
+        extraArgs: [],
+      });
+    }
+  }
+
+  allStrategies.push({
+    name: 'no-cookies',
+    cookieBrowser: null,
+    extraArgs: [],
+  });
+
+  let lastError = null;
+
+  for (const strategy of allStrategies) {
+    const commonArgs = [
+      '--no-check-certificate',
+      '--ignore-errors',
+      '--socket-timeout', '30',
+      '--retries', '2',
+      '--geo-bypass',
+      '--no-warnings',
+      ...jsRuntimeArgs,
+    ];
+
+    if (strategy.cookieBrowser) {
+      commonArgs.push('--cookies-from-browser', strategy.cookieBrowser);
+    }
+
+    commonArgs.push(...proxyArgs, ...strategy.extraArgs);
+
+    const [cmd, cmdArgs] = ytDlpUseModule
+      ? [ytDlpCommand, ['-m', 'yt_dlp', ...commonArgs, ...args]]
+      : [ytDlpCommand, [...commonArgs, ...args]];
+
+    try {
+      return await execFileAsync(cmd, cmdArgs, {
+        maxBuffer: 30 * 1024 * 1024,
+        timeout: 3 * 60_000,
+        env: { ...process.env, PYTHONWARNINGS: 'ignore' },
+      });
+    } catch (e) {
+      lastError = e;
+      const stderr = e && typeof e.stderr === 'string' ? e.stderr.trim() : '';
+      if (stderr.includes('Requested format is not available')) continue;
+      if (stderr.includes('Video unavailable')) continue;
+      if (stderr.includes('Sign in to confirm') || stderr.includes('sign in to confirm')) continue;
+      if (stderr.includes('HTTP Error 429')) continue;
+      if (stderr.includes('challenge')) continue;
+      if (stderr.includes('Only images are available')) continue;
+      if (stderr.includes('n challenge solving failed')) continue;
+    }
+  }
+
+  if (lastError) {
+    const stderr = lastError && typeof lastError.stderr === 'string' ? lastError.stderr.trim() : '';
+    if (stderr.includes('Sign in to confirm') || stderr.includes('sign in to confirm')) {
+      throw new Error('YouTube 下载失败：所有策略均被拦截。请尝试：1) 在 Chrome 中登录 YouTube 后重试；2) 使用 VPN/代理；3) 上传本地视频文件');
+    }
+    throw lastError;
+  }
+
+  throw new Error('yt-dlp download failed: all strategies exhausted');
 }
 
 module.exports = {

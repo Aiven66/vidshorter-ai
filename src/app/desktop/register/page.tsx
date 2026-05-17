@@ -12,7 +12,7 @@ export default function DesktopRegisterPage() {
   const router = useRouter();
 
   const handleOpenWebRegister = () => {
-    window.location.href = 'https://vidshorterai.vercel.app/register?from=desktop';
+    window.location.href = 'https://clipopai.vercel.app/register?from=desktop';
   };
 
   return (
@@ -21,7 +21,7 @@ export default function DesktopRegisterPage() {
         <CardHeader className="text-center">
           <div className="flex items-center justify-center gap-2 font-bold text-xl mb-4">
             <Video className="h-6 w-6 text-primary" />
-            <span>VidShorter AI</span>
+            <span>Clipop AI</span>
           </div>
           <CardTitle>{t('auth.register.title')}</CardTitle>
           <CardDescription>{t('auth.register.subtitle')}</CardDescription>

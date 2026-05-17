@@ -49,7 +49,7 @@ export function Navbar() {
   const navItems = isDesktop
     ? [
         { href: '/', label: t('nav.home') },
-        { href: `${process.env.NEXT_PUBLIC_APP_URL || 'https://vidshorterai.vercel.app'}/pricing`, label: t('nav.pricing'), external: true },
+        { href: `${process.env.NEXT_PUBLIC_APP_URL || 'https://clipopai.vercel.app'}/pricing`, label: t('nav.pricing'), external: true },
       ]
     : [
         { href: '/', label: t('nav.home') },
@@ -79,7 +79,7 @@ export function Navbar() {
           {/* Logo */}
           <Link href="/" className="flex items-center gap-2 font-bold text-xl">
             <Video className="h-6 w-6 text-primary" />
-            <span>VidShorter AI</span>
+            <span>Clipop AI</span>
           </Link>
 
           {/* Desktop Navigation */}
@@ -179,23 +179,23 @@ export function Navbar() {
                 {isDesktop ? (
                   <>
                     <Button variant="ghost" onClick={async () => {
-                      if (typeof window.vidshorterDesktop !== 'undefined' && window.vidshorterDesktop.openWebLogin) {
-                        await window.vidshorterDesktop.openWebLogin();
+                      if (typeof window.clipopDesktop !== 'undefined' && window.clipopDesktop.openWebLogin) {
+                        await window.clipopDesktop.openWebLogin();
                       } else if (typeof window.agent !== 'undefined' && window.agent.openWebLogin) {
                         await window.agent.openWebLogin();
                       } else {
-                        window.open('https://vidshorterai.vercel.app/login?from=desktop', '_blank');
+                        window.open('https://clipopai.vercel.app/login?from=desktop', '_blank');
                       }
                     }}>
                       {t('nav.login')}
                     </Button>
                     <Button onClick={async () => {
-                      if (typeof window.vidshorterDesktop !== 'undefined' && window.vidshorterDesktop.openWebRegister) {
-                        await window.vidshorterDesktop.openWebRegister();
+                      if (typeof window.clipopDesktop !== 'undefined' && window.clipopDesktop.openWebRegister) {
+                        await window.clipopDesktop.openWebRegister();
                       } else if (typeof window.agent !== 'undefined' && window.agent.openWebRegister) {
                         await window.agent.openWebRegister();
                       } else {
-                        window.open('https://vidshorterai.vercel.app/register?from=desktop', '_blank');
+                        window.open('https://clipopai.vercel.app/register?from=desktop', '_blank');
                       }
                     }}>
                       {t('nav.register')}
@@ -331,24 +331,24 @@ export function Navbar() {
                       <>
                         <Button variant="outline" onClick={async () => { 
                           setMobileOpen(false); 
-                          if (typeof window.vidshorterDesktop !== 'undefined' && window.vidshorterDesktop.openWebLogin) {
-                            await window.vidshorterDesktop.openWebLogin();
+                          if (typeof window.clipopDesktop !== 'undefined' && window.clipopDesktop.openWebLogin) {
+                            await window.clipopDesktop.openWebLogin();
                           } else if (typeof window.agent !== 'undefined' && window.agent.openWebLogin) {
                             await window.agent.openWebLogin();
                           } else {
-                            window.open('https://vidshorterai.vercel.app/login?from=desktop', '_blank');
+                            window.open('https://clipopai.vercel.app/login?from=desktop', '_blank');
                           }
                         }}>
                           {t('nav.login')}
                         </Button>
                         <Button onClick={async () => { 
                           setMobileOpen(false); 
-                          if (typeof window.vidshorterDesktop !== 'undefined' && window.vidshorterDesktop.openWebRegister) {
-                            await window.vidshorterDesktop.openWebRegister();
+                          if (typeof window.clipopDesktop !== 'undefined' && window.clipopDesktop.openWebRegister) {
+                            await window.clipopDesktop.openWebRegister();
                           } else if (typeof window.agent !== 'undefined' && window.agent.openWebRegister) {
                             await window.agent.openWebRegister();
                           } else {
-                            window.open('https://vidshorterai.vercel.app/register?from=desktop', '_blank');
+                            window.open('https://clipopai.vercel.app/register?from=desktop', '_blank');
                           }
                         }}>
                           {t('nav.register')}

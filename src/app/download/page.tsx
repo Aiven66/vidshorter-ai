@@ -9,7 +9,7 @@ export default function DownloadPage() {
     <div className="min-h-screen flex items-center justify-center bg-muted/30 py-12 px-4">
       <Card className="w-full max-w-xl">
         <CardHeader className="text-center">
-          <CardTitle>Download VidShorter Agent</CardTitle>
+          <CardTitle>Download Clipop Agent</CardTitle>
           <CardDescription>Desktop app for stable YouTube/Bilibili processing</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

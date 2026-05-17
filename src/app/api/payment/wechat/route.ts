@@ -107,7 +107,7 @@ export async function POST(request: NextRequest) {
   const reqBody = JSON.stringify({
     appid: appId,
     mchid: mchId,
-    description: description || 'VidShorter AI 订阅',
+    description: description || 'Clipop AI 订阅',
     out_trade_no: outTradeNo,
     notify_url: notifyUrl,
     attach: userId ? JSON.stringify({ user_id: userId, plan_id: planId }) : undefined,

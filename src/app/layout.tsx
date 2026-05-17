@@ -7,13 +7,13 @@ import { DevInspector } from '@/components/dev-inspector';
 
 export const metadata: Metadata = {
   title: {
-    default: 'VidShorter AI - Transform Long Videos into Viral Shorts',
-    template: '%s | VidShorter AI',
+    default: 'Clipop AI - Transform Long Videos into Viral Shorts',
+    template: '%s | Clipop AI',
   },
   description:
     'AI-powered video clipping tool that automatically extracts the best moments from your long-form content. Transform YouTube, Bilibili videos into engaging short clips.',
   keywords: [
-    'VidShorter AI',
+    'Clipop AI',
     'AI Video Editor',
     'Video Clipping',
     'Short Video Generator',
@@ -23,10 +23,10 @@ export const metadata: Metadata = {
     'Content Creation',
     'Video Highlights',
   ],
-  authors: [{ name: 'VidShorter AI Team' }],
-  generator: 'VidShorter AI',
+  authors: [{ name: 'Clipop AI Team' }],
+  generator: 'Clipop AI',
   openGraph: {
-    title: 'VidShorter AI - Transform Long Videos into Viral Shorts',
+    title: 'Clipop AI - Transform Long Videos into Viral Shorts',
     description:
       'AI-powered video clipping tool that automatically extracts the best moments from your long-form content.',
     type: 'website',

@@ -28,13 +28,13 @@ pnpm electron-builder --mac dmg
 
 ARCH="$(uname -m)"
 VERSION="$(node -p "require('./package.json').version")"
-DMG_PATH="dist/VidShorter-Agent-${VERSION}-${ARCH}.dmg"
+DMG_PATH="dist/Clipop-Agent-${VERSION}-${ARCH}.dmg"
 if [[ -f "$DMG_PATH" ]]; then
   echo "$DMG_PATH"
   exit 0
 fi
 
-FOUND="$(find dist -maxdepth 1 -name "VidShorter-Agent-${VERSION}-*.dmg" -print -quit)"
+FOUND="$(find dist -maxdepth 1 -name "Clipop-Agent-${VERSION}-*.dmg" -print -quit)"
 if [[ -n "$FOUND" ]]; then
   echo "$FOUND"
   exit 0

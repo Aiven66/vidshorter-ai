@@ -25,11 +25,15 @@ async function copyDir(src, dst) {
   }
 }
 
+async function rmDirSafe(p) {
+  try { await fsp.rm(p, { recursive: true, force: true }); } catch {}
+}
+
 async function main() {
   const root = path.resolve(__dirname, '..', '..', '..');
   const embeddedInRepo = path.join(root, 'apps', 'macos-agent', 'embedded-web');
-  await fsp.rm(embeddedInRepo, { recursive: true, force: true });
-  await fsp.rm(path.join(root, '.next', 'standalone'), { recursive: true, force: true });
+  await rmDirSafe(embeddedInRepo);
+  await rmDirSafe(path.join(root, '.next', 'standalone'));
 
   run('node', [path.join(__dirname, 'prepare-ytdlp.js')], path.join(root, 'apps', 'macos-agent'));
 
@@ -49,7 +53,7 @@ async function main() {
   await fsp.copyFile(src, dst);
 
   const embeddedDir = path.join(__dirname, '..', 'embedded-web');
-  await fsp.rm(embeddedDir, { recursive: true, force: true });
+  await rmDirSafe(embeddedDir);
 
   const standaloneSrc = path.join(root, '.next', 'standalone');
   const staticSrc = path.join(root, '.next', 'static');
@@ -57,16 +61,45 @@ async function main() {
     process.stderr.write('Missing .next/standalone\n');
     process.exit(1);
   }
+
   await copyDir(standaloneSrc, embeddedDir);
+
   if (fs.existsSync(staticSrc)) await copyDir(staticSrc, path.join(embeddedDir, '.next', 'static'));
   const publicSrc = path.join(root, 'public');
   if (fs.existsSync(publicSrc)) await copyDir(publicSrc, path.join(embeddedDir, 'public'));
+
+  await rmDirSafe(path.join(embeddedDir, '.data'));
+  await rmDirSafe(path.join(embeddedDir, 'public', 'generated-clips'));
+
+  const nextDir = path.join(embeddedDir, '.next');
+  const nmDir = path.join(embeddedDir, 'node_modules');
+  if (!fs.existsSync(nextDir)) {
+    process.stderr.write('ERROR: embedded-web/.next missing after copy!\n');
+    process.exit(1);
+  }
+  if (!fs.existsSync(nmDir)) {
+    process.stderr.write('ERROR: embedded-web/node_modules missing after copy!\n');
+    process.exit(1);
+  }
+
+  const nextModuleDir = path.join(nmDir, 'next');
+  if (!fs.existsSync(nextModuleDir)) {
+    process.stderr.write('ERROR: embedded-web/node_modules/next missing after copy!\n');
+    process.exit(1);
+  }
+
+  console.log('[prepare-runner] embedded-web/.next OK');
+  console.log('[prepare-runner] embedded-web/node_modules OK');
+  console.log('[prepare-runner] embedded-web/node_modules/next OK');
 
   await fsp.writeFile(path.join(embeddedDir, 'bootstrap.js'), [
     "const fs = require('node:fs');",
     "const path = require('node:path');",
     "const Module = require('node:module');",
     "const candidates = [",
+    "  path.join(__dirname, 'node_modules'),",
+    "  path.join(process.resourcesPath || '', 'embedded-web', 'node_modules'),",
+    "  path.join(process.resourcesPath || '', 'app.asar.unpacked', 'embedded-web', 'node_modules'),",
     "  path.join(process.resourcesPath || '', 'app.asar', 'node_modules'),",
     "  path.join(process.resourcesPath || '', 'app.asar.unpacked', 'node_modules'),",
     "  path.join(__dirname, '..', 'node_modules'),",
@@ -78,6 +111,5 @@ async function main() {
     "",
   ].join('\n'));
 }
-
 
 main();

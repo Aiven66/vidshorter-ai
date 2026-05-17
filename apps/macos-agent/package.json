@@ -1,77 +1,66 @@
 {
-  "name": "vidshorter-macos-agent",
+  "name": "clipop-macos-agent",
   "private": true,
-  "version": "0.7.53",
+  "version": "0.8.1",
   "main": "main.js",
   "scripts": {
     "prepare:runner": "node scripts/prepare-runner.js",
     "dev": "pnpm prepare:runner && electron .",
-    "dist": "bash scripts/build-dmg.sh"
-  },
-  "dependencies": {
-    "@ffmpeg-installer/ffmpeg": "1.1.0",
-    "https-proxy-agent": "7.0.6",
-    "next": "16.1.1",
-    "react": "19.2.3",
-    "react-dom": "19.2.3"
-  },
-  "devDependencies": {
-    "electron": "33.4.11",
-    "electron-builder": "25.1.8"
+    "start": "electron .",
+    "dist": "pnpm prepare:runner && electron-builder --mac --arm64",
+    "dist:x64": "pnpm prepare:runner && electron-builder --mac --x64"
   },
   "build": {
-    "appId": "com.vidshorter.agent",
-    "productName": "VidShorter Agent",
-    "artifactName": "VidShorter-Agent-${version}-${arch}.${ext}",
+    "appId": "com.clipop.macos-agent",
+    "productName": "Clipop Agent",
     "directories": {
       "output": "dist"
     },
+    "asar": true,
+    "asarUnpack": [
+      "bin/**"
+    ],
+    "extraResources": [
+      {
+        "from": "embedded-web",
+        "to": "embedded-web",
+        "filter": ["**/*", "!**/.data/**", "!**/generated-clips/**", "!**/*.mp4"]
+      }
+    ],
     "files": [
       "main.js",
-      "local-highlights.js",
-      "ytdlp.js",
-      "media-server.js",
-      "bin/**",
-      "embedded-web/**",
       "preload.js",
       "preload-web.js",
+      "ytdlp.js",
       "runner.js",
-      "renderer/**",
+      "local-highlights.js",
+      "media-server.js",
       "package.json",
-      "node_modules/**"
-    ],
-    "asarUnpack": [
-      "node_modules/@ffmpeg-installer/**",
-      "node_modules/next/**",
-      "node_modules/react/**",
-      "node_modules/react-dom/**",
       "bin/**",
-      "embedded-web/**"
+      "renderer/**",
+      "embedded-ui/**",
+      "node_modules/**"
     ],
     "mac": {
       "target": [
-        "dmg"
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
       ],
-      "category": "public.app-category.video",
-      "icon": "icon.png",
       "identity": null,
-      "hardenedRuntime": false,
-      "gatekeeperAssess": false
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "entitlements.mac.plist",
+      "entitlementsInherit": "entitlements.mac.plist"
     },
-    "protocols": [
-      {
-        "name": "VidShorter Agent",
-        "schemes": [
-          "vidshorter"
-        ]
-      }
-    ],
     "dmg": {
       "contents": [
         {
           "x": 130,
-          "y": 220,
-          "type": "file"
+          "y": 220
         },
         {
           "x": 410,
@@ -81,5 +70,13 @@
         }
       ]
     }
+  },
+  "devDependencies": {
+    "electron": "^33.4.0",
+    "electron-builder": "^25.1.8"
+  },
+  "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "https-proxy-agent": "^7.0.5"
   }
 }

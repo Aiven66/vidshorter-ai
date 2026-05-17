@@ -7,7 +7,7 @@ function generateCode(): string {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-const COOKIE_NAME = 'vidshorter_email_otp';
+const COOKIE_NAME = 'clipop_email_otp';
 const MAX_ATTEMPTS = 5;
 
 function base64url(input: string) {
@@ -34,7 +34,7 @@ function getSecret() {
   if (!providerSeed) return '';
 
   return createHash('sha256')
-    .update(`vidshorter_email_otp:${providerSeed}`)
+    .update(`clipop_email_otp:${providerSeed}`)
     .digest('hex');
 }
 
@@ -57,13 +57,13 @@ async function sendViaResend(to: string, code: string): Promise<{ ok: boolean; r
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: `VidShorter AI <${fromDomain}>`,
+        from: `Clipop AI <${fromDomain}>`,
         to: [to],
-        subject: '【VidShorter AI】邮箱验证码',
+        subject: '【Clipop AI】邮箱验证码',
         html: `
           <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:480px;margin:0 auto;padding:24px;background:#fff;">
             <div style="text-align:center;margin-bottom:24px;">
-              <h1 style="color:#6366f1;margin:0;font-size:24px;">VidShorter AI</h1>
+              <h1 style="color:#6366f1;margin:0;font-size:24px;">Clipop AI</h1>
               <p style="color:#6b7280;margin:4px 0 0;">验证你的邮箱地址</p>
             </div>
             <div style="background:#f9fafb;border-radius:12px;padding:32px;text-align:center;">
@@ -74,7 +74,7 @@ async function sendViaResend(to: string, code: string): Promise<{ ok: boolean; r
               <p style="color:#9ca3af;margin:16px 0 0;font-size:13px;">验证码 5 分钟内有效，请勿分享给他人。</p>
             </div>
             <p style="color:#d1d5db;font-size:12px;text-align:center;margin-top:24px;">
-              如果你没有注册 VidShorter AI，请忽略此邮件。
+              如果你没有注册 Clipop AI，请忽略此邮件。
             </p>
           </div>
         `,
@@ -156,13 +156,13 @@ async function sendViaSMTP(to: string, code: string): Promise<{ ok: boolean; rea
     console.log('[SMTP] Sending email to:', to);
     
     const result = await transporter.sendMail({
-      from: `"VidShorter AI" <${smtpUser}>`,
+      from: `"Clipop AI" <${smtpUser}>`,
       to,
-      subject: '【VidShorter AI】邮箱验证码',
+      subject: '【Clipop AI】邮箱验证码',
       html: `
         <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:480px;margin:0 auto;padding:24px;background:#fff;">
           <div style="text-align:center;margin-bottom:24px;">
-            <h1 style="color:#6366f1;margin:0;font-size:24px;">VidShorter AI</h1>
+            <h1 style="color:#6366f1;margin:0;font-size:24px;">Clipop AI</h1>
             <p style="color:#6b7280;margin:4px 0 0;">验证你的邮箱地址</p>
           </div>
           <div style="background:#f9fafb;border-radius:12px;padding:32px;text-align:center;">
@@ -173,7 +173,7 @@ async function sendViaSMTP(to: string, code: string): Promise<{ ok: boolean; rea
             <p style="color:#9ca3af;margin:16px 0 0;font-size:13px;">验证码 5 分钟内有效，请勿分享给他人。</p>
           </div>
           <p style="color:#d1d5db;font-size:12px;text-align:center;margin-top:24px;">
-            如果你没有注册 VidShorter AI，请忽略此邮件。
+            如果你没有注册 Clipop AI，请忽略此邮件。
           </p>
         </div>
       `,
@@ -216,7 +216,7 @@ export async function POST(request: NextRequest) {
   console.log('[send-verification-code] Generated code:', code);
   const expiresAt = Date.now() + 5 * 60 * 1000;
 
-  const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL || process.env.SERVER_URL || 'https://vidshorterai.vercel.app';
+  const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL || process.env.SERVER_URL || 'https://clipopai.vercel.app';
 
   if (isDesktop && SERVER_URL && !SERVER_URL.includes('127.0.0.1') && !SERVER_URL.includes('localhost')) {
     console.log('[send-verification-code] Desktop mode, proxying to server:', SERVER_URL);
@@ -328,7 +328,7 @@ export async function PUT(request: NextRequest) {
     return Response.json({ error: 'Email and code are required' }, { status: 400 });
   }
 
-  const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL || process.env.SERVER_URL || 'https://vidshorterai.vercel.app';
+  const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL || process.env.SERVER_URL || 'https://clipopai.vercel.app';
 
   if (isDesktop && SERVER_URL && !SERVER_URL.includes('127.0.0.1') && !SERVER_URL.includes('localhost')) {
     console.log('[verify-code] Desktop mode, proxying verification to server:', SERVER_URL);

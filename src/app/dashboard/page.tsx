@@ -67,7 +67,7 @@ type DbVideoRow = {
 
 // Demo video storage – keyed per user for isolation
 function getDemoVideosKey(userId: string): string {
-  return `vidshorter_demo_videos_${userId}`;
+  return `clipop_demo_videos_${userId}`;
 }
 
 function getDemoVideos(userId: string): VideoRecord[] {
@@ -82,12 +82,12 @@ function getDemoVideos(userId: string): VideoRecord[] {
       return [];
     }
   }
-  const legacy = localStorage.getItem('vidshorter_demo_videos');
+  const legacy = localStorage.getItem('clipop_demo_videos');
   if (!legacy) return [];
   try {
     return JSON.parse(legacy);
   } catch {
-    localStorage.removeItem('vidshorter_demo_videos');
+    localStorage.removeItem('clipop_demo_videos');
     return [];
   }
 }
@@ -377,7 +377,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     const check = () => {
-      const fromDesktop = localStorage.getItem('vidshorter_desktop_login') === 'true';
+      const fromDesktop = localStorage.getItem('clipop_desktop_login') === 'true';
       setIsFromDesktop(fromDesktop);
     };
     check();
@@ -385,7 +385,7 @@ export default function DashboardPage() {
 
   const handleReturnToDesktop = () => {
     try {
-      window.location.href = 'vidshorter://auth/complete';
+      window.location.href = 'clipop://auth/complete';
     } catch (e) {
       console.error('Failed to redirect to desktop app', e);
     }
@@ -484,7 +484,7 @@ export default function DashboardPage() {
 
     try {
       if (useDemoMode) {
-        const key = `vidshorter_demo_feedbacks_${user.id}`;
+        const key = `clipop_demo_feedbacks_${user.id}`;
         const stored = typeof window !== 'undefined' ? localStorage.getItem(key) : null;
         const list = stored ? JSON.parse(stored) : [];
         list.unshift({ id: `fb-${Date.now()}`, content, created_at: new Date().toISOString() });
@@ -553,10 +553,10 @@ export default function DashboardPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="font-medium">Detected Desktop App Login</h3>
-                  <p className="text-sm text-muted-foreground">Click the button below to return to VidShorter Agent</p>
+                  <p className="text-sm text-muted-foreground">Click the button below to return to Clipop Agent</p>
                 </div>
                 <Button onClick={handleReturnToDesktop}>
-                  Return to VidShorter Agent
+                  Return to Clipop Agent
                 </Button>
               </div>
             </div>

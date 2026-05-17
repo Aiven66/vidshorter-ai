@@ -16,7 +16,7 @@ export function Footer() {
           <div className="col-span-1 md:col-span-2">
             <Link href="/" className="flex items-center gap-2 font-bold text-xl mb-4">
               <Video className="h-6 w-6 text-primary" />
-              <span>VidShorter AI</span>
+              <span>Clipop AI</span>
             </Link>
             <p className="text-muted-foreground max-w-md">
               Transform your long videos into engaging short clips with AI-powered analysis and editing.
@@ -69,7 +69,7 @@ export function Footer() {
         </div>
 
         <div className="border-t border-border mt-8 pt-8 text-center text-muted-foreground">
-          <p>&copy; {currentYear} VidShorter AI. All rights reserved.</p>
+          <p>&copy; {currentYear} Clipop AI. All rights reserved.</p>
         </div>
       </div>
     </footer>

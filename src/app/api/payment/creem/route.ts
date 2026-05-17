@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
       metadata: {
         plan_id: planId,
         user_id: userId || '',
-        source: 'vidshorter_ai',
+        source: 'clipop_ai',
       },
     };
 

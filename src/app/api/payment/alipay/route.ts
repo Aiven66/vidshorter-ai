@@ -96,7 +96,7 @@ export async function POST(request: NextRequest) {
     biz_content: JSON.stringify({
       out_trade_no: outTradeNo,
       total_amount: amount.toFixed(2),
-      subject: subject || 'VidShorter AI 订阅',
+      subject: subject || 'Clipop AI 订阅',
       product_code: 'FACE_TO_FACE_PAYMENT',
       passback_params: userId ? encodeURIComponent(JSON.stringify({ user_id: userId, plan_id: planId })) : undefined,
     }),
@@ -143,7 +143,7 @@ export async function POST(request: NextRequest) {
       biz_content: JSON.stringify({
         out_trade_no: outTradeNo,
         total_amount: amount.toFixed(2),
-        subject: subject || 'VidShorter AI 订阅',
+        subject: subject || 'Clipop AI 订阅',
         product_code: 'FAST_INSTANT_TRADE_PAY',
       }),
     };

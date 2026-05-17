@@ -49,7 +49,7 @@ const categories = [
 ];
 
 // Demo posts storage
-const DEMO_POSTS_KEY = 'vidshorter_demo_posts';
+const DEMO_POSTS_KEY = 'clipop_demo_posts';
 
 function getDemoPosts(): BlogPost[] {
   if (typeof window === 'undefined') return [];
@@ -65,7 +65,7 @@ function saveDemoPosts(posts: BlogPost[]) {
 /* ───────────────────────────────────────────────
    Payment Config Storage
 ─────────────────────────────────────────────── */
-const PAYMENT_CONFIG_KEY = 'vidshorter_payment_config';
+const PAYMENT_CONFIG_KEY = 'clipop_payment_config';
 
 interface PaymentConfig {
   wechat: {
@@ -120,7 +120,7 @@ export { getPaymentConfig, type PaymentConfig };
 /* ───────────────────────────────────────────────
    AI Compute Config Storage
 ─────────────────────────────────────────────── */
-const AI_CONFIG_KEY = 'vidshorter_ai_config';
+const AI_CONFIG_KEY = 'clipop_ai_config';
 
 export interface AiConfig {
   apiKey: string;

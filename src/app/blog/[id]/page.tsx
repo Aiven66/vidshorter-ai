@@ -21,7 +21,7 @@ interface BlogPost {
 }
 
 // Demo posts storage key (same as admin/page.tsx and blog/page.tsx)
-const DEMO_POSTS_KEY = 'vidshorter_demo_posts';
+const DEMO_POSTS_KEY = 'clipop_demo_posts';
 
 function getLocalPost(id: string): BlogPost | null {
   if (typeof window === 'undefined') return null;

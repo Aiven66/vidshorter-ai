@@ -27,7 +27,7 @@ let embeddedWebUrl = '';
 let authCallbackServer = null;
 let authCallbackPort = 0;
 
-const SERVER_URL = 'https://vidshorterai.vercel.app';
+const SERVER_URL = 'https://clipopai.vercel.app';
 
 // ==================== LOGGING ====================
 function nowIso() {
@@ -54,6 +54,53 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (err) => {
   appendLog('[ERROR] UnhandledRejection: ' + (err && err.stack ? err.stack : String(err)));
 });
+
+// ==================== VIDEO DOWNLOAD ====================
+async function downloadVideo(videoUrl, downloadDir) {
+  appendLog(`[Download] Starting download for: ${videoUrl}`);
+
+  const id = `${Date.now()}-${randomUUID()}`;
+  const tmpl = path.join(downloadDir, `${id}.%(ext)s`);
+
+  const formats = [
+    { name: '720p', spec: 'best[height<=720]', remux: true },
+    { name: 'best', spec: 'bestvideo+bestaudio/best', remux: true },
+    { name: '360p', spec: 'worst[height<=360]', remux: false },
+    { name: 'format18', spec: '18', remux: false },
+  ];
+
+  let lastError = null;
+  for (const fmt of formats) {
+    appendLog(`[Download] Trying format: ${fmt.name}`);
+    try {
+      const args = [
+        '--no-playlist', '--quiet',
+        '-f', fmt.spec,
+      ];
+      if (fmt.remux) args.push('--remux-video', 'mp4');
+      args.push('-o', tmpl, videoUrl);
+
+      await runYtDlp(args);
+
+      let tmpPath = path.join(downloadDir, `${id}.mp4`);
+      if (!fsSync.existsSync(tmpPath)) {
+        const files = fsSync.readdirSync(downloadDir);
+        const matching = files.find(f => f.startsWith(id + '.'));
+        if (matching) tmpPath = path.join(downloadDir, matching);
+      }
+      if (fsSync.existsSync(tmpPath)) {
+        appendLog(`[Download] Success with format "${fmt.name}": ${tmpPath}`);
+        return tmpPath;
+      }
+      appendLog(`[Download] Format "${fmt.name}" produced no file, trying next`);
+    } catch (err) {
+      lastError = err;
+      appendLog(`[Download] Format "${fmt.name}" failed: ${err && err.message ? err.message : String(err)}`);
+    }
+  }
+
+  throw lastError || new Error('All download formats failed');
+}
 
 // ==================== CONFIG ====================
 function configPath() {
@@ -171,12 +218,12 @@ function startAuthCallbackServer() {
       }
 
       res.writeHead(200, { 'Content-Type': 'text/html', ...corsHeaders });
-      res.end(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>VidShorter Agent</title>
+      res.end(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Clipop Agent</title>
         <style>body{font-family:-apple-system,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f5f5f5}
         .card{text-align:center;padding:40px;background:#fff;border-radius:16px;box-shadow:0 2px 8px rgba(0,0,0,.1)}
         .icon{font-size:48px;margin-bottom:16px}h1{color:#16a34a;margin:0 0 8px}p{color:#666;margin:0}</style></head>
         <body><div class="card"><div class="icon">✅</div><h1>Login Successful!</h1>
-        <p>You can close this tab and return to VidShorter Agent.</p></div></body></html>`);
+        <p>You can close this tab and return to Clipop Agent.</p></div></body></html>`);
       return;
     }
 
@@ -219,18 +266,18 @@ async function injectAuthToWebWindow(token, email, userId, name) {
       console.log('[DEBUG-INJECT] Token length:', ${JSON.stringify(token.length)});
       console.log('[DEBUG-INJECT] Email:', ${JSON.stringify(email)});
 
-      localStorage.setItem('vidshorter_access_token', ${JSON.stringify(token)});
+      localStorage.setItem('clipop_access_token', ${JSON.stringify(token)});
       console.log('[DEBUG-INJECT] localStorage set');
 
-      window.__vidshorterDesktopToken = ${JSON.stringify(token)};
-      window.__vidshorterDesktopEmail = ${JSON.stringify(email)};
-      window.__vidshorterDesktopUserId = ${JSON.stringify(userId)};
-      window.__vidshorterDesktopName = ${JSON.stringify(name)};
+      window.__clipopDesktopToken = ${JSON.stringify(token)};
+      window.__clipopDesktopEmail = ${JSON.stringify(email)};
+      window.__clipopDesktopUserId = ${JSON.stringify(userId)};
+      window.__clipopDesktopName = ${JSON.stringify(name)};
       console.log('[DEBUG-INJECT] Window vars set');
 
       for (let i = 0; i < 5; i++) {
         setTimeout(() => {
-          var event = new CustomEvent('vidshorter-desktop-login', {
+          var event = new CustomEvent('clipop-desktop-login', {
             detail: {
               token: ${JSON.stringify(token)},
               email: ${JSON.stringify(email)},
@@ -239,7 +286,7 @@ async function injectAuthToWebWindow(token, email, userId, name) {
             }
           });
           window.dispatchEvent(event);
-          window.dispatchEvent(new Event('vidshorter-auth-change'));
+          window.dispatchEvent(new Event('clipop-auth-change'));
           console.log('[DEBUG-INJECT] Events dispatched, attempt ' + (i+1));
         }, i * 200);
       }
@@ -261,8 +308,8 @@ async function injectAuthToWebWindow(token, email, userId, name) {
 
 // ==================== DEEP LINK ====================
 function parseDeepLink(url) {
-  if (!url || !url.startsWith('vidshorter://')) return null;
-  const httpUrl = url.replace('vidshorter://', 'http://fakehost/');
+  if (!url || !url.startsWith('clipop://')) return null;
+  const httpUrl = url.replace('clipop://', 'http://fakehost/');
   try {
     const parsed = new URL(httpUrl);
     return {
@@ -319,6 +366,7 @@ async function ensureEmbeddedWeb() {
   if (embeddedWebUrl) return embeddedWebUrl;
 
   const candidates = [
+    path.join(process.resourcesPath || '', 'embedded-web'),
     path.join(process.resourcesPath || '', 'app.asar.unpacked', 'embedded-web'),
     path.join(__dirname, 'embedded-web'),
   ];
@@ -328,6 +376,9 @@ async function ensureEmbeddedWeb() {
     : (dir ? path.join(dir, 'server.js') : '');
 
   if (!entryJs) throw new Error('Embedded Web UI not found');
+
+  appendLog(`[Embedded] Using dir: ${dir}`);
+  appendLog(`[Embedded] Entry: ${entryJs}`);
 
   const port = await (async () => {
     const s = net.createServer();
@@ -345,24 +396,32 @@ async function ensureEmbeddedWeb() {
 
   embeddedWebUrl = `http://127.0.0.1:${port}`;
 
+  const nodePathCandidates = [
+    path.join(dir, 'node_modules'),
+    path.join(process.resourcesPath || '', 'embedded-web', 'node_modules'),
+    path.join(process.resourcesPath || '', 'app.asar.unpacked', 'embedded-web', 'node_modules'),
+    path.join(process.resourcesPath || '', 'app.asar', 'node_modules'),
+    path.join(process.resourcesPath || '', 'app.asar.unpacked', 'node_modules'),
+    path.join(__dirname, 'node_modules'),
+  ].filter((p) => p && fsSync.existsSync(p));
+
   const baseEnv = {
     ...process.env,
-    NODE_PATH: [
-      path.join(process.resourcesPath || '', 'app.asar', 'node_modules'),
-      path.join(__dirname, 'node_modules'),
-    ].filter((p) => p && fsSync.existsSync(p)).join(':'),
+    NODE_PATH: nodePathCandidates.join(':'),
     NODE_ENV: 'production',
     HOSTNAME: '127.0.0.1',
     PORT: String(port),
     NEXT_PUBLIC_DESKTOP: '1',
     NEXT_TELEMETRY_DISABLED: '1',
-    SERVER_URL: 'https://vidshorterai.vercel.app',
-    NEXT_PUBLIC_SERVER_URL: 'https://vidshorterai.vercel.app',
+    SERVER_URL: 'https://clipopai.vercel.app',
+    NEXT_PUBLIC_SERVER_URL: 'https://clipopai.vercel.app',
     NEXT_PUBLIC_SUPABASE_URL: 'https://wpbzrvrwqjqdjjqfgfpa.supabase.co',
     NEXT_PUBLIC_SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndwYnpycnJ3cWpxZGpxcGZnZnBhIiwiaWF0IjoxNzc0Njc0ODcyLCJleHAiOjIwNDAyNTA4NzJ9.AIeP9T9H8E2C8vJ1D0K1D0J1D0K1D0J1D0K1D0J1D0K1D0J1D0K1D0J1D0K1D0K1D0K1D0J1D0K1D0K1D',
     COZE_SUPABASE_URL: 'https://wpbzrvrwqjqdjjqfgfpa.supabase.co',
     COZE_SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndwYnpycnJ3cWpxZGpxcGZnZnBhIiwiaWF0IjoxNzc0Njc0ODcyLCJleHAiOjIwNDAyNTA4NzJ9.AIeP9T9H8E2C8vJ1D0K1D0J1D0K1D0J1D0K1D0J1D0K1D0J1D0K1D0J1D0K1D0K1D0K1D0J1D0K1D0K1D',
   };
+
+  appendLog(`[Embedded] NODE_PATH: ${baseEnv.NODE_PATH}`);
 
   if (utilityProcess && typeof utilityProcess.fork === 'function') {
     embeddedWebProc = utilityProcess.fork(entryJs, [], { cwd: dir, env: baseEnv, stdio: 'pipe' });
@@ -378,13 +437,14 @@ async function ensureEmbeddedWeb() {
     const s = String(b).trim();
     if (s) appendLog('[Embedded Web] ' + s);
   });
-  embeddedWebProc.on('exit', () => {
+  embeddedWebProc.on('exit', (code) => {
+    appendLog(`[Embedded Web] Process exited with code ${code}`);
     embeddedWebProc = null;
     embeddedWebUrl = '';
   });
 
   const start = Date.now();
-  while (Date.now() - start < 30000) {
+  while (Date.now() - start < 45000) {
     try {
       const resp = await fetch(`${embeddedWebUrl}/`, { method: 'GET' });
       if (resp.ok) {
@@ -392,7 +452,7 @@ async function ensureEmbeddedWeb() {
         return embeddedWebUrl;
       }
     } catch {}
-    await new Promise(r => setTimeout(r, 200));
+    await new Promise(r => setTimeout(r, 300));
   }
   throw new Error('Embedded Web UI timeout');
 }
@@ -415,7 +475,7 @@ async function ensureWebWindow() {
     width: 1120,
     height: 760,
     resizable: true,
-    title: 'VidShorter Agent',
+    title: 'Clipop Agent',
     webPreferences: {
       preload: path.join(__dirname, 'preload-web.js'),
       webSecurity: false,
@@ -430,11 +490,11 @@ async function ensureWebWindow() {
     try {
       await webWindow.webContents.executeJavaScript(`
         (function() {
-          window.vidshorterDesktop = true;
+          window.clipopDesktop = true;
           if (!window.api) window.api = {};
           window.api.getAuthToken = async function() {
             if (window.electronAPI && window.electronAPI.getAuthToken) return await window.electronAPI.getAuthToken();
-            return window.__vidshorterDesktopToken || '';
+            return window.__clipopDesktopToken || '';
           };
           window.api.clearAuthToken = async function() {
             if (window.electronAPI && window.electronAPI.clearAuthToken) return await window.electronAPI.clearAuthToken();
@@ -457,8 +517,8 @@ async function ensureWebWindow() {
         await webWindow.webContents.executeJavaScript(`
           (function() {
             const baseUrl = ${JSON.stringify(base)};
-            if (!window.__vidshorterFetchPatched) {
-              window.__vidshorterFetchPatched = true;
+            if (!window.__clipopFetchPatched) {
+              window.__clipopFetchPatched = true;
               const origFetch = window.fetch.bind(window);
               window.fetch = function(input, init) {
                 const u = typeof input === 'string' ? input : (input && input.url ? input.url : '');
@@ -509,10 +569,7 @@ function startMediaServer() {
           let tmpPath = '';
           if (videoUrl.includes('youtube.com') || videoUrl.includes('youtu.be') || videoUrl.includes('bilibili.com') || videoUrl.includes('b23.tv')) {
             write({ stage: 'extract_frames', progress: 5, message: 'Downloading video...' });
-            const id = `${Date.now()}-${randomUUID()}`;
-            const tmpl = path.join(ctx.dirs.downloadDir, `${id}.%(ext)s`);
-            await runYtDlp(['--no-playlist', '--quiet', '--no-warnings', '-f', 'bestvideo[vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best', '--remux-video', 'mp4', '-o', tmpl, videoUrl]);
-            tmpPath = path.join(ctx.dirs.downloadDir, `${id}.mp4`);
+            tmpPath = await downloadVideo(videoUrl, ctx.dirs.downloadDir);
             inputPath = tmpPath;
           } else if (videoUrl.startsWith('http://127.0.0.1') || videoUrl.startsWith('http://localhost')) {
             const u = new URL(videoUrl);
@@ -550,7 +607,7 @@ function ensureSettingsWindow() {
     width: 680,
     height: 800,
     resizable: true,
-    title: 'VidShorter Agent - Debug',
+    title: 'Clipop Agent - Debug',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: true,
@@ -589,9 +646,9 @@ async function applyMenu() {
               await saveConfig(cfg);
               if (webWindow && !webWindow.isDestroyed()) {
                 await webWindow.webContents.executeJavaScript(`
-                  localStorage.removeItem('vidshorter_access_token');
-                  window.__vidshorterDesktopToken = '';
-                  window.dispatchEvent(new Event('vidshorter-auth-change'));
+                  localStorage.removeItem('clipop_access_token');
+                  window.__clipopDesktopToken = '';
+                  window.dispatchEvent(new Event('clipop-auth-change'));
                 `, true).catch(() => {});
                 webWindow.webContents.reload();
               }
@@ -639,9 +696,9 @@ ipcMain.handle('clearAuthToken', async () => {
   await saveConfig(cfg);
   if (webWindow && !webWindow.isDestroyed()) {
     await webWindow.webContents.executeJavaScript(`
-      localStorage.removeItem('vidshorter_access_token');
-      window.__vidshorterDesktopToken = '';
-      window.dispatchEvent(new Event('vidshorter-auth-change'));
+      localStorage.removeItem('clipop_access_token');
+      window.__clipopDesktopToken = '';
+      window.dispatchEvent(new Event('clipop-auth-change'));
     `, true).catch(() => {});
     webWindow.webContents.reload();
   }
@@ -662,7 +719,7 @@ ipcMain.handle('openAuth', async () => {
 
 ipcMain.handle('testDeepLink', async () => {
   appendLog('[IPC] testDeepLink called');
-  await handleDeepLink('vidshorter://login-success?token=test_token_12345&email=test%40example.com&userId=user_123&name=Test%20User');
+  await handleDeepLink('clipop://login-success?token=test_token_12345&email=test%40example.com&userId=user_123&name=Test%20User');
   return 'OK';
 });
 
@@ -695,13 +752,13 @@ app.on('open-url', (event, url) => {
 app.on('ready', async () => {
   appendLog(`[App] Ready (v${APP_VERSION})`);
 
-  const logDir = path.join(app.getPath('logs'), 'VidShorterAgent');
+  const logDir = path.join(app.getPath('logs'), 'ClipopAgent');
   await fs.mkdir(logDir, { recursive: true });
   logFilePath = path.join(logDir, 'app.log');
 
   try {
-    app.setAsDefaultProtocolClient('vidshorter');
-    appendLog('[App] Protocol registered: vidshorter://');
+    app.setAsDefaultProtocolClient('clipop')');
+    appendLog('[App] Protocol registered: clipop://');
   } catch (e) {
     appendLog(`[App] Protocol register ERROR: ${e}`);
   }

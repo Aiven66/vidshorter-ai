@@ -28,7 +28,7 @@ import Link from 'next/link';
 function getAdminAiConfig() {
   if (typeof window === 'undefined') return null;
   try {
-    const stored = localStorage.getItem('vidshorter_ai_config');
+    const stored = localStorage.getItem('clipop_ai_config');
     return stored ? JSON.parse(stored) : null;
   } catch {
     return null;
@@ -91,11 +91,11 @@ interface VidShorterDesktopBridge {
 
 declare global {
   interface Window {
-    vidshorterDesktop?: VidShorterDesktopBridge;
-    __vidshorterDesktopToken?: string;
-    __vidshorterDesktopEmail?: string;
-    __vidshorterDesktopUserId?: string;
-    __vidshorterDesktopName?: string;
+    clipopDesktop?: VidShorterDesktopBridge;
+    __clipopDesktopToken?: string;
+    __clipopDesktopEmail?: string;
+    __clipopDesktopUserId?: string;
+    __clipopDesktopName?: string;
     electronAPI?: {
       getAuthToken?: () => Promise<string>;
       clearAuthToken?: () => Promise<{ ok?: boolean }>;
@@ -145,10 +145,10 @@ const STAGE_META: Record<string, { icon: typeof Video; label: string }> = {
 };
 
 /* ── Demo history persistence ── */
-const DEMO_VIDEOS_KEY = 'vidshorter_demo_videos';
+const DEMO_VIDEOS_KEY = 'clipop_demo_videos';
 
 function getDemoVideosKey(userId?: string): string {
-  return userId ? `vidshorter_demo_videos_${userId}` : DEMO_VIDEOS_KEY;
+  return userId ? `clipop_demo_videos_${userId}` : DEMO_VIDEOS_KEY;
 }
 
 function saveDemoVideoRecord(url: string, title: string | null, clips: VideoClip[], userId?: string) {
@@ -208,7 +208,7 @@ export default function HomePage() {
     try {
       const q = new URLSearchParams(window.location.search);
       const enabledByQuery = q.get('agent') === '1';
-      const enabledByStorage = localStorage.getItem('vidshorter_use_agent') === '1';
+      const enabledByStorage = localStorage.getItem('clipop_use_agent') === '1';
       setUseAgent(enabledByQuery || enabledByStorage);
     } catch {}
   }, []);
@@ -237,14 +237,14 @@ export default function HomePage() {
   }, [accessToken, user]);
 
   const getLocalMediaBaseUrl = useCallback(async () => {
-    const desktop = window.vidshorterDesktop;
+    const desktop = window.clipopDesktop;
     if (desktop?.getMediaBaseUrl) {
       const baseUrl = await desktop.getMediaBaseUrl();
       if (typeof baseUrl === 'string' && baseUrl.trim()) return baseUrl.replace(/\/$/, '');
     }
 
     try {
-      const stored = localStorage.getItem('vidshorter_desktop_media_base') || '';
+      const stored = localStorage.getItem('clipop_desktop_media_base') || '';
       if (stored.startsWith('http://127.0.0.1') || stored.startsWith('http://localhost')) {
         return stored.replace(/\/$/, '');
       }
@@ -363,7 +363,7 @@ export default function HomePage() {
       };
 
       // When inputUrl is a local media server URL, always use local processing
-      const desktop = (window as any)?.vidshorterDesktop;
+      const desktop = (window as any)?.clipopDesktop;
       const isDesktop = !!desktop?.getMediaBaseUrl;
       const shouldUseLocalProcessing = isDesktop || isLocalMediaUrl(inputUrl);
 
@@ -639,10 +639,6 @@ export default function HomePage() {
                   <ArrowRight className="ml-2 h-5 w-5" />
                 </Link>
               </Button>
-              <Button size="lg" variant="outline" className="text-lg px-8">
-                <Play className="mr-2 h-5 w-5" />
-                {t('home.hero.secondary')}
-              </Button>
               <Button size="lg" variant="outline" className="text-lg px-8" asChild>
                 <Link href="/download">
                   <Download className="mr-2 h-5 w-5" />
@@ -701,7 +697,7 @@ export default function HomePage() {
                         href="/login"
                         className="text-primary hover:underline"
                         onClick={(e) => {
-                          const d = window.vidshorterDesktop;
+                          const d = window.clipopDesktop;
                           if (d && typeof d.openAuth === 'function') {
                             e.preventDefault();
                             d.openAuth();
@@ -748,7 +744,7 @@ export default function HomePage() {
                     onChange={(e) => {
                       const v = e.target.checked;
                       setUseAgent(v);
-                      try { localStorage.setItem('vidshorter_use_agent', v ? '1' : '0'); } catch {}
+                      try { localStorage.setItem('clipop_use_agent', v ? '1' : '0'); } catch {}
                     }}
                     disabled={isProcessing || isUploading}
                   />
