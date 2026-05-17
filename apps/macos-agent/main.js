@@ -27,7 +27,7 @@ let embeddedWebUrl = '';
 let authCallbackServer = null;
 let authCallbackPort = 0;
 
-const SERVER_URL = 'https://clipopai.vercel.app';
+const SERVER_URL = 'https://vidshorterai.vercel.app';
 
 // ==================== LOGGING ====================
 function nowIso() {
@@ -757,7 +757,7 @@ app.on('ready', async () => {
   logFilePath = path.join(logDir, 'app.log');
 
   try {
-    app.setAsDefaultProtocolClient('clipop')');
+    app.setAsDefaultProtocolClient('clipop');
     appendLog('[App] Protocol registered: clipop://');
   } catch (e) {
     appendLog(`[App] Protocol register ERROR: ${e}`);
