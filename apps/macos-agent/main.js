@@ -483,6 +483,12 @@ async function ensureWebWindow() {
     },
   });
 
+  // 确保所有新窗口都用系统浏览器打开
+  webWindow.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
+    return { action: 'deny' };
+  });
+
   await webWindow.loadURL(url);
 
   webWindow.webContents.on('did-finish-load', async () => {
@@ -731,6 +737,17 @@ ipcMain.handle('open-web-login', async () => {
     loginUrl.searchParams.set('callback', callbackUrl);
   }
   await shell.openExternal(loginUrl.toString());
+  return { ok: true };
+});
+
+ipcMain.handle('open-web-register', async () => {
+  const callbackUrl = authCallbackPort ? `http://127.0.0.1:${authCallbackPort}` : '';
+  const registerUrl = new URL('/register', SERVER_URL);
+  registerUrl.searchParams.set('from', 'desktop');
+  if (callbackUrl) {
+    registerUrl.searchParams.set('callback', callbackUrl);
+  }
+  await shell.openExternal(registerUrl.toString());
   return { ok: true };
 });
 
