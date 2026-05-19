@@ -56,17 +56,17 @@ process.on('unhandledRejection', (err) => {
 });
 
 // ==================== VIDEO DOWNLOAD ====================
-async function downloadVideo(videoUrl, downloadDir) {
+async function downloadVideo(videoUrl, downloadDir, onProgress) {
   appendLog(`[Download] Starting download for: ${videoUrl}`);
 
   const id = `${Date.now()}-${randomUUID()}`;
   const tmpl = path.join(downloadDir, `${id}.%(ext)s`);
+  const ffmpegBin = ffmpegPath();
 
   const formats = [
-    { name: '720p', spec: 'best[height<=720]', remux: true },
-    { name: 'best', spec: 'bestvideo+bestaudio/best', remux: true },
-    { name: '360p', spec: 'worst[height<=360]', remux: false },
-    { name: 'format18', spec: '18', remux: false },
+    { name: 'adaptive-720p', spec: 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]/best', remux: true },
+    { name: 'single-file-480p', spec: 'best[height<=480]/best', remux: true },
+    { name: 'format18', spec: '18/best[ext=mp4]/best', remux: false },
   ];
 
   let lastError = null;
@@ -74,13 +74,28 @@ async function downloadVideo(videoUrl, downloadDir) {
     appendLog(`[Download] Trying format: ${fmt.name}`);
     try {
       const args = [
-        '--no-playlist', '--quiet',
+        '--no-playlist',
         '-f', fmt.spec,
       ];
+      if (ffmpegBin) args.push('--ffmpeg-location', ffmpegBin);
       if (fmt.remux) args.push('--remux-video', 'mp4');
       args.push('-o', tmpl, videoUrl);
 
-      await runYtDlp(args);
+      await runYtDlp(args, {
+        overallTimeoutMs: 8 * 60_000,
+        strategyTimeoutMs: 75_000,
+        cookieStrategyTimeoutMs: 45_000,
+        onStrategy: (strategy) => appendLog(`[Download] yt-dlp strategy: ${strategy}`),
+        onStrategyError: (strategy, err) => {
+          const msg = err && err.message ? err.message : String(err);
+          appendLog(`[Download] yt-dlp strategy failed (${strategy}): ${msg.slice(0, 240)}`);
+        },
+        onProgress: (pct, strategy) => {
+          const safePct = Math.max(0, Math.min(100, pct));
+          appendLog(`[Download] ${fmt.name}/${strategy}: ${safePct.toFixed(1)}%`);
+          if (typeof onProgress === 'function') onProgress(safePct, fmt.name, strategy);
+        },
+      });
 
       let tmpPath = path.join(downloadDir, `${id}.mp4`);
       if (!fsSync.existsSync(tmpPath)) {
@@ -463,14 +478,6 @@ async function ensureWebWindow() {
     return;
   }
 
-  let url = '';
-  try {
-    url = await ensureEmbeddedWeb();
-  } catch (e) {
-    appendLog(`[WebWindow] Failed: ${e}`);
-    url = `data:text/html,<html><body><pre>${String(e)}</pre></body></html>`;
-  }
-
   webWindow = new BrowserWindow({
     width: 1120,
     height: 760,
@@ -481,6 +488,7 @@ async function ensureWebWindow() {
       webSecurity: false,
       allowRunningInsecureContent: true,
     },
+    show: false, // 先隐藏，准备好再显示
   });
 
   // 确保所有新窗口都用系统浏览器打开
@@ -489,37 +497,104 @@ async function ensureWebWindow() {
     return { action: 'deny' };
   });
 
-  await webWindow.loadURL(url);
+  // 先显示加载界面，避免白屏
+  await webWindow.loadURL(`data:text/html,<html><head><style>html,body{margin:0;padding:0;height:100%;background:#0f172a;display:flex;align-items:center;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}h1{color:#fff;font-size:24px}p{color:#94a3b8;margin-top:10px 0 0}</style></head><body><div><h1>Clipop Agent</h1><p id="status">Loading...</p></div></body></html>`);
+  webWindow.show();
+
+  // 后台启动嵌入式服务器
+  let url = '';
+  try {
+    // 更新状态
+    webWindow.webContents.executeJavaScript(`document.getElementById('status').textContent = 'Starting embedded server...'`);
+    url = await ensureEmbeddedWeb();
+    webWindow.webContents.executeJavaScript(`document.getElementById('status').textContent = 'Loading interface...'`);
+    await webWindow.loadURL(url);
+  } catch (e) {
+    appendLog(`[WebWindow] Failed: ${e}`);
+    url = `data:text/html,<html><body><pre>${String(e)}</pre></body></html>`;
+    webWindow.loadURL(url);
+  }
 
   webWindow.webContents.on('did-finish-load', async () => {
     appendLog('[WebWindow] did-finish-load');
     try {
+      // 并行启动媒体服务器
+      startMediaServer();
+      
+      // 注入桌面 API
       await webWindow.webContents.executeJavaScript(`
         (function() {
-          window.clipopDesktop = true;
+          const nativeDesktop = (window.clipopDesktop && typeof window.clipopDesktop === 'object')
+            ? window.clipopDesktop
+            : ((window.vidshorterDesktop && typeof window.vidshorterDesktop === 'object') ? window.vidshorterDesktop : {});
+          const desktopBridge = {
+            ...nativeDesktop,
+            getAuthToken: async function() {
+              if (nativeDesktop.getAuthToken) return await nativeDesktop.getAuthToken();
+              if (window.electronAPI && window.electronAPI.getAuthToken) return await window.electronAPI.getAuthToken();
+              return window.__clipopDesktopToken || '';
+            },
+            clearAuthToken: async function() {
+              if (nativeDesktop.clearAuthToken) return await nativeDesktop.clearAuthToken();
+              if (window.electronAPI && window.electronAPI.clearAuthToken) return await window.electronAPI.clearAuthToken();
+            },
+            openAuth: async function() {
+              if (nativeDesktop.openAuth) return await nativeDesktop.openAuth();
+              if (window.electronAPI && window.electronAPI.openAuth) return await window.electronAPI.openAuth();
+            },
+            openWebLogin: async function() {
+              if (nativeDesktop.openWebLogin) return await nativeDesktop.openWebLogin();
+              if (window.electronAPI && window.electronAPI.openWebLogin) return await window.electronAPI.openWebLogin();
+            },
+            openWebRegister: async function() {
+              if (nativeDesktop.openWebRegister) return await nativeDesktop.openWebRegister();
+              if (window.electronAPI && window.electronAPI.openWebRegister) return await window.electronAPI.openWebRegister();
+            },
+            getMediaBaseUrl: async function() {
+              if (nativeDesktop.getMediaBaseUrl) return await nativeDesktop.getMediaBaseUrl();
+              if (window.electronAPI && window.electronAPI.getMediaBaseUrl) return await window.electronAPI.getMediaBaseUrl();
+              return localStorage.getItem('clipop_desktop_media_base') || '';
+            },
+          };
+          try {
+            if (!window.clipopDesktop || typeof window.clipopDesktop !== 'object') window.clipopDesktop = desktopBridge;
+          } catch {}
+          try {
+            if (!window.vidshorterDesktop || typeof window.vidshorterDesktop !== 'object') window.vidshorterDesktop = desktopBridge;
+          } catch {}
           if (!window.api) window.api = {};
           window.api.getAuthToken = async function() {
-            if (window.electronAPI && window.electronAPI.getAuthToken) return await window.electronAPI.getAuthToken();
-            return window.__clipopDesktopToken || '';
+            return await desktopBridge.getAuthToken();
           };
           window.api.clearAuthToken = async function() {
-            if (window.electronAPI && window.electronAPI.clearAuthToken) return await window.electronAPI.clearAuthToken();
+            return await desktopBridge.clearAuthToken();
           };
           window.api.requestAuth = async function() {
-            if (window.electronAPI && window.electronAPI.openAuth) return await window.electronAPI.openAuth();
+            return await desktopBridge.openAuth();
+          };
+          window.agent = {
+            openWebLogin: async function() {
+              return await desktopBridge.openWebLogin();
+            },
+            openWebRegister: async function() {
+              return await desktopBridge.openWebRegister();
+            },
           };
         })();
       `, true);
 
+      // 注入认证 token
       const cfg = await loadConfig();
       if (cfg.authToken) {
         appendLog('[WebWindow] Injecting saved token...');
         await injectAuthToWebWindow(cfg.authToken, cfg.authEmail, cfg.authUserId, cfg.authName);
       }
 
-      startMediaServer();
+      // 等待媒体服务器就绪
+      if (mediaReady) await mediaReady;
       const base = mediaBaseUrl;
       if (base) {
+        appendLog(`[WebWindow] Patching fetch for media server: ${base}`);
         await webWindow.webContents.executeJavaScript(`
           (function() {
             const baseUrl = ${JSON.stringify(base)};
@@ -531,6 +606,13 @@ async function ensureWebWindow() {
                 if (u && u.includes('/api/process-video')) return origFetch(baseUrl + '/api/process-video', init);
                 return origFetch(input, init);
               };
+            }
+            localStorage.setItem('clipop_desktop_media_base', baseUrl);
+            if (window.clipopDesktop && typeof window.clipopDesktop === 'object') {
+              try { window.clipopDesktop.getMediaBaseUrl = async function() { return baseUrl; }; } catch {}
+            }
+            if (window.vidshorterDesktop && typeof window.vidshorterDesktop === 'object') {
+              try { window.vidshorterDesktop.getMediaBaseUrl = async function() { return baseUrl; }; } catch {}
             }
           })();
         `, true);
@@ -575,7 +657,14 @@ function startMediaServer() {
           let tmpPath = '';
           if (videoUrl.includes('youtube.com') || videoUrl.includes('youtu.be') || videoUrl.includes('bilibili.com') || videoUrl.includes('b23.tv')) {
             write({ stage: 'extract_frames', progress: 5, message: 'Downloading video...' });
-            tmpPath = await downloadVideo(videoUrl, ctx.dirs.downloadDir);
+            tmpPath = await downloadVideo(videoUrl, ctx.dirs.downloadDir, (pct, formatName, strategyName) => {
+              write({
+                stage: 'extract_frames',
+                progress: Math.max(6, Math.min(29, 6 + Math.floor(pct * 0.23))),
+                message: `Downloading video... ${Math.floor(pct)}%`,
+                data: { formatName, strategyName },
+              });
+            });
             inputPath = tmpPath;
           } else if (videoUrl.startsWith('http://127.0.0.1') || videoUrl.startsWith('http://localhost')) {
             const u = new URL(videoUrl);
@@ -783,8 +872,8 @@ app.on('ready', async () => {
   startAuthCallbackServer();
   startMediaServer();
   await applyMenu();
-  ensureSettingsWindow();
-  setTimeout(ensureWebWindow, 500);
+  // 只打开主窗口，设置窗口按需打开
+  setTimeout(ensureWebWindow, 100);
 });
 
 app.on('window-all-closed', () => {

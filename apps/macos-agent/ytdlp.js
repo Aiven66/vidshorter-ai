@@ -1,4 +1,4 @@
-const { execFile } = require('node:child_process');
+const { execFile, spawn } = require('node:child_process');
 const fs = require('node:fs/promises');
 const fsSync = require('node:fs');
 const net = require('node:net');
@@ -46,6 +46,7 @@ function resolveBundledYtDlpPath() {
 const YT_DLP_BIN_PATH = resolveYtDlpBinPath();
 const YT_DLP_BUNDLED_PATH = resolveBundledYtDlpPath();
 const YT_DLP_DARWIN_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos';
+const HAS_EXPLICIT_YTDLP_PATH = !!String(process.env.VIDSHORTER_YTDLP_PATH || process.env.YT_DLP_BIN_PATH || '').trim();
 
 function isDarwin() {
   return process.platform === 'darwin';
@@ -260,6 +261,13 @@ async function canUsePythonYtDlpModule() {
 async function ensureYtDlp() {
   if (ytDlpCommand) return;
 
+  if (HAS_EXPLICIT_YTDLP_PATH) {
+    await tryExecYtDlpVersion(YT_DLP_BIN_PATH, 30_000);
+    ytDlpCommand = YT_DLP_BIN_PATH;
+    ytDlpUseModule = false;
+    return;
+  }
+
   try {
     if (await canUseSystemYtDlp()) return;
   } catch {}
@@ -334,7 +342,128 @@ function isYouTubeUrl(url) {
   return url && (url.includes('youtube.com') || url.includes('youtu.be'));
 }
 
-async function runYtDlp(args) {
+function browserCookieStoreExists(browser) {
+  if (process.env.VIDSHORTER_TEST_ENABLE_COOKIE_STRATEGIES === '1') return true;
+  const home = os.homedir();
+  const candidatesByBrowser = {
+    chrome: [path.join(home, 'Library', 'Application Support', 'Google', 'Chrome')],
+    chromium: [path.join(home, 'Library', 'Application Support', 'Chromium')],
+    brave: [path.join(home, 'Library', 'Application Support', 'BraveSoftware', 'Brave-Browser')],
+    edge: [path.join(home, 'Library', 'Application Support', 'Microsoft Edge')],
+    firefox: [path.join(home, 'Library', 'Application Support', 'Firefox', 'Profiles')],
+    safari: [path.join(home, 'Library', 'Containers', 'com.apple.Safari'), path.join(home, 'Library', 'Safari')],
+  };
+  const candidates = candidatesByBrowser[browser] || [];
+  return candidates.some((p) => {
+    try { return fsSync.existsSync(p); } catch { return false; }
+  });
+}
+
+function parsePercent(chunk) {
+  const text = String(chunk || '');
+  const matches = [...text.matchAll(/(?:\[download\]\s*)?(\d+(?:\.\d+)?)%/g)];
+  if (!matches.length) return null;
+  const n = Number(matches[matches.length - 1][1]);
+  return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : null;
+}
+
+function makeCommandFailure(cmd, args, code, signal, stdout, stderr, timedOut, strategyName) {
+  const detail = stderr.trim() || stdout.trim() || `exit ${code ?? signal ?? 'unknown'}`;
+  const err = new Error(`yt-dlp ${strategyName ? `(${strategyName}) ` : ''}failed: ${timedOut ? 'timed out' : detail.slice(0, 500)}`);
+  err.code = code;
+  err.signal = signal;
+  err.stdout = stdout;
+  err.stderr = stderr;
+  err.timedOut = timedOut;
+  err.cmd = cmd;
+  err.args = args;
+  return err;
+}
+
+async function execYtDlpStreaming(cmd, cmdArgs, options, strategyName) {
+  const timeoutMs = Math.max(5_000, options.timeoutMs || 180_000);
+  const maxBuffer = options.maxBuffer || 30 * 1024 * 1024;
+  const env = { ...process.env, PYTHONWARNINGS: 'ignore', ...(options.env || {}) };
+
+  return await new Promise((resolve, reject) => {
+    const child = spawn(cmd, cmdArgs, { env, windowsHide: true });
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    let timedOut = false;
+    let lastPercent = -1;
+
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn(value);
+    };
+
+    const handleChunk = (source, chunk) => {
+      const text = String(chunk || '');
+      if (source === 'stdout') stdout += text;
+      else stderr += text;
+      if (stdout.length + stderr.length > maxBuffer) {
+        try { child.kill('SIGKILL'); } catch {}
+        finish(reject, makeCommandFailure(cmd, cmdArgs, null, 'MAXBUFFER', stdout, stderr, false, strategyName));
+        return;
+      }
+      if (typeof options.onOutput === 'function') options.onOutput(text, source, strategyName);
+      const pct = parsePercent(text);
+      if (pct !== null && pct > lastPercent) {
+        lastPercent = pct;
+        if (typeof options.onProgress === 'function') options.onProgress(pct, strategyName);
+      }
+    };
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try { child.kill('SIGTERM'); } catch {}
+      setTimeout(() => {
+        if (!settled) {
+          try { child.kill('SIGKILL'); } catch {}
+        }
+      }, 1500).unref?.();
+    }, timeoutMs);
+
+    child.stdout.on('data', (b) => handleChunk('stdout', b));
+    child.stderr.on('data', (b) => handleChunk('stderr', b));
+    child.on('error', (e) => finish(reject, e));
+    child.on('close', (code, signal) => {
+      if (code === 0) finish(resolve, { stdout, stderr });
+      else finish(reject, makeCommandFailure(cmd, cmdArgs, code, signal, stdout, stderr, timedOut, strategyName));
+    });
+  });
+}
+
+function buildStrategies(isYT, preferCookies = false) {
+  if (!isYT) {
+    const browsers = ['chrome', 'chromium', 'brave', 'edge', 'safari', 'firefox'].filter(browserCookieStoreExists);
+    return [
+      ...browsers.map((browser) => ({ name: `cookies-${browser}`, cookieBrowser: browser, extraArgs: [], isCookie: true })),
+      { name: 'no-cookies', cookieBrowser: null, extraArgs: [], isCookie: false },
+    ];
+  }
+
+  const publicStrategies = [
+    { name: 'mweb', cookieBrowser: null, extraArgs: ['--extractor-args', 'youtube:player_client=mweb'], isCookie: false },
+    { name: 'tv-embedded', cookieBrowser: null, extraArgs: ['--extractor-args', 'youtube:player_client=tv_embedded'], isCookie: false },
+    { name: 'android', cookieBrowser: null, extraArgs: ['--extractor-args', 'youtube:player_client=android'], isCookie: false },
+    { name: 'ios', cookieBrowser: null, extraArgs: ['--extractor-args', 'youtube:player_client=ios'], isCookie: false },
+  ];
+  const cookieStrategies = ['chrome', 'chromium', 'brave', 'edge', 'safari', 'firefox']
+    .filter(browserCookieStoreExists)
+    .flatMap((browser) => [
+      { name: `${browser}+mweb`, cookieBrowser: browser, extraArgs: ['--extractor-args', 'youtube:player_client=mweb'], isCookie: true },
+      { name: `${browser}+tv-embedded`, cookieBrowser: browser, extraArgs: ['--extractor-args', 'youtube:player_client=tv_embedded'], isCookie: true },
+      { name: `${browser}+android`, cookieBrowser: browser, extraArgs: ['--extractor-args', 'youtube:player_client=android'], isCookie: true },
+    ]);
+
+  return preferCookies ? [...cookieStrategies, ...publicStrategies] : [...publicStrategies, ...cookieStrategies];
+}
+
+async function runYtDlp(args, options = {}) {
   await ensureYtDlp();
   const proxy = await resolveHttpProxy();
   const proxyArgs = proxy ? ['--proxy', proxy] : [];
@@ -344,64 +473,23 @@ async function runYtDlp(args) {
 
   const videoUrl = args.find(a => a.startsWith('http'));
   const isYT = isYouTubeUrl(videoUrl);
-
-  const ytClientStrategies = isYT ? [
-    { name: 'cookies+web', extraArgs: [], useCookies: true },
-    { name: 'cookies+android', extraArgs: ['--extractor-args', 'youtube:player_client=android'], useCookies: true },
-    { name: 'cookies+ios', extraArgs: ['--extractor-args', 'youtube:player_client=ios'], useCookies: true },
-    { name: 'android', extraArgs: ['--extractor-args', 'youtube:player_client=android'], useCookies: false },
-    { name: 'ios', extraArgs: ['--extractor-args', 'youtube:player_client=ios'], useCookies: false },
-    { name: 'mweb', extraArgs: ['--extractor-args', 'youtube:player_client=mweb'], useCookies: false },
-  ] : [];
-
-  const browsers = ['chrome', 'firefox'];
-
-  const allStrategies = [];
-
-  for (const strategy of ytClientStrategies) {
-    if (strategy.useCookies) {
-      for (const browser of browsers) {
-        allStrategies.push({
-          name: `${browser}+${strategy.name}`,
-          cookieBrowser: browser,
-          extraArgs: strategy.extraArgs,
-        });
-      }
-    } else {
-      allStrategies.push({
-        name: strategy.name,
-        cookieBrowser: null,
-        extraArgs: strategy.extraArgs,
-      });
-    }
-  }
-
-  if (!isYT) {
-    for (const browser of browsers) {
-      allStrategies.push({
-        name: `cookies-${browser}`,
-        cookieBrowser: browser,
-        extraArgs: [],
-      });
-    }
-  }
-
-  allStrategies.push({
-    name: 'no-cookies',
-    cookieBrowser: null,
-    extraArgs: [],
-  });
+  const allStrategies = buildStrategies(isYT, options.preferCookies);
 
   let lastError = null;
+  const startedAt = Date.now();
+  const overallTimeoutMs = options.overallTimeoutMs || 8 * 60_000;
 
   for (const strategy of allStrategies) {
+    const remainingMs = overallTimeoutMs - (Date.now() - startedAt);
+    if (remainingMs <= 0) break;
     const commonArgs = [
       '--no-check-certificate',
-      '--ignore-errors',
-      '--socket-timeout', '30',
-      '--retries', '2',
+      '--socket-timeout', '20',
+      '--retries', '1',
+      '--fragment-retries', '1',
       '--geo-bypass',
       '--no-warnings',
+      '--newline',
       ...jsRuntimeArgs,
     ];
 
@@ -416,14 +504,23 @@ async function runYtDlp(args) {
       : [ytDlpCommand, [...commonArgs, ...args]];
 
     try {
-      return await execFileAsync(cmd, cmdArgs, {
-        maxBuffer: 30 * 1024 * 1024,
-        timeout: 3 * 60_000,
-        env: { ...process.env, PYTHONWARNINGS: 'ignore' },
+      if (typeof options.onStrategy === 'function') options.onStrategy(strategy.name);
+      return await execYtDlpStreaming(cmd, cmdArgs, {
+        timeoutMs: Math.min(
+          remainingMs,
+          strategy.isCookie
+            ? (options.cookieStrategyTimeoutMs || 60_000)
+            : (options.strategyTimeoutMs || 90_000),
+        ),
+        maxBuffer: options.maxBuffer,
+        env: options.env,
+        onOutput: options.onOutput,
+        onProgress: options.onProgress,
       });
     } catch (e) {
       lastError = e;
       const stderr = e && typeof e.stderr === 'string' ? e.stderr.trim() : '';
+      if (typeof options.onStrategyError === 'function') options.onStrategyError(strategy.name, e);
       if (stderr.includes('Requested format is not available')) continue;
       if (stderr.includes('Video unavailable')) continue;
       if (stderr.includes('Sign in to confirm') || stderr.includes('sign in to confirm')) continue;
@@ -431,6 +528,7 @@ async function runYtDlp(args) {
       if (stderr.includes('challenge')) continue;
       if (stderr.includes('Only images are available')) continue;
       if (stderr.includes('n challenge solving failed')) continue;
+      if (e && e.timedOut) continue;
     }
   }
 
@@ -449,5 +547,7 @@ module.exports = {
   ensureYtDlp,
   runYtDlp,
   resolveHttpProxy,
+  buildStrategies,
+  parsePercent,
   YT_DLP_BIN_PATH,
 };

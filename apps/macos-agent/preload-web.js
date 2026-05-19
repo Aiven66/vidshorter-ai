@@ -20,7 +20,7 @@ try {
   }
 } catch {}
 
-contextBridge.exposeInMainWorld('vidshorterDesktop', {
+const desktopBridge = {
   openSettings: () => ipcRenderer.invoke('open-settings'),
   openLogs: () => ipcRenderer.invoke('open-logs'),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
@@ -41,7 +41,10 @@ contextBridge.exposeInMainWorld('vidshorterDesktop', {
     const r = await ipcRenderer.invoke('get-media-base-url');
     return r?.baseUrl || '';
   },
-});
+};
+
+contextBridge.exposeInMainWorld('vidshorterDesktop', desktopBridge);
+contextBridge.exposeInMainWorld('clipopDesktop', desktopBridge);
 
 contextBridge.exposeInMainWorld('electronAPI', {
   getAuthToken: async () => {
@@ -52,4 +55,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return await ipcRenderer.invoke('clearAuthToken');
   },
   openAuth: () => ipcRenderer.invoke('open-auth'),
+  openWebLogin: () => ipcRenderer.invoke('open-web-login'),
+  openWebRegister: () => ipcRenderer.invoke('open-web-register'),
+  getMediaBaseUrl: async () => {
+    const r = await ipcRenderer.invoke('get-media-base-url');
+    return r?.baseUrl || '';
+  },
 });

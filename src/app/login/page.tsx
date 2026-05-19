@@ -10,7 +10,7 @@ import { useLocale } from '@/lib/locale-context';
 import { useAuth } from '@/lib/auth-context';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { Video, CheckCircle } from 'lucide-react';
+import { Video, CheckCircle, Mail, Lock } from 'lucide-react';
 
 function LoginContent() {
   const { t } = useLocale();
@@ -145,14 +145,14 @@ function LoginContent() {
 
   if (showDesktopSuccess) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-muted/30 py-12 px-4">
-        <Card className="w-full max-w-md">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-background to-muted/30 py-12 px-4">
+        <Card className="w-full max-w-md shadow-lg border-0">
           <CardHeader className="text-center">
-            <div className="flex items-center justify-center gap-2 font-bold text-xl mb-4">
-              <Video className="h-6 w-6 text-primary" />
+            <div className="flex items-center justify-center gap-2 font-bold text-2xl mb-4">
+              <Video className="h-7 w-7 text-primary" />
               <span>Clipop AI</span>
             </div>
-            <CardTitle>Login Successful!</CardTitle>
+            <CardTitle className="text-xl">登录成功！</CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
             <div className="flex flex-col items-center gap-4">
@@ -160,14 +160,14 @@ function LoginContent() {
                 <CheckCircle className="h-10 w-10 text-green-500" />
               </div>
               <p className="text-center text-muted-foreground">
-                You have successfully logged in as <strong>{user?.email || email}</strong>. Click the button below to return to the desktop app.
+                您已成功登录 <strong>{user?.email || email}</strong>。点击下方按钮返回桌面应用。
               </p>
             </div>
             <Button className="w-full h-12 text-lg" onClick={handleReturnToDesktop}>
-              Return to Clipop Agent
+              返回 Clipop Agent
             </Button>
             <p className="text-center text-sm text-muted-foreground">
-              If the desktop app doesn't open automatically, please make sure Clipop Agent is running.
+              如果桌面应用没有自动打开，请确保 Clipop Agent 正在运行。
             </p>
           </CardContent>
         </Card>
@@ -176,60 +176,76 @@ function LoginContent() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-muted/30 py-12 px-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="text-center">
-          <div className="flex items-center justify-center gap-2 font-bold text-xl mb-4">
-            <Video className="h-6 w-6 text-primary" />
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-background to-muted/30 py-12 px-4">
+      <Card className="w-full max-w-md shadow-lg border-0">
+        <CardHeader className="text-center space-y-1">
+          <div className="flex items-center justify-center gap-2 font-bold text-2xl mb-2">
+            <Video className="h-7 w-7 text-primary" />
             <span>Clipop AI</span>
           </div>
-          <CardTitle>{t('login.title')}</CardTitle>
+          <CardTitle className="text-2xl">{t('login.title')}</CardTitle>
           <CardDescription>{t('login.description')}</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-6">
+        <CardContent className="space-y-5">
           {error && (
-            <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-500 text-sm">
-              {error}
+            <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-500 text-sm flex items-center gap-2">
+              <span>{error}</span>
             </div>
           )}
+          
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="email">{t('login.emailLabel')}</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder={t('login.emailPlaceholder')}
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-              />
+              <Label htmlFor="email" className="text-sm font-medium">{t('login.emailLabel')}</Label>
+              <div className="relative">
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  id="email"
+                  type="email"
+                  placeholder={t('login.emailPlaceholder')}
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  className="pl-10 h-11"
+                />
+              </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password">{t('login.passwordLabel')}</Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder={t('login.passwordPlaceholder')}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-              />
+              <Label htmlFor="password" className="text-sm font-medium">{t('login.passwordLabel')}</Label>
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  id="password"
+                  type="password"
+                  placeholder={t('login.passwordPlaceholder')}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  className="pl-10 h-11"
+                />
+              </div>
             </div>
-            <Button type="submit" className="w-full" disabled={loading}>
+            <Button type="submit" className="w-full h-11 text-base" disabled={loading}>
               {loading ? t('common.loading') : t('login.submitButton')}
             </Button>
           </form>
+          
           <div className="relative">
             <div className="absolute inset-0 flex items-center">
               <Separator className="w-full" />
             </div>
-            <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-background px-2 text-muted-foreground">
+            <div className="relative flex justify-center text-xs">
+              <span className="bg-background px-3 text-muted-foreground">
                 {t('login.orContinueWith')}
               </span>
             </div>
           </div>
-          <Button variant="outline" className="w-full" onClick={handleGoogleSignIn} disabled={loading}>
+          
+          <Button 
+            variant="outline" 
+            className="w-full h-11 text-base border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-900" 
+            onClick={handleGoogleSignIn} 
+            disabled={loading}
+          >
             <svg className="h-5 w-5 mr-2" viewBox="0 0 24 24">
               <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
               <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
@@ -238,9 +254,10 @@ function LoginContent() {
             </svg>
             {t('login.googleButton')}
           </Button>
-          <div className="text-center text-sm">
+          
+          <div className="text-center text-sm pt-1">
             {t('login.dontHaveAccount')}{' '}
-            <Link href={fromDesktop ? `/register?from=desktop${callbackUrl ? `&callback=${encodeURIComponent(callbackUrl)}` : ''}` : '/register'} className="text-primary hover:underline">
+            <Link href={fromDesktop ? `/register?from=desktop${callbackUrl ? `&callback=${encodeURIComponent(callbackUrl)}` : ''}` : '/register'} className="text-primary font-medium hover:underline">
               {t('login.signUp')}
             </Link>
           </div>

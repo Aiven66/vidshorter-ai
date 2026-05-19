@@ -10,7 +10,7 @@ import { useLocale } from '@/lib/locale-context';
 import { useAuth } from '@/lib/auth-context';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { Video, Mail, KeyRound, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
+import { Video, Mail, Lock, User, Loader2, CheckCircle, AlertCircle, KeyRound } from 'lucide-react';
 import { Suspense } from 'react';
 
 type Step = 'info' | 'verify' | 'done';
@@ -188,14 +188,14 @@ function RegisterContent() {
 
   if (step === 'done') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-muted/30 py-12 px-4">
-        <Card className="w-full max-w-md">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-background to-muted/30 py-12 px-4">
+        <Card className="w-full max-w-md shadow-lg border-0">
           <CardHeader className="text-center">
-            <div className="flex items-center justify-center gap-2 font-bold text-xl mb-4">
-              <Video className="h-6 w-6 text-primary" />
+            <div className="flex items-center justify-center gap-2 font-bold text-2xl mb-4">
+              <Video className="h-7 w-7 text-primary" />
               <span>Clipop AI</span>
             </div>
-            <CardTitle>Account Created Successfully!</CardTitle>
+            <CardTitle className="text-xl">账户创建成功！</CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
             <div className="flex flex-col items-center gap-4">
@@ -203,14 +203,14 @@ function RegisterContent() {
                 <CheckCircle className="h-10 w-10 text-green-500" />
               </div>
               <p className="text-center text-muted-foreground">
-                You have successfully created your account as <strong>{desktopEmail || user?.email || email}</strong>. Click the button below to return to the desktop app.
+                您已成功创建账户 <strong>{desktopEmail || user?.email || email}</strong>。点击下方按钮返回桌面应用。
               </p>
             </div>
             <Button className="w-full h-12 text-lg" onClick={handleReturnToDesktop}>
-              Return to Clipop Agent
+              返回 Clipop Agent
             </Button>
             <p className="text-center text-sm text-muted-foreground">
-              If the desktop app doesn't open automatically, please make sure Clipop Agent is running.
+              如果桌面应用没有自动打开，请确保 Clipop Agent 正在运行。
             </p>
           </CardContent>
         </Card>
@@ -219,17 +219,17 @@ function RegisterContent() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-muted/30 py-12 px-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="text-center">
-          <div className="flex items-center justify-center gap-2 font-bold text-xl mb-4">
-            <Video className="h-6 w-6 text-primary" />
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-background to-muted/30 py-12 px-4">
+      <Card className="w-full max-w-md shadow-lg border-0">
+        <CardHeader className="text-center space-y-1">
+          <div className="flex items-center justify-center gap-2 font-bold text-2xl mb-2">
+            <Video className="h-7 w-7 text-primary" />
             <span>Clipop AI</span>
           </div>
-          <CardTitle>{t('register.title')}</CardTitle>
+          <CardTitle className="text-2xl">{t('register.title')}</CardTitle>
           <CardDescription>{t('register.description')}</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-6">
+        <CardContent className="space-y-5">
           {error && (
             <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-500 text-sm flex items-center gap-2">
               <AlertCircle className="h-4 w-4" />
@@ -246,50 +246,66 @@ function RegisterContent() {
               className="space-y-4"
             >
               <div className="space-y-2">
-                <Label htmlFor="name">{t('register.nameLabel')}</Label>
-                <Input
-                  id="name"
-                  type="text"
-                  placeholder={t('register.namePlaceholder')}
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  required
-                />
+                <Label htmlFor="name" className="text-sm font-medium">{t('register.nameLabel')}</Label>
+                <div className="relative">
+                  <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    id="name"
+                    type="text"
+                    placeholder={t('register.namePlaceholder')}
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    required
+                    className="pl-10 h-11"
+                  />
+                </div>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="email">{t('register.emailLabel')}</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder={t('register.emailPlaceholder')}
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                />
+                <Label htmlFor="email" className="text-sm font-medium">{t('register.emailLabel')}</Label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    id="email"
+                    type="email"
+                    placeholder={t('register.emailPlaceholder')}
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                    className="pl-10 h-11"
+                  />
+                </div>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="password">{t('register.passwordLabel')}</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  placeholder={t('register.passwordPlaceholder')}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
+                <Label htmlFor="password" className="text-sm font-medium">{t('register.passwordLabel')}</Label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    id="password"
+                    type="password"
+                    placeholder={t('register.passwordPlaceholder')}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    className="pl-10 h-11"
+                  />
+                </div>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="confirmPassword">{t('register.confirmPasswordLabel')}</Label>
-                <Input
-                  id="confirmPassword"
-                  type="password"
-                  placeholder={t('register.confirmPasswordPlaceholder')}
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  required
-                />
+                <Label htmlFor="confirmPassword" className="text-sm font-medium">{t('register.confirmPasswordLabel')}</Label>
+                <div className="relative">
+                  <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    id="confirmPassword"
+                    type="password"
+                    placeholder={t('register.confirmPasswordPlaceholder')}
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    required
+                    className="pl-10 h-11"
+                  />
+                </div>
               </div>
-              <Button type="submit" className="w-full" disabled={sendingCode}>
+              <Button type="submit" className="w-full h-11 text-base" disabled={sendingCode}>
                 {sendingCode ? (
                   <>
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -309,7 +325,7 @@ function RegisterContent() {
               className="space-y-4"
             >
               <div className="space-y-2">
-                <Label htmlFor="code">{t('register.codeLabel')}</Label>
+                <Label htmlFor="code" className="text-sm font-medium">{t('register.codeLabel')}</Label>
                 <Input
                   id="code"
                   type="text"
@@ -318,9 +334,10 @@ function RegisterContent() {
                   onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
                   maxLength={6}
                   required
+                  className="h-11 text-center text-xl tracking-widest"
                 />
               </div>
-              <Button type="submit" className="w-full" disabled={loading}>
+              <Button type="submit" className="w-full h-11 text-base" disabled={loading}>
                 {loading ? (
                   <>
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -334,7 +351,7 @@ function RegisterContent() {
                 {t('register.codeNotReceived')}{' '}
                 <button
                   type="button"
-                  className="text-primary hover:underline"
+                  className="text-primary hover:underline font-medium"
                   disabled={countdown > 0 || sendingCode}
                   onClick={() => {
                     setStep('info');
@@ -347,7 +364,7 @@ function RegisterContent() {
               <Button
                 type="button"
                 variant="outline"
-                className="w-full"
+                className="w-full h-11"
                 onClick={() => setStep('info')}
                 disabled={loading}
               >
@@ -359,7 +376,7 @@ function RegisterContent() {
           <Separator />
           <Button
             variant="outline"
-            className="w-full"
+            className="w-full h-11 text-base border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-900"
             onClick={signInWithGoogle}
             disabled={loading || sendingCode}
           >
@@ -372,9 +389,9 @@ function RegisterContent() {
             {t('register.googleButton')}
           </Button>
 
-          <div className="text-center text-sm">
+          <div className="text-center text-sm pt-1">
             {t('register.alreadyHaveAccount')}{' '}
-            <Link href={fromDesktop ? `/login?from=desktop${callbackUrl ? `&callback=${encodeURIComponent(callbackUrl)}` : ''}` : '/login'} className="text-primary hover:underline">
+            <Link href={fromDesktop ? `/login?from=desktop${callbackUrl ? `&callback=${encodeURIComponent(callbackUrl)}` : ''}` : '/login'} className="text-primary font-medium hover:underline">
               {t('register.signIn')}
             </Link>
           </div>

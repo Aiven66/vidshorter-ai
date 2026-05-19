@@ -92,6 +92,7 @@ interface VidShorterDesktopBridge {
 declare global {
   interface Window {
     clipopDesktop?: VidShorterDesktopBridge;
+    vidshorterDesktop?: VidShorterDesktopBridge;
     __clipopDesktopToken?: string;
     __clipopDesktopEmail?: string;
     __clipopDesktopUserId?: string;
@@ -237,7 +238,7 @@ export default function HomePage() {
   }, [accessToken, user]);
 
   const getLocalMediaBaseUrl = useCallback(async () => {
-    const desktop = window.clipopDesktop;
+    const desktop = window.clipopDesktop || window.vidshorterDesktop;
     if (desktop?.getMediaBaseUrl) {
       const baseUrl = await desktop.getMediaBaseUrl();
       if (typeof baseUrl === 'string' && baseUrl.trim()) return baseUrl.replace(/\/$/, '');
@@ -363,7 +364,7 @@ export default function HomePage() {
       };
 
       // When inputUrl is a local media server URL, always use local processing
-      const desktop = (window as any)?.clipopDesktop;
+      const desktop = window.clipopDesktop || window.vidshorterDesktop;
       const isDesktop = !!desktop?.getMediaBaseUrl;
       const shouldUseLocalProcessing = isDesktop || isLocalMediaUrl(inputUrl);
 
@@ -697,7 +698,7 @@ export default function HomePage() {
                         href="/login"
                         className="text-primary hover:underline"
                         onClick={(e) => {
-                          const d = window.clipopDesktop;
+                          const d = window.clipopDesktop || window.vidshorterDesktop;
                           if (d && typeof d.openAuth === 'function') {
                             e.preventDefault();
                             d.openAuth();

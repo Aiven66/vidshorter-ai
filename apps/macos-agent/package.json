@@ -1,14 +1,16 @@
 {
   "name": "clipop-macos-agent",
   "private": true,
-  "version": "0.9.2",
+  "version": "0.9.5",
   "main": "main.js",
   "scripts": {
     "prepare:runner": "node scripts/prepare-runner.js",
     "dev": "pnpm prepare:runner && electron .",
     "start": "electron .",
     "dist": "pnpm prepare:runner && electron-builder --mac --arm64",
-    "dist:x64": "pnpm prepare:runner && electron-builder --mac --x64"
+    "dist:x64": "pnpm prepare:runner && electron-builder --mac --x64",
+    "test:ytdlp": "node scripts/check-ytdlp-strategies.js",
+    "test:local-highlights": "node scripts/check-local-highlights-generated.js"
   },
   "build": {
     "appId": "com.clipop.macos-agent",
