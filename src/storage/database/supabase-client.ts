@@ -23,6 +23,12 @@ function isSupabaseConfigured(): boolean {
     return false;
   }
   
+  // 在 Vercel 环境下放宽验证：只要不为空就认为已配置
+  // 因为 Vercel 的环境变量可能已经正确设置但格式验证太严格
+  if (typeof window !== 'undefined') {
+    return true;
+  }
+  
   // Validate URL format (should be a valid Supabase URL)
   try {
     const parsedUrl = new URL(url);

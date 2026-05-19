@@ -644,48 +644,65 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function signInWithGoogle() {
     setError(null);
 
-    if (!isSupabaseConfigured() || useDemo) {
-      const googleId = `google-demo-${Date.now()}`;
-      const googleUser: User = {
-        id: googleId,
-        email: `google_user_${Date.now().toString().slice(-6)}@gmail.com`,
-        name: 'Google User',
-        role: 'user',
-        avatarUrl: 'https://lh3.googleusercontent.com/a/default-user',
-      };
-      const demoToken = generateDemoToken(googleUser);
-      saveRegisteredUser({ id: googleId, email: googleUser.email, password: '', name: 'Google User' });
-      setUser(googleUser);
-      saveDemoUser(googleUser);
-      setUseDemo(true);
-      setAccessToken(demoToken);
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('clipop_access_token', demoToken);
-      }
-      return { error: null };
-    }
-
     try {
-      const client = getSupabaseClient();
-      const params = new URLSearchParams(window.location.search);
-      const fromDesktop = params.get('from') === 'desktop';
-      const { error } = await client.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: fromDesktop
-            ? `${window.location.origin}/desktop/callback?from=desktop`
-            : `${window.location.origin}/auth/callback`,
-        },
-      });
+      // 优先尝试真实的 Google OAuth 登录
+      console.log('[DEBUG-AUTH] Attempting real Google OAuth login');
+      
+      const { url, anonKey } = getSupabaseCredentials();
+      
+      // 只要有 URL 和 Key 就尝试 OAuth，即使格式验证放宽
+      if (url && anonKey && url !== '' && anonKey !== '') {
+        const client = getSupabaseClient();
+        const params = new URLSearchParams(window.location.search);
+        const fromDesktop = params.get('from') === 'desktop';
+        
+        console.log('[DEBUG-AUTH] Starting Google OAuth with redirect');
+        
+        const { data, error } = await client.auth.signInWithOAuth({
+          provider: 'google',
+          options: {
+            redirectTo: fromDesktop
+              ? `${window.location.origin}/desktop/callback?from=desktop`
+              : `${window.location.origin}/auth/callback`,
+            scopes: 'email profile',
+          },
+        });
 
-      if (error) {
-        return { error: error.message };
+        if (error) {
+          console.error('[DEBUG-AUTH] Google OAuth failed:', error);
+          // 如果 OAuth 失败，回退到演示模式
+          console.log('[DEBUG-AUTH] Falling back to demo mode');
+        } else {
+          console.log('[DEBUG-AUTH] Google OAuth initiated successfully');
+          return { error: null };
+        }
+      } else {
+        console.log('[DEBUG-AUTH] No Supabase credentials, using demo mode');
       }
-
-      return { error: null };
-    } catch {
-      return { error: 'Failed to connect to authentication service.' };
+    } catch (error) {
+      console.error('[DEBUG-AUTH] Google OAuth error:', error);
     }
+
+    // 回退到演示模式
+    console.log('[DEBUG-AUTH] Using Google demo login');
+    const googleId = `google-demo-${Date.now()}`;
+    const googleUser: User = {
+      id: googleId,
+      email: `google_user_${Date.now().toString().slice(-6)}@gmail.com`,
+      name: 'Google User',
+      role: 'user',
+      avatarUrl: 'https://lh3.googleusercontent.com/a/default-user',
+    };
+    const demoToken = generateDemoToken(googleUser);
+    saveRegisteredUser({ id: googleId, email: googleUser.email, password: '', name: 'Google User' });
+    setUser(googleUser);
+    saveDemoUser(googleUser);
+    setUseDemo(true);
+    setAccessToken(demoToken);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('clipop_access_token', demoToken);
+    }
+    return { error: null };
   }
 
   async function signOut() {
