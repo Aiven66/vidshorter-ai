@@ -148,11 +148,26 @@ export function Navbar() {
                 {/* User Menu */}
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon">
-                      <User className="h-5 w-5" />
+                    <Button variant="ghost" className="gap-2">
+                      {user?.avatarUrl ? (
+                        <img 
+                          src={user.avatarUrl} 
+                          alt={user.name || user.email} 
+                          className="h-8 w-8 rounded-full object-cover"
+                        />
+                      ) : (
+                        <User className="h-5 w-5" />
+                      )}
+                      <span className="text-sm font-medium hidden md:inline">
+                        {user?.name || user.email?.split('@')[0] || 'User'}
+                      </span>
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
+                    <div className="px-3 py-2 border-b border-border">
+                      <p className="text-sm font-medium">{user?.name || 'User'}</p>
+                      <p className="text-xs text-muted-foreground">{user?.email}</p>
+                    </div>
                     <DropdownMenuItem asChild>
                       <Link href="/dashboard" className="flex items-center gap-2">
                         <LayoutDashboard className="h-4 w-4" />
