@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState, ReactNode, useCallback, useRef } from 'react';
-import { getSupabaseClient, isSupabaseConfigured } from '@/storage/database/supabase-client';
+import { getSupabaseClient, isSupabaseConfigured, getSupabaseCredentials } from '@/storage/database/supabase-client';
 
 interface User {
   id: string;
