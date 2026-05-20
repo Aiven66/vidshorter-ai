@@ -20,6 +20,7 @@ interface AuthContextType {
   signUp: (email: string, password: string, name: string) => Promise<{ error: string | null; token?: string | null; email?: string }>;
   signInWithGoogle: () => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
+  clearError: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -644,47 +645,71 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function signInWithGoogle() {
     setError(null);
 
-    try {
-      // 优先尝试真实的 Google OAuth 登录
-      console.log('[DEBUG-AUTH] Attempting real Google OAuth login');
-      
-      const { url, anonKey } = getSupabaseCredentials();
-      
-      // 只要有 URL 和 Key 就尝试 OAuth，即使格式验证放宽
-      if (url && anonKey && url !== '' && anonKey !== '') {
+    console.log('[GOOGLE-AUTH] Starting Google OAuth login process');
+    
+    const { url, anonKey } = getSupabaseCredentials();
+    console.log('[GOOGLE-AUTH] Credentials check:', { 
+      hasUrl: !!url, 
+      urlStartsWith: url?.substring(0, 20),
+      hasAnonKey: !!anonKey,
+      anonKeyStartsWith: anonKey?.substring(0, 10)
+    });
+    
+    // 首先尝试真实的 Google OAuth 登录
+    if (url && url !== '' && url !== 'https://placeholder.supabase.co' && 
+        anonKey && anonKey !== '' && anonKey !== 'placeholder-key') {
+      try {
+        console.log('[GOOGLE-AUTH] Initializing real Google OAuth with Supabase');
         const client = getSupabaseClient();
         const params = new URLSearchParams(window.location.search);
         const fromDesktop = params.get('from') === 'desktop';
         
-        console.log('[DEBUG-AUTH] Starting Google OAuth with redirect');
+        const redirectUrl = fromDesktop
+          ? `${window.location.origin}/desktop/callback?from=desktop`
+          : `${window.location.origin}/auth/callback`;
+        
+        console.log('[GOOGLE-AUTH] Redirect URL:', redirectUrl);
         
         const { data, error } = await client.auth.signInWithOAuth({
           provider: 'google',
           options: {
-            redirectTo: fromDesktop
-              ? `${window.location.origin}/desktop/callback?from=desktop`
-              : `${window.location.origin}/auth/callback`,
+            redirectTo: redirectUrl,
             scopes: 'email profile',
+            queryParams: {
+              access_type: 'offline',
+              prompt: 'consent',
+            },
           },
         });
 
         if (error) {
-          console.error('[DEBUG-AUTH] Google OAuth failed:', error);
-          // 如果 OAuth 失败，回退到演示模式
-          console.log('[DEBUG-AUTH] Falling back to demo mode');
-        } else {
-          console.log('[DEBUG-AUTH] Google OAuth initiated successfully');
+          console.error('[GOOGLE-AUTH] Google OAuth failed with error:', error);
+          setError(`Google 登录失败: ${error.message}`);
+          
+          // 不要立即回退，而是返回错误让用户知道
+          return { error: error.message };
+        }
+        
+        if (data?.url) {
+          console.log('[GOOGLE-AUTH] Google OAuth redirect URL generated successfully');
+          // 如果有 URL，说明会重定向到 Google 授权页面
           return { error: null };
         }
-      } else {
-        console.log('[DEBUG-AUTH] No Supabase credentials, using demo mode');
+        
+        console.log('[GOOGLE-AUTH] Google OAuth initiated but no redirect URL');
+      } catch (error) {
+        console.error('[GOOGLE-AUTH] Google OAuth exception:', error);
+        setError('Google 登录过程中发生错误');
+        return { error: error instanceof Error ? error.message : 'Unknown error' };
       }
-    } catch (error) {
-      console.error('[DEBUG-AUTH] Google OAuth error:', error);
+    } else {
+      console.log('[GOOGLE-AUTH] No valid Supabase credentials for Google OAuth');
+      console.log('[GOOGLE-AUTH] - URL valid?:', url && url !== '' && url !== 'https://placeholder.supabase.co');
+      console.log('[GOOGLE-AUTH] - Key valid?:', anonKey && anonKey !== '' && anonKey !== 'placeholder-key');
     }
 
-    // 回退到演示模式
-    console.log('[DEBUG-AUTH] Using Google demo login');
+    // 只有当 OAuth 不可用时才使用演示模式
+    console.log('[GOOGLE-AUTH] Falling back to demo mode for Google login');
     const googleId = `google-demo-${Date.now()}`;
     const googleUser: User = {
       id: googleId,
@@ -703,6 +728,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.setItem('clipop_access_token', demoToken);
     }
     return { error: null };
+  }
+
+  function clearError() {
+    setError(null);
   }
 
   async function signOut() {
@@ -733,7 +762,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, accessToken, loading, error, signIn, signUp, signInWithGoogle, signOut }}>
+    <AuthContext.Provider value={{ user, accessToken, loading, error, signIn, signUp, signInWithGoogle, signOut, clearError }}>
       {children}
     </AuthContext.Provider>
   );
