@@ -645,89 +645,54 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function signInWithGoogle() {
     setError(null);
 
-    console.log('[GOOGLE-AUTH] Starting Google OAuth login process');
-    
     const { url, anonKey } = getSupabaseCredentials();
-    console.log('[GOOGLE-AUTH] Credentials check:', { 
-      hasUrl: !!url, 
-      urlStartsWith: url?.substring(0, 20),
-      hasAnonKey: !!anonKey,
-      anonKeyStartsWith: anonKey?.substring(0, 10)
-    });
-    
-    // 首先尝试真实的 Google OAuth 登录
-    if (url && url !== '' && url !== 'https://placeholder.supabase.co' && 
-        anonKey && anonKey !== '' && anonKey !== 'placeholder-key') {
-      try {
-        console.log('[GOOGLE-AUTH] Initializing real Google OAuth with Supabase');
-        const client = getSupabaseClient();
-        const params = new URLSearchParams(window.location.search);
-        const fromDesktop = params.get('from') === 'desktop';
-        
-        const redirectUrl = fromDesktop
-          ? `${window.location.origin}/desktop/callback?from=desktop`
-          : `${window.location.origin}/auth/callback`;
-        
-        console.log('[GOOGLE-AUTH] Redirect URL:', redirectUrl);
-        
-        const { data, error } = await client.auth.signInWithOAuth({
-          provider: 'google',
-          options: {
-            redirectTo: redirectUrl,
-            scopes: 'email profile',
-            queryParams: {
-              access_type: 'offline',
-              prompt: 'consent',
-            },
+
+    if (!url || url === '' || url === 'https://placeholder.supabase.co' ||
+        !anonKey || anonKey === '' || anonKey === 'placeholder-key') {
+      const msg = 'Google 登录未配置：缺少 Supabase 环境变量，请联系管理员配置 NEXT_PUBLIC_SUPABASE_URL 和 NEXT_PUBLIC_SUPABASE_ANON_KEY';
+      setError(msg);
+      return { error: msg };
+    }
+
+    try {
+      const client = getSupabaseClient();
+      const params = new URLSearchParams(window.location.search);
+      const fromDesktop = params.get('from') === 'desktop';
+
+      const redirectUrl = fromDesktop
+        ? `${window.location.origin}/desktop/callback?from=desktop`
+        : `${window.location.origin}/auth/callback`;
+
+      const { data, error: oauthError } = await client.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: redirectUrl,
+          scopes: 'email profile',
+          queryParams: {
+            access_type: 'offline',
+            prompt: 'consent',
           },
-        });
+        },
+      });
 
-        if (error) {
-          console.error('[GOOGLE-AUTH] Google OAuth failed with error:', error);
-          setError(`Google 登录失败: ${error.message}`);
-          
-          // 不要立即回退，而是返回错误让用户知道
-          return { error: error.message };
-        }
-        
-        if (data?.url) {
-          console.log('[GOOGLE-AUTH] Google OAuth redirect URL generated successfully');
-          // 如果有 URL，说明会重定向到 Google 授权页面
-          return { error: null };
-        }
-        
-        console.log('[GOOGLE-AUTH] Google OAuth initiated but no redirect URL');
-      } catch (error) {
-        console.error('[GOOGLE-AUTH] Google OAuth exception:', error);
-        setError('Google 登录过程中发生错误');
-        return { error: error instanceof Error ? error.message : 'Unknown error' };
+      if (oauthError) {
+        const msg = `Google 登录失败: ${oauthError.message}`;
+        setError(msg);
+        return { error: msg };
       }
-    } else {
-      console.log('[GOOGLE-AUTH] No valid Supabase credentials for Google OAuth');
-      console.log('[GOOGLE-AUTH] - URL valid?:', url && url !== '' && url !== 'https://placeholder.supabase.co');
-      console.log('[GOOGLE-AUTH] - Key valid?:', anonKey && anonKey !== '' && anonKey !== 'placeholder-key');
-    }
 
-    // 只有当 OAuth 不可用时才使用演示模式
-    console.log('[GOOGLE-AUTH] Falling back to demo mode for Google login');
-    const googleId = `google-demo-${Date.now()}`;
-    const googleUser: User = {
-      id: googleId,
-      email: `google_user_${Date.now().toString().slice(-6)}@gmail.com`,
-      name: 'Google User',
-      role: 'user',
-      avatarUrl: 'https://lh3.googleusercontent.com/a/default-user',
-    };
-    const demoToken = generateDemoToken(googleUser);
-    saveRegisteredUser({ id: googleId, email: googleUser.email, password: '', name: 'Google User' });
-    setUser(googleUser);
-    saveDemoUser(googleUser);
-    setUseDemo(true);
-    setAccessToken(demoToken);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('clipop_access_token', demoToken);
+      if (data?.url) {
+        return { error: null };
+      }
+
+      const msg = 'Google 登录未返回授权地址，请重试';
+      setError(msg);
+      return { error: msg };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Google 登录过程中发生未知错误';
+      setError(msg);
+      return { error: msg };
     }
-    return { error: null };
   }
 
   function clearError() {

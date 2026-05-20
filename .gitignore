@@ -118,3 +118,4 @@ apps/macos-agent/dist/
 apps/macos-agent/embedded-web/
 apps/macos-agent/dist-old/
 *.dmg
+config/
