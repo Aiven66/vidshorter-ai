@@ -405,7 +405,109 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     console.log('[DEBUG-AUTH] Initializing useEffect');
     initializedRef.current = true;
 
-    checkAuthState();
+    const handleOAuthCallback = async () => {
+      if (typeof window === 'undefined') return;
+
+      const hash = window.location.hash;
+      const search = window.location.search;
+      const params = new URLSearchParams();
+
+      if (hash) {
+        const hashParams = new URLSearchParams(hash.substring(1));
+        const accessToken = hashParams.get('access_token');
+        const refreshToken = hashParams.get('refresh_token');
+        const error = hashParams.get('error');
+        const errorCode = hashParams.get('error_code');
+
+        if (error) {
+          console.log('[DEBUG-AUTH] OAuth error in hash:', error, errorCode);
+          setError(`登录失败: ${error}`);
+          window.history.replaceState(null, '', window.location.pathname);
+          return;
+        }
+
+        if (accessToken && refreshToken) {
+          console.log('[DEBUG-AUTH] Found OAuth tokens in URL hash');
+          try {
+            const client = getSupabaseClient();
+            const { data, error: sessionError } = await client.auth.setSession({
+              access_token: accessToken,
+              refresh_token: refreshToken,
+            });
+
+            if (sessionError) {
+              console.log('[DEBUG-AUTH] setSession error:', sessionError);
+              setError(`登录失败: ${sessionError.message}`);
+            } else if (data?.session) {
+              console.log('[DEBUG-AUTH] Session established from URL hash');
+              setAccessToken(data.session.access_token);
+              localStorage.setItem('clipop_access_token', data.session.access_token);
+
+              const user = data.session.user;
+              if (user) {
+                const { data: userData } = await client
+                  .from('users')
+                  .select('*')
+                  .eq('id', user.id)
+                  .maybeSingle();
+
+                if (userData) {
+                  setUser({
+                    id: userData.id,
+                    email: userData.email,
+                    name: userData.name,
+                    role: userData.role,
+                    avatarUrl: userData.avatar_url,
+                  });
+                } else {
+                  setUser({
+                    id: user.id,
+                    email: user.email || '',
+                    name: user.user_metadata?.name || null,
+                    role: 'user',
+                    avatarUrl: user.user_metadata?.avatar_url || null,
+                  });
+
+                  try {
+                    await client.from('users').insert({
+                      id: user.id,
+                      email: user.email!,
+                      name: user.user_metadata?.name || user.email?.split('@')[0],
+                      role: 'user',
+                      google_id: user.app_metadata?.provider === 'google' ? user.id : null,
+                    });
+                    await client.from('credits').insert({ user_id: user.id, balance: 100 });
+                    await client.from('subscriptions').insert({ user_id: user.id, plan_type: 'free', status: 'active' });
+                  } catch (e) {
+                    console.log('[DEBUG-AUTH] User creation error (non-fatal):', e);
+                  }
+                }
+              }
+
+              window.history.replaceState(null, '', window.location.pathname);
+              window.dispatchEvent(new Event('clipop-auth-change'));
+              return;
+            }
+          } catch (e) {
+            console.log('[DEBUG-AUTH] Error processing OAuth tokens:', e);
+          }
+        }
+      }
+
+      const code = new URLSearchParams(search).get('code');
+      const errorSearch = new URLSearchParams(search).get('error');
+      if (errorSearch) {
+        console.log('[DEBUG-AUTH] OAuth error in search params:', errorSearch);
+        setError(`登录失败: ${errorSearch}`);
+        return;
+      }
+
+      if (!hash || !params.get('access_token')) {
+        checkAuthState();
+      }
+    };
+
+    handleOAuthCallback();
 
     console.log('[DEBUG-AUTH] Adding event listeners');
 
@@ -422,7 +524,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     const handleAuthChange = () => {
-      console.log('[DEBUG-AUTH] vidshorter-auth-change event received');
+      console.log('[DEBUG-AUTH] clipop-auth-change event received');
       checkAuthState();
     };
 
