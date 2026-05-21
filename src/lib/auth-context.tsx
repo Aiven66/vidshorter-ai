@@ -347,8 +347,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const client = getSupabaseClient();
       const { data: { session } } = await client.auth.getSession();
 
+      console.log('[DEBUG-AUTH] getSession result:', session ? `user=${session.user?.email}` : 'no session');
+
       if (session?.user) {
         setAccessToken(session.access_token || null);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('clipop_access_token', session.access_token || '');
+        }
         const { data: userData } = await client
           .from('users')
           .select('*')
@@ -663,6 +668,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         ? `${window.location.origin}/desktop/callback?from=desktop`
         : `${window.location.origin}/auth/callback`;
 
+      console.log('[AUTH] Starting Google OAuth, redirectTo:', redirectUrl);
+
       const { data, error: oauthError } = await client.auth.signInWithOAuth({
         provider: 'google',
         options: {
@@ -676,12 +683,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
 
       if (oauthError) {
+        console.log('[AUTH] Google OAuth error:', oauthError.message);
         const msg = `Google 登录失败: ${oauthError.message}`;
         setError(msg);
         return { error: msg };
       }
 
       if (data?.url) {
+        console.log('[AUTH] Google OAuth redirect URL:', data.url);
         return { error: null };
       }
 
@@ -689,6 +698,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setError(msg);
       return { error: msg };
     } catch (err) {
+      console.log('[AUTH] Google OAuth exception:', err);
       const msg = err instanceof Error ? err.message : 'Google 登录过程中发生未知错误';
       setError(msg);
       return { error: msg };
