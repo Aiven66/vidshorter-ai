@@ -3,11 +3,17 @@ import { NextRequest } from 'next/server';
 const CREEM_API_BASE = 'https://api.creem.io/v1';
 const CREEM_TEST_API_BASE = 'https://test-api.creem.io/v1';
 
+function getApiBase(apiKey: string) {
+  if (apiKey.startsWith('creem_test_')) return CREEM_TEST_API_BASE;
+  return CREEM_API_BASE;
+}
+
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
-  const { planId, userId } = body as {
+  const { planId, userId, userEmail } = body as {
     planId?: string;
     userId?: string;
+    userEmail?: string;
   };
 
   if (!planId) {
@@ -16,9 +22,17 @@ export async function POST(request: NextRequest) {
 
   const apiKey = process.env.CREEM_API_KEY;
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-  const productId = process.env.CREEM_PRODUCT_IDS
-    ? JSON.parse(process.env.CREEM_PRODUCT_IDS)[planId]
-    : undefined;
+  const productIdsRaw = process.env.CREEM_PRODUCT_IDS;
+
+  let productId: string | undefined;
+  try {
+    if (productIdsRaw) {
+      const mapping = JSON.parse(productIdsRaw);
+      productId = mapping[planId];
+    }
+  } catch {
+    console.warn('[Creem] Failed to parse CREEM_PRODUCT_IDS');
+  }
 
   if (!apiKey) {
     console.log('[Creem] Running in demo mode (CREEM_API_KEY not set)');
@@ -26,36 +40,44 @@ export async function POST(request: NextRequest) {
     return Response.json({ checkoutUrl: demoUrl, demo: true, sessionId: `demo_${Date.now()}` });
   }
 
+  if (!productId) {
+    console.error('[Creem] No product ID mapping found for plan:', planId);
+    return Response.json({ error: `No product ID configured for plan: ${planId}` }, { status: 400 });
+  }
+
   try {
-    const isTest = apiKey.startsWith('creem_test_');
-    const apiBase = isTest ? CREEM_TEST_API_BASE : CREEM_API_BASE;
+    const apiBase = getApiBase(apiKey);
 
     const checkoutBody: Record<string, unknown> = {
+      product_id: productId,
       success_url: `${appUrl}/dashboard?payment=success&plan=${planId}`,
       metadata: {
         plan_id: planId,
         user_id: userId || '',
-        source: 'vidshorter_ai',
+        source: 'clipop_ai',
       },
     };
 
-    if (productId) {
-      checkoutBody.product_id = productId;
-    } else {
-      console.warn('[Creem] No product ID mapping found for plan:', planId, '. Using product_id from env or fallback.');
-      checkoutBody.product_id = planId;
+    if (userId) {
+      checkoutBody.request_id = `clipop_${userId}_${Date.now()}`;
     }
 
-    if (userId) {
-      checkoutBody.request_id = `vids_${userId}_${Date.now()}`;
+    if (userEmail) {
+      checkoutBody.customer = { email: userEmail };
     }
+
+    console.log('[Creem] Creating checkout:', {
+      apiBase,
+      productId,
+      planId,
+      userId: userId || 'none',
+    });
 
     const res = await fetch(`${apiBase}/checkouts`, {
       method: 'POST',
       headers: {
         'x-api-key': apiKey,
         'Content-Type': 'application/json',
-        'Accept': 'application/json',
       },
       body: JSON.stringify(checkoutBody),
     });
@@ -63,22 +85,27 @@ export async function POST(request: NextRequest) {
     const data = await res.json();
 
     if (!res.ok) {
-      console.error('[Creem] API error:', data);
+      console.error('[Creem] API error:', res.status, data);
       return Response.json({
-        checkoutUrl: `${appUrl}/pricing?payment=error`,
-        demo: false,
+        error: data.message || data.error || `Creem API error: ${res.status}`,
         apiError: data,
-      }, { status: 200 });
+      }, { status: 400 });
     }
 
-    const checkoutUrl = data.checkout_url || data.url;
+    const checkoutUrl = data.checkout_url;
     if (!checkoutUrl) {
       console.error('[Creem] No checkout URL in response:', data);
       return Response.json({
-        checkoutUrl: `${appUrl}/pricing?payment=error`,
-        demo: false,
-      });
+        error: 'No checkout URL returned from Creem',
+        apiResponse: data,
+      }, { status: 500 });
     }
+
+    console.log('[Creem] Checkout created:', {
+      id: data.id,
+      status: data.status,
+      checkoutUrl,
+    });
 
     return Response.json({
       checkoutUrl,
@@ -88,9 +115,8 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     console.error('[Creem] Request failed:', err);
     return Response.json({
-      checkoutUrl: `${appUrl}/pricing?payment=error`,
-      demo: true,
-    });
+      error: 'Failed to connect to Creem, please try again',
+    }, { status: 500 });
   }
 }
 
@@ -108,19 +134,17 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const isTest = apiKey.startsWith('creem_test_');
-    const apiBase = isTest ? CREEM_TEST_API_BASE : CREEM_API_BASE;
+    const apiBase = getApiBase(apiKey);
 
-    const res = await fetch(`${apiBase}/checkouts/${sessionId}`, {
+    const res = await fetch(`${apiBase}/checkouts?checkout_id=${sessionId}`, {
       headers: {
         'x-api-key': apiKey,
-        'Accept': 'application/json',
       },
     });
     const data = await res.json();
     return Response.json({
       status: data.status,
-      paid: data.status === 'completed' || data.paid === true,
+      paid: data.status === 'completed',
     });
   } catch (err) {
     console.error('[Creem] Status check failed:', err);
