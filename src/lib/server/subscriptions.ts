@@ -1,19 +1,19 @@
 import { isSupabaseConfigured } from '@/storage/database/supabase-client';
 
-type PlanId = 'basic' | 'pro';
+type PlanId = 'starter' | 'pro';
 
-const PLAN_TO_TYPE: Record<PlanId, 'basic' | 'pro'> = {
-  basic: 'basic',
+const PLAN_TO_TYPE: Record<PlanId, 'starter' | 'pro'> = {
+  starter: 'starter',
   pro: 'pro',
 };
 
 const PLAN_CREDITS: Record<PlanId, number> = {
-  basic: 1000,
+  starter: 500,
   pro: 1000000,
 };
 
 export function isPaidPlan(planId: string | null | undefined): planId is PlanId {
-  return planId === 'basic' || planId === 'pro';
+  return planId === 'starter' || planId === 'pro';
 }
 
 export async function applyPlanPurchase(input: {

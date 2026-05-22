@@ -18,7 +18,7 @@ const DEMO_CREDITS_KEY = 'clipop_demo_credits';
 const DEMO_CREDITS_RESET_KEY = 'clipop_demo_credits_reset';
 
 const DAILY_FREE_CREDITS = 100;
-const DAILY_BASIC_CREDITS = 1000;
+const DAILY_STARTER_CREDITS = 500;
 const DAILY_PRO_CREDITS = 1_000_000;
 const ADMIN_CREDITS = 10_000;
 
@@ -66,7 +66,7 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   function planDailyCredits(planType: string | null | undefined) {
-    if (planType === 'basic') return DAILY_BASIC_CREDITS;
+    if (planType === 'starter') return DAILY_STARTER_CREDITS;
     if (planType === 'pro') return DAILY_PRO_CREDITS;
     return DAILY_FREE_CREDITS;
   }

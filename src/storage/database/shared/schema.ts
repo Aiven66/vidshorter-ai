@@ -47,7 +47,7 @@ export const credits = pgTable(
     userId: varchar("user_id", { length: 36 })
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    balance: integer("balance").notNull().default(300),
+    balance: integer("balance").notNull().default(100),
     lastResetAt: timestamp("last_reset_at", { withTimezone: true }).defaultNow().notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
@@ -143,7 +143,7 @@ export const subscriptions = pgTable(
     userId: varchar("user_id", { length: 36 })
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    planType: varchar("plan_type", { length: 20 }).notNull().default("free"), // free, basic, pro
+    planType: varchar("plan_type", { length: 20 }).notNull().default("free"), // free, starter, pro
     status: varchar("status", { length: 20 }).notNull().default("active"), // active, cancelled, expired
     stripeSubscriptionId: varchar("stripe_subscription_id", { length: 255 }),
     stripeCustomerId: varchar("stripe_customer_id", { length: 255 }),

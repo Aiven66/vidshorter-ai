@@ -36,6 +36,7 @@ const plans: PlanConfig[] = [
       'pricing.free.feature1',
       'pricing.free.feature2',
       'pricing.free.feature3',
+      'pricing.free.feature4',
     ],
     ctaKey: 'pricing.free.cta',
     popular: false,
@@ -43,21 +44,22 @@ const plans: PlanConfig[] = [
     period: 'month',
   },
   {
-    id: 'basic',
-    name: 'Basic',
-    titleKey: 'pricing.basic.title',
-    priceKey: 'pricing.basic.price',
-    periodKey: 'pricing.basic.period',
-    descKey: 'pricing.basic.desc',
+    id: 'starter',
+    name: 'Starter',
+    titleKey: 'pricing.starter.title',
+    priceKey: 'pricing.starter.price',
+    periodKey: 'pricing.starter.period',
+    descKey: 'pricing.starter.desc',
     features: [
-      'pricing.basic.feature1',
-      'pricing.basic.feature2',
-      'pricing.basic.feature3',
-      'pricing.basic.feature4',
+      'pricing.starter.feature1',
+      'pricing.starter.feature2',
+      'pricing.starter.feature3',
+      'pricing.starter.feature4',
+      'pricing.starter.feature5',
     ],
-    ctaKey: 'pricing.basic.cta',
+    ctaKey: 'pricing.starter.cta',
     popular: true,
-    price: { cn: 68, intl: 9 },
+    price: { cn: 49, intl: 9.9 },
     period: 'month',
   },
   {
@@ -73,10 +75,11 @@ const plans: PlanConfig[] = [
       'pricing.pro.feature3',
       'pricing.pro.feature4',
       'pricing.pro.feature5',
+      'pricing.pro.feature6',
     ],
     ctaKey: 'pricing.pro.cta',
     popular: false,
-    price: { cn: 198, intl: 29 },
+    price: { cn: 99, intl: 19.9 },
     period: 'month',
   },
 ];
@@ -103,7 +106,7 @@ export default function PricingPage() {
           <h1 className="text-4xl font-bold mb-4">{t('pricing.title')}</h1>
           <p className="text-xl text-muted-foreground">{t('pricing.subtitle')}</p>
           <p className="text-sm text-muted-foreground mt-2">
-            国内支持 <strong>微信支付</strong> / <strong>支付宝</strong> · 海外支持 <strong>Creem</strong>（Visa / Apple Pay / Google Pay）
+            国内支持 <strong>支付宝</strong> · 海外支持 <strong>Creem</strong>（Visa / Mastercard / Apple Pay / Google Pay）
           </p>
         </div>
 
@@ -173,12 +176,6 @@ export default function PricingPage() {
         {/* Payment methods note */}
         <div className="flex flex-wrap items-center justify-center gap-6 mt-12 text-sm text-muted-foreground">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-5 bg-[#07C160] rounded flex items-center justify-center">
-              <span className="text-white text-[8px] font-bold">WX</span>
-            </div>
-            <span>微信支付</span>
-          </div>
-          <div className="flex items-center gap-2">
             <div className="w-8 h-5 bg-[#1677FF] rounded flex items-center justify-center">
               <span className="text-white text-[8px] font-bold">ALI</span>
             </div>
@@ -218,7 +215,7 @@ export default function PricingPage() {
               },
               {
                 q: '支持哪些支付方式？',
-                a: '国内用户支持微信支付和支付宝，海外用户支持 Creem（Visa、Mastercard、Apple Pay、Google Pay）。',
+                a: '国内用户支持支付宝扫码支付，海外用户支持 Creem（Visa、Mastercard、Apple Pay、Google Pay）。',
               },
             ].map((faq, index) => (
               <Card key={index}>

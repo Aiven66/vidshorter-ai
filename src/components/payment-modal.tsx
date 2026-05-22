@@ -6,32 +6,13 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { CheckCircle, Loader2, QrCode, CreditCard, Globe, Smartphone, ExternalLink } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
-
-const PAYMENT_CONFIG_KEY = 'clipop_payment_config';
-
-interface StoredPaymentConfig {
-  wechat?: { appId?: string; mchId?: string; apiKey?: string; serialNo?: string; privateKey?: string; notifyUrl?: string; enabled?: boolean };
-  alipay?: { appId?: string; privateKey?: string; publicKey?: string; notifyUrl?: string; sandbox?: boolean; enabled?: boolean };
-  creem?: { enabled?: boolean };
-}
-
-function getStoredPaymentConfig(): StoredPaymentConfig {
-  if (typeof window === 'undefined') return {};
-  try {
-    const stored = localStorage.getItem(PAYMENT_CONFIG_KEY);
-    return stored ? JSON.parse(stored) : {};
-  } catch {
-    return {};
-  }
-}
 
 interface PlanInfo {
   id: string;
   name: string;
-  price: { cn: number; intl: number }; // ¥ CNY / $ USD
+  price: { cn: number; intl: number };
   period: string;
 }
 
@@ -42,10 +23,9 @@ interface PaymentModalProps {
 }
 
 type Region = 'cn' | 'intl';
-type PayMethod = 'wechat' | 'alipay' | 'creem';
+type PayMethod = 'alipay' | 'creem';
 type PayState = 'selecting' | 'pending' | 'success';
 
-/** Detect region from browser locale / timezone */
 function detectRegion(): Region {
   try {
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -60,7 +40,6 @@ function detectRegion(): Region {
   return 'intl';
 }
 
-/** Generate QR code image via qr-server API */
 function qrUrl(data: string) {
   return `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(data)}`;
 }
@@ -68,13 +47,12 @@ function qrUrl(data: string) {
 export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
   const { user } = useAuth();
   const [region, setRegion] = useState<Region>('intl');
-  const [method, setMethod] = useState<PayMethod>('wechat');
+  const [method, setMethod] = useState<PayMethod>('creem');
   const [payState, setPayState] = useState<PayState>('selecting');
   const [countdown, setCountdown] = useState(0);
   const [qrCodeUrl, setQrCodeUrl] = useState('');
   const [creemCheckoutUrl, setCreemCheckoutUrl] = useState('');
   const [paymentError, setPaymentError] = useState('');
-  const [payConfig, setPayConfig] = useState<StoredPaymentConfig>({});
 
   useEffect(() => {
     if (open) {
@@ -84,18 +62,16 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
       setQrCodeUrl('');
       setCreemCheckoutUrl('');
       setPaymentError('');
-      setPayConfig(getStoredPaymentConfig());
     }
   }, [open]);
 
   useEffect(() => {
-    if (region === 'cn') setMethod('wechat');
+    if (region === 'cn') setMethod('alipay');
     else setMethod('creem');
   }, [region]);
 
-  // Countdown for QR payment
   useEffect(() => {
-    if (payState === 'pending' && (method === 'wechat' || method === 'alipay')) {
+    if (payState === 'pending' && method === 'alipay') {
       setCountdown(120);
       const id = setInterval(() => {
         setCountdown(prev => {
@@ -111,8 +87,7 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
 
   const price = region === 'cn' ? `¥${plan.price.cn}` : `$${plan.price.intl}`;
 
-  const hasWechat = !!(payConfig.wechat?.enabled && payConfig.wechat?.appId && payConfig.wechat?.mchId && payConfig.wechat?.apiKey && payConfig.wechat?.serialNo && payConfig.wechat?.privateKey);
-  const hasAlipay = !!(payConfig.alipay?.enabled && payConfig.alipay?.appId && payConfig.alipay?.privateKey);
+  const hasAlipay = !!(process.env.NEXT_PUBLIC_ALIPAY_CONFIGURED);
   const hasCreem = true;
 
   const handlePay = async () => {
@@ -122,100 +97,61 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
       return;
     }
 
-    if (method === 'wechat') {
-      setPayState('pending');
-      if (hasWechat) {
-        // Call real WeChat Pay API
-        try {
-          const res = await fetch('/api/payment/wechat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              planId: plan.id,
-              amount: plan.price.cn * 100,
-              description: `${plan.name} 订阅`,
-              userId: user.id,
-              config: payConfig,
-            }),
-          });
-          const data = await res.json();
-          if (data.codeUrl) {
-            setQrCodeUrl(qrUrl(data.codeUrl));
-          } else {
-            setQrCodeUrl(qrUrl(`weixin://wxpay/bizpayurl?pr=${plan.id}_${Date.now()}`));
-          }
-        } catch {
-          setQrCodeUrl(qrUrl(`weixin://wxpay/bizpayurl?pr=${plan.id}_${Date.now()}`));
-        }
-      } else {
-        // Demo QR
-        setQrCodeUrl(qrUrl(`weixin://wxpay/bizpayurl?pr=demo_${plan.id}_${Date.now()}`));
-        setTimeout(() => setPayState('success'), 30000);
-      }
-      return;
-    }
-
     if (method === 'alipay') {
       setPayState('pending');
-      if (hasAlipay) {
-        try {
-          const res = await fetch('/api/payment/alipay', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              planId: plan.id,
-              amount: plan.price.cn,
-              subject: `${plan.name} 订阅`,
-              userId: user.id,
-              config: payConfig,
-            }),
-          });
-          const data = await res.json();
-          if (data.qrCode) {
-            setQrCodeUrl(qrUrl(data.qrCode));
-          } else if (data.payUrl) {
-            window.open(data.payUrl, '_blank');
-          } else {
-            setQrCodeUrl(qrUrl(`https://qr.alipay.com/demo?plan=${plan.id}&t=${Date.now()}`));
-          }
-        } catch {
+      try {
+        const res = await fetch('/api/payment/alipay', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            planId: plan.id,
+            amount: plan.price.cn,
+            subject: `VidShorter ${plan.name} 订阅`,
+            userId: user.id,
+          }),
+        });
+        const data = await res.json();
+        if (data.error) {
+          setPaymentError(data.error);
+          setPayState('selecting');
+          return;
+        }
+        if (data.qrCode) {
+          setQrCodeUrl(qrUrl(data.qrCode));
+        } else if (data.payUrl) {
+          window.open(data.payUrl, '_blank');
+        } else {
           setQrCodeUrl(qrUrl(`https://qr.alipay.com/demo?plan=${plan.id}&t=${Date.now()}`));
         }
-      } else {
+      } catch {
         setQrCodeUrl(qrUrl(`https://qr.alipay.com/demo?plan=${plan.id}&t=${Date.now()}`));
-        setTimeout(() => setPayState('success'), 30000);
       }
       return;
     }
 
     if (method === 'creem') {
-      if (hasCreem) {
-        // Call Creem API to create checkout
-        try {
-          setPayState('pending');
-          const res = await fetch('/api/payment/creem', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ planId: plan.id, amount: plan.price.intl, currency: 'USD', userId: user.id }),
-          });
-          const data = await res.json();
-          if (data.checkoutUrl) {
-            setCreemCheckoutUrl(data.checkoutUrl);
-          } else {
-            const url = `https://www.creem.io/payment?product=${plan.id}&amount=${plan.price.intl * 100}&currency=USD`;
-            setCreemCheckoutUrl(url);
-          }
-        } catch {
-          const url = `https://www.creem.io/payment?product=${plan.id}&amount=${plan.price.intl * 100}&currency=USD`;
-          setCreemCheckoutUrl(url);
-          setPayState('pending');
+      setPayState('pending');
+      try {
+        const res = await fetch('/api/payment/creem', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ planId: plan.id, userId: user.id }),
+        });
+        const data = await res.json();
+        if (data.error) {
+          setPaymentError(data.error);
+          setPayState('selecting');
+          return;
         }
-      } else {
-        // Demo Creem flow
-        const creemUrl = `https://www.creem.io/payment?product=${plan.id}&amount=${plan.price.intl * 100}&currency=USD&redirect=${encodeURIComponent(window.location.href)}`;
-        setCreemCheckoutUrl(creemUrl);
-        setPayState('pending');
-        setTimeout(() => setPayState('success'), 5000);
+        if (data.checkoutUrl) {
+          setCreemCheckoutUrl(data.checkoutUrl);
+        } else {
+          setPaymentError('Failed to create checkout session');
+          setPayState('selecting');
+        }
+      } catch {
+        setPaymentError('Network error, please try again');
+        setPayState('selecting');
       }
       return;
     }
@@ -249,7 +185,6 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
           </div>
         ) : (
           <div className="space-y-4">
-            {/* Region selector */}
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground">支付地区：</span>
               <div className="flex gap-2">
@@ -277,106 +212,62 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
             )}
 
             {region === 'cn' ? (
-              <Tabs value={method === 'alipay' ? 'alipay' : 'wechat'} onValueChange={v => { setMethod(v as PayMethod); setPayState('selecting'); setQrCodeUrl(''); }}>
-                <TabsList className="w-full">
-                  <TabsTrigger value="wechat" className="flex-1 gap-1.5">
-                    <QrCode className="h-4 w-4" />微信支付
-                    {hasWechat && <CheckCircle className="h-3 w-3 text-green-500" />}
-                  </TabsTrigger>
-                  <TabsTrigger value="alipay" className="flex-1 gap-1.5">
-                    <QrCode className="h-4 w-4" />支付宝
-                    {hasAlipay && <CheckCircle className="h-3 w-3 text-green-500" />}
-                  </TabsTrigger>
-                </TabsList>
-
-                <TabsContent value="wechat" className="mt-4">
-                  {payState === 'pending' ? (
-                    <div className="flex flex-col items-center gap-3">
-                      {qrCodeUrl ? (
-                        <img src={qrCodeUrl} alt="微信支付二维码" className="w-48 h-48 rounded-lg border" />
-                      ) : (
-                        <div className="w-48 h-48 rounded-lg border bg-muted flex items-center justify-center">
-                          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                        </div>
-                      )}
-                      <div className="text-center">
-                        <p className="text-sm font-medium">使用微信扫码支付</p>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          二维码 <span className="text-primary font-semibold tabular-nums">{countdown}s</span> 后失效
-                        </p>
-                        <Badge variant="outline" className="mt-2">
-                          <Loader2 className="h-3 w-3 mr-1 animate-spin" />等待支付中...
-                        </Badge>
-                      </div>
-                      <Button size="sm" variant="outline" onClick={() => { setPayState('success'); }}>
-                        我已完成支付
-                      </Button>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      <div className="p-3 bg-muted rounded-lg flex items-center justify-between">
-                        <span className="text-sm">微信支付</span>
-                        <span className="font-bold text-primary">¥{plan.price.cn}</span>
-                      </div>
-                      {!hasWechat && (
-                        <p className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 p-2 rounded">
-                          ⚠️ 微信支付未配置，将使用演示模式。<a href="/admin" className="underline ml-1">前往配置 →</a>
-                        </p>
-                      )}
-                      <Button className="w-full bg-[#07C160] hover:bg-[#06AD56] text-white" onClick={handlePay}>
-                        <QrCode className="h-4 w-4 mr-2" />生成微信支付二维码
-                      </Button>
-                    </div>
-                  )}
-                </TabsContent>
-
-                <TabsContent value="alipay" className="mt-4">
-                  {payState === 'pending' ? (
-                    <div className="flex flex-col items-center gap-3">
-                      {qrCodeUrl ? (
-                        <img src={qrCodeUrl} alt="支付宝二维码" className="w-48 h-48 rounded-lg border" />
-                      ) : (
-                        <div className="w-48 h-48 rounded-lg border bg-muted flex items-center justify-center">
-                          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                        </div>
-                      )}
-                      <div className="text-center">
-                        <p className="text-sm font-medium">使用支付宝扫码支付</p>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          二维码 <span className="text-primary font-semibold tabular-nums">{countdown}s</span> 后失效
-                        </p>
-                        <Badge variant="outline" className="mt-2">
-                          <Loader2 className="h-3 w-3 mr-1 animate-spin" />等待支付中...
-                        </Badge>
-                      </div>
-                      <Button size="sm" variant="outline" onClick={() => setPayState('success')}>
-                        我已完成支付
-                      </Button>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      <div className="p-3 bg-muted rounded-lg flex items-center justify-between">
-                        <span className="text-sm">支付宝</span>
-                        <span className="font-bold text-primary">¥{plan.price.cn}</span>
-                      </div>
-                      {!hasAlipay && (
-                        <p className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 p-2 rounded">
-                          ⚠️ 支付宝未配置，将使用演示模式。<a href="/admin" className="underline ml-1">前往配置 →</a>
-                        </p>
-                      )}
-                      <Button className="w-full bg-[#1677FF] hover:bg-[#0958D9] text-white" onClick={handlePay}>
-                        <QrCode className="h-4 w-4 mr-2" />生成支付宝二维码
-                      </Button>
-                    </div>
-                  )}
-                </TabsContent>
-              </Tabs>
-            ) : (
-              // International: Creem
               <div className="space-y-4">
                 <div className="p-4 bg-muted rounded-lg">
                   <div className="flex items-center justify-between mb-3">
-                    <span className="font-medium">{plan.name} Plan</span>
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-5 bg-[#1677FF] rounded flex items-center justify-center">
+                        <span className="text-white text-[8px] font-bold">ALI</span>
+                      </div>
+                      <span className="font-medium">支付宝</span>
+                    </div>
+                    <span className="font-bold text-primary">¥{plan.price.cn}</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground space-y-1">
+                    <p>✓ 扫码支付，安全便捷</p>
+                    <p>✓ 支持支付宝余额、银行卡、花呗</p>
+                    <p>✓ 随时取消订阅</p>
+                  </div>
+                </div>
+
+                {payState === 'pending' ? (
+                  <div className="flex flex-col items-center gap-3">
+                    {qrCodeUrl ? (
+                      <img src={qrCodeUrl} alt="支付宝二维码" className="w-48 h-48 rounded-lg border" />
+                    ) : (
+                      <div className="w-48 h-48 rounded-lg border bg-muted flex items-center justify-center">
+                        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                      </div>
+                    )}
+                    <div className="text-center">
+                      <p className="text-sm font-medium">使用支付宝扫码支付</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        二维码 <span className="text-primary font-semibold tabular-nums">{countdown}s</span> 后失效
+                      </p>
+                      <Badge variant="outline" className="mt-2">
+                        <Loader2 className="h-3 w-3 mr-1 animate-spin" />等待支付中...
+                      </Badge>
+                    </div>
+                    <Button size="sm" variant="outline" onClick={() => setPayState('success')}>
+                      我已完成支付
+                    </Button>
+                  </div>
+                ) : (
+                  <Button className="w-full bg-[#1677FF] hover:bg-[#0958D9] text-white" onClick={handlePay}>
+                    <QrCode className="h-4 w-4 mr-2" />生成支付宝二维码
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="p-4 bg-muted rounded-lg">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-5 bg-gradient-to-r from-violet-600 to-indigo-600 rounded flex items-center justify-center">
+                        <span className="text-white text-[8px] font-bold">CR</span>
+                      </div>
+                      <span className="font-medium">Creem</span>
+                    </div>
                     <span className="font-bold text-primary">${plan.price.intl}/{plan.period}</span>
                   </div>
                   <div className="text-xs text-muted-foreground space-y-1">
@@ -384,17 +275,11 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
                     <p>✓ Visa, Mastercard, Apple Pay, Google Pay</p>
                     <p>✓ Cancel anytime</p>
                   </div>
-                  {hasCreem && (
-                    <Badge className="mt-2 bg-green-500 text-white text-xs gap-1">
-                      <CheckCircle className="h-3 w-3" />Creem 已配置
-                    </Badge>
-                  )}
+                  <Badge className="mt-2 bg-green-500 text-white text-xs gap-1">
+                    <CheckCircle className="h-3 w-3" />Creem 已配置
+                  </Badge>
                 </div>
-                {!hasCreem && (
-                  <p className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 p-2 rounded">
-                    ⚠️ Creem 未配置，将使用演示模式。<a href="/admin" className="underline ml-1">前往配置 →</a>
-                  </p>
-                )}
+
                 {payState === 'pending' ? (
                   creemCheckoutUrl ? (
                     <div className="space-y-2">

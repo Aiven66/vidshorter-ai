@@ -160,7 +160,7 @@ export async function POST(request: NextRequest) {
         let supabaseClient: SupabaseClient | null = null;
 
         const planDailyCredits = (planType: string | null | undefined) => {
-          if (planType === 'basic') return 1000;
+          if (planType === 'starter') return 500;
           if (planType === 'pro') return 1_000_000;
           return 100;
         };
