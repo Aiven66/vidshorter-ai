@@ -5,6 +5,7 @@ import { ThemeProvider } from 'next-themes';
 import { AuthProvider } from '@/lib/auth-context';
 import { CreditsProvider } from '@/lib/credits-context';
 import { LocaleProvider } from '@/lib/locale-context';
+import { PostHogProvider } from '@/lib/posthog-provider';
 import { Toaster } from '@/components/ui/sonner';
 
 export function Providers({ children }: { children: ReactNode }) {
@@ -15,14 +16,16 @@ export function Providers({ children }: { children: ReactNode }) {
       enableSystem
       disableTransitionOnChange
     >
-      <LocaleProvider>
-        <AuthProvider>
-          <CreditsProvider>
-            {children}
-            <Toaster />
-          </CreditsProvider>
-        </AuthProvider>
-      </LocaleProvider>
+      <PostHogProvider>
+        <LocaleProvider>
+          <AuthProvider>
+            <CreditsProvider>
+              {children}
+              <Toaster />
+            </CreditsProvider>
+          </AuthProvider>
+        </LocaleProvider>
+      </PostHogProvider>
     </ThemeProvider>
   );
 }

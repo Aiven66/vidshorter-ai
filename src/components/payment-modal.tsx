@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { CheckCircle, Loader2, QrCode, CreditCard, Globe, Smartphone, ExternalLink, ArrowLeft, XCircle } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
+import { posthog } from '@/lib/posthog';
 
 interface PlanInfo {
   id: string;
@@ -92,6 +93,14 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
       const data = await res.json();
       if (data.paid) {
         if (setAsSuccess) {
+          if (posthog && plan) {
+            posthog.capture('payment_completed', {
+              amount: region === 'cn' ? plan.price.cn : plan.price.intl,
+              currency: region === 'cn' ? 'CNY' : 'USD',
+              plan: plan.id,
+              payment_method: method,
+            });
+          }
           setPollingPayment(false);
           setPayState('success');
         }
@@ -101,7 +110,7 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
     } catch {
       return false;
     }
-  }, []);
+  }, [plan, region, method]);
 
   const pollCreemPayment = useCallback(async (sessionId: string) => {
     if (!sessionId) return;

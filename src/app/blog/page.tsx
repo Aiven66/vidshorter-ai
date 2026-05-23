@@ -248,9 +248,10 @@ function seedSeoArticles() {
 
 /* ── Read posts from localStorage (demo mode) ── */
 function getLocalPosts(): BlogPost[] {
-  if (typeof window === 'undefined') return [];
+  if (typeof window === 'undefined') return seoPosts; // Return SEO posts for SSR
   const stored = localStorage.getItem(DEMO_POSTS_KEY);
-  return stored ? JSON.parse(stored) : [];
+  const posts = stored ? JSON.parse(stored) : seoPosts;
+  return posts;
 }
 
 export default function BlogPage() {
@@ -266,8 +267,9 @@ export default function BlogPage() {
     // Always seed SEO articles first (idempotent)
     seedSeoArticles();
 
-    // Check if Supabase is configured
-    if (!isSupabaseConfigured()) {
+    // Check if we're in a browser environment and Supabase is configured
+    const isBrowser = typeof window !== 'undefined';
+    if (!isBrowser || !isSupabaseConfigured()) {
       // Read from localStorage (includes admin-created + SEO seed)
       const localPosts = getLocalPosts().filter(p => p.is_published !== false);
       setPosts(localPosts);

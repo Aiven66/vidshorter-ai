@@ -12,6 +12,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Video, CheckCircle, Mail, Lock } from 'lucide-react';
 import { GoogleLoginButton } from '@/components/google-login-button';
+import { posthog } from '@/lib/posthog';
 
 function LoginContent() {
   const { t } = useLocale();
@@ -95,6 +96,13 @@ function LoginContent() {
       return;
     }
 
+    if (posthog) {
+      posthog.capture('user_logged_in', {
+        email,
+        login_method: 'email_password',
+      });
+    }
+
     if (fromDesktop) {
       const token = result.token || accessToken;
       console.log('[DesktopAuth] Login complete, token received:', !!token);
@@ -115,9 +123,17 @@ function LoginContent() {
     if (result.error) {
       setError(result.error);
       setLoading(false);
-    } else if (fromDesktop) {
-      setLoginSuccess(true);
-      setLoading(false);
+    } else {
+      if (posthog) {
+        posthog.capture('user_logged_in', {
+          email: user?.email,
+          login_method: 'google',
+        });
+      }
+      if (fromDesktop) {
+        setLoginSuccess(true);
+        setLoading(false);
+      }
     }
   };
 

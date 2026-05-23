@@ -13,6 +13,7 @@ import Link from 'next/link';
 import { Video, Mail, Lock, User, Loader2, CheckCircle, AlertCircle, KeyRound } from 'lucide-react';
 import { Suspense } from 'react';
 import { GoogleLoginButton } from '@/components/google-login-button';
+import { posthog } from '@/lib/posthog';
 
 type Step = 'info' | 'verify' | 'done';
 
@@ -145,6 +146,14 @@ function RegisterContent() {
       if (result.error) {
         setError(result.error);
         return;
+      }
+
+      if (posthog) {
+        posthog.capture('user_signed_up', {
+          email,
+          name,
+          sign_up_method: 'email_password',
+        });
       }
 
       if (fromDesktop) {
