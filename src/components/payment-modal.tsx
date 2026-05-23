@@ -6,7 +6,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { CheckCircle, Loader2, QrCode, CreditCard, Globe, Smartphone, ExternalLink, ArrowLeft } from 'lucide-react';
+import { CheckCircle, Loader2, QrCode, CreditCard, Globe, Smartphone, ExternalLink, ArrowLeft, XCircle } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 
 interface PlanInfo {
@@ -24,7 +24,7 @@ interface PaymentModalProps {
 
 type Region = 'cn' | 'intl';
 type PayMethod = 'alipay' | 'creem';
-type PayState = 'selecting' | 'pending' | 'success';
+type PayState = 'selecting' | 'pending' | 'success' | 'failed';
 
 function detectRegion(): Region {
   try {
@@ -52,6 +52,7 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
   const [paymentError, setPaymentError] = useState('');
   const [creemSessionId, setCreemSessionId] = useState('');
   const [pollingPayment, setPollingPayment] = useState(false);
+  const [manualCheck, setManualCheck] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -62,6 +63,7 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
       setPaymentError('');
       setCreemSessionId('');
       setPollingPayment(false);
+      setManualCheck(false);
     }
   }, [open]);
 
@@ -83,6 +85,24 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
     }
   }, [payState, method]);
 
+  const verifyCreemPayment = useCallback(async (sessionId: string, setAsSuccess: boolean = true) => {
+    if (!sessionId) return false;
+    try {
+      const res = await fetch(`/api/payment/creem?session_id=${sessionId}`);
+      const data = await res.json();
+      if (data.paid) {
+        if (setAsSuccess) {
+          setPollingPayment(false);
+          setPayState('success');
+        }
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }, []);
+
   const pollCreemPayment = useCallback(async (sessionId: string) => {
     if (!sessionId) return;
     setPollingPayment(true);
@@ -97,19 +117,14 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
         return;
       }
 
-      try {
-        const res = await fetch(`/api/payment/creem?session_id=${sessionId}`);
-        const data = await res.json();
-        if (data.paid) {
-          clearInterval(interval);
-          setPollingPayment(false);
-          setPayState('success');
-        }
-      } catch {}
+      const paid = await verifyCreemPayment(sessionId, true);
+      if (paid) {
+        clearInterval(interval);
+      }
     }, 5000);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [verifyCreemPayment]);
 
   useEffect(() => {
     if (payState === 'pending' && method === 'creem' && creemSessionId) {
@@ -118,13 +133,17 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
     }
   }, [payState, method, creemSessionId, pollCreemPayment]);
 
-  useEffect(() => {
-    if (!open) return;
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('payment') === 'success') {
+  const handleManualPaymentCheck = useCallback(async () => {
+    if (!creemSessionId) return;
+    setManualCheck(true);
+    const paid = await verifyCreemPayment(creemSessionId, false);
+    if (paid) {
       setPayState('success');
+    } else {
+      setPaymentError('Payment not confirmed. Please complete payment in the Creem window.');
     }
-  }, [open]);
+    setManualCheck(false);
+  }, [creemSessionId, verifyCreemPayment]);
 
   if (!plan) return null;
 
@@ -232,6 +251,22 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
             </p>
             <Button className="w-full mt-2" onClick={() => onOpenChange(false)}>
               Start Using
+            </Button>
+          </div>
+        ) : payState === 'failed' ? (
+          <div className="flex flex-col items-center py-8 gap-4">
+            <div className="h-16 w-16 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
+              <XCircle className="h-10 w-10 text-red-500" />
+            </div>
+            <h3 className="text-lg font-semibold">Payment Failed</h3>
+            <p className="text-sm text-muted-foreground text-center">
+              Payment was not completed successfully. Please try again.
+            </p>
+            <Button className="w-full mt-2" onClick={() => {
+              setPayState('selecting');
+              setPaymentError('');
+            }}>
+              Try Again
             </Button>
           </div>
         ) : (
@@ -362,9 +397,20 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
                       <Button
                         size="sm"
                         className="flex-1"
-                        onClick={() => setPayState('success')}
+                        onClick={handleManualPaymentCheck}
+                        disabled={manualCheck}
                       >
-                        <CheckCircle className="h-4 w-4 mr-1" />I have completed payment
+                        {manualCheck ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                            Verifying...
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle className="h-4 w-4 mr-1" />
+                            Verify Payment
+                          </>
+                        )}
                       </Button>
                     </div>
                   </div>
