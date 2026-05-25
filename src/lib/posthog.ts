@@ -1,34 +1,47 @@
 'use client';
 
-import posthog from 'posthog-js';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+
+let posthogInstance: any = null;
+
+if (typeof window !== 'undefined') {
+  // 只在客户端动态导入
+  const posthogModule = require('posthog-js');
+  posthogInstance = posthogModule.default || posthogModule;
+}
 
 const POSTHOG_API_KEY = process.env.NEXT_PUBLIC_POSTHOG_API_KEY || '';
 const POSTHOG_HOST = process.env.NEXT_PUBLIC_POSTHOG_HOST || 'https://app.posthog.com';
 
 export function usePostHog() {
-  useEffect(() => {
-    if (!POSTHOG_API_KEY) return;
+  const [initialized, setInitialized] = useState(false);
 
-    posthog.init(POSTHOG_API_KEY, {
+  useEffect(() => {
+    if (!POSTHOG_API_KEY || !posthogInstance || initialized) return;
+
+    posthogInstance.init(POSTHOG_API_KEY, {
       api_host: POSTHOG_HOST,
       capture_pageview: true,
       capture_pageleave: true,
     });
 
+    setInitialized(true);
+
     return () => {
-      posthog.dispose();
+      if (posthogInstance) {
+        posthogInstance.dispose();
+      }
     };
-  }, []);
+  }, [initialized]);
 
   const identifyUser = (userId: string, properties?: Record<string, unknown>) => {
-    if (!POSTHOG_API_KEY) return;
-    posthog.identify(userId, properties);
+    if (!POSTHOG_API_KEY || !posthogInstance) return;
+    posthogInstance.identify(userId, properties);
   };
 
   const track = (event: string, properties?: Record<string, unknown>) => {
-    if (!POSTHOG_API_KEY) return;
-    posthog.capture(event, properties);
+    if (!POSTHOG_API_KEY || !posthogInstance) return;
+    posthogInstance.capture(event, properties);
   };
 
   const trackSignup = (email: string, plan: string = 'free') => {
@@ -57,4 +70,16 @@ export function usePostHog() {
   };
 }
 
-export { posthog };
+// 安全导出，避免服务器端导入问题
+export const posthog = {
+  capture: (event: string, properties?: Record<string, unknown>) => {
+    if (typeof window !== 'undefined' && posthogInstance) {
+      posthogInstance.capture(event, properties);
+    }
+  },
+  identify: (userId: string, properties?: Record<string, unknown>) => {
+    if (typeof window !== 'undefined' && posthogInstance) {
+      posthogInstance.identify(userId, properties);
+    }
+  },
+};

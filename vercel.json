@@ -1,11 +1,17 @@
 {
   "buildCommand": "pnpm next build",
-  "installCommand": "pnpm install",
+  "installCommand": "pnpm install --no-frozen-lockfile",
   "framework": "nextjs",
   "regions": ["hkg1"],
   "functions": {
     "src/app/api/**/*.ts": {
       "maxDuration": 300
+    }
+  },
+  "nodeVersion": "20.x",
+  "build": {
+    "env": {
+      "VERCEL": "1"
     }
   }
 }
