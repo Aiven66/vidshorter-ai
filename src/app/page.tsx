@@ -619,81 +619,41 @@ export default function HomePage() {
   /* ── Render ── */
   return (
     <div className="min-h-screen">
-      {/* Hero */}
-      <section className="relative overflow-hidden bg-gradient-to-b from-background to-muted/30 py-20 md:py-32">
-        <div className="container mx-auto px-4">
-          <div className="max-w-4xl mx-auto text-center">
-            <Badge variant="outline" className="mb-6 px-4 py-1.5 text-sm">
-              <Sparkles className="h-4 w-4 mr-2 text-primary" />
-              AI-Powered Video Processing
-            </Badge>
-            <h1 className="text-4xl md:text-6xl font-bold tracking-tight mb-6">
-              {t('home.hero.title')}
-            </h1>
-            <p className="text-xl text-muted-foreground mb-8 max-w-2xl mx-auto">
-              {t('home.hero.subtitle')}
-            </p>
-            <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <Button size="lg" className="text-lg px-8" asChild>
-                <Link href={user ? '#process' : '/register'}>
-                  {t('home.hero.cta')}
-                  <ArrowRight className="ml-2 h-5 w-5" />
-                </Link>
-              </Button>
-              <Button size="lg" variant="outline" className="text-lg px-8" asChild>
-                <Link href="/download">
-                  <Download className="mr-2 h-5 w-5" />
-                  Download Mac App
-                </Link>
-              </Button>
-            </div>
-          </div>
-        </div>
+      {/* Hero + Process - Combined for first-screen visibility */}
+      <section className="relative overflow-hidden bg-gradient-to-b from-background to-muted/30">
         <div className="absolute inset-0 -z-10 overflow-hidden">
           <div className="absolute -top-40 -right-32 h-96 w-96 bg-primary/10 rounded-full blur-3xl" />
           <div className="absolute -bottom-40 -left-32 h-96 w-96 bg-primary/5 rounded-full blur-3xl" />
         </div>
-      </section>
 
-      {/* Features */}
-      <section className="py-20 bg-muted/30">
-        <div className="container mx-auto px-4">
-          <h2 className="text-3xl font-bold text-center mb-12">{t('features.title')}</h2>
-          <div className="grid md:grid-cols-3 gap-8 max-w-5xl mx-auto">
-            {[
-              { Icon: Sparkles, title: t('features.auto.title'), desc: t('features.auto.desc') },
-              { Icon: Film, title: t('features.multi.title'), desc: t('features.multi.desc') },
-              { Icon: Zap, title: t('features.quick.title'), desc: t('features.quick.desc') },
-            ].map(({ Icon, title, desc }) => (
-              <Card key={title} className="border-0 shadow-lg">
-                <CardHeader>
-                  <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center mb-4">
-                    <Icon className="h-6 w-6 text-primary" />
-                  </div>
-                  <CardTitle>{title}</CardTitle>
-                </CardHeader>
-                <CardContent><CardDescription className="text-base">{desc}</CardDescription></CardContent>
-              </Card>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Process */}
-      <section id="process" className="py-20">
-        <div className="container mx-auto px-4">
+        <div className="container mx-auto px-4 py-12 md:py-20">
           <div className="max-w-4xl mx-auto">
+            {/* Hero Content */}
+            <div className="text-center mb-10">
+              <Badge variant="outline" className="mb-4 px-4 py-1.5 text-sm">
+                <Sparkles className="h-4 w-4 mr-2 text-primary" />
+                AI-Powered Video Processing
+              </Badge>
+              <h1 className="text-3xl md:text-5xl font-bold tracking-tight mb-4">
+                {t('home.hero.title')}
+              </h1>
+              <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+                {t('home.hero.subtitle')}
+              </p>
+            </div>
+
+            {/* Core Process Section - Now visible above the fold */}
             <Card className="border-0 shadow-xl">
-              <CardHeader className="text-center">
-                <CardTitle className="text-2xl">{t('video.input.title')}</CardTitle>
-                <CardDescription>
+              <CardHeader className="text-center pb-2">
+                <CardTitle className="text-xl">{t('video.input.title')}</CardTitle>
+                <CardDescription className="text-sm">
                   {user ? (
-                    <span className="flex items-center justify-center gap-2 mt-2">
+                    <span className="flex items-center justify-center gap-2 mt-1">
                       <CheckCircle className="h-4 w-4 text-green-500" />
                       {balance} {t('nav.credits')} available
                     </span>
                   ) : (
-                    <span className="mt-2">
+                    <span className="mt-1">
                       <a
                         href="/login"
                         className="text-primary hover:underline"
@@ -712,7 +672,7 @@ export default function HomePage() {
                   )}
                 </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-6">
+              <CardContent className="space-y-4">
                 {/* URL input */}
                 <div className="flex gap-2">
                   <div className="relative flex-1">
@@ -754,10 +714,10 @@ export default function HomePage() {
 
                 {/* File upload (secondary) */}
                 <div
-                  className="border-2 border-dashed border-border rounded-lg p-4 text-center cursor-pointer hover:border-primary/50 transition-colors"
+                  className="border-2 border-dashed border-border rounded-lg p-3 text-center cursor-pointer hover:border-primary/50 transition-colors"
                   onClick={() => fileInputRef.current?.click()}
                 >
-                  <Upload className="h-6 w-6 mx-auto text-muted-foreground mb-1" />
+                  <Upload className="h-5 w-5 mx-auto text-muted-foreground mb-1" />
                   <p className="text-sm text-muted-foreground">
                     {selectedFile ? `Selected: ${selectedFile.name}` : 'Upload a local video file (recommended when YouTube link is blocked)'}
                   </p>
@@ -773,10 +733,10 @@ export default function HomePage() {
 
                 {/* Error */}
                 {error && (
-                  <div className="p-4 bg-destructive/10 rounded-lg flex items-start gap-3">
+                  <div className="p-3 bg-destructive/10 rounded-lg flex items-start gap-3">
                     <AlertCircle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
                     <div>
-                      <p className="font-medium text-destructive">Error</p>
+                      <p className="font-medium text-destructive text-sm">Error</p>
                       <p className="text-sm text-muted-foreground">{error}</p>
                     </div>
                   </div>
@@ -784,7 +744,7 @@ export default function HomePage() {
 
                 {/* Progress */}
                 {isProcessing && progress && (
-                  <div className="space-y-3 rounded-lg border p-4 bg-muted/30">
+                  <div className="space-y-2 rounded-lg border p-3 bg-muted/30">
                     <div className="flex items-center gap-3">
                       <StageIcon className={`h-5 w-5 text-primary ${progress.stage !== 'complete' && progress.stage !== 'error' ? 'animate-spin' : ''}`} />
                       <span className="font-medium text-sm flex-1">{progress.message}</span>
@@ -795,7 +755,7 @@ export default function HomePage() {
 
                     {/* Live clip list while processing */}
                     {clips.length > 0 && (
-                      <div className="mt-3 pt-3 border-t space-y-2">
+                      <div className="mt-2 pt-2 border-t space-y-2">
                         <p className="text-xs font-medium text-muted-foreground">Clips being generated:</p>
                         {clips.map(c => (
                           <div key={c.id} className="flex items-center gap-2 text-xs">
@@ -817,9 +777,56 @@ export default function HomePage() {
               </CardContent>
             </Card>
 
+            {/* Quick actions */}
+            <div className="flex flex-col sm:flex-row gap-3 justify-center mt-6">
+              <Button variant="outline" size="lg" className="px-6" asChild>
+                <Link href="/download">
+                  <Download className="mr-2 h-4 w-4" />
+                  Download Mac App
+                </Link>
+              </Button>
+              <Button variant="outline" size="lg" className="px-6" asChild>
+                <Link href="/pricing">
+                  <Sparkles className="mr-2 h-4 w-4" />
+                  View Pricing
+                </Link>
+              </Button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Features */}
+      <section className="py-16 bg-muted/30">
+        <div className="container mx-auto px-4">
+          <h2 className="text-2xl font-bold text-center mb-10">{t('features.title')}</h2>
+          <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto">
+            {[
+              { Icon: Sparkles, title: t('features.auto.title'), desc: t('features.auto.desc') },
+              { Icon: Film, title: t('features.multi.title'), desc: t('features.multi.desc') },
+              { Icon: Zap, title: t('features.quick.title'), desc: t('features.quick.desc') },
+            ].map(({ Icon, title, desc }) => (
+              <Card key={title} className="border-0 shadow-lg">
+                <CardHeader>
+                  <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center mb-4">
+                    <Icon className="h-6 w-6 text-primary" />
+                  </div>
+                  <CardTitle>{title}</CardTitle>
+                </CardHeader>
+                <CardContent><CardDescription className="text-base">{desc}</CardDescription></CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Results Section */}
+      <section id="process" className="py-16">
+        <div className="container mx-auto px-4">
+          <div className="max-w-4xl mx-auto">
             {/* ── Results ── */}
             {clips.length > 0 && !isProcessing && (
-              <div className="mt-8">
+              <div>
                 <div className="flex items-center justify-between mb-6">
                   <h3 className="text-2xl font-bold">{t('video.results')}</h3>
                   <Badge variant="secondary">
@@ -922,9 +929,9 @@ export default function HomePage() {
       </section>
 
       {/* How It Works */}
-      <section className="py-20 bg-muted/30">
+      <section className="py-16 bg-muted/30">
         <div className="container mx-auto px-4">
-          <h2 className="text-3xl font-bold text-center mb-12">How It Works</h2>
+          <h2 className="text-2xl font-bold text-center mb-10">How It Works</h2>
           <div className="grid md:grid-cols-4 gap-6 max-w-5xl mx-auto">
             {[
               { step: '1', title: 'Input Video', desc: 'Paste URL or upload your video', icon: Video },

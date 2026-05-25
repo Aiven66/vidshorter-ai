@@ -6,7 +6,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { CheckCircle, Loader2, QrCode, CreditCard, Globe, Smartphone, ExternalLink, ArrowLeft, XCircle } from 'lucide-react';
+import { CheckCircle, Loader2, QrCode, CreditCard, Smartphone, ExternalLink, ArrowLeft, XCircle, Lock, Shield, ChevronRight } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import { posthog } from '@/lib/posthog';
 
@@ -23,21 +23,8 @@ interface PaymentModalProps {
   plan: PlanInfo | null;
 }
 
-type Region = 'cn' | 'intl';
 type PayMethod = 'alipay' | 'creem';
 type PayState = 'selecting' | 'pending' | 'success' | 'failed';
-
-function detectRegion(): Region {
-  try {
-    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    if (tz.startsWith('Asia/Shanghai') || tz.startsWith('Asia/Beijing') || tz.startsWith('Asia/Chongqing') || tz.startsWith('Asia/Urumqi') || tz.startsWith('Asia/Harbin')) {
-      return 'cn';
-    }
-    const lang = navigator.language || '';
-    if (lang.startsWith('zh-CN') || lang === 'zh') return 'cn';
-  } catch {}
-  return 'intl';
-}
 
 function qrUrl(data: string) {
   return `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(data)}`;
@@ -45,7 +32,6 @@ function qrUrl(data: string) {
 
 export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
   const { user } = useAuth();
-  const [region, setRegion] = useState<Region>('intl');
   const [method, setMethod] = useState<PayMethod>('creem');
   const [payState, setPayState] = useState<PayState>('selecting');
   const [countdown, setCountdown] = useState(0);
@@ -57,7 +43,6 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
 
   useEffect(() => {
     if (open) {
-      setRegion(detectRegion());
       setPayState('selecting');
       setCountdown(0);
       setQrCodeUrl('');
@@ -65,13 +50,9 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
       setCreemSessionId('');
       setPollingPayment(false);
       setManualCheck(false);
+      setMethod('creem');
     }
   }, [open]);
-
-  useEffect(() => {
-    if (region === 'cn') setMethod('alipay');
-    else setMethod('creem');
-  }, [region]);
 
   useEffect(() => {
     if (payState === 'pending' && method === 'alipay') {
@@ -95,8 +76,8 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
         if (setAsSuccess) {
           if (posthog && plan) {
             posthog.capture('payment_completed', {
-              amount: region === 'cn' ? plan.price.cn : plan.price.intl,
-              currency: region === 'cn' ? 'CNY' : 'USD',
+              amount: plan.price.intl,
+              currency: 'USD',
               plan: plan.id,
               payment_method: method,
             });
@@ -110,7 +91,7 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
     } catch {
       return false;
     }
-  }, [plan, region, method]);
+  }, [plan, method]);
 
   const pollCreemPayment = useCallback(async (sessionId: string) => {
     if (!sessionId) return;
@@ -155,8 +136,6 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
   }, [creemSessionId, verifyCreemPayment]);
 
   if (!plan) return null;
-
-  const price = region === 'cn' ? `¥${plan.price.cn}` : `$${plan.price.intl}`;
 
   const handlePay = async () => {
     setPaymentError('');
@@ -236,205 +215,314 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
     }
   };
 
+  const handleBack = () => {
+    setPayState('selecting');
+    setPaymentError('');
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <CreditCard className="h-5 w-5 text-primary" />
+          <DialogTitle className="flex items-center gap-3 text-lg font-semibold">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-primary/70 flex items-center justify-center">
+              <CreditCard className="h-5 w-5 text-white" />
+            </div>
             Subscribe to {plan.name}
           </DialogTitle>
-          <DialogDescription>
-            {price} / {plan.period} · Secure Payment
+          <DialogDescription className="flex items-center gap-2 text-sm">
+            <span className="font-semibold text-primary">${plan.price.intl}</span> / {plan.period}
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+              <Lock className="h-3 w-3" />
+              Secure Payment
+            </span>
           </DialogDescription>
         </DialogHeader>
 
         {payState === 'success' ? (
-          <div className="flex flex-col items-center py-8 gap-4">
-            <div className="h-16 w-16 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
-              <CheckCircle className="h-10 w-10 text-green-500" />
+          <div className="flex flex-col items-center py-8 gap-5">
+            <div className="relative">
+              <div className="h-20 w-20 rounded-full bg-gradient-to-br from-green-400 to-emerald-600 flex items-center justify-center shadow-lg shadow-green-500/30">
+                <CheckCircle className="h-12 w-12 text-white" />
+              </div>
+              <div className="absolute -bottom-1 -right-1 h-6 w-6 rounded-full bg-white border-2 border-green-500 flex items-center justify-center">
+                <CheckCircle className="h-4 w-4 text-green-500" />
+              </div>
             </div>
-            <h3 className="text-lg font-semibold">Payment Successful!</h3>
-            <p className="text-sm text-muted-foreground text-center">
-              Your {plan.name} subscription is now active. Credits have been added to your account.
-            </p>
-            <Button className="w-full mt-2" onClick={() => onOpenChange(false)}>
-              Start Using
+            <div className="text-center space-y-2">
+              <h3 className="text-xl font-bold text-foreground">Payment Successful!</h3>
+              <p className="text-sm text-muted-foreground">
+                Your {plan.name} subscription is now active.<br />Credits have been added to your account.
+              </p>
+            </div>
+            <Button className="w-full mt-2 h-12 text-base font-medium" onClick={() => onOpenChange(false)}>
+              Continue Using Clipop AI
             </Button>
           </div>
         ) : payState === 'failed' ? (
-          <div className="flex flex-col items-center py-8 gap-4">
-            <div className="h-16 w-16 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
-              <XCircle className="h-10 w-10 text-red-500" />
+          <div className="flex flex-col items-center py-8 gap-5">
+            <div className="h-20 w-20 rounded-full bg-gradient-to-br from-red-400 to-red-600 flex items-center justify-center shadow-lg shadow-red-500/30">
+              <XCircle className="h-12 w-12 text-white" />
             </div>
-            <h3 className="text-lg font-semibold">Payment Failed</h3>
-            <p className="text-sm text-muted-foreground text-center">
-              Payment was not completed successfully. Please try again.
-            </p>
-            <Button className="w-full mt-2" onClick={() => {
-              setPayState('selecting');
-              setPaymentError('');
-            }}>
+            <div className="text-center space-y-2">
+              <h3 className="text-xl font-bold text-foreground">Payment Failed</h3>
+              <p className="text-sm text-muted-foreground">
+                Payment was not completed successfully. Please try again.
+              </p>
+            </div>
+            <Button className="w-full mt-2 h-12 text-base font-medium" onClick={handleBack}>
               Try Again
             </Button>
           </div>
-        ) : (
-          <div className="space-y-4">
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">Region:</span>
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  variant={region === 'cn' ? 'default' : 'outline'}
-                  onClick={() => setRegion('cn')}
-                  className="gap-1.5"
-                >
-                  <Smartphone className="h-3.5 w-3.5" />China
+        ) : payState === 'pending' && method === 'alipay' ? (
+          <div className="space-y-6 py-4">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 p-0 text-muted-foreground hover:text-foreground self-start"
+              onClick={handleBack}
+            >
+              <ArrowLeft className="h-4 w-4 mr-1" />
+              Back to payment methods
+            </Button>
+
+            {paymentError && (
+              <div className="text-sm text-destructive bg-destructive/10 p-4 rounded-xl">
+                <div className="flex items-start gap-2">
+                  <XCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                  <span>{paymentError}</span>
+                </div>
+              </div>
+            )}
+
+            <div className="flex flex-col items-center gap-6">
+              <div className="relative">
+                <div className="w-64 h-64 rounded-2xl border-2 border-muted bg-white p-4 shadow-lg">
+                  {qrCodeUrl ? (
+                    <img 
+                      src={qrCodeUrl} 
+                      alt="Alipay QR Code" 
+                      className="w-full h-full object-contain rounded-xl"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <Loader2 className="h-10 w-10 animate-spin text-primary" />
+                    </div>
+                  )}
+                </div>
+                <div className="absolute -top-2 -right-2">
+                  <div className="w-8 h-5 bg-[#1677FF] rounded-lg flex items-center justify-center shadow-md">
+                    <span className="text-white text-[10px] font-bold">ALI</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="text-center space-y-2">
+                <h4 className="font-semibold text-foreground">Scan with Alipay</h4>
+                <p className="text-sm text-muted-foreground">
+                  Use Alipay app to scan the QR code and complete payment
+                </p>
+                <div className="flex items-center justify-center gap-2">
+                  <span className="text-xs text-muted-foreground">QR code expires in</span>
+                  <span className="text-lg font-bold text-primary tabular-nums">{countdown}s</span>
+                </div>
+              </div>
+
+              <Badge className="gap-2 bg-primary/10 text-primary hover:bg-primary/20">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Waiting for payment...
+              </Badge>
+
+              <Button variant="outline" className="w-full" onClick={() => setPayState('success')}>
+                I have completed the payment
+              </Button>
+            </div>
+          </div>
+        ) : payState === 'pending' && method === 'creem' ? (
+          <div className="space-y-6 py-4">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 p-0 text-muted-foreground hover:text-foreground self-start"
+              onClick={handleBack}
+            >
+              <ArrowLeft className="h-4 w-4 mr-1" />
+              Back to payment methods
+            </Button>
+
+            {paymentError && (
+              <div className="text-sm text-destructive bg-destructive/10 p-4 rounded-xl">
+                <div className="flex items-start gap-2">
+                  <XCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                  <span>{paymentError}</span>
+                </div>
+              </div>
+            )}
+
+            <div className="flex flex-col items-center gap-6 py-8">
+              <div className="w-20 h-20 rounded-full bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-violet-500/30">
+                <ExternalLink className="h-10 w-10 text-white" />
+              </div>
+
+              <div className="text-center space-y-3">
+                <h4 className="font-semibold text-lg">Checkout Page Opened</h4>
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  Complete your payment in the Creem checkout window.<br />
+                  This dialog will automatically detect when payment is complete.
+                </p>
+              </div>
+
+              {pollingPayment && (
+                <Badge variant="outline" className="gap-2 px-4 py-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Checking payment status...
+                </Badge>
+              )}
+
+              <div className="flex gap-3 w-full">
+                <Button variant="outline" className="flex-1" onClick={handleBack}>
+                  <ArrowLeft className="h-4 w-4 mr-2" />
+                  Cancel
                 </Button>
-                <Button
-                  size="sm"
-                  variant={region === 'intl' ? 'default' : 'outline'}
-                  onClick={() => setRegion('intl')}
-                  className="gap-1.5"
-                >
-                  <Globe className="h-3.5 w-3.5" />International
+                <Button className="flex-1" onClick={handleManualPaymentCheck} disabled={manualCheck}>
+                  {manualCheck ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Verifying...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle className="h-4 w-4 mr-2" />
+                      Verify Payment
+                    </>
+                  )}
                 </Button>
               </div>
             </div>
+          </div>
+        ) : (
+          <div className="space-y-6">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Shield className="h-4 w-4" />
+              <span>Your payment information is encrypted and secure</span>
+            </div>
 
             {paymentError && (
-              <div className="text-sm text-destructive bg-destructive/10 p-3 rounded-md">
-                {paymentError}
+              <div className="text-sm text-destructive bg-destructive/10 p-4 rounded-xl">
+                <div className="flex items-start gap-2">
+                  <XCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                  <span>{paymentError}</span>
+                </div>
               </div>
             )}
 
-            {region === 'cn' ? (
-              <div className="space-y-4">
-                <div className="p-4 bg-muted rounded-lg">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <div className="w-8 h-5 bg-[#1677FF] rounded flex items-center justify-center">
-                        <span className="text-white text-[8px] font-bold">ALI</span>
+            <div className="space-y-3">
+              <p className="text-sm font-medium text-muted-foreground">Choose payment method</p>
+              
+              <button
+                onClick={() => setMethod('creem')}
+                className={`w-full p-4 rounded-xl border-2 transition-all duration-200 text-left group ${
+                  method === 'creem' 
+                    ? 'border-primary bg-primary/5 shadow-sm' 
+                    : 'border-muted hover:border-muted-foreground/30 hover:bg-muted/50'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-md">
+                      <CreditCard className="h-6 w-6 text-white" />
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold">Creem</span>
+                        <Badge variant="secondary" className="text-xs bg-green-100 text-green-700">
+                          <CheckCircle className="h-3 w-3 mr-1" />
+                          Secure
+                        </Badge>
                       </div>
-                      <span className="font-medium">Alipay</span>
-                    </div>
-                    <span className="font-bold text-primary">¥{plan.price.cn}</span>
-                  </div>
-                  <div className="text-xs text-muted-foreground space-y-1">
-                    <p>✓ Scan to pay, safe and convenient</p>
-                    <p>✓ Supports Alipay balance, bank cards, Huabei</p>
-                    <p>✓ Cancel subscription anytime</p>
-                  </div>
-                </div>
-
-                {payState === 'pending' ? (
-                  <div className="flex flex-col items-center gap-3">
-                    {qrCodeUrl ? (
-                      <img src={qrCodeUrl} alt="Alipay QR Code" className="w-48 h-48 rounded-lg border" />
-                    ) : (
-                      <div className="w-48 h-48 rounded-lg border bg-muted flex items-center justify-center">
-                        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                      </div>
-                    )}
-                    <div className="text-center">
-                      <p className="text-sm font-medium">Scan with Alipay to pay</p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        QR code expires in <span className="text-primary font-semibold tabular-nums">{countdown}s</span>
-                      </p>
-                      <Badge variant="outline" className="mt-2">
-                        <Loader2 className="h-3 w-3 mr-1 animate-spin" />Waiting for payment...
-                      </Badge>
-                    </div>
-                    <Button size="sm" variant="outline" onClick={() => setPayState('success')}>
-                      I have completed the payment
-                    </Button>
-                  </div>
-                ) : (
-                  <Button className="w-full bg-[#1677FF] hover:bg-[#0958D9] text-white" onClick={handlePay}>
-                    <QrCode className="h-4 w-4 mr-2" />Generate Alipay QR Code
-                  </Button>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <div className="p-4 bg-muted rounded-lg">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <div className="w-8 h-5 bg-gradient-to-r from-violet-600 to-indigo-600 rounded flex items-center justify-center">
-                        <span className="text-white text-[8px] font-bold">CR</span>
-                      </div>
-                      <span className="font-medium">Creem</span>
-                    </div>
-                    <span className="font-bold text-primary">${plan.price.intl}/{plan.period}</span>
-                  </div>
-                  <div className="text-xs text-muted-foreground space-y-1">
-                    <p>✓ Secure checkout via Creem</p>
-                    <p>✓ Visa, Mastercard, Apple Pay, Google Pay</p>
-                    <p>✓ Cancel subscription anytime</p>
-                  </div>
-                  <Badge className="mt-2 bg-green-500 text-white text-xs gap-1">
-                    <CheckCircle className="h-3 w-3" />Creem Configured
-                  </Badge>
-                </div>
-
-                {payState === 'pending' ? (
-                  <div className="flex flex-col items-center gap-4 py-4">
-                    <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center">
-                      <ExternalLink className="h-8 w-8 text-primary" />
-                    </div>
-                    <div className="text-center space-y-2">
-                      <p className="text-sm font-medium">Checkout page opened in new tab</p>
                       <p className="text-xs text-muted-foreground">
-                        Complete your payment in the Creem checkout window.
-                        <br />This dialog will auto-detect when payment is complete.
+                        Visa, Mastercard, Apple Pay, Google Pay
                       </p>
                     </div>
-                    {pollingPayment && (
-                      <Badge variant="outline" className="gap-1">
-                        <Loader2 className="h-3 w-3 animate-spin" />Checking payment status...
-                      </Badge>
-                    )}
-                    <div className="flex gap-2 w-full">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="flex-1"
-                        onClick={() => setPayState('selecting')}
-                      >
-                        <ArrowLeft className="h-4 w-4 mr-1" />Back
-                      </Button>
-                      <Button
-                        size="sm"
-                        className="flex-1"
-                        onClick={handleManualPaymentCheck}
-                        disabled={manualCheck}
-                      >
-                        {manualCheck ? (
-                          <>
-                            <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                            Verifying...
-                          </>
-                        ) : (
-                          <>
-                            <CheckCircle className="h-4 w-4 mr-1" />
-                            Verify Payment
-                          </>
-                        )}
-                      </Button>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="font-semibold text-primary">${plan.price.intl}/{plan.period}</span>
+                    <ChevronRight className={`h-5 w-5 transition-transform ${method === 'creem' ? 'text-primary' : 'text-muted-foreground group-hover:translate-x-1'}`} />
+                  </div>
+                </div>
+              </button>
+
+              <button
+                onClick={() => setMethod('alipay')}
+                className={`w-full p-4 rounded-xl border-2 transition-all duration-200 text-left group ${
+                  method === 'alipay' 
+                    ? 'border-primary bg-primary/5 shadow-sm' 
+                    : 'border-muted hover:border-muted-foreground/30 hover:bg-muted/50'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-xl bg-[#1677FF] flex items-center justify-center shadow-md">
+                      <Smartphone className="h-6 w-6 text-white" />
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold">Alipay</span>
+                        <Badge variant="secondary" className="text-xs bg-blue-100 text-blue-700">
+                          <CheckCircle className="h-3 w-3 mr-1" />
+                          CN Users
+                        </Badge>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Scan QR code to pay, supports balance, bank cards, Huabei
+                      </p>
                     </div>
                   </div>
-                ) : (
-                  <Button className="w-full gap-2" onClick={handlePay}>
-                    <CreditCard className="h-4 w-4" />
-                    Pay with Creem · ${plan.price.intl}
-                    <ExternalLink className="h-3.5 w-3.5 ml-auto opacity-60" />
-                  </Button>
-                )}
-              </div>
-            )}
+                  <div className="flex items-center gap-3">
+                    <span className="font-semibold text-primary">¥{plan.price.cn}/{plan.period}</span>
+                    <ChevronRight className={`h-5 w-5 transition-transform ${method === 'alipay' ? 'text-primary' : 'text-muted-foreground group-hover:translate-x-1'}`} />
+                  </div>
+                </div>
+              </button>
+            </div>
 
-            <p className="text-xs text-center text-muted-foreground">
-              By subscribing, you agree to our Terms of Service. Payments are securely processed by the respective payment platform.
+            <Button className="w-full h-12 text-base font-medium gap-2" onClick={handlePay}>
+              {method === 'alipay' ? (
+                <>
+                  <QrCode className="h-5 w-5" />
+                  Pay with Alipay
+                </>
+              ) : (
+                <>
+                  <CreditCard className="h-5 w-5" />
+                  Pay with Creem
+                </>
+              )}
+              <ChevronRight className="h-4 w-4 ml-auto" />
+            </Button>
+
+            <div className="flex items-center justify-center gap-4 pt-4 border-t border-muted">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-5 bg-[#1677FF] rounded flex items-center justify-center">
+                  <span className="text-white text-[8px] font-bold">ALI</span>
+                </div>
+                <span className="text-xs text-muted-foreground">Alipay</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-5 bg-gradient-to-r from-violet-600 to-indigo-600 rounded flex items-center justify-center">
+                  <span className="text-white text-[8px] font-bold">CR</span>
+                </div>
+                <span className="text-xs text-muted-foreground">Creem</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Lock className="h-3 w-3 text-muted-foreground" />
+                <span className="text-xs text-muted-foreground">256-bit TLS</span>
+              </div>
+            </div>
+
+            <p className="text-xs text-center text-muted-foreground leading-relaxed">
+              By subscribing, you agree to our Terms of Service.
+              Payments are securely processed by the respective payment platform.
             </p>
           </div>
         )}
