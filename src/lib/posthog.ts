@@ -2,46 +2,68 @@
 
 import { useEffect, useState } from 'react';
 
-let posthogInstance: any = null;
-
-if (typeof window !== 'undefined') {
-  // 只在客户端动态导入
-  const posthogModule = require('posthog-js');
-  posthogInstance = posthogModule.default || posthogModule;
-}
-
 const POSTHOG_API_KEY = process.env.NEXT_PUBLIC_POSTHOG_API_KEY || '';
 const POSTHOG_HOST = process.env.NEXT_PUBLIC_POSTHOG_HOST || 'https://app.posthog.com';
+const isPostHogEnabled = !!POSTHOG_API_KEY;
+
+let posthogInstance: any = null;
+
+if (typeof window !== 'undefined' && isPostHogEnabled) {
+  try {
+    // 只在客户端动态导入
+    const posthogModule = require('posthog-js');
+    posthogInstance = posthogModule.default || posthogModule;
+  } catch (e) {
+    console.warn('Failed to load posthog-js:', e);
+    posthogInstance = null;
+  }
+}
 
 export function usePostHog() {
   const [initialized, setInitialized] = useState(false);
 
   useEffect(() => {
-    if (!POSTHOG_API_KEY || !posthogInstance || initialized) return;
+    if (!isPostHogEnabled || !posthogInstance || initialized) return;
 
-    posthogInstance.init(POSTHOG_API_KEY, {
-      api_host: POSTHOG_HOST,
-      capture_pageview: true,
-      capture_pageleave: true,
-    });
+    try {
+      posthogInstance.init(POSTHOG_API_KEY, {
+        api_host: POSTHOG_HOST,
+        capture_pageview: true,
+        capture_pageleave: true,
+      });
 
-    setInitialized(true);
+      setInitialized(true);
 
-    return () => {
-      if (posthogInstance) {
-        posthogInstance.dispose();
-      }
-    };
+      return () => {
+        try {
+          if (posthogInstance) {
+            posthogInstance.dispose();
+          }
+        } catch (e) {
+          console.warn('PostHog cleanup error:', e);
+        }
+      };
+    } catch (e) {
+      console.warn('PostHog initialization error:', e);
+    }
   }, [initialized]);
 
   const identifyUser = (userId: string, properties?: Record<string, unknown>) => {
-    if (!POSTHOG_API_KEY || !posthogInstance) return;
-    posthogInstance.identify(userId, properties);
+    if (!isPostHogEnabled || !posthogInstance) return;
+    try {
+      posthogInstance.identify(userId, properties);
+    } catch (e) {
+      console.warn('PostHog identify error:', e);
+    }
   };
 
   const track = (event: string, properties?: Record<string, unknown>) => {
-    if (!POSTHOG_API_KEY || !posthogInstance) return;
-    posthogInstance.capture(event, properties);
+    if (!isPostHogEnabled || !posthogInstance) return;
+    try {
+      posthogInstance.capture(event, properties);
+    } catch (e) {
+      console.warn('PostHog track error:', e);
+    }
   };
 
   const trackSignup = (email: string, plan: string = 'free') => {
@@ -73,13 +95,21 @@ export function usePostHog() {
 // 安全导出，避免服务器端导入问题
 export const posthog = {
   capture: (event: string, properties?: Record<string, unknown>) => {
-    if (typeof window !== 'undefined' && posthogInstance) {
-      posthogInstance.capture(event, properties);
+    if (typeof window !== 'undefined' && posthogInstance && isPostHogEnabled) {
+      try {
+        posthogInstance.capture(event, properties);
+      } catch (e) {
+        console.warn('PostHog capture error:', e);
+      }
     }
   },
   identify: (userId: string, properties?: Record<string, unknown>) => {
-    if (typeof window !== 'undefined' && posthogInstance) {
-      posthogInstance.identify(userId, properties);
+    if (typeof window !== 'undefined' && posthogInstance && isPostHogEnabled) {
+      try {
+        posthogInstance.identify(userId, properties);
+      } catch (e) {
+        console.warn('PostHog identify error:', e);
+      }
     }
   },
 };
