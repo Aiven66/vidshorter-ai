@@ -8,7 +8,6 @@
       "maxDuration": 300
     }
   },
-  "nodeVersion": "20.x",
   "build": {
     "env": {
       "VERCEL": "1"
