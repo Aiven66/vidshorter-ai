@@ -31,6 +31,10 @@ function PostHogProviderContent({ children }: PostHogProviderProps) {
         ph.init(POSTHOG_API_KEY, {
           api_host: POSTHOG_HOST,
           person_profiles: 'identified_only',
+          disable_session_recording: true,
+          disable_surveys: true,
+          capture_performance: false,
+          autocapture: false,
         });
         posthogRef.current = ph;
         setInitialized(true);

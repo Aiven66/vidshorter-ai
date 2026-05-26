@@ -23,6 +23,10 @@ export function usePostHog() {
           api_host: POSTHOG_HOST,
           capture_pageview: true,
           capture_pageleave: true,
+          disable_session_recording: true,
+          disable_surveys: true,
+          capture_performance: false,
+          autocapture: false,
         });
         setPosthogInstance(ph);
         setInitialized(true);

@@ -1,4 +1,3 @@
-@import url('https://fonts.googleapis.cn/css2?family=Noto+Serif+SC:wght@200..900&display=swap');
 @import 'tailwindcss';
 @import 'tw-animate-css';
 
@@ -130,7 +129,7 @@
 
   }
   body {
-    @apply bg-background text-foreground font-serif;
+    @apply bg-background text-foreground font-sans;
 
   }
 }
