@@ -10,7 +10,6 @@ import { Toaster } from '@/components/ui/sonner';
 
 interface ErrorBoundaryState {
   hasError: boolean;
-  error?: Error;
 }
 
 class ProviderErrorBoundary extends Component<
@@ -22,8 +21,8 @@ class ProviderErrorBoundary extends Component<
     this.state = { hasError: false };
   }
 
-  static getDerivedStateFromError(error: Error) {
-    return { hasError: true, error };
+  static getDerivedStateFromError() {
+    return { hasError: true };
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
@@ -46,23 +45,23 @@ export function Providers({ children }: { children: ReactNode }) {
       enableSystem
       disableTransitionOnChange
     >
-      <ProviderErrorBoundary name="PostHog">
-        <PostHogProvider>
-          <ProviderErrorBoundary name="Locale">
-            <LocaleProvider>
-              <ProviderErrorBoundary name="Auth">
-                <AuthProvider>
+      <ProviderErrorBoundary name="Locale">
+        <LocaleProvider>
+          <ProviderErrorBoundary name="Auth">
+            <AuthProvider>
+              <ProviderErrorBoundary name="PostHog">
+                <PostHogProvider>
                   <ProviderErrorBoundary name="Credits">
                     <CreditsProvider>
                       {children}
                       <Toaster />
                     </CreditsProvider>
                   </ProviderErrorBoundary>
-                </AuthProvider>
+                </PostHogProvider>
               </ProviderErrorBoundary>
-            </LocaleProvider>
+            </AuthProvider>
           </ProviderErrorBoundary>
-        </PostHogProvider>
+        </LocaleProvider>
       </ProviderErrorBoundary>
     </ThemeProvider>
   );
