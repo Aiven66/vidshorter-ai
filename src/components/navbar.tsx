@@ -159,13 +159,13 @@ export function Navbar() {
                         <User className="h-5 w-5" />
                       )}
                       <span className="text-sm font-medium hidden md:inline">
-                        {user?.name || user.email?.split('@')[0] || 'User'}
+                        {user?.name || user.email?.split('@')[0] || t('common.user')}
                       </span>
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
                     <div className="px-3 py-2 border-b border-border">
-                      <p className="text-sm font-medium">{user?.name || 'User'}</p>
+                      <p className="text-sm font-medium">{user?.name || t('common.user')}</p>
                       <p className="text-xs text-muted-foreground">{user?.email}</p>
                     </div>
                     <DropdownMenuItem asChild>
@@ -264,9 +264,9 @@ export function Navbar() {
                     className="ml-auto"
                   >
                     {mounted && theme === 'dark' ? (
-                      <><Sun className="h-4 w-4 mr-1" />Light</>
+                      <><Sun className="h-4 w-4 mr-1" />{t('nav.light')}</>
                     ) : (
-                      <><Moon className="h-4 w-4 mr-1" />Dark</>
+                      <><Moon className="h-4 w-4 mr-1" />{t('nav.dark')}</>
                     )}
                   </Button>
                 </div>

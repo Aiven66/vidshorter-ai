@@ -125,18 +125,18 @@ function isHttpVideoUrl(value: string) {
   }
 }
 
-const STAGE_META: Record<string, { icon: typeof Video; label: string }> = {
-  init:              { icon: Loader2,  label: 'Initializing...' },
-  extract_frames:    { icon: Film,     label: 'Extracting video frames...' },
-  frames_extracted:  { icon: Film,     label: 'Frames extracted successfully' },
-  frames_unavailable:{ icon: Film,     label: 'Proceeding with analysis' },
-  ai_analysis:       { icon: Sparkles, label: 'AI analyzing video content...' },
-  analysis_complete:  { icon: Sparkles, label: 'Analysis complete' },
-  generating_clip:   { icon: Scissors, label: 'Creating highlight clip...' },
-  clip_ready:        { icon: CheckCircle, label: 'Highlight clip ready' },
-  saving:            { icon: Loader2,  label: 'Saving results...' },
-  complete:          { icon: CheckCircle, label: 'Processing complete!' },
-  error:             { icon: AlertCircle, label: 'Error occurred' },
+const STAGE_META: Record<string, { icon: typeof Video; labelKey: string }> = {
+  init:              { icon: Loader2,  labelKey: 'video.stage.init' },
+  extract_frames:    { icon: Film,     labelKey: 'video.stage.extractFrames' },
+  frames_extracted:  { icon: Film,     labelKey: 'video.stage.framesExtracted' },
+  frames_unavailable:{ icon: Film,     labelKey: 'video.stage.framesUnavailable' },
+  ai_analysis:       { icon: Sparkles, labelKey: 'video.stage.aiAnalysis' },
+  analysis_complete:  { icon: Sparkles, labelKey: 'video.stage.analysisComplete' },
+  generating_clip:   { icon: Scissors, labelKey: 'video.stage.generatingClip' },
+  clip_ready:        { icon: CheckCircle, labelKey: 'video.stage.clipReady' },
+  saving:            { icon: Loader2,  labelKey: 'video.stage.saving' },
+  complete:          { icon: CheckCircle, labelKey: 'video.stage.complete' },
+  error:             { icon: AlertCircle, labelKey: 'video.stage.error' },
 };
 
 const DEMO_VIDEOS_KEY = 'clipop_demo_videos';
@@ -600,7 +600,7 @@ export default function VideoProcessor() {
             {user ? (
               <span className="flex items-center justify-center gap-2 mt-1">
                 <CheckCircle className="h-4 w-4 text-green-500" />
-                {balance} {t('nav.credits')} available
+                {balance} {t('video.creditsAvailable')}
               </span>
             ) : (
               <span className="mt-1">
@@ -615,9 +615,8 @@ export default function VideoProcessor() {
                     }
                   }}
                 >
-                  Sign in
-                </a>{' '}
-                to start processing videos
+                  {t('nav.login')}
+                </a>{' '}{t('video.signInToStart')}
               </span>
             )}
           </CardDescription>
@@ -627,7 +626,7 @@ export default function VideoProcessor() {
             <div className="relative flex-1">
               <Link2 className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Paste a video URL (MP4, MOV, AVI...)"
+                placeholder={t('video.pasteUrlPlaceholder')}
                 value={videoUrl}
                 onChange={e => { setVideoUrl(e.target.value); setSelectedFile(null); setError(null); }}
                 className="pl-9"
@@ -640,9 +639,9 @@ export default function VideoProcessor() {
               className="gap-2 min-w-[140px]"
             >
               {isProcessing || isUploading ? (
-                <><Scissors className="h-4 w-4 animate-spin" />Processing...</>
+                <><Scissors className="h-4 w-4 animate-spin" />{t('video.processing')}</>
               ) : (
-                <><Sparkles className="h-4 w-4" />Analyze</>
+                <><Sparkles className="h-4 w-4" />{t('video.analyze')}</>
               )}
             </Button>
           </div>
@@ -658,7 +657,7 @@ export default function VideoProcessor() {
               }}
               disabled={isProcessing || isUploading}
             />
-            Use local Mac Agent (recommended for stable YouTube)
+            {t('video.useLocalAgent')}
           </label>
 
           <div
@@ -667,7 +666,7 @@ export default function VideoProcessor() {
           >
             <Upload className="h-5 w-5 mx-auto text-muted-foreground mb-1" />
             <p className="text-sm text-muted-foreground">
-              {selectedFile ? `Selected: ${selectedFile.name}` : 'Upload a local video file (recommended when YouTube link is blocked)'}
+              {selectedFile ? `${t('video.selectedFile')}: ${selectedFile.name}` : t('video.uploadLocal')}
             </p>
             <input
               ref={fileInputRef}
@@ -683,7 +682,7 @@ export default function VideoProcessor() {
             <div className="p-3 bg-destructive/10 rounded-lg flex items-start gap-3">
               <AlertCircle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
               <div>
-                <p className="font-medium text-destructive text-sm">Error</p>
+                <p className="font-medium text-destructive text-sm">{t('common.error')}</p>
                 <p className="text-sm text-muted-foreground">{error}</p>
               </div>
             </div>
@@ -697,11 +696,11 @@ export default function VideoProcessor() {
                 <span className="text-xs text-muted-foreground tabular-nums">{progress.progress}%</span>
               </div>
               <Progress value={progress.progress} className="h-2" />
-              <p className="text-xs text-muted-foreground">{stageMeta.label}</p>
+              <p className="text-xs text-muted-foreground">{t(stageMeta.labelKey)}</p>
 
               {clips.length > 0 && (
                 <div className="mt-2 pt-2 border-t space-y-2">
-                  <p className="text-xs font-medium text-muted-foreground">Clips being generated:</p>
+                  <p className="text-xs font-medium text-muted-foreground">{t('video.clipsBeingGenerated')}</p>
                   {clips.map(c => (
                     <div key={c.id} className="flex items-center gap-2 text-xs">
                       {c.status === 'completed' ? (
@@ -726,13 +725,13 @@ export default function VideoProcessor() {
         <Button variant="outline" size="lg" className="px-6" asChild>
           <Link href="/download">
             <Download className="mr-2 h-4 w-4" />
-            Download Mac App
+            {t('video.downloadMacApp')}
           </Link>
         </Button>
         <Button variant="outline" size="lg" className="px-6" asChild>
           <Link href="/pricing">
             <Sparkles className="mr-2 h-4 w-4" />
-            View Pricing
+            {t('video.viewPricing')}
           </Link>
         </Button>
       </div>
@@ -745,18 +744,18 @@ export default function VideoProcessor() {
                 <div className="flex items-center justify-between mb-6">
                   <h3 className="text-2xl font-bold">{t('video.results')}</h3>
                   <Badge variant="secondary">
-                    {completedClips.length}/{clips.length} clips ready
+                    {completedClips.length}/{clips.length} {t('video.clipsReady')}
                   </Badge>
                 </div>
                 <Card className="mb-6 border-border/60 bg-muted/20">
                   <CardContent className="flex flex-col gap-3 py-5 md:flex-row md:items-center md:justify-between">
                     <div>
-                      <p className="text-sm text-muted-foreground">AI has finished selecting the strongest moments from your source video.</p>
-                      <p className="text-sm text-muted-foreground">Open any ready clip to preview it inline, or download the MP4 directly.</p>
+                      <p className="text-sm text-muted-foreground">{t('video.aiFinished')}</p>
+                      <p className="text-sm text-muted-foreground">{t('video.openToPreview')}</p>
                     </div>
                     <div className="flex items-center gap-3 text-sm">
-                      <Badge variant="outline">{completedClips.length} playable clips</Badge>
-                      <Badge variant="outline">{clips.filter(clip => clip.status === 'failed').length} failed</Badge>
+                      <Badge variant="outline">{completedClips.length} {t('video.playableClips')}</Badge>
+                      <Badge variant="outline">{clips.filter(clip => clip.status === 'failed').length} {t('video.failedClips')}</Badge>
                     </div>
                   </CardContent>
                 </Card>
@@ -783,12 +782,12 @@ export default function VideoProcessor() {
                         </Badge>
                         {clip.status === 'completed' && (
                           <Badge className="absolute top-2 left-2 bg-green-500 text-xs">
-                            <CheckCircle className="h-3 w-3 mr-1" />Ready
+                            <CheckCircle className="h-3 w-3 mr-1" />{t('common.ready')}
                           </Badge>
                         )}
                         {clip.status === 'failed' && (
                           <Badge className="absolute top-2 left-2 bg-destructive text-xs">
-                            <AlertCircle className="h-3 w-3 mr-1" />Failed
+                            <AlertCircle className="h-3 w-3 mr-1" />{t('common.failed')}
                           </Badge>
                         )}
                       </div>
@@ -801,7 +800,7 @@ export default function VideoProcessor() {
                           <ArrowRight className="h-3 w-3" />
                           <span>{fmt(clip.endTime)}</span>
                           <Badge variant="outline" className="ml-auto text-xs">
-                            Score {clip.engagementScore}/10
+                            {t('common.score')} {clip.engagementScore}/10
                           </Badge>
                         </div>
                         <div className="flex gap-2 pt-1">
@@ -812,7 +811,7 @@ export default function VideoProcessor() {
                             onClick={() => clip.status === 'completed' && setPreviewClip(clip)}
                             disabled={clip.status !== 'completed'}
                           >
-                            <Eye className="h-4 w-4" />Preview
+                            <Eye className="h-4 w-4" />{t('video.preview')}
                           </Button>
                           <Button
                             size="sm"
@@ -821,9 +820,9 @@ export default function VideoProcessor() {
                             disabled={clip.status !== 'completed' || downloadingId === clip.id}
                           >
                             {downloadingId === clip.id ? (
-                              <><Loader2 className="h-4 w-4 animate-pulse" />Saving...</>
+                              <><Loader2 className="h-4 w-4 animate-pulse" />{t('common.saving')}</>
                             ) : (
-                              <><Download className="h-4 w-4" />Download</>
+                              <><Download className="h-4 w-4" />{t('video.download')}</>
                             )}
                           </Button>
                         </div>

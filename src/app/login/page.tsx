@@ -169,7 +169,7 @@ function LoginContent() {
               <Video className="h-7 w-7 text-primary" />
               <span>Clipop AI</span>
             </div>
-            <CardTitle className="text-xl">登录成功！</CardTitle>
+            <CardTitle className="text-xl">{t('login.successTitle')}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
             <div className="flex flex-col items-center gap-4">
@@ -177,14 +177,14 @@ function LoginContent() {
                 <CheckCircle className="h-10 w-10 text-green-500" />
               </div>
               <p className="text-center text-muted-foreground">
-                您已成功登录 <strong>{user?.email || email}</strong>。点击下方按钮返回桌面应用。
+                {t('login.successMessage')} <strong>{user?.email || email}</strong>。{t('login.successDesktopHint')}
               </p>
             </div>
             <Button className="w-full h-12 text-lg" onClick={handleReturnToDesktop}>
-              返回 Clipop Agent
+              {t('login.returnToDesktop')}
             </Button>
             <p className="text-center text-sm text-muted-foreground">
-              如果桌面应用没有自动打开，请确保 Clipop Agent 正在运行。
+              {t('login.desktopNotOpened')}
             </p>
           </CardContent>
         </Card>
@@ -273,7 +273,7 @@ function LoginContent() {
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen flex items-center justify-center">Loading...</div>}>
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-background to-muted/30"><div className="flex flex-col items-center gap-4"><div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" /><p className="text-muted-foreground">Loading...</p></div></div>}>
       <LoginContent />
     </Suspense>
   );

@@ -62,7 +62,7 @@ export default function DownloadPage() {
           <div className="text-center mb-12">
             <Badge variant="outline" className="mb-4 px-4 py-1.5 text-sm">
               <Monitor className="h-4 w-4 mr-2 text-primary" />
-              Desktop App
+              {t('downloadPage.badge')}
             </Badge>
             <h1 className="text-3xl md:text-5xl font-bold tracking-tight mb-4">
               {t('downloadPage.title')}
@@ -77,7 +77,7 @@ export default function DownloadPage() {
               <div className="absolute top-4 right-4">
                 <Badge className="bg-primary text-primary-foreground">
                   <Apple className="h-3 w-3 mr-1" />
-                  macOS
+                  {t('downloadPage.macTitle')}
                 </Badge>
               </div>
               <CardHeader className="pb-4">
@@ -156,7 +156,7 @@ export default function DownloadPage() {
 
           <div className="mb-16">
             <h2 className="text-2xl font-bold text-center mb-8">
-              Why Use the Desktop App?
+              {t('downloadPage.whyDesktopTitle')}
             </h2>
             <div className="grid md:grid-cols-3 gap-6">
               {features.map(({ Icon, titleKey, descKey }) => (

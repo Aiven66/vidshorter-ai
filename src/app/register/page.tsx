@@ -88,10 +88,10 @@ function RegisterContent() {
   }, [step, desktopToken, sentToDesktop]);
 
   const handleSendCode = async () => {
-    if (!name.trim()) { setError('Please enter your name'); return; }
-    if (!email.trim()) { setError('Please enter your email'); return; }
-    if (password.length < 6) { setError('Password must be at least 6 characters'); return; }
-    if (password !== confirmPassword) { setError('Passwords do not match'); return; }
+    if (!name.trim()) { setError(t('register.errorNameRequired')); return; }
+    if (!email.trim()) { setError(t('register.errorEmailRequired')); return; }
+    if (password.length < 6) { setError(t('register.errorPasswordLength')); return; }
+    if (password !== confirmPassword) { setError(t('register.errorPasswordMismatch')); return; }
 
     setSendingCode(true);
     setError('');
@@ -105,7 +105,7 @@ function RegisterContent() {
       const checkData = await checkRes.json();
 
       if (checkData.exists) {
-        setError('This email is already registered. Please log in instead.');
+        setError(t('register.errorEmailExists'));
         return;
       }
 
@@ -117,7 +117,7 @@ function RegisterContent() {
       const data = await res.json();
 
       if (!res.ok) {
-        setError(data.error || 'Failed to send code');
+        setError(data.error || t('register.errorSendCode'));
         return;
       }
 
@@ -130,14 +130,14 @@ function RegisterContent() {
         });
       }, 1000);
     } catch {
-      setError('Network error. Please try again.');
+      setError(t('register.errorNetwork'));
     } finally {
       setSendingCode(false);
     }
   };
 
   const handleVerify = async () => {
-    if (code.length !== 6) { setError('Please enter 6-digit code'); return; }
+    if (code.length !== 6) { setError(t('register.errorCodeLength')); return; }
     setLoading(true);
     setError('');
 
@@ -205,7 +205,7 @@ function RegisterContent() {
               <Video className="h-7 w-7 text-primary" />
               <span>Clipop AI</span>
             </div>
-            <CardTitle className="text-xl">账户创建成功！</CardTitle>
+            <CardTitle className="text-xl">{t('register.successTitle')}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
             <div className="flex flex-col items-center gap-4">
@@ -213,14 +213,14 @@ function RegisterContent() {
                 <CheckCircle className="h-10 w-10 text-green-500" />
               </div>
               <p className="text-center text-muted-foreground">
-                您已成功创建账户 <strong>{desktopEmail || user?.email || email}</strong>。点击下方按钮返回桌面应用。
+                {t('register.successMessage')} <strong>{desktopEmail || user?.email || email}</strong>。{t('register.successDesktopHint')}
               </p>
             </div>
             <Button className="w-full h-12 text-lg" onClick={handleReturnToDesktop}>
-              返回 Clipop Agent
+              {t('register.returnToDesktop')}
             </Button>
             <p className="text-center text-sm text-muted-foreground">
-              如果桌面应用没有自动打开，请确保 Clipop Agent 正在运行。
+              {t('register.desktopNotOpened')}
             </p>
           </CardContent>
         </Card>

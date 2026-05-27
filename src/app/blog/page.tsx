@@ -255,7 +255,7 @@ function getLocalPosts(): BlogPost[] {
 }
 
 export default function BlogPage() {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const [posts, setPosts] = useState<BlogPost[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -306,7 +306,8 @@ export default function BlogPage() {
   }
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
+    const dateLocale = locale === 'zh' ? 'zh-CN' : locale === 'zh-Hant' ? 'zh-TW' : locale === 'en' ? 'en-US' : locale;
+    return new Date(dateString).toLocaleDateString(dateLocale, {
       year: 'numeric',
       month: 'long',
       day: 'numeric',
@@ -334,7 +335,7 @@ export default function BlogPage() {
         <div className="max-w-4xl mx-auto">
           <h1 className="text-4xl font-bold mb-4">{t('blog.title')}</h1>
           <p className="text-muted-foreground mb-12">
-            Latest news, tips, and updates from Clipop AI
+            {t('blog.subtitle')}
           </p>
 
           {posts.length === 0 ? (
@@ -365,7 +366,7 @@ export default function BlogPage() {
                         </span>
                         {post.view_count && post.view_count > 0 && (
                           <span className="text-xs text-muted-foreground">
-                            {post.view_count} views
+                            {post.view_count} {t('blog.views')}
                           </span>
                         )}
                       </div>

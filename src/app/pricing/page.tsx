@@ -84,6 +84,8 @@ const plans: PlanConfig[] = [
   },
 ];
 
+const faqKeys = ['q1', 'q2', 'q3', 'q4', 'q5'];
+
 export default function PricingPage() {
   const { t } = useLocale();
   const { user } = useAuth();
@@ -106,7 +108,7 @@ export default function PricingPage() {
           <h1 className="text-4xl font-bold mb-4">{t('pricing.title')}</h1>
           <p className="text-xl text-muted-foreground">{t('pricing.subtitle')}</p>
           <p className="text-sm text-muted-foreground mt-2">
-            国内支持 <strong>支付宝</strong> · 海外支持 <strong>Creem</strong>（Visa / Mastercard / Apple Pay / Google Pay）
+            {t('pricing.paymentNote')}
           </p>
         </div>
 
@@ -120,7 +122,7 @@ export default function PricingPage() {
             >
               {plan.popular && (
                 <Badge className="absolute top-4 right-4">
-                  Most Popular
+                  {t('pricing.mostPopular')}
                 </Badge>
               )}
               <CardHeader className="text-center pb-8">
@@ -131,7 +133,7 @@ export default function PricingPage() {
                 </div>
                 {plan.id !== 'free' && (
                   <p className="text-xs text-muted-foreground mt-1">
-                    国内 ¥{plan.price.cn}/月 · 海外 ${plan.price.intl}/mo
+                    {plan.price.cn > 0 ? `¥${plan.price.cn}/月 · $${plan.price.intl}/mo` : ''}
                   </p>
                 )}
                 <CardDescription className="mt-2">
@@ -173,7 +175,6 @@ export default function PricingPage() {
           ))}
         </div>
 
-        {/* Payment methods note */}
         <div className="flex flex-wrap items-center justify-center gap-6 mt-12 text-sm text-muted-foreground">
           <div className="flex items-center gap-2">
             <div className="w-8 h-5 bg-[#1677FF] rounded flex items-center justify-center">
@@ -188,42 +189,20 @@ export default function PricingPage() {
             <span>Creem</span>
           </div>
           <div className="flex items-center gap-2 text-xs">
-            <span>🔒 All payments secured with TLS 256-bit encryption</span>
+            <span>🔒 {t('pricing.secureNote')}</span>
           </div>
         </div>
 
-        {/* FAQ Section */}
         <div className="max-w-3xl mx-auto mt-20">
-          <h2 className="text-2xl font-bold text-center mb-8">Frequently Asked Questions</h2>
+          <h2 className="text-2xl font-bold text-center mb-8">{t('pricing.faqTitle')}</h2>
           <div className="grid gap-6">
-            {[
-              {
-                q: 'What is a credit?',
-                a: 'Each credit represents processing power. Processing a video clip costs 30 credits.',
-              },
-              {
-                q: 'How does daily credit reset work?',
-                a: "Credits reset to your plan's daily limit at 00:00 UTC every day. Unused credits don't carry over.",
-              },
-              {
-                q: 'Can I upgrade or downgrade my plan?',
-                a: 'Yes, you can change your plan at any time. Changes take effect immediately.',
-              },
-              {
-                q: 'What video sources are supported?',
-                a: 'We support YouTube, Bilibili, and direct video file uploads (MP4, MOV, AVI).',
-              },
-              {
-                q: '支持哪些支付方式？',
-                a: '国内用户支持支付宝扫码支付，海外用户支持 Creem（Visa、Mastercard、Apple Pay、Google Pay）。',
-              },
-            ].map((faq, index) => (
-              <Card key={index}>
+            {faqKeys.map((key) => (
+              <Card key={key}>
                 <CardHeader>
-                  <CardTitle className="text-lg">{faq.q}</CardTitle>
+                  <CardTitle className="text-lg">{t(`pricing.faq.${key}`)}</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <p className="text-muted-foreground">{faq.a}</p>
+                  <p className="text-muted-foreground">{t(`pricing.faq.a${key.slice(1)}`)}</p>
                 </CardContent>
               </Card>
             ))}
@@ -231,7 +210,6 @@ export default function PricingPage() {
         </div>
       </div>
 
-      {/* Payment Modal */}
       <PaymentModal
         open={modalOpen}
         onOpenChange={setModalOpen}

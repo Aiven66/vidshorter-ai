@@ -102,7 +102,8 @@ function fmt(sec: number): string {
 function ClipPlayerDialog({
   clip, open, onClose,
 }: { clip: VideoClip | null; open: boolean; onClose: () => void }) {
-  const { accessToken } = useAuth();
+    const { accessToken } = useAuth();
+    const { t } = useLocale();
   const [resolved, setResolved] = useState<string>('');
   const [resolving, setResolving] = useState(false);
 
@@ -221,7 +222,7 @@ function ClipPlayerDialog({
           {downloadUrl && (
             <Button size="sm" variant="outline" asChild className="flex-shrink-0">
               <a href={downloadUrl} download={`${clip.title}.mp4`}>
-                <Download className="h-4 w-4 mr-1" />Download
+                <Download className="h-4 w-4 mr-1" />{t('video.download')}
               </a>
             </Button>
           )}
@@ -274,10 +275,11 @@ function ClipCard({ clip, onPlay }: { clip: VideoClip; onPlay: () => void }) {
 }
 
 /* ── Video Record Row ── */
-function VideoRecordRow({ video, formatDate, getStatusBadge }: {
+function VideoRecordRow({ video, formatDate, getStatusBadge, t }: {
   video: VideoRecord;
   formatDate: (s: string) => string;
   getStatusBadge: (s: string) => React.ReactNode;
+  t: (key: string) => string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [playingClip, setPlayingClip] = useState<VideoClip | null>(null);
@@ -308,7 +310,7 @@ function VideoRecordRow({ video, formatDate, getStatusBadge }: {
           </div>
           <div className="min-w-0">
             <p className="font-medium text-sm truncate max-w-sm">
-              {video.title || video.original_url.split('/').pop() || 'Untitled'}
+              {video.title || video.original_url.split('/').pop() || t('dashboard.untitled')}
             </p>
             <p className="text-xs text-muted-foreground">
               {video.source_type.toUpperCase()} · {formatDate(video.created_at)}
@@ -320,7 +322,7 @@ function VideoRecordRow({ video, formatDate, getStatusBadge }: {
           {getStatusBadge(video.status)}
           {hasClips && (
             <Badge variant="outline" className="text-xs gap-1">
-              <FileVideo className="h-3 w-3" />{video.clips!.length} 条高光
+              <FileVideo className="h-3 w-3" />{video.clips!.length} {t('dashboard.clipsCount')}
             </Badge>
           )}
           {hasClips && (
@@ -335,7 +337,7 @@ function VideoRecordRow({ video, formatDate, getStatusBadge }: {
       {expanded && hasClips && (
         <div className="border-t bg-muted/20 p-4">
           <p className="text-xs text-muted-foreground mb-3">
-            点击任意片段可播放 · 共 {video.clips!.length} 条高光短视频
+            {t('dashboard.clipsHint')} · {video.clips!.length} {t('dashboard.clipsCount')}
           </p>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
             {video.clips!.map((clip) => (
@@ -357,7 +359,7 @@ function VideoRecordRow({ video, formatDate, getStatusBadge }: {
 
 /* ── Dashboard Page ── */
 export default function DashboardPage() {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const { user, accessToken, loading: authLoading } = useAuth();
   const { balance, loading: creditsLoading } = useCredits();
   const router = useRouter();
@@ -434,7 +436,7 @@ export default function DashboardPage() {
             : (c.url || null);
           return {
             id: c.id,
-            title: c.highlight_title || 'Clip',
+            title: c.highlight_title || t('dashboard.clip'),
             startTime: Number(c.start_time ?? 0),
             endTime: Number(c.end_time ?? 0),
             duration: Number(c.duration ?? 0),
@@ -499,20 +501,21 @@ export default function DashboardPage() {
           body: JSON.stringify({ content }),
         });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || 'Failed to submit feedback');
+        if (!res.ok) throw new Error(data.error || t('dashboard.feedbackFailed'));
       }
 
       setFeedbackContent('');
       setFeedbackDone(true);
     } catch (e) {
-      setFeedbackError(e instanceof Error ? e.message : 'Failed to submit feedback');
+      setFeedbackError(e instanceof Error ? e.message : t('dashboard.feedbackFailed'));
     } finally {
       setFeedbackSending(false);
     }
   }
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('zh-CN', {
+    const dateLocale = locale === 'zh' ? 'zh-CN' : locale === 'zh-Hant' ? 'zh-TW' : locale === 'en' ? 'en-US' : locale;
+    return new Date(dateString).toLocaleDateString(dateLocale, {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
@@ -523,10 +526,10 @@ export default function DashboardPage() {
 
   const getStatusBadge = (status: string) => {
     const statusConfig: Record<string, { variant: 'default' | 'secondary' | 'destructive' | 'outline'; label: string }> = {
-      pending:    { variant: 'secondary',    label: '待处理' },
-      processing: { variant: 'default',      label: '处理中' },
-      completed:  { variant: 'outline',      label: '✓ 完成' },
-      failed:     { variant: 'destructive',  label: '失败' },
+      pending:    { variant: 'secondary',    label: t('dashboard.statusPending') },
+      processing: { variant: 'default',      label: t('dashboard.statusProcessing') },
+      completed:  { variant: 'outline',      label: t('dashboard.statusCompleted') },
+      failed:     { variant: 'destructive',  label: t('dashboard.statusFailed') },
     };
     const config = statusConfig[status] || statusConfig.pending;
     return <Badge variant={config.variant}>{config.label}</Badge>;
@@ -552,17 +555,17 @@ export default function DashboardPage() {
             <div className="mb-4 p-4 border border-primary/30 bg-primary/5 rounded-lg">
               <div className="flex items-center justify-between">
                 <div>
-                  <h3 className="font-medium">Detected Desktop App Login</h3>
-                  <p className="text-sm text-muted-foreground">Click the button below to return to Clipop Agent</p>
+                  <h3 className="font-medium">{t('dashboard.desktopLoginDetected')}</h3>
+                  <p className="text-sm text-muted-foreground">{t('dashboard.desktopLoginHint')}</p>
                 </div>
                 <Button onClick={handleReturnToDesktop}>
-                  Return to Clipop Agent
+                  {t('dashboard.returnToDesktop')}
                 </Button>
               </div>
             </div>
           )}
           <h1 className="text-3xl font-bold">{t('dashboard.title')}</h1>
-          <p className="text-muted-foreground">Welcome back, {user.name || user.email}!</p>
+          <p className="text-muted-foreground">{t('dashboard.welcomeBack')}, {user.name || user.email}!</p>
         </div>
 
         {/* Stats Cards */}
@@ -580,35 +583,35 @@ export default function DashboardPage() {
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">已处理视频</CardTitle>
+              <CardTitle className="text-sm font-medium">{t('dashboard.videosProcessed')}</CardTitle>
               <Video className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-bold">{videos.length}</div>
-              <p className="text-xs text-muted-foreground mt-1">累计处理视频数</p>
+              <p className="text-xs text-muted-foreground mt-1">{t('dashboard.videosProcessedDesc')}</p>
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">已生成高光片段</CardTitle>
+              <CardTitle className="text-sm font-medium">{t('dashboard.clipsGenerated')}</CardTitle>
               <Film className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-bold">{totalClips}</div>
-              <p className="text-xs text-muted-foreground mt-1">累计高光短视频</p>
+              <p className="text-xs text-muted-foreground mt-1">{t('dashboard.clipsGeneratedDesc')}</p>
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">当前套餐</CardTitle>
+              <CardTitle className="text-sm font-medium">{t('dashboard.currentPlan')}</CardTitle>
               <Settings className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-bold">{user.role === 'admin' ? 'Admin' : 'Free'}</div>
+              <div className="text-3xl font-bold">{user.role === 'admin' ? t('nav.admin') : t('pricing.free.title')}</div>
               <Button variant="link" className="p-0 h-auto text-xs" asChild>
-                <Link href="/pricing">升级套餐</Link>
+                <Link href="/pricing">{t('dashboard.upgradePlan')}</Link>
               </Button>
             </CardContent>
           </Card>
@@ -626,11 +629,11 @@ export default function DashboardPage() {
             </TabsTrigger>
             <TabsTrigger value="new" className="gap-2">
               <Video className="h-4 w-4" />
-              处理新视频
+              {t('dashboard.processNewVideo')}
             </TabsTrigger>
             <TabsTrigger value="feedback" className="gap-2">
               <Settings className="h-4 w-4" />
-              反馈
+              {t('dashboard.feedback')}
             </TabsTrigger>
           </TabsList>
 
@@ -639,7 +642,7 @@ export default function DashboardPage() {
               <CardHeader>
                 <CardTitle>{t('dashboard.history')}</CardTitle>
                 <CardDescription>
-                  点击已完成的记录可展开查看高光短视频 · 点击片段可在线播放或下载
+                  {t('dashboard.historyHint')}
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -664,6 +667,7 @@ export default function DashboardPage() {
                         video={video}
                         formatDate={formatDate}
                         getStatusBadge={getStatusBadge}
+                        t={t}
                       />
                     ))}
                   </div>
@@ -675,13 +679,13 @@ export default function DashboardPage() {
           <TabsContent value="new">
             <Card>
               <CardHeader>
-                <CardTitle>处理新视频</CardTitle>
-                <CardDescription>前往首页处理新的长视频</CardDescription>
+                <CardTitle>{t('dashboard.processNewVideo')}</CardTitle>
+                <CardDescription>{t('dashboard.processNewVideoDesc')}</CardDescription>
               </CardHeader>
               <CardContent>
                 <Button asChild>
                   <Link href="/#process">
-                    前往视频处理器
+                    {t('dashboard.goToProcessor')}
                     <ArrowRight className="ml-2 h-4 w-4" />
                   </Link>
                 </Button>
@@ -692,27 +696,27 @@ export default function DashboardPage() {
           <TabsContent value="feedback">
             <Card>
               <CardHeader>
-                <CardTitle>用户反馈</CardTitle>
-                <CardDescription>告诉我们你希望改进的功能或遇到的问题</CardDescription>
+                <CardTitle>{t('dashboard.userFeedback')}</CardTitle>
+                <CardDescription>{t('dashboard.feedbackDesc')}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 <Textarea
                   value={feedbackContent}
                   onChange={(e) => { setFeedbackContent(e.target.value); setFeedbackError(''); setFeedbackDone(false); }}
-                  placeholder="请输入你的反馈（建议、BUG、功能需求等）"
+                  placeholder={t('dashboard.feedbackPlaceholder')}
                   disabled={feedbackSending}
                 />
                 {feedbackError && (
                   <p className="text-sm text-destructive">{feedbackError}</p>
                 )}
                 {feedbackDone && (
-                  <p className="text-sm text-green-600">已提交，感谢你的反馈！</p>
+                  <p className="text-sm text-green-600">{t('dashboard.feedbackSubmitted')}</p>
                 )}
                 <Button
                   onClick={submitFeedback}
                   disabled={feedbackSending || !feedbackContent.trim()}
                 >
-                  {feedbackSending ? t('common.loading') : '提交反馈'}
+                  {feedbackSending ? t('common.loading') : t('dashboard.submitFeedback')}
                 </Button>
               </CardContent>
             </Card>

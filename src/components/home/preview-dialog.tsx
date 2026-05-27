@@ -10,6 +10,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Play, Download, AlertCircle, Loader2 } from 'lucide-react';
+import { useLocale } from '@/lib/locale-context';
 
 interface VideoClip {
   id: string;
@@ -43,6 +44,8 @@ export default function PreviewDialog({
   downloadingId,
   fmt,
 }: PreviewDialogProps) {
+  const { t } = useLocale();
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl w-[92vw]">
@@ -68,15 +71,15 @@ export default function PreviewDialog({
         ) : (
           <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
             <AlertCircle className="h-12 w-12 mb-4" />
-            <p className="font-medium">Video preview not available</p>
-            <p className="text-sm mt-1">The clip may still be processing or failed to generate.</p>
+            <p className="font-medium">{t('video.videoPreviewNotAvailable')}</p>
+            <p className="text-sm mt-1">{t('video.clipMayStillProcessing')}</p>
           </div>
         )}
 
         <div className="flex items-center justify-between mt-4">
           <div className="flex items-center gap-4 text-sm text-muted-foreground">
             <span>{fmt(clip.startTime)} - {fmt(clip.endTime)}</span>
-            <Badge variant="outline">Score: {clip.engagementScore}/10</Badge>
+            <Badge variant="outline">{t('common.score')}: {clip.engagementScore}/10</Badge>
           </div>
           {clip.videoUrl && (
             <Button
@@ -85,9 +88,9 @@ export default function PreviewDialog({
               className="gap-2"
             >
               {downloadingId === clip.id ? (
-                <><Loader2 className="h-4 w-4 animate-pulse" />Saving...</>
+                <><Loader2 className="h-4 w-4 animate-pulse" />{t('common.saving')}</>
               ) : (
-                <><Download className="h-4 w-4" />Download</>
+                <><Download className="h-4 w-4" />{t('video.download')}</>
               )}
             </Button>
           )}
