@@ -110,24 +110,18 @@ function clearDemoUser() {
 }
 
 async function verifyTokenAndFetchUser(token: string): Promise<User | null> {
-  console.log('[DEBUG-AUTH] verifyTokenAndFetchUser called');
   try {
     const client = getSupabaseClient(token);
     const { data: { user: authUser } } = await client.auth.getUser();
-    if (!authUser) {
-      console.log('[DEBUG-AUTH] No auth user from Supabase');
-      return null;
-    }
-    
-    console.log('[DEBUG-AUTH] Got auth user, fetching profile...');
+    if (!authUser) return null;
+
     const { data: userData } = await client
       .from('users')
       .select('*')
       .eq('id', authUser.id)
       .maybeSingle();
-    
+
     if (userData) {
-      console.log('[DEBUG-AUTH] Got user profile');
       return {
         id: userData.id,
         email: userData.email,
@@ -136,8 +130,7 @@ async function verifyTokenAndFetchUser(token: string): Promise<User | null> {
         avatarUrl: userData.avatar_url,
       };
     }
-    
-    console.log('[DEBUG-AUTH] No user profile, using auth user');
+
     return {
       id: authUser.id,
       email: authUser.email || '',
@@ -145,8 +138,7 @@ async function verifyTokenAndFetchUser(token: string): Promise<User | null> {
       role: 'user',
       avatarUrl: authUser.user_metadata?.avatar_url || null,
     };
-  } catch (e) {
-    console.log('[DEBUG-AUTH] verifyTokenAndFetchUser error:', e);
+  } catch {
     return null;
   }
 }
@@ -220,16 +212,13 @@ function applyDesktopToken(
   setLoading: (l: boolean) => void,
   setUseDemo?: (d: boolean) => void
 ) {
-  console.log('[DEBUG-AUTH] applyDesktopToken called, token:', !!token);
   if (!token) return;
-  
+
   localStorage.setItem('clipop_access_token', token);
-  
+
   if (isDemoToken(token)) {
-    console.log('[DEBUG-AUTH] It\'s a Demo token');
     const jwtUser = createUserFromJwt(token);
     if (jwtUser) {
-      console.log('[DEBUG-AUTH] User from Demo JWT:', jwtUser.email);
       setAccessToken(token);
       setUser(jwtUser);
       if (setUseDemo) setUseDemo(true);
@@ -237,22 +226,16 @@ function applyDesktopToken(
     }
     return;
   }
-  
+
   const jwtUser = createUserFromJwt(token);
   if (jwtUser) {
-    console.log('[DEBUG-AUTH] User from JWT:', jwtUser.email);
     setAccessToken(token);
     setUser(jwtUser);
     setLoading(false);
-    
+
     verifyTokenAndFetchUser(token).then((userData) => {
-      if (userData) {
-        console.log('[DEBUG-AUTH] User verified from Supabase');
-        setUser(userData);
-      }
-    }).catch((err) => {
-      console.log('[DEBUG-AUTH] Supabase verification failed:', err);
-    });
+      if (userData) setUser(userData);
+    }).catch(() => {});
   }
 }
 
@@ -264,47 +247,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [useDemo, setUseDemo] = useState(false);
   const initializedRef = useRef(false);
 
-  console.log('[DEBUG-AUTH] AuthProvider rendering, initialized:', initializedRef.current);
-
   const checkAuthState = useCallback(async () => {
-    console.log('[DEBUG-AUTH] checkAuthState called');
     try {
       const isDesktop = !!(window.clipopDesktop || window.electronAPI);
-      console.log('[DEBUG-AUTH] isDesktop:', isDesktop);
 
       if (isDesktop) {
-        console.log('[DEBUG-AUTH] Desktop mode, checking token sources...');
-        
         let token: string | null = null;
 
         if (typeof window !== 'undefined' && window.localStorage) {
           const storedToken = localStorage.getItem('clipop_access_token');
-          if (storedToken) {
-            token = storedToken;
-            console.log('[DEBUG-AUTH] Got token from localStorage');
-          }
+          if (storedToken) token = storedToken;
         }
 
         if (!token && (window as any).__clipopDesktopToken) {
-            token = (window as any).__clipopDesktopToken;
-          console.log('[DEBUG-AUTH] Got token from __clipopDesktopToken');
+          token = (window as any).__clipopDesktopToken;
         }
-        
+
         if (!token && window.electronAPI?.getAuthToken) {
           token = await window.electronAPI.getAuthToken();
-          console.log('[DEBUG-AUTH] Got token from electronAPI.getAuthToken:', !!token);
         }
-        
+
         if (!token && (window as any).api?.getAuthToken) {
           token = await (window as any).api.getAuthToken();
-          console.log('[DEBUG-AUTH] Got token from window.api.getAuthToken:', !!token);
         }
-        
+
         if (token) {
-          console.log('[DEBUG-AUTH] Token found, applying...');
-          
           if (isDemoToken(token)) {
-            console.log('[DEBUG-AUTH] It\'s a Demo token');
             const jwtUser = createUserFromJwt(token);
             if (jwtUser) {
               setAccessToken(token);
@@ -320,19 +288,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               setUser(jwtUser);
               setLoading(false);
               verifyTokenAndFetchUser(token).then((userData) => {
-                if (userData) {
-                  console.log('[DEBUG-AUTH] User verified from Supabase');
-                  setUser(userData);
-                }
+                if (userData) setUser(userData);
               }).catch(() => {});
               return;
             }
           }
-        } else {
-          console.log('[DEBUG-AUTH] No token found in desktop mode');
         }
       }
-      
+
       if (!isSupabaseConfigured()) {
         const demoUser = getDemoUser();
         if (demoUser) {
@@ -346,8 +309,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       const client = getSupabaseClient();
       const { data: { session } } = await client.auth.getSession();
-
-      console.log('[DEBUG-AUTH] getSession result:', session ? `user=${session.user?.email}` : 'no session');
 
       if (session?.user) {
         setAccessToken(session.access_token || null);
@@ -384,8 +345,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUseDemo(true);
         }
       }
-    } catch (err) {
-      console.log('[DEBUG-AUTH] checkAuthState error:', err);
+    } catch {
       const demoUser = getDemoUser();
       if (demoUser) {
         setUser(demoUser);
@@ -397,12 +357,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (initializedRef.current) {
-      console.log('[DEBUG-AUTH] Already initialized, skipping useEffect');
-      return;
-    }
-    
-    console.log('[DEBUG-AUTH] Initializing useEffect');
+    if (initializedRef.current) return;
     initializedRef.current = true;
 
     const handleOAuthCallback = async () => {
@@ -416,18 +371,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const hashParams = new URLSearchParams(hash.substring(1));
         const accessToken = hashParams.get('access_token');
         const refreshToken = hashParams.get('refresh_token');
-        const error = hashParams.get('error');
-        const errorCode = hashParams.get('error_code');
+        const oauthError = hashParams.get('error');
 
-        if (error) {
-          console.log('[DEBUG-AUTH] OAuth error in hash:', error, errorCode);
-          setError(`登录失败: ${error}`);
+        if (oauthError) {
+          setError(`Login failed: ${oauthError}`);
           window.history.replaceState(null, '', window.location.pathname);
           return;
         }
 
         if (accessToken && refreshToken) {
-          console.log('[DEBUG-AUTH] Found OAuth tokens in URL hash');
           try {
             const client = getSupabaseClient();
             const { data, error: sessionError } = await client.auth.setSession({
@@ -436,10 +388,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             });
 
             if (sessionError) {
-              console.log('[DEBUG-AUTH] setSession error:', sessionError);
-              setError(`登录失败: ${sessionError.message}`);
+              setError(`Login failed: ${sessionError.message}`);
             } else if (data?.session) {
-              console.log('[DEBUG-AUTH] Session established from URL hash');
               setAccessToken(data.session.access_token);
               localStorage.setItem('clipop_access_token', data.session.access_token);
 
@@ -478,9 +428,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                     });
                     await client.from('credits').insert({ user_id: user.id, balance: 100 });
                     await client.from('subscriptions').insert({ user_id: user.id, plan_type: 'free', status: 'active' });
-                  } catch (e) {
-                    console.log('[DEBUG-AUTH] User creation error (non-fatal):', e);
-                  }
+                  } catch {}
                 }
               }
 
@@ -494,17 +442,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
               return;
             }
-          } catch (e) {
-            console.log('[DEBUG-AUTH] Error processing OAuth tokens:', e);
-          }
+          } catch {}
         }
       }
 
-      const code = new URLSearchParams(search).get('code');
       const errorSearch = new URLSearchParams(search).get('error');
       if (errorSearch) {
-        console.log('[DEBUG-AUTH] OAuth error in search params:', errorSearch);
-        setError(`登录失败: ${errorSearch}`);
+        setError(`Login failed: ${errorSearch}`);
         return;
       }
 
@@ -515,32 +459,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     handleOAuthCallback();
 
-    console.log('[DEBUG-AUTH] Adding event listeners');
-
     const handleDesktopLogin = (event: Event) => {
-      console.log('[DEBUG-AUTH] ========================================');
-      console.log('[DEBUG-AUTH] clipop-desktop-login event RECEIVED!');
       const detail = event instanceof CustomEvent ? event.detail : null;
-      console.log('[DEBUG-AUTH] Event detail:', detail);
-      console.log('[DEBUG-AUTH] ========================================');
-      
       if (detail?.token) {
         applyDesktopToken(detail.token, setUser, setAccessToken, setLoading, setUseDemo);
       }
     };
 
     const handleAuthChange = () => {
-      console.log('[DEBUG-AUTH] clipop-auth-change event received');
       checkAuthState();
     };
 
     window.addEventListener('clipop-desktop-login', handleDesktopLogin);
     window.addEventListener('clipop-auth-change', handleAuthChange);
 
-    console.log('[DEBUG-AUTH] Event listeners added');
-
     return () => {
-      console.log('[DEBUG-AUTH] Cleanup: removing event listeners');
       window.removeEventListener('clipop-desktop-login', handleDesktopLogin);
       window.removeEventListener('clipop-auth-change', handleAuthChange);
     };
@@ -612,7 +545,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         return { error: null, token, email: data.session.user?.email };
       }
-      
+
       return { error: null, token: null };
     } catch {
       if (isDemoAdmin(email, password)) {
@@ -690,8 +623,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         ) {
           return { error: 'This email is already registered. Please sign in.' };
         }
-        
-        console.warn('Supabase signup failed, falling back to demo mode:', authError.message);
+
         const userId = `demo-${Date.now()}`;
         const demoUser: User = {
           id: userId,
@@ -762,7 +694,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     if (!url || url === '' || url === 'https://placeholder.supabase.co' ||
         !anonKey || anonKey === '' || anonKey === 'placeholder-key') {
-      const msg = 'Google 登录未配置：缺少 Supabase 环境变量，请联系管理员配置 NEXT_PUBLIC_SUPABASE_URL 和 NEXT_PUBLIC_SUPABASE_ANON_KEY';
+      const msg = 'Google login is not configured. Please contact the administrator.';
       setError(msg);
       return { error: msg };
     }
@@ -775,8 +707,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const redirectUrl = fromDesktop
         ? `${window.location.origin}/desktop/callback?from=desktop`
         : `${window.location.origin}/auth/callback`;
-
-      console.log('[AUTH] Starting Google OAuth, redirectTo:', redirectUrl);
 
       const { data, error: oauthError } = await client.auth.signInWithOAuth({
         provider: 'google',
@@ -791,23 +721,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
 
       if (oauthError) {
-        console.log('[AUTH] Google OAuth error:', oauthError.message);
-        const msg = `Google 登录失败: ${oauthError.message}`;
+        const msg = `Google login failed: ${oauthError.message}`;
         setError(msg);
         return { error: msg };
       }
 
       if (data?.url) {
-        console.log('[AUTH] Google OAuth redirect URL:', data.url);
         return { error: null };
       }
 
-      const msg = 'Google 登录未返回授权地址，请重试';
+      const msg = 'Google login failed. Please try again.';
       setError(msg);
       return { error: msg };
     } catch (err) {
-      console.log('[AUTH] Google OAuth exception:', err);
-      const msg = err instanceof Error ? err.message : 'Google 登录过程中发生未知错误';
+      const msg = err instanceof Error ? err.message : 'Google login failed.';
       setError(msg);
       return { error: msg };
     }
@@ -835,7 +762,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         localStorage.removeItem('clipop_access_token');
       }
-      
+
       const client = getSupabaseClient();
       await client.auth.signOut();
       setUser(null);
