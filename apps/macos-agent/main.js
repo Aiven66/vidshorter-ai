@@ -13,6 +13,7 @@ const execFileAsync = promisify(execFile);
 const { generateHighlightsFromPath, ffmpegPath } = require('./local-highlights');
 const { runYtDlp } = require('./ytdlp');
 const { createMediaServer } = require('./media-server');
+const { t, currentLocale, setLocale, detectLocale } = require('./i18n');
 const APP_VERSION = require('./package.json').version;
 
 let mainWindow = null;
@@ -237,8 +238,8 @@ function startAuthCallbackServer() {
         <style>body{font-family:-apple-system,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f5f5f5}
         .card{text-align:center;padding:40px;background:#fff;border-radius:16px;box-shadow:0 2px 8px rgba(0,0,0,.1)}
         .icon{font-size:48px;margin-bottom:16px}h1{color:#16a34a;margin:0 0 8px}p{color:#666;margin:0}</style></head>
-        <body><div class="card"><div class="icon">✅</div><h1>Login Successful!</h1>
-        <p>You can close this tab and return to Clipop Agent.</p></div></body></html>`);
+        <body><div class="card"><div class="icon">✅</div><h1>${t('auth.loginSuccess')}</h1>
+        <p>${t('auth.closeTab')}</p></div></body></html>`);
       return;
     }
 
@@ -498,16 +499,16 @@ async function ensureWebWindow() {
   });
 
   // 先显示加载界面，避免白屏
-  await webWindow.loadURL(`data:text/html,<html><head><style>html,body{margin:0;padding:0;height:100%;background:#0f172a;display:flex;align-items:center;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}h1{color:#fff;font-size:24px}p{color:#94a3b8;margin-top:10px 0 0}</style></head><body><div><h1>Clipop Agent</h1><p id="status">Loading...</p></div></body></html>`);
+  await webWindow.loadURL(`data:text/html,<html><head><style>html,body{margin:0;padding:0;height:100%;background:#0f172a;display:flex;align-items:center;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}h1{color:#fff;font-size:24px}p{color:#94a3b8;margin-top:10px 0 0}</style></head><body><div><h1>${t('loading.title')}</h1><p id="status">${t('loading.status')}</p></div></body></html>`);
   webWindow.show();
 
   // 后台启动嵌入式服务器
   let url = '';
   try {
     // 更新状态
-    webWindow.webContents.executeJavaScript(`document.getElementById('status').textContent = 'Starting embedded server...'`);
+    webWindow.webContents.executeJavaScript(`document.getElementById('status').textContent = '${t('loading.startingServer')}'`);
     url = await ensureEmbeddedWeb();
-    webWindow.webContents.executeJavaScript(`document.getElementById('status').textContent = 'Loading interface...'`);
+    webWindow.webContents.executeJavaScript(`document.getElementById('status').textContent = '${t('loading.loadingInterface')}'`);
     await webWindow.loadURL(url);
   } catch (e) {
     appendLog(`[WebWindow] Failed: ${e}`);
@@ -726,11 +727,11 @@ async function applyMenu() {
         { role: 'about' },
         { type: 'separator' },
         {
-          label: 'Debug Console',
+          label: t('menu.debugConsole'),
           click: () => ensureSettingsWindow(),
         },
         {
-          label: isLoggedIn ? 'Sign Out' : 'Sign In',
+          label: isLoggedIn ? t('menu.signOut') : t('menu.signIn'),
           click: async () => {
             if (isLoggedIn) {
               const cfg = await loadConfig();
@@ -758,7 +759,7 @@ async function applyMenu() {
       ],
     },
     {
-      label: 'Edit',
+      label: t('menu.edit'),
       submenu: [{ role: 'cut' }, { role: 'copy' }, { role: 'paste' }],
     },
   ];
@@ -774,6 +775,24 @@ ipcMain.handle('get-config', async () => {
     logs: logBuffer.slice(-200),
     logFilePath,
     authCallbackPort,
+    locale: currentLocale,
+    translations: {
+      'debug.title': t('debug.title'),
+      'debug.status': t('debug.status'),
+      'debug.deepLinkHandler': t('debug.deepLinkHandler'),
+      'debug.tokenSaved': t('debug.tokenSaved'),
+      'debug.recentDeepLink': t('debug.recentDeepLink'),
+      'debug.savedAuth': t('debug.savedAuth'),
+      'debug.test': t('debug.test'),
+      'debug.testDeepLink': t('debug.testDeepLink'),
+      'debug.clearAuth': t('debug.clearAuth'),
+      'debug.refresh': t('debug.refresh'),
+      'debug.logs': t('debug.logs'),
+      'debug.refreshing': t('debug.refreshing'),
+      'debug.authCleared': t('debug.authCleared'),
+      'debug.testingDeepLink': t('debug.testingDeepLink'),
+      'debug.none': t('debug.none'),
+    },
   };
 });
 
@@ -857,6 +876,9 @@ app.on('open-url', (event, url) => {
 
 app.on('ready', async () => {
   appendLog(`[App] Ready (v${APP_VERSION})`);
+
+  detectLocale();
+  appendLog(`[App] Detected locale: ${currentLocale}`);
 
   const logDir = path.join(app.getPath('logs'), 'ClipopAgent');
   await fs.mkdir(logDir, { recursive: true });
