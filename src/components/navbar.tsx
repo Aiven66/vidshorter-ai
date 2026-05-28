@@ -15,7 +15,8 @@ import { Sheet, SheetContent, SheetTrigger, SheetTitle } from '@/components/ui/s
 import { useAuth } from '@/lib/auth-context';
 import { useLocale } from '@/lib/locale-context';
 import { useCredits } from '@/lib/credits-context';
-import { Menu, Globe, User, LogOut, Video, CreditCard, LayoutDashboard, Shield, Sun, Moon } from 'lucide-react';
+import { Menu, Globe, User, LogOut, Video, CreditCard, LayoutDashboard, Shield, Sun, Moon, Check } from 'lucide-react';
+import { locales, localeNames, type Locale } from '@/lib/i18n';
 
 export function Navbar() {
   const { user, signOut } = useAuth();
@@ -127,13 +128,17 @@ export function Navbar() {
                   <Globe className="h-5 w-5" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => setLocale('en')}>
-                  English {locale === 'en' && '✓'}
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setLocale('zh')}>
-                  中文 {locale === 'zh' && '✓'}
-                </DropdownMenuItem>
+              <DropdownMenuContent align="end" className="max-h-80 overflow-y-auto">
+                {locales.map((loc) => (
+                  <DropdownMenuItem
+                    key={loc}
+                    onClick={() => setLocale(loc)}
+                    className="flex items-center justify-between gap-4"
+                  >
+                    <span>{localeNames[loc].native}</span>
+                    {locale === loc && <Check className="h-4 w-4 text-primary" />}
+                  </DropdownMenuItem>
+                ))}
               </DropdownMenuContent>
             </DropdownMenu>
 
@@ -241,34 +246,37 @@ export function Navbar() {
               <SheetTitle className="sr-only">Menu</SheetTitle>
               <div className="flex flex-col gap-4 mt-8">
                 {/* Language Switcher */}
-                <div className="flex gap-2">
-                  <Button
-                    variant={locale === 'en' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setLocale('en')}
-                  >
-                    English
-                  </Button>
-                  <Button
-                    variant={locale === 'zh' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setLocale('zh')}
-                  >
-                    中文
-                  </Button>
-                  {/* Theme Toggle */}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={toggleTheme}
-                    className="ml-auto"
-                  >
-                    {mounted && theme === 'dark' ? (
-                      <><Sun className="h-4 w-4 mr-1" />{t('nav.light')}</>
-                    ) : (
-                      <><Moon className="h-4 w-4 mr-1" />{t('nav.dark')}</>
-                    )}
-                  </Button>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-muted-foreground">
+                      <Globe className="h-4 w-4 inline mr-1" />
+                      Language
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={toggleTheme}
+                    >
+                      {mounted && theme === 'dark' ? (
+                        <><Sun className="h-4 w-4 mr-1" />{t('nav.light')}</>
+                      ) : (
+                        <><Moon className="h-4 w-4 mr-1" />{t('nav.dark')}</>
+                      )}
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1.5 max-h-48 overflow-y-auto">
+                    {locales.map((loc) => (
+                      <Button
+                        key={loc}
+                        variant={locale === loc ? 'default' : 'outline'}
+                        size="sm"
+                        className="text-xs px-2"
+                        onClick={() => setLocale(loc)}
+                      >
+                        {localeNames[loc].native}
+                      </Button>
+                    ))}
+                  </div>
                 </div>
 
                 {/* Nav Items */}
