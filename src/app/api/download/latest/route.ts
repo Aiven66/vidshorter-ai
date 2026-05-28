@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 
 const GITHUB_REPO = 'Aiven66/vidshorter-ai';
-const CACHE_DURATION = 300;
+const CACHE_DURATION = 60;
 
 let cachedData: { timestamp: number; data: unknown } | null = null;
 
@@ -31,11 +31,14 @@ export async function GET() {
 
     const release = await res.json();
 
-    const dmgAsset = (release.assets as Array<{ name: string; browser_download_url: string; size: number }>)
-      ?.find((a) => a.name.endsWith('.dmg') && a.name.includes('arm64'));
+    const assets = (release.assets as Array<{ name: string; browser_download_url: string; size: number }>) || [];
+
+    const dmgAsset = assets.find((a) => a.name.endsWith('.dmg') && a.name.includes('arm64'))
+      || assets.find((a) => a.name.endsWith('.dmg') && a.name.includes('x64'))
+      || assets.find((a) => a.name.endsWith('.dmg'));
 
     const data = {
-      available: true,
+      available: !!dmgAsset,
       version: release.tag_name?.replace(/^v/, '') || release.name || '',
       name: release.name || '',
       publishedAt: release.published_at || '',
