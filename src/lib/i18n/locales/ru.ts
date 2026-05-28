@@ -1,0 +1,84 @@
+import { commonTranslations } from '../common';
+
+const translations = {
+  ...commonTranslations,
+  nav: {
+  home: 'Главная', blog: 'Блог', pricing: 'Цены', login: 'Войти', register: 'Регистрация', dashboard: 'Панель управления', admin: 'Панель администратора', logout: 'Выйти', credits: 'Кредиты', download: 'Скачать приложение', light: 'Светлая', dark: 'Тёмная',
+  },
+  common: {
+  error: 'Произошла ошибка', ready: 'Готово', failed: 'Не удалось', saving: 'Сохранение...', score: 'Оценка', user: 'Пользователь',
+  loading: 'Загрузка...', success: 'Успешно', cancel: 'Отмена', save: 'Сохранить', delete: 'Удалить', edit: 'Редактировать', search: 'Поиск',
+  },
+  footer: {
+  desc: 'Превращайте длинные видео в увлекательные короткие клипы с помощью анализа и редактирования на основе ИИ.',
+  quickLinks: 'Быстрые ссылки', legal: 'Юридическая информация', privacy: 'Политика конфиденциальности', terms: 'Условия использования', contact: 'Контакты', rights: 'Все права защищены.',
+  },
+  home: {
+  hero: {
+  badge: 'Обработка видео на основе ИИ',
+  title: 'Превратите длинные видео в вирусные шорты',
+  subtitle: 'Нарезка видео с помощью ИИ, которая автоматически извлекает лучшие моменты из вашего длинного контента',
+  cta: 'Начать нарезку бесплатно',
+  secondary: 'Смотреть демо',
+  },
+  howItWorks: {
+  title: 'Как это работает',
+  step1: { title: 'Входное видео', desc: 'Вставьте URL или загрузите видео' },
+  step2: { title: 'Анализ ИИ', desc: 'ИИ автоматически находит яркие моменты' },
+  step3: { title: 'Создание клипов', desc: 'Создаются короткие видео' },
+  step4: { title: 'Скачивание', desc: 'Экспортируйте и делитесь где угодно' },
+  },
+  features: {
+  title: 'Мощная нарезка видео ИИ',
+  auto: { title: 'Автоматическое обнаружение ярких моментов', desc: 'ИИ анализирует ваше видео и автоматически определяет самые привлекательные моменты' },
+  multi: { title: 'Поддержка нескольких платформ', desc: 'Импортируйте из YouTube, Bilibili или загрузите свои видеофайлы' },
+  quick: { title: 'Быстрый экспорт', desc: 'Скачивайте ваши клипы в нескольких форматах, готовых для любой социальной платформы' },
+  },
+  },
+  video: {
+  input: { title: 'Входное видео', url: 'URL видео (YouTube/Bilibili)', upload: 'Загрузить видео', placeholder: 'Вставьте ссылку на видео YouTube или Bilibili...' },
+  process: 'Обработать видео', processing: 'Обрабатываем...', analyze: 'Анализировать', results: 'Сгенерированные шорты', highlights: 'Анализ ярких моментов', download: 'Скачать', preview: 'Предварительный просмотр',
+  creditsAvailable: 'кредитов доступно', signInToStart: 'чтобы начать обработку видео', pasteUrlPlaceholder: 'Вставьте URL видео (MP4, MOV, AVI...)', useLocalAgent: 'Использовать локальный Mac Agent (рекомендуется для стабильного YouTube)', uploadLocal: 'Загрузить локальный видеофайл (рекомендуется, когда ссылка YouTube заблокирована)', selectedFile: 'Выбран', downloadMacApp: 'Скачать приложение для Mac', viewPricing: 'Посмотреть цены', clipsReady: 'клипов готово', playableClips: 'воспроизводимых клипов', failedClips: 'не удалось', aiFinished: 'ИИ завершил выбор самых ярких моментов из исходного видео.', openToPreview: 'Откройте готовый клип для предпросмотра или скачайте MP4 напрямую.', clipsBeingGenerated: 'Клипы создаются:', videoPreviewNotAvailable: 'Предпросмотр видео недоступен', clipMayStillProcessing: 'Клип всё ещё обрабатывается или не удалось создать.', insufficientCredits: 'Недостаточно кредитов. Вам нужно минимум 30 кредитов.', enterVideoUrl: 'Пожалуйста, введите URL видео или загрузите локальный видеофайл.', enterValidUrl: 'Пожалуйста, введите корректный публичный http(s) URL видео.',
+  stage: {
+  init: 'Инициализация...', extractFrames: 'Извлечение кадров видео...', framesExtracted: 'Кадры успешно извлечены', framesUnavailable: 'Продолжаем анализ', aiAnalysis: 'ИИ анализирует содержимое видео...', analysisComplete: 'Анализ завершён', generatingClip: 'Создание клипа с яркими моментами...', clipReady: 'Клип с яркими моментами готов', saving: 'Сохранение результатов...', complete: 'Обработка завершена!', error: 'Произошла ошибка',
+  },
+  },
+  pricing: {
+  title: 'Простые, прозрачные цены', subtitle: 'Выберите план, который подходит вашим нуждам',
+  paymentNote: 'Alipay для Китая · Creem для международных платежей (Visa / Mastercard / Apple Pay / Google Pay)', secureNote: 'Все платежи защищены TLS 256-битным шифрованием', faqTitle: 'Часто задаваемые вопросы', faq: { q1: 'Что такое кредит?', a1: 'Каждый кредит представляет вычислительную мощность. Обработка видеоклипа стоит 30 кредитов.', q2: 'Как работает ежедневный сброс кредитов?', a2: 'Кредиты сбрасываются до дневного лимита вашего плана в 00:00 UTC каждый день. Неиспользованные кредиты не переносятся.', q3: 'Могу ли я повысить или понизить план?', a3: 'Да, вы можете изменить план в любое время. Изменения вступают в силу немедленно.', q4: 'Какие источники видео поддерживаются?', a4: 'Мы поддерживаем YouTube, Bilibili и прямую загрузку видеофайлов (MP4, MOV, AVI).', q5: 'Какие способы оплаты поддерживаются?', a5: 'Alipay для пользователей из Китая, Creem (Visa, Mastercard, Apple Pay, Google Pay) для международных пользователей.' },
+  mostPopular: 'Самый популярный',
+  free: { title: 'Бесплатно', price: '$0', period: '/месяц', desc: 'Идеально для пробы', feature1: '100 кредитов в день', feature2: 'Базовая нарезка видео', feature3: 'Качество экспорта 720p', feature4: 'Водяной знак включён', cta: 'Начать' },
+  starter: { title: 'Начальный', price: '$9.9', period: '/месяц', desc: 'Для создателей контента', feature1: '500 кредитов в день', feature2: 'Приоритетная обработка', feature3: 'Качество экспорта 1080p', feature4: 'Без водяного знака', feature5: 'Поддержка по электронной почте', cta: 'Подписаться сейчас' },
+  pro: { title: 'Профессиональный', price: '$19.9', period: '/месяц', desc: 'Для профессионалов и команд', feature1: 'Неограниченные кредиты', feature2: 'Самая быстрая обработка', feature3: 'Качество экспорта 4K', feature4: 'Без водяного знака', feature5: 'Доступ к API', feature6: 'Приоритетная поддержка', cta: 'Подписаться сейчас' },
+  },
+  downloadPage: {
+  title: 'Скачать Clipop Agent', subtitle: 'Настольное приложение для стабильной обработки видео YouTube/Bilibili', badge: 'Настольное приложение', macTitle: 'macOS', macDesc: 'Для Mac на Apple Silicon (M1/M2/M3/M4)', downloadButton: 'Скачать для macOS', version: 'Версия', fileSize: 'Размер файла', requirements: 'macOS 12.0 или новее', installing: 'Инструкция по установке', step1: 'Нажмите кнопку скачивания, чтобы сохранить файл .dmg', step2: 'Дважды щёлкните скачанный файл .dmg', step3: 'Перетащите Clipop Agent в папку Applications', step4: 'Откройте Clipop Agent из Applications', notAvailable: 'Скачивание готовится, пожалуйста, проверьте позже', backToHome: 'Вернуться на главную', whyDesktopTitle: 'Зачем использовать настольное приложение?', features: { stable: { title: 'Стабильная обработка', desc: 'Обрабатывайте видео локально с максимальной стабильностью' }, fast: { title: 'Быстрые загрузки', desc: 'Скачивайте видео напрямую без ограничений браузера' }, local: { title: 'Локальная обработка', desc: 'Обрабатывайте видео на Mac для приватности и скорости' } },
+  },
+  login: {
+  title: 'Вход', description: 'Доступ к вашему аккаунту', emailLabel: 'Электронная почта', emailPlaceholder: 'you@example.com', passwordLabel: 'Пароль', passwordPlaceholder: '••••••••', submitButton: 'Войти', orContinueWith: 'Или продолжить с', googleButton: 'Продолжить с Google', dontHaveAccount: 'Нет аккаунта?', signUp: 'Регистрация',
+  successTitle: 'Вход выполнен!', successMessage: 'Вы успешно вошли как', successDesktopHint: 'Нажмите кнопку ниже, чтобы вернуться в настольное приложение.', returnToDesktop: 'Вернуться в Clipop Agent', desktopNotOpened: 'Если настольное приложение не открывается автоматически, убедитесь, что Clipop Agent запущен.',
+  },
+  register: {
+  title: 'Создать аккаунт', description: 'Начать с Clipop AI', nameLabel: 'Полное имя', namePlaceholder: 'John Doe', emailLabel: 'Электронная почта', emailPlaceholder: 'you@example.com', passwordLabel: 'Пароль', passwordPlaceholder: '••••••••', confirmPasswordLabel: 'Подтвердите пароль', confirmPasswordPlaceholder: '••••••••', sendCodeButton: 'Продолжить', sendingCode: 'Отправляем...', codeLabel: 'Код подтверждения', codePlaceholder: 'Введите 6-значный код', verifyButton: 'Создать аккаунт', codeNotReceived: 'Не получили код?', resendButton: 'Отправить повторно', resendIn: 'Отправить повторно через', backButton: 'Назад', googleButton: 'Продолжить с Google', alreadyHaveAccount: 'Уже есть аккаунт?', signIn: 'Войти',
+  errorNameRequired: 'Пожалуйста, введите ваше имя', errorEmailRequired: 'Пожалуйста, введите ваш email', errorPasswordLength: 'Пароль должен содержать не менее 6 символов', errorPasswordMismatch: 'Пароли не совпадают', errorEmailExists: 'Этот email уже зарегистрирован. Пожалуйста, войдите.', errorSendCode: 'Не удалось отправить код', errorNetwork: 'Ошибка сети. Пожалуйста, попробуйте снова.', errorCodeLength: 'Пожалуйста, введите 6-значный код',
+  successTitle: 'Аккаунт создан!', successMessage: 'Ваш аккаунт успешно создан как', successDesktopHint: 'Нажмите кнопку ниже, чтобы вернуться в настольное приложение.', returnToDesktop: 'Вернуться в Clipop Agent', desktopNotOpened: 'Если настольное приложение не открывается автоматически, убедитесь, что Clipop Agent запущен.',
+  },
+  dashboard: { title: 'Панель управления', credits: 'Доступные кредиты', creditsReset: 'Сброс каждый день в 00:00 UTC', history: 'История обработки', noVideos: 'Ещё не обработано ни одного видео', startProcessing: 'Начать обработку видео',
+  untitled: 'Без названия', clip: 'Клип', clipsCount: 'ярких моментов', clipsHint: 'Нажмите на любой клип для воспроизведения',
+  desktopLoginDetected: 'Обнаружен вход через настольное приложение', desktopLoginHint: 'Нажмите кнопку ниже, чтобы вернуться в Clipop Agent', returnToDesktop: 'Вернуться в Clipop Agent',
+  welcomeBack: 'С возвращением',
+  videosProcessed: 'Обработанные видео', videosProcessedDesc: 'Всего обработанных видео', clipsGenerated: 'Созданные клипы', clipsGeneratedDesc: 'Всего клипов с яркими моментами',
+  currentPlan: 'Текущий план', upgradePlan: 'Повысить план',
+  processNewVideo: 'Обработать новое видео', feedback: 'Обратная связь',
+  historyHint: 'Нажмите на завершённые записи, чтобы развернуть и просмотреть клипы',
+  processNewVideoDesc: 'Перейдите на главную страницу, чтобы обработать новое длинное видео', goToProcessor: 'Перейти к обработчику видео',
+  userFeedback: 'Обратная связь пользователей', feedbackDesc: 'Расскажите о функциях, которые хотите улучшить, или о проблемах, с которыми столкнулись',
+  feedbackPlaceholder: 'Введите ваш отзыв (предложения, ошибки, запросы функций и т.д.)', feedbackSubmitted: 'Отправлено, спасибо за ваш отзыв!',
+  submitFeedback: 'Отправить отзыв', feedbackFailed: 'Не удалось отправить отзыв',
+  statusPending: 'Ожидание', statusProcessing: 'Обработка', statusCompleted: '✓ Завершено', statusFailed: 'Не удалось',
+  },
+  admin: { title: 'Панель администратора', blog: 'Управление блогом', blogCreate: 'Создать публикацию', blogTitle: 'Заголовок', blogCategory: 'Категория', blogContent: 'Контент', blogPublish: 'Опубликовать', blogSave: 'Сохранить черновик', blogPublished: 'Опубликовано', blogDraft: 'Черновик' },
+  blog: { title: 'Блог', readMore: 'Читать далее', noPosts: 'Публикаций пока нет', subtitle: 'Последние новости, советы и обновления от Clipop AI', views: 'просмотров' },
+};
+
+export default translations;
