@@ -113,7 +113,7 @@ function LoginContent() {
         sendTokenToDesktop(token);
       }
     } else {
-      router.push('/dashboard');
+      window.location.href = '/dashboard';
     }
   };
 

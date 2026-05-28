@@ -486,6 +486,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
               window.history.replaceState(null, '', window.location.pathname);
               window.dispatchEvent(new Event('clipop-auth-change'));
+
+              if (window.location.pathname === '/login' || window.location.pathname === '/register') {
+                window.location.href = '/dashboard';
+                return;
+              }
+
               return;
             }
           } catch (e) {

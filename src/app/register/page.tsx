@@ -166,7 +166,7 @@ function RegisterContent() {
           sendTokenToDesktop(token);
         }
       } else {
-        router.push('/dashboard');
+        window.location.href = '/dashboard';
       }
     } finally {
       setLoading(false);
