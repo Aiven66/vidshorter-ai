@@ -49,8 +49,6 @@ export default function RootLayout({
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.cn" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link rel="preconnect" href="https://us-assets.i.posthog.com" />
-        <link rel="preconnect" href="https://us.i.posthog.com" />
       </head>
       <body className="antialiased min-h-screen flex flex-col" suppressHydrationWarning>
         {isDev && <DevInspector />}

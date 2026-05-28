@@ -1,10 +1,27 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Sparkles, Film, Zap, Video, Scissors, Download } from 'lucide-react';
 import { useLocale } from '@/lib/locale-context';
-import VideoProcessor from '@/components/home/video-processor';
+
+const VideoProcessor = dynamic(
+  () => import('@/components/home/video-processor'),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="w-full max-w-2xl mx-auto">
+        <Card className="border-2 border-primary/20">
+          <CardContent className="p-8 text-center">
+            <div className="h-8 w-8 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+            <p className="text-sm text-muted-foreground">Loading...</p>
+          </CardContent>
+        </Card>
+      </div>
+    ),
+  }
+);
 
 export default function HomePage() {
   const { t } = useLocale();
