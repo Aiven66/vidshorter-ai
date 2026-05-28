@@ -11,11 +11,17 @@ const VideoProcessor = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="w-full max-w-2xl mx-auto">
-        <Card className="border-2 border-primary/20">
-          <CardContent className="p-8 text-center">
-            <div className="h-8 w-8 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-            <p className="text-sm text-muted-foreground">Loading...</p>
+      <div className="w-full max-w-2xl mx-auto" style={{ minHeight: '280px' }}>
+        <Card className="border-0 shadow-xl">
+          <CardHeader className="text-center pb-2">
+            <div className="h-6 bg-muted animate-pulse rounded w-48 mx-auto mb-2" />
+            <div className="h-4 bg-muted animate-pulse rounded w-32 mx-auto" />
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex gap-2">
+              <div className="flex-1 h-10 bg-muted animate-pulse rounded" />
+              <div className="h-10 w-[140px] bg-muted animate-pulse rounded" />
+            </div>
           </CardContent>
         </Card>
       </div>
