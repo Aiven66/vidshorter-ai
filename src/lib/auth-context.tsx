@@ -769,6 +769,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       if (data?.url) {
+        window.location.href = data.url;
         return { error: null };
       }
 
