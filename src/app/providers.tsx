@@ -5,7 +5,12 @@ import { ThemeProvider } from 'next-themes';
 import { AuthProvider } from '@/lib/auth-context';
 import { CreditsProvider } from '@/lib/credits-context';
 import { LocaleProvider } from '@/lib/locale-context';
-import { Toaster } from '@/components/ui/sonner';
+import dynamic from 'next/dynamic';
+
+const Toaster = dynamic(
+  () => import('@/components/ui/sonner').then(m => ({ default: m.Toaster })),
+  { ssr: false }
+);
 
 interface ErrorBoundaryState {
   hasError: boolean;
