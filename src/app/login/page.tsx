@@ -24,6 +24,13 @@ function LoginContent() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [loginSuccess, setLoginSuccess] = useState(false);
+
+  useEffect(() => {
+    const urlError = sp.get('error');
+    if (urlError) {
+      setError(decodeURIComponent(urlError));
+    }
+  }, [sp]);
   const [currentToken, setCurrentToken] = useState<string | null>(null);
   const [sentToDesktop, setSentToDesktop] = useState(false);
 

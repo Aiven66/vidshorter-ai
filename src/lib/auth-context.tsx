@@ -754,6 +754,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         provider: 'google',
         options: {
           redirectTo: redirectUrl,
+          skipBrowserRedirect: true,
           scopes: 'email profile',
           queryParams: {
             access_type: 'offline',
