@@ -5,18 +5,13 @@ import { useTheme } from 'next-themes';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from '@/components/ui/sheet';
 import { useAuth } from '@/lib/auth-context';
 import { useLocale } from '@/lib/locale-context';
 import { useCredits } from '@/lib/credits-context';
 import { Menu, Globe, User, LogOut, Video, CreditCard, LayoutDashboard, Shield, Sun, Moon, Check } from 'lucide-react';
 import dynamic from 'next/dynamic';
+import { locales, localeNames } from '@/lib/i18n';
 
 const LanguageSwitcher = dynamic(
   () => import('@/components/navbar/language-switcher').then(m => ({ default: m.LanguageSwitcher })),

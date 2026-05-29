@@ -2,10 +2,18 @@
 
 import { ReactNode, Component } from 'react';
 import { ThemeProvider } from 'next-themes';
-import { AuthProvider } from '@/lib/auth-context';
-import { CreditsProvider } from '@/lib/credits-context';
 import { LocaleProvider } from '@/lib/locale-context';
 import dynamic from 'next/dynamic';
+
+const AuthProvider = dynamic(
+  () => import('@/lib/auth-context').then(m => ({ default: m.AuthProvider })),
+  { ssr: false }
+);
+
+const CreditsProvider = dynamic(
+  () => import('@/lib/credits-context').then(m => ({ default: m.CreditsProvider })),
+  { ssr: false }
+);
 
 const Toaster = dynamic(
   () => import('@/components/ui/sonner').then(m => ({ default: m.Toaster })),
