@@ -2,8 +2,12 @@ import type { Metadata } from 'next';
 import './globals.css';
 import { Providers } from './providers';
 import { Navbar } from '@/components/navbar';
-import { Footer } from '@/components/footer';
+import dynamic from 'next/dynamic';
 import { DevInspector } from '@/components/dev-inspector';
+
+const Footer = dynamic(() => import('@/components/footer').then(m => ({ default: m.Footer })), {
+  ssr: true,
+});
 
 export const metadata: Metadata = {
   title: {
