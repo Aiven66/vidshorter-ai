@@ -1,14 +1,17 @@
 {
   "name": "clipop-macos-agent",
   "private": true,
-  "version": "0.9.6",
+  "version": "0.9.7",
   "main": "main.js",
   "scripts": {
     "prepare:runner": "node scripts/prepare-runner.js",
     "dev": "pnpm prepare:runner && electron .",
     "start": "electron .",
     "dist": "pnpm prepare:runner && electron-builder --mac --arm64",
+    "dist:zip": "pnpm prepare:runner && electron-builder --mac --arm64 --config.mac.target=zip",
+    "pack": "electron-builder --mac --arm64 --dir",
     "dist:x64": "pnpm prepare:runner && electron-builder --mac --x64",
+    "test": "node scripts/test-desktop.js",
     "test:ytdlp": "node scripts/check-ytdlp-strategies.js",
     "test:local-highlights": "node scripts/check-local-highlights-generated.js"
   },
@@ -20,7 +23,8 @@
     },
     "asar": true,
     "asarUnpack": [
-      "bin/**"
+      "bin/**",
+      "node_modules/@ffmpeg-installer/**"
     ],
     "extraResources": [
       {
@@ -37,10 +41,11 @@
       "runner.js",
       "local-highlights.js",
       "media-server.js",
+      "i18n.js",
       "package.json",
+      "icon.png",
       "bin/**",
       "renderer/**",
-      "embedded-ui/**",
       "node_modules/**"
     ],
     "mac": {

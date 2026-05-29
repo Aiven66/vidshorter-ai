@@ -391,7 +391,17 @@ async function ensureEmbeddedWeb() {
     ? path.join(dir, 'bootstrap.js')
     : (dir ? path.join(dir, 'server.js') : '');
 
-  if (!entryJs) throw new Error('Embedded Web UI not found');
+  if (!entryJs) {
+    appendLog('[Embedded] server.js not found in any candidate directory');
+    appendLog('[Embedded] Candidates checked: ' + candidates.join(', '));
+    throw new Error('Embedded Web UI not found');
+  }
+
+  const hasNext = dir && fsSync.existsSync(path.join(dir, '.next'));
+  const hasNodeModules = dir && fsSync.existsSync(path.join(dir, 'node_modules'));
+  if (!hasNext || !hasNodeModules) {
+    appendLog(`[Embedded] WARNING: Missing .next=${hasNext} node_modules=${hasNodeModules}`);
+  }
 
   appendLog(`[Embedded] Using dir: ${dir}`);
   appendLog(`[Embedded] Entry: ${entryJs}`);
@@ -439,13 +449,18 @@ async function ensureEmbeddedWeb() {
 
   appendLog(`[Embedded] NODE_PATH: ${baseEnv.NODE_PATH}`);
 
-  if (utilityProcess && typeof utilityProcess.fork === 'function') {
-    embeddedWebProc = utilityProcess.fork(entryJs, [], { cwd: dir, env: baseEnv, stdio: 'pipe' });
-  } else {
-    embeddedWebProc = spawn(process.execPath, [entryJs], {
-      cwd: dir, stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...baseEnv, ELECTRON_RUN_AS_NODE: '1' },
-    });
+  try {
+    if (utilityProcess && typeof utilityProcess.fork === 'function') {
+      embeddedWebProc = utilityProcess.fork(entryJs, [], { cwd: dir, env: baseEnv, stdio: 'pipe' });
+    } else {
+      embeddedWebProc = spawn(process.execPath, [entryJs], {
+        cwd: dir, stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...baseEnv, ELECTRON_RUN_AS_NODE: '1' },
+      });
+    }
+  } catch (forkErr) {
+    appendLog(`[Embedded] Failed to fork process: ${forkErr}`);
+    throw new Error(`Failed to start embedded web server: ${forkErr.message || String(forkErr)}`);
   }
 
   embeddedWebProc.stdout?.on('data', (b) => appendLog('[Embedded Web] ' + String(b).trim()));
@@ -470,6 +485,12 @@ async function ensureEmbeddedWeb() {
     } catch {}
     await new Promise(r => setTimeout(r, 300));
   }
+
+  if (embeddedWebProc) {
+    try { embeddedWebProc.kill(); } catch {}
+    embeddedWebProc = null;
+  }
+  embeddedWebUrl = '';
   throw new Error('Embedded Web UI timeout');
 }
 
@@ -505,15 +526,21 @@ async function ensureWebWindow() {
   // 后台启动嵌入式服务器
   let url = '';
   try {
-    // 更新状态
     webWindow.webContents.executeJavaScript(`document.getElementById('status').textContent = '${t('loading.startingServer')}'`);
     url = await ensureEmbeddedWeb();
     webWindow.webContents.executeJavaScript(`document.getElementById('status').textContent = '${t('loading.loadingInterface')}'`);
     await webWindow.loadURL(url);
   } catch (e) {
-    appendLog(`[WebWindow] Failed: ${e}`);
-    url = `data:text/html,<html><body><pre>${String(e)}</pre></body></html>`;
-    webWindow.loadURL(url);
+    appendLog(`[WebWindow] Embedded server failed: ${e}, falling back to remote URL`);
+    webWindow.webContents.executeJavaScript(`document.getElementById('status').textContent = '${t('loading.loadingInterface')}'`);
+    try {
+      await webWindow.loadURL(SERVER_URL);
+      url = SERVER_URL;
+    } catch (e2) {
+      appendLog(`[WebWindow] Remote URL also failed: ${e2}`);
+      url = `data:text/html,<html><body style="background:#0f172a;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><h2>Unable to Connect</h2><p style="color:#94a3b8">Embedded server and remote server are both unavailable.</p><p style="color:#64748b;font-size:12px;margin-top:20px">${String(e)}</p></div></body></html>`;
+      webWindow.loadURL(url);
+    }
   }
 
   webWindow.webContents.on('did-finish-load', async () => {
