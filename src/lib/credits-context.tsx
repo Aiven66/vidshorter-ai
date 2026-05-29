@@ -1,8 +1,32 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { getSupabaseClient, isSupabaseConfigured } from '@/storage/database/supabase-client';
 import { useAuth } from './auth-context';
+
+function isSupabaseConfigured(): boolean {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.COZE_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.COZE_SUPABASE_ANON_KEY;
+  if (!url || !anonKey || url === '' || anonKey === '') return false;
+  return true;
+}
+
+let _supabaseMod: typeof import('@/storage/database/supabase-client') | null = null;
+let _loadPromise: Promise<typeof import('@/storage/database/supabase-client')> | null = null;
+
+async function loadSupabaseMod() {
+  if (_supabaseMod) return _supabaseMod;
+  if (_loadPromise) return _loadPromise;
+  _loadPromise = import('@/storage/database/supabase-client').then(mod => {
+    _supabaseMod = mod;
+    return mod;
+  });
+  return _loadPromise;
+}
+
+async function getSupabaseClient(token?: string) {
+  const mod = await loadSupabaseMod();
+  return mod.getSupabaseClient(token);
+}
 
 interface CreditsContextType {
   balance: number;

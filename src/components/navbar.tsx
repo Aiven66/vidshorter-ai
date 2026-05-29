@@ -6,12 +6,27 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from '@/components/ui/sheet';
-import { useAuth } from '@/lib/auth-context';
 import { useLocale } from '@/lib/locale-context';
-import { useCredits } from '@/lib/credits-context';
-import { Menu, Globe, User, LogOut, Video, CreditCard, LayoutDashboard, Shield, Sun, Moon, Check } from 'lucide-react';
+import { Menu, Globe, Video, Sun, Moon } from 'lucide-react';
 import dynamic from 'next/dynamic';
-import { locales, localeNames } from '@/lib/i18n';
+
+const NavbarUserSection = dynamic(
+  () => import('@/components/navbar/navbar-user-section').then(m => ({ default: m.NavbarUserSection })),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex items-center gap-2">
+        <div className="h-9 w-16 bg-muted animate-pulse rounded" />
+        <div className="h-9 w-20 bg-muted animate-pulse rounded" />
+      </div>
+    ),
+  }
+);
+
+const MobileUserSection = dynamic(
+  () => import('@/components/navbar/mobile-user-section').then(m => ({ default: m.MobileUserSection })),
+  { ssr: false }
+);
 
 const LanguageSwitcher = dynamic(
   () => import('@/components/navbar/language-switcher').then(m => ({ default: m.LanguageSwitcher })),
@@ -24,9 +39,7 @@ const MobileLanguageGrid = dynamic(
 );
 
 export function Navbar() {
-  const { user, signOut } = useAuth();
-  const { locale, setLocale, t } = useLocale();
-  const { balance } = useCredits();
+  const { t } = useLocale();
   const { theme, setTheme } = useTheme();
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -44,9 +57,6 @@ export function Navbar() {
     };
     checkDesktop();
   }, []);
-
-  const showUser = mounted && !!user;
-  const isAdmin = user?.role === 'admin';
 
   const toggleTheme = () => setTheme(theme === 'dark' ? 'light' : 'dark');
 
@@ -109,95 +119,7 @@ export function Navbar() {
 
             <LanguageSwitcher />
 
-            {showUser ? (
-              <>
-                <div className="flex items-center gap-2 px-3 py-1.5 bg-muted rounded-lg text-sm">
-                  <CreditCard className="h-4 w-4 text-primary" />
-                  <span>{balance} {t('nav.credits')}</span>
-                </div>
-
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" className="gap-2">
-                      {user?.avatarUrl ? (
-                        <img 
-                          src={user.avatarUrl} 
-                          alt={user.name || user.email} 
-                          className="h-8 w-8 rounded-full object-cover"
-                        />
-                      ) : (
-                        <User className="h-5 w-5" />
-                      )}
-                      <span className="text-sm font-medium hidden md:inline">
-                        {user?.name || user.email?.split('@')[0] || t('common.user')}
-                      </span>
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <div className="px-3 py-2 border-b border-border">
-                      <p className="text-sm font-medium">{user?.name || t('common.user')}</p>
-                      <p className="text-xs text-muted-foreground">{user?.email}</p>
-                    </div>
-                    <DropdownMenuItem asChild>
-                      <Link href="/dashboard" className="flex items-center gap-2">
-                        <LayoutDashboard className="h-4 w-4" />
-                        {t('nav.dashboard')}
-                      </Link>
-                    </DropdownMenuItem>
-                    {isAdmin && (
-                      <DropdownMenuItem asChild>
-                        <Link href="/admin" className="flex items-center gap-2">
-                          <Shield className="h-4 w-4" />
-                          {t('nav.admin')}
-                        </Link>
-                      </DropdownMenuItem>
-                    )}
-                    <DropdownMenuItem onClick={signOut} className="text-destructive">
-                      <LogOut className="h-4 w-4 mr-2" />
-                      {t('nav.logout')}
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </>
-            ) : (
-              <div className="flex items-center gap-2">
-                {isDesktop ? (
-                  <>
-                    <Button variant="ghost" onClick={async () => {
-                      if (window.clipopDesktop?.openWebLogin) {
-                        await window.clipopDesktop.openWebLogin();
-                      } else if ((window as any).agent?.openWebLogin) {
-                        await (window as any).agent.openWebLogin();
-                      } else {
-                        window.open('https://clipopai.vercel.app/login?from=desktop', '_blank');
-                      }
-                    }}>
-                      {t('nav.login')}
-                    </Button>
-                    <Button onClick={async () => {
-                      if (window.clipopDesktop?.openWebRegister) {
-                        await window.clipopDesktop.openWebRegister();
-                      } else if ((window as any).agent?.openWebRegister) {
-                        await (window as any).agent.openWebRegister();
-                      } else {
-                        window.open('https://clipopai.vercel.app/register?from=desktop', '_blank');
-                      }
-                    }}>
-                      {t('nav.register')}
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                    <Button variant="ghost" asChild>
-                      <Link href="/login">{t('nav.login')}</Link>
-                    </Button>
-                    <Button asChild>
-                      <Link href="/register">{t('nav.register')}</Link>
-                    </Button>
-                  </>
-                )}
-              </div>
-            )}
+            <NavbarUserSection mounted={mounted} isDesktop={isDesktop} />
           </div>
 
           <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
@@ -258,90 +180,7 @@ export function Navbar() {
 
                 <hr className="my-2" />
 
-                {showUser ? (
-                  <>
-                    <div className="flex items-center gap-2 py-2">
-                      <CreditCard className="h-5 w-5 text-primary" />
-                      <span className="font-medium">{balance} {t('nav.credits')}</span>
-                    </div>
-
-                    <Link
-                      href="/dashboard"
-                      onClick={() => setMobileOpen(false)}
-                      className="flex items-center gap-2 py-2 text-lg font-medium"
-                    >
-                      <LayoutDashboard className="h-5 w-5" />
-                      {t('nav.dashboard')}
-                    </Link>
-
-                    {isAdmin && (
-                      <Link
-                        href="/admin"
-                        onClick={() => setMobileOpen(false)}
-                        className="flex items-center gap-2 py-2 text-lg font-medium"
-                      >
-                        <Shield className="h-5 w-5" />
-                        {t('nav.admin')}
-                      </Link>
-                    )}
-
-                    <Button
-                      variant="destructive"
-                      className="mt-4"
-                      onClick={() => {
-                        signOut();
-                        setMobileOpen(false);
-                      }}
-                    >
-                      <LogOut className="h-4 w-4 mr-2" />
-                      {t('nav.logout')}
-                    </Button>
-                  </>
-                ) : (
-                  <div className="flex flex-col gap-2 mt-4">
-                    {isDesktop ? (
-                      <>
-                        <Button variant="outline" onClick={async () => { 
-                          setMobileOpen(false); 
-                          if (window.clipopDesktop?.openWebLogin) {
-                            await window.clipopDesktop.openWebLogin();
-                          } else if ((window as any).agent?.openWebLogin) {
-                            await (window as any).agent.openWebLogin();
-                          } else {
-                            window.open('https://clipopai.vercel.app/login?from=desktop', '_blank');
-                          }
-                        }}>
-                          {t('nav.login')}
-                        </Button>
-                        <Button onClick={async () => { 
-                          setMobileOpen(false); 
-                          if (window.clipopDesktop?.openWebRegister) {
-                            await window.clipopDesktop.openWebRegister();
-                          } else if ((window as any).agent?.openWebRegister) {
-                            await (window as any).agent.openWebRegister();
-                          } else {
-                            window.open('https://clipopai.vercel.app/register?from=desktop', '_blank');
-                          }
-                        }}>
-                          {t('nav.register')}
-                        </Button>
-                      </>
-                    ) : (
-                      <>
-                        <Button variant="outline" asChild>
-                          <Link href="/login" onClick={() => setMobileOpen(false)}>
-                            {t('nav.login')}
-                          </Link>
-                        </Button>
-                        <Button asChild>
-                          <Link href="/register" onClick={() => setMobileOpen(false)}>
-                            {t('nav.register')}
-                          </Link>
-                        </Button>
-                      </>
-                    )}
-                  </div>
-                )}
+                <MobileUserSection mounted={mounted} onCloseMobile={() => setMobileOpen(false)} />
               </div>
             </SheetContent>
           </Sheet>

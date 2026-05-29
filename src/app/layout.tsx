@@ -1,9 +1,9 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { Providers } from './providers';
+import { Navbar } from '@/components/navbar';
 import { Footer } from '@/components/footer';
 import { DevInspector } from '@/components/dev-inspector';
-import ClientNavbar from '@/components/client-navbar';
 import LazyPostHog from '@/components/lazy-posthog';
 
 export const metadata: Metadata = {
@@ -47,10 +47,14 @@ export default function RootLayout({
 
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+      </head>
       <body className="antialiased min-h-screen flex flex-col" suppressHydrationWarning>
         {isDev && <DevInspector />}
         <Providers>
-          <ClientNavbar />
+          <Navbar />
           <main className="flex-1">{children}</main>
           <Footer />
         </Providers>
