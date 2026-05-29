@@ -52,7 +52,7 @@ const translations = {
   register: {
   title: 'アカウント作成', description: 'Clipop AIを始める', nameLabel: 'フルネーム', namePlaceholder: 'John Doe', emailLabel: 'メールアドレス', emailPlaceholder: 'you@example.com', passwordLabel: 'パスワード', passwordPlaceholder: '••••••••', confirmPasswordLabel: 'パスワード確認', confirmPasswordPlaceholder: '••••••••', sendCodeButton: '続行', sendingCode: '送信中...', codeLabel: '認証コード', codePlaceholder: '6桁のコードを入力', verifyButton: 'アカウント作成', codeNotReceived: 'コードを受け取っていませんか？', resendButton: '再送', resendIn: '再送', backButton: '戻る', googleButton: 'Googleで続行', alreadyHaveAccount: 'アカウントをお持ちですか？', signIn: 'ログイン',
   errorNameRequired: '名前を入力してください', errorEmailRequired: 'メールアドレスを入力してください', errorPasswordLength: 'パスワードは6文字以上である必要があります', errorPasswordMismatch: 'パスワードが一致しません', errorEmailExists: 'このメールアドレスは既に登録されています。ログインしてください。', errorSendCode: 'コードの送信に失敗しました', errorNetwork: 'ネットワークエラー。もう一度お試しください。', errorCodeLength: '6桁のコードを入力してください',
-  agreeTerms: '{利用規約}と{プライバシーポリシー}に同意します', termsLink: '利用規約', privacyLink: 'プライバシーポリシー', errorAgreeTerms: '利用規約とプライバシーポリシーに同意してください',
+  agreeTerms: '{terms}と{privacy}に同意します', termsLink: '利用規約', privacyLink: 'プライバシーポリシー', errorAgreeTerms: '利用規約とプライバシーポリシーに同意してください',
   successTitle: 'アカウント作成完了！', successMessage: 'アカウントが作成されました：', successDesktopHint: '下のボタンをクリックしてデスクトップアプリに戻ってください。', returnToDesktop: 'Clipop Agentに戻る', desktopNotOpened: 'デスクトップアプリが自動的に開かない場合は、Clipop Agentが実行されていることを確認してください。',
   },
   dashboard: { title: 'ダッシュボード', credits: '利用可能なクレジット', creditsReset: '毎日00:00 UTCでリセット', history: '処理履歴', noVideos: 'まだ処理された動画はありません', startProcessing: '動画処理を開始',

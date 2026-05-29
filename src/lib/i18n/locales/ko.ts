@@ -52,7 +52,7 @@ const translations = {
   register: {
   title: '계정 생성', description: 'Clipop AI로 시작', nameLabel: '이름', namePlaceholder: 'John Doe', emailLabel: '이메일', emailPlaceholder: 'you@example.com', passwordLabel: '비밀번호', passwordPlaceholder: '••••••••', confirmPasswordLabel: '비밀번호 확인', confirmPasswordPlaceholder: '••••••••', sendCodeButton: '계속', sendingCode: '전송 중...', codeLabel: '인증 코드', codePlaceholder: '6자리 코드 입력', verifyButton: '계정 생성', codeNotReceived: '코드를 받지 못하셨나요?', resendButton: '재전송', resendIn: '재전송', backButton: '뒤로', googleButton: 'Google로 계속', alreadyHaveAccount: '이미 계정이 있으신가요?', signIn: '로그인',
   errorNameRequired: '이름을 입력해 주세요', errorEmailRequired: '이메일을 입력해 주세요', errorPasswordLength: '비밀번호는 6자 이상이어야 합니다', errorPasswordMismatch: '비밀번호가 일치하지 않습니다', errorEmailExists: '이 이메일은 이미 등록되어 있습니다. 로그인해 주세요.', errorSendCode: '코드 전송에 실패했습니다', errorNetwork: '네트워크 오류. 다시 시도해 주세요.', errorCodeLength: '6자리 코드를 입력해 주세요',
-  agreeTerms: '{이용약관} 및 {개인정보 처리방침}에 동의합니다', termsLink: '이용약관', privacyLink: '개인정보 처리방침', errorAgreeTerms: '이용약관 및 개인정보 처리방침에 동의해야 합니다',
+  agreeTerms: '{terms} 및 {privacy}에 동의합니다', termsLink: '이용약관', privacyLink: '개인정보 처리방침', errorAgreeTerms: '이용약관 및 개인정보 처리방침에 동의해야 합니다',
   successTitle: '계정 생성 완료!', successMessage: '계정이 생성되었습니다:', successDesktopHint: '아래 버튼을 클릭하여 데스크톱 앱으로 돌아가세요.', returnToDesktop: 'Clipop Agent로 돌아가기', desktopNotOpened: '데스크톱 앱이 자동으로 열리지 않으면 Clipop Agent가 실행 중인지 확인하세요.',
   },
   dashboard: { title: '대시보드', credits: '사용 가능한 크레딧', creditsReset: '매일 00:00 UTC에 리셋', history: '처리 기록', noVideos: '아직 처리된 비디오가 없습니다', startProcessing: '비디오 처리 시작',

@@ -61,7 +61,7 @@ const translations = {
   register: {
   title: '建立帳戶', description: '開始使用Clipop AI', nameLabel: '姓名', namePlaceholder: '張三', emailLabel: '電子郵件', emailPlaceholder: 'you@example.com', passwordLabel: '密碼', passwordPlaceholder: '••••••••', confirmPasswordLabel: '確認密碼', confirmPasswordPlaceholder: '••••••••', sendCodeButton: '繼續', sendingCode: '發送中...', codeLabel: '驗證碼', codePlaceholder: '輸入6位驗證碼', verifyButton: '建立帳戶', codeNotReceived: '未收到驗證碼？', resendButton: '重新發送', resendIn: '重新發送', backButton: '返回', googleButton: '使用Google登入', alreadyHaveAccount: '已有帳戶？', signIn: '登入',
   errorNameRequired: '請輸入您的姓名', errorEmailRequired: '請輸入您的電子郵件', errorPasswordLength: '密碼至少需要6個字元', errorPasswordMismatch: '密碼不一致', errorEmailExists: '此電子郵件已註冊，請改為登入。', errorSendCode: '無法發送驗證碼', errorNetwork: '網路錯誤，請重試。', errorCodeLength: '請輸入6位驗證碼',
-  agreeTerms: '我同意{使用聲明}和{隱私權政策}', termsLink: '使用聲明', privacyLink: '隱私權政策', errorAgreeTerms: '請同意使用聲明和隱私權政策',
+  agreeTerms: '我同意{terms}和{privacy}', termsLink: '使用聲明', privacyLink: '隱私權政策', errorAgreeTerms: '請同意使用聲明和隱私權政策',
   successTitle: '帳戶建立成功！', successMessage: '您的帳戶已成功建立', successDesktopHint: '點擊下方按鈕返回桌面應用程式。', returnToDesktop: '返回 Clipop Agent', desktopNotOpened: '如果桌面應用程式沒有自動開啟，請確保 Clipop Agent 正在執行。',
   },
   dashboard: { title: '儀錶板', credits: '可用積分', creditsReset: '每天00:00 UTC重置', history: '處理歷史', noVideos: '暫無處理的影片', startProcessing: '開始處理影片',

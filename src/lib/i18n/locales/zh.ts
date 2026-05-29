@@ -124,7 +124,7 @@ const translations = {
   register: {
   title: '创建账户', description: '开始使用Clipop AI', nameLabel: '姓名', namePlaceholder: '张三', emailLabel: '邮箱', emailPlaceholder: 'you@example.com', passwordLabel: '密码', passwordPlaceholder: '••••••••', confirmPasswordLabel: '确认密码', confirmPasswordPlaceholder: '••••••••', sendCodeButton: '继续', sendingCode: '发送中...', codeLabel: '验证码', codePlaceholder: '输入6位验证码', verifyButton: '创建账户', codeNotReceived: '未收到验证码？', resendButton: '重新发送', resendIn: '重新发送', backButton: '返回', googleButton: '使用Google登录', alreadyHaveAccount: '已有账户？', signIn: '登录',
   errorNameRequired: '请输入姓名', errorEmailRequired: '请输入邮箱', errorPasswordLength: '密码至少需要6个字符', errorPasswordMismatch: '两次输入的密码不一致', errorEmailExists: '该邮箱已注册，请直接登录。', errorSendCode: '发送验证码失败', errorNetwork: '网络错误，请重试。', errorCodeLength: '请输入6位验证码',
-  agreeTerms: '我同意{使用声明}和{隐私政策}', termsLink: '使用声明', privacyLink: '隐私政策', errorAgreeTerms: '请同意使用声明和隐私政策',
+  agreeTerms: '我同意{terms}和{privacy}', termsLink: '使用声明', privacyLink: '隐私政策', errorAgreeTerms: '请同意使用声明和隐私政策',
   successTitle: '账户创建成功！', successMessage: '您已成功创建账户', successDesktopHint: '点击下方按钮返回桌面应用。', returnToDesktop: '返回 Clipop Agent', desktopNotOpened: '如果桌面应用没有自动打开，请确保 Clipop Agent 正在运行。',
   },
   dashboard: { title: '控制台', credits: '可用积分', creditsReset: '每天00:00 UTC重置', history: '处理历史', noVideos: '暂无处理的视频', startProcessing: '开始处理视频',
