@@ -360,12 +360,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (initializedRef.current) return;
     initializedRef.current = true;
 
-    const handleOAuthCallback = async () => {
-      if (typeof window === 'undefined') return;
+    let desktopHandler: ((event: Event) => void) | null = null;
+    let authChangeHandler: (() => void) | null = null;
 
-      const hash = window.location.hash;
-      const search = window.location.search;
-      const params = new URLSearchParams();
+    const init = () => {
+      const handleOAuthCallback = async () => {
+        if (typeof window === 'undefined') return;
+
+        const hash = window.location.hash;
+        const search = window.location.search;
+        const params = new URLSearchParams();
 
       if (hash) {
         const hashParams = new URLSearchParams(hash.substring(1));
@@ -459,23 +463,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     handleOAuthCallback();
 
-    const handleDesktopLogin = (event: Event) => {
+    desktopHandler = (event: Event) => {
       const detail = event instanceof CustomEvent ? event.detail : null;
       if (detail?.token) {
         applyDesktopToken(detail.token, setUser, setAccessToken, setLoading, setUseDemo);
       }
     };
 
-    const handleAuthChange = () => {
+    authChangeHandler = () => {
       checkAuthState();
     };
 
-    window.addEventListener('clipop-desktop-login', handleDesktopLogin);
-    window.addEventListener('clipop-auth-change', handleAuthChange);
+    window.addEventListener('clipop-desktop-login', desktopHandler);
+    window.addEventListener('clipop-auth-change', authChangeHandler);
+    };
+
+    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+      (window as any).requestIdleCallback(init);
+    } else {
+      setTimeout(init, 100);
+    }
 
     return () => {
-      window.removeEventListener('clipop-desktop-login', handleDesktopLogin);
-      window.removeEventListener('clipop-auth-change', handleAuthChange);
+      if (desktopHandler) window.removeEventListener('clipop-desktop-login', desktopHandler);
+      if (authChangeHandler) window.removeEventListener('clipop-auth-change', authChangeHandler);
     };
   }, [checkAuthState]);
 
