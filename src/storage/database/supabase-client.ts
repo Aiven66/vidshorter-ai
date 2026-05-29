@@ -1,11 +1,10 @@
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
-
 interface SupabaseCredentials {
   url: string;
   anonKey: string;
 }
 
-let cachedClient: SupabaseClient | null = null;
+let SupabaseClientClass: any = null;
+let cachedClient: any = null;
 
 function isSupabaseConfigured(): boolean {
   const url = 
@@ -57,45 +56,91 @@ function getSupabaseCredentials(): SupabaseCredentials {
   return { url, anonKey };
 }
 
-function getSupabaseClient(token?: string): SupabaseClient {
-  const { url, anonKey } = getSupabaseCredentials();
+async function loadSupabaseModule() {
+  if (SupabaseClientClass) return SupabaseClientClass;
+  const mod = await import('@supabase/supabase-js');
+  SupabaseClientClass = mod.createClient;
+  return SupabaseClientClass;
+}
 
+function getSupabaseClient(token?: string) {
   if (cachedClient && !token) {
     return cachedClient;
   }
 
+  const { url, anonKey } = getSupabaseCredentials();
+
   if (!url || !anonKey) {
-    const client = createClient('https://placeholder.supabase.co', 'placeholder-key', {
-      global: token ? {
-        headers: { Authorization: `Bearer ${token}` },
-      } : undefined,
-      db: { timeout: 1000 },
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false,
-        detectSessionInUrl: false,
+    const createPlaceholderClient = () => {
+      const placeholder: any = {
+        auth: {
+          getSession: async () => ({ data: { session: null } }),
+          getUser: async () => ({ data: { user: null } }),
+          signInWithPassword: async () => ({ data: { session: null }, error: new Error('Not configured') }),
+          signUp: async () => ({ data: { session: null }, error: new Error('Not configured') }),
+          signInWithOAuth: async () => ({ data: { url: null }, error: new Error('Not configured') }),
+          signOut: async () => ({}),
+          setSession: async () => ({ data: { session: null }, error: null }),
+        },
+        from: () => ({
+          select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null }) }) }),
+          insert: async () => ({ error: null }),
+        }),
+      };
+      return placeholder;
+    };
+    return createPlaceholderClient();
+  }
+
+  if (typeof window !== 'undefined' && !cachedClient) {
+    const lazyClient: any = {
+      _realClient: null,
+      _initPromise: null,
+      _ensureClient: async function() {
+        if (this._realClient) return this._realClient;
+        if (this._initPromise) return this._initPromise;
+        this._initPromise = loadSupabaseModule().then(createClient => {
+          this._realClient = createClient(url, anonKey, {
+            global: token ? { headers: { Authorization: `Bearer ${token}` } } : undefined,
+            db: { timeout: 60000 },
+            auth: {
+              autoRefreshToken: true,
+              persistSession: true,
+              detectSessionInUrl: true,
+            },
+          });
+          cachedClient = this._realClient;
+          return this._realClient;
+        });
+        return this._initPromise;
       },
-    });
-    return client;
+      get auth() {
+        const self = this;
+        return new Proxy({}, {
+          get(_, prop) {
+            return async (...args: any[]) => {
+              const client = await self._ensureClient();
+              return client.auth[prop](...args);
+            };
+          }
+        });
+      },
+      from(table: string) {
+        const self = this;
+        return new Proxy({}, {
+          get(_, prop) {
+            return async (...args: any[]) => {
+              const client = await self._ensureClient();
+              return client.from(table)[prop](...args);
+            };
+          }
+        });
+      },
+    };
+    return lazyClient;
   }
 
-  const client = createClient(url, anonKey, {
-    global: token ? {
-      headers: { Authorization: `Bearer ${token}` },
-    } : undefined,
-    db: { timeout: 60000 },
-    auth: {
-      autoRefreshToken: true,
-      persistSession: typeof window !== 'undefined',
-      detectSessionInUrl: true,
-    },
-  });
-
-  if (!token && !cachedClient) {
-    cachedClient = client;
-  }
-
-  return client;
+  return cachedClient;
 }
 
 export { getSupabaseCredentials, getSupabaseClient, isSupabaseConfigured };

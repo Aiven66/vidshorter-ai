@@ -5,7 +5,6 @@ import { ThemeProvider } from 'next-themes';
 import { AuthProvider } from '@/lib/auth-context';
 import { CreditsProvider } from '@/lib/credits-context';
 import { LocaleProvider } from '@/lib/locale-context';
-import { PostHogProvider } from '@/lib/posthog-provider';
 import { Toaster } from '@/components/ui/sonner';
 
 interface ErrorBoundaryState {
@@ -49,15 +48,11 @@ export function Providers({ children }: { children: ReactNode }) {
         <LocaleProvider>
           <ProviderErrorBoundary name="Auth">
             <AuthProvider>
-              <ProviderErrorBoundary name="PostHog">
-                <PostHogProvider>
-                  <ProviderErrorBoundary name="Credits">
-                    <CreditsProvider>
-                      {children}
-                      <Toaster />
-                    </CreditsProvider>
-                  </ProviderErrorBoundary>
-                </PostHogProvider>
+              <ProviderErrorBoundary name="Credits">
+                <CreditsProvider>
+                  {children}
+                  <Toaster />
+                </CreditsProvider>
               </ProviderErrorBoundary>
             </AuthProvider>
           </ProviderErrorBoundary>
