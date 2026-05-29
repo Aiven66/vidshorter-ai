@@ -142,7 +142,7 @@ function clearDemoUser() {
 
 async function verifyTokenAndFetchUser(token: string): Promise<User | null> {
   try {
-    const client = getSupabaseClient(token);
+    const client = await getSupabaseClient(token);
     const { data: { user: authUser } } = await client.auth.getUser();
     if (!authUser) return null;
 
@@ -338,7 +338,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      const client = getSupabaseClient();
+      const client = await getSupabaseClient();
       const { data: { session } } = await client.auth.getSession();
 
       if (session?.user) {
@@ -416,7 +416,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (accessToken && refreshToken) {
           try {
-            const client = getSupabaseClient();
+            const client = await getSupabaseClient();
             const { data, error: sessionError } = await client.auth.setSession({
               access_token: accessToken,
               refresh_token: refreshToken,
@@ -560,7 +560,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      const client = getSupabaseClient();
+      const client = await getSupabaseClient();
       const { data, error: authError } = await client.auth.signInWithPassword({ email, password });
 
       if (authError) {
@@ -648,7 +648,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      const client = getSupabaseClient();
+      const client = await getSupabaseClient();
       const { error: authError } = await client.auth.signUp({
         email,
         password,
@@ -742,7 +742,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      const client = getSupabaseClient();
+      const client = await getSupabaseClient();
       const params = new URLSearchParams(window.location.search);
       const fromDesktop = params.get('from') === 'desktop';
 
@@ -805,7 +805,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         localStorage.removeItem('clipop_access_token');
       }
 
-      const client = getSupabaseClient();
+      const client = await getSupabaseClient();
       await client.auth.signOut();
       setUser(null);
       setAccessToken(null);

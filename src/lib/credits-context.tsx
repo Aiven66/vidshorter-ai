@@ -183,7 +183,7 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      const client = getSupabaseClient(accessToken);
+      const client = await getSupabaseClient(accessToken);
       const { data: sub } = await client
         .from('subscriptions')
         .select('plan_type')
@@ -253,7 +253,7 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
     
     try {
       if (!accessToken) return balance;
-      const client = getSupabaseClient(accessToken);
+      const client = await getSupabaseClient(accessToken);
 
       if (user.role === 'admin') {
         const adminBalance = Math.max(balance, ADMIN_CREDITS);
@@ -324,7 +324,7 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
     
     try {
       if (!accessToken) return false;
-      const client = getSupabaseClient(accessToken);
+      const client = await getSupabaseClient(accessToken);
       const newBalance = balance - amount;
       
       const { error } = await client
