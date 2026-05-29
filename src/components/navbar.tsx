@@ -180,7 +180,7 @@ export function Navbar() {
 
                 <hr className="my-2" />
 
-                <MobileUserSection mounted={mounted} onCloseMobile={() => setMobileOpen(false)} />
+                <MobileUserSection mounted={mounted} isDesktop={isDesktop} onCloseMobile={() => setMobileOpen(false)} />
               </div>
             </SheetContent>
           </Sheet>
