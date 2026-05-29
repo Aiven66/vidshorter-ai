@@ -46,6 +46,9 @@ const nextConfig: NextConfig = {
     optimizePackageImports: [
       'lucide-react',
       '@radix-ui/react-icons',
+      '@radix-ui/react-dropdown-menu',
+      '@radix-ui/react-dialog',
+      '@radix-ui/react-sheet',
       'date-fns',
     ],
   },

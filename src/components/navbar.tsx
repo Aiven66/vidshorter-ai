@@ -5,26 +5,32 @@ import { useTheme } from 'next-themes';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from '@/components/ui/sheet';
 import { useAuth } from '@/lib/auth-context';
 import { useLocale } from '@/lib/locale-context';
 import { useCredits } from '@/lib/credits-context';
-import { Menu, Video, Sun, Moon } from 'lucide-react';
+import { Menu, Globe, User, LogOut, Video, CreditCard, LayoutDashboard, Shield, Sun, Moon, Check } from 'lucide-react';
 import dynamic from 'next/dynamic';
 
 const LanguageSwitcher = dynamic(
-  () => import('./navbar/language-switcher').then(m => ({ default: m.LanguageSwitcher })),
+  () => import('@/components/navbar/language-switcher').then(m => ({ default: m.LanguageSwitcher })),
   { ssr: false }
 );
 
-const UserMenu = dynamic(
-  () => import('./navbar/user-menu').then(m => ({ default: m.UserMenu })),
+const MobileLanguageGrid = dynamic(
+  () => import('@/components/navbar/mobile-language-grid').then(m => ({ default: m.MobileLanguageGrid })),
   { ssr: false }
 );
 
 export function Navbar() {
   const { user, signOut } = useAuth();
-  const { t, locale, setLocale } = useLocale();
+  const { locale, setLocale, t } = useLocale();
   const { balance } = useCredits();
   const { theme, setTheme } = useTheme();
   const pathname = usePathname();
@@ -46,6 +52,7 @@ export function Navbar() {
 
   const showUser = mounted && !!user;
   const isAdmin = user?.role === 'admin';
+
   const toggleTheme = () => setTheme(theme === 'dark' ? 'light' : 'dark');
 
   const navItems = isDesktop
@@ -108,7 +115,55 @@ export function Navbar() {
             <LanguageSwitcher />
 
             {showUser ? (
-              <UserMenu />
+              <>
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-muted rounded-lg text-sm">
+                  <CreditCard className="h-4 w-4 text-primary" />
+                  <span>{balance} {t('nav.credits')}</span>
+                </div>
+
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" className="gap-2">
+                      {user?.avatarUrl ? (
+                        <img 
+                          src={user.avatarUrl} 
+                          alt={user.name || user.email} 
+                          className="h-8 w-8 rounded-full object-cover"
+                        />
+                      ) : (
+                        <User className="h-5 w-5" />
+                      )}
+                      <span className="text-sm font-medium hidden md:inline">
+                        {user?.name || user.email?.split('@')[0] || t('common.user')}
+                      </span>
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <div className="px-3 py-2 border-b border-border">
+                      <p className="text-sm font-medium">{user?.name || t('common.user')}</p>
+                      <p className="text-xs text-muted-foreground">{user?.email}</p>
+                    </div>
+                    <DropdownMenuItem asChild>
+                      <Link href="/dashboard" className="flex items-center gap-2">
+                        <LayoutDashboard className="h-4 w-4" />
+                        {t('nav.dashboard')}
+                      </Link>
+                    </DropdownMenuItem>
+                    {isAdmin && (
+                      <DropdownMenuItem asChild>
+                        <Link href="/admin" className="flex items-center gap-2">
+                          <Shield className="h-4 w-4" />
+                          {t('nav.admin')}
+                        </Link>
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuItem onClick={signOut} className="text-destructive">
+                      <LogOut className="h-4 w-4 mr-2" />
+                      {t('nav.logout')}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </>
             ) : (
               <div className="flex items-center gap-2">
                 {isDesktop ? (
@@ -162,12 +217,22 @@ export function Navbar() {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-medium text-muted-foreground">
-                      Theme
+                      <Globe className="h-4 w-4 inline mr-1" />
+                      Language
                     </span>
-                    <Button variant="outline" size="sm" onClick={toggleTheme}>
-                      {mounted && theme === 'dark' ? t('nav.light') : t('nav.dark')}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={toggleTheme}
+                    >
+                      {mounted && theme === 'dark' ? (
+                        <><Sun className="h-4 w-4 mr-1" />{t('nav.light')}</>
+                      ) : (
+                        <><Moon className="h-4 w-4 mr-1" />{t('nav.dark')}</>
+                      )}
                     </Button>
                   </div>
+                  <MobileLanguageGrid />
                 </div>
 
                 {navItems.map((item) =>
@@ -201,24 +266,30 @@ export function Navbar() {
                 {showUser ? (
                   <>
                     <div className="flex items-center gap-2 py-2">
+                      <CreditCard className="h-5 w-5 text-primary" />
                       <span className="font-medium">{balance} {t('nav.credits')}</span>
                     </div>
+
                     <Link
                       href="/dashboard"
                       onClick={() => setMobileOpen(false)}
                       className="flex items-center gap-2 py-2 text-lg font-medium"
                     >
+                      <LayoutDashboard className="h-5 w-5" />
                       {t('nav.dashboard')}
                     </Link>
+
                     {isAdmin && (
                       <Link
                         href="/admin"
                         onClick={() => setMobileOpen(false)}
                         className="flex items-center gap-2 py-2 text-lg font-medium"
                       >
+                        <Shield className="h-5 w-5" />
                         {t('nav.admin')}
                       </Link>
                     )}
+
                     <Button
                       variant="destructive"
                       className="mt-4"
@@ -227,21 +298,53 @@ export function Navbar() {
                         setMobileOpen(false);
                       }}
                     >
+                      <LogOut className="h-4 w-4 mr-2" />
                       {t('nav.logout')}
                     </Button>
                   </>
                 ) : (
                   <div className="flex flex-col gap-2 mt-4">
-                    <Button variant="outline" asChild>
-                      <Link href="/login" onClick={() => setMobileOpen(false)}>
-                        {t('nav.login')}
-                      </Link>
-                    </Button>
-                    <Button asChild>
-                      <Link href="/register" onClick={() => setMobileOpen(false)}>
-                        {t('nav.register')}
-                      </Link>
-                    </Button>
+                    {isDesktop ? (
+                      <>
+                        <Button variant="outline" onClick={async () => { 
+                          setMobileOpen(false); 
+                          if (window.clipopDesktop?.openWebLogin) {
+                            await window.clipopDesktop.openWebLogin();
+                          } else if ((window as any).agent?.openWebLogin) {
+                            await (window as any).agent.openWebLogin();
+                          } else {
+                            window.open('https://clipopai.vercel.app/login?from=desktop', '_blank');
+                          }
+                        }}>
+                          {t('nav.login')}
+                        </Button>
+                        <Button onClick={async () => { 
+                          setMobileOpen(false); 
+                          if (window.clipopDesktop?.openWebRegister) {
+                            await window.clipopDesktop.openWebRegister();
+                          } else if ((window as any).agent?.openWebRegister) {
+                            await (window as any).agent.openWebRegister();
+                          } else {
+                            window.open('https://clipopai.vercel.app/register?from=desktop', '_blank');
+                          }
+                        }}>
+                          {t('nav.register')}
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <Button variant="outline" asChild>
+                          <Link href="/login" onClick={() => setMobileOpen(false)}>
+                            {t('nav.login')}
+                          </Link>
+                        </Button>
+                        <Button asChild>
+                          <Link href="/register" onClick={() => setMobileOpen(false)}>
+                            {t('nav.register')}
+                          </Link>
+                        </Button>
+                      </>
+                    )}
                   </div>
                 )}
               </div>

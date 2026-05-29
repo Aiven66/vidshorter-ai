@@ -1,6 +1,6 @@
 import { flattenTranslations, commonTranslations } from '@/lib/i18n';
 import { HomeHero, HomeFeatures, HomeHowItWorks } from '@/components/home/home-sections';
-import ClientHomeContent from '@/components/home/client-home-content';
+import ClientVideoProcessor from '@/components/home/client-video-processor';
 
 const en = flattenTranslations(commonTranslations);
 const defaultT = (key: string) => en[key] || key;
@@ -15,11 +15,10 @@ export default function HomePage() {
         </div>
         <div className="container mx-auto px-4 py-12 md:py-20">
           <div className="max-w-4xl mx-auto">
-            <ClientHomeContent
-              heroSlot={<HomeHero t={defaultT} />}
-              featuresSlot={<HomeFeatures t={defaultT} />}
-              howItWorksSlot={<HomeHowItWorks t={defaultT} />}
-            />
+            <HomeHero t={defaultT} />
+            <ClientVideoProcessor />
+            <HomeFeatures t={defaultT} />
+            <HomeHowItWorks t={defaultT} />
           </div>
         </div>
       </section>
