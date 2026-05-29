@@ -13,6 +13,7 @@ import Link from 'next/link';
 import { Video, Mail, Lock, User, Loader2, CheckCircle, AlertCircle, KeyRound } from 'lucide-react';
 import { Suspense } from 'react';
 import { GoogleLoginButton } from '@/components/google-login-button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { posthog } from '@/lib/posthog';
 
 type Step = 'info' | 'verify' | 'done';
@@ -36,6 +37,7 @@ function RegisterContent() {
   const [desktopToken, setDesktopToken] = useState<string | null>(null);
   const [desktopEmail, setDesktopEmail] = useState('');
   const [sentToDesktop, setSentToDesktop] = useState(false);
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
 
   const fromDesktop = sp.get('from') === 'desktop' || sp.get('desktop') === '1';
   const callbackUrl = sp.get('callback') || '';
@@ -92,6 +94,7 @@ function RegisterContent() {
     if (!email.trim()) { setError(t('register.errorEmailRequired')); return; }
     if (password.length < 6) { setError(t('register.errorPasswordLength')); return; }
     if (password !== confirmPassword) { setError(t('register.errorPasswordMismatch')); return; }
+    if (!agreedToTerms) { setError(t('register.errorAgreeTerms')); return; }
 
     setSendingCode(true);
     setError('');
@@ -314,6 +317,23 @@ function RegisterContent() {
                     className="pl-10 h-11"
                   />
                 </div>
+              </div>
+              <div className="flex items-start gap-3 rounded-lg border p-3 bg-muted/30">
+                <Checkbox
+                  id="agree-terms"
+                  checked={agreedToTerms}
+                  onCheckedChange={(checked) => setAgreedToTerms(!!checked)}
+                  className="mt-0.5"
+                />
+                <label
+                  htmlFor="agree-terms"
+                  className="text-sm text-muted-foreground leading-relaxed cursor-pointer"
+                  dangerouslySetInnerHTML={{
+                    __html: t('register.agreeTerms')
+                      .replace('{terms}', `<a href="/terms" class="text-primary hover:underline font-medium">${t('register.termsLink')}</a>`)
+                      .replace('{privacy}', `<a href="/privacy" class="text-primary hover:underline font-medium">${t('register.privacyLink')}</a>`)
+                  }}
+                />
               </div>
               <Button type="submit" className="w-full h-11 text-base" disabled={sendingCode}>
                 {sendingCode ? (
