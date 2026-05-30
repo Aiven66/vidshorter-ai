@@ -9,7 +9,6 @@ import {
   buildDesktopDeepLink,
   buildDesktopLoginRedirectUrl,
   getDesktopCallbackFromSearch,
-  isDesktopAuthRequest,
   rememberDesktopAuth,
   type DesktopAuthPayload,
 } from '@/lib/desktop-auth';
@@ -23,6 +22,7 @@ function DesktopCallbackContent() {
   const [retryCount, setRetryCount] = useState(0);
 
   const callbackUrl = useMemo(() => getDesktopCallbackFromSearch(sp), [sp]);
+  const isDesktop = isDesktopAuthRequest(sp);
 
   useEffect(() => {
     rememberDesktopAuth(callbackUrl);
@@ -116,7 +116,10 @@ function DesktopCallbackContent() {
         return;
       }
 
-      setError('No authentication token found. Please try signing in again.');
+      console.log('[DesktopCallback] No token found, checking session only...');
+      if (!session) {
+        setError('No authentication token found. Please try signing in again.');
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Failed to complete sign-in.';
       console.log('[DesktopCallback] Error:', msg);
@@ -131,24 +134,20 @@ function DesktopCallbackContent() {
   }, [resolveAndSetPayload]);
 
   const handleOpenDesktop = () => {
-    const deepLink = buildDesktopDeepLink(payload);
-    console.log('[DesktopCallback] Opening deep link:', deepLink.substring(0, 80) + '...');
-
-    try {
-      window.location.href = deepLink;
-    } catch {}
-
     if (callbackUrl) {
       const redirectUrl = buildDesktopLoginRedirectUrl(callbackUrl, payload);
       if (redirectUrl) {
-        setTimeout(() => {
-          try {
-            const img = new Image();
-            img.src = redirectUrl;
-          } catch {}
-        }, 500);
+        console.log('[DesktopCallback] Navigating to local auth callback server:', redirectUrl);
+        window.location.href = redirectUrl;
+        return;
       }
     }
+
+    const deepLink = buildDesktopDeepLink(payload);
+    console.log('[DesktopCallback] No callback URL, trying deep link:', deepLink.substring(0, 50));
+    try {
+      window.location.href = deepLink;
+    } catch {}
   };
 
   const handleRetry = () => {
@@ -200,7 +199,7 @@ function DesktopCallbackContent() {
             </div>
           )}
 
-          {!loading && (hasToken || payload.email) && (
+          {!loading && !error && (hasToken || payload.email || isDesktop) && (
             <div className="space-y-4">
               <Button
                 size="lg"
@@ -216,7 +215,7 @@ function DesktopCallbackContent() {
             </div>
           )}
 
-          {!loading && !hasToken && !payload.email && !error && (
+          {!loading && !hasToken && !payload.email && !error && !isDesktop && (
             <div className="space-y-4">
               <p className="text-sm text-amber-600">
                 Sign-in completed but token not detected. Please return to the desktop app.

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import {
@@ -17,8 +17,12 @@ export default function AuthCallbackPage() {
   const searchParams = useSearchParams();
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
   const [errorMessage, setErrorMessage] = useState('');
+  const executedRef = useRef(false);
 
   useEffect(() => {
+    if (executedRef.current) return;
+    executedRef.current = true;
+
     async function handleCallback() {
       try {
         const code = searchParams.get('code');
@@ -73,7 +77,7 @@ export default function AuthCallbackPage() {
           auth: {
             autoRefreshToken: true,
             persistSession: true,
-            detectSessionInUrl: true,
+            detectSessionInUrl: false,
           },
         });
 
@@ -82,36 +86,69 @@ export default function AuthCallbackPage() {
         if (code) {
           const { data: exchangeData, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
           if (exchangeError) {
-            setStatus('error');
-            setErrorMessage(exchangeError.message);
-            setTimeout(() => router.replace(loginErrorUrl(exchangeError.message)), 2000);
-            return;
+            console.log('[AUTH CALLBACK] exchangeCodeForSession error:', exchangeError.message);
           }
           if (exchangeData.session) {
             sessionForRedirect = {
               accessToken: exchangeData.session.access_token,
               refreshToken: exchangeData.session.refresh_token,
             };
+            if (exchangeData.session.user) {
+              try {
+                const { data: existingUser } = await supabase
+                  .from('users')
+                  .select('id')
+                  .eq('id', exchangeData.session.user.id)
+                  .maybeSingle();
+
+                if (!existingUser) {
+                  await supabase.from('users').insert({
+                    id: exchangeData.session.user.id,
+                    email: exchangeData.session.user.email!,
+                    name: exchangeData.session.user.user_metadata?.name || exchangeData.session.user.email?.split('@')[0],
+                    role: 'user',
+                    google_id: exchangeData.session.user.app_metadata?.provider === 'google' ? exchangeData.session.user.id : null,
+                  });
+                  await supabase.from('credits').insert({ user_id: exchangeData.session.user.id, balance: 100 });
+                  await supabase.from('subscriptions').insert({
+                    user_id: exchangeData.session.user.id,
+                    plan_type: 'free',
+                    status: 'active',
+                  });
+                }
+              } catch (dbError) {
+                console.error('[AUTH CALLBACK] Database error (non-fatal):', dbError);
+              }
+            }
           }
-          if (exchangeData.session?.user) {
+        }
+
+        if (!sessionForRedirect.accessToken) {
+          console.log('[AUTH CALLBACK] No session from exchangeCode, trying getSession...');
+          const { data: { session } } = await supabase.auth.getSession();
+          if (session) {
+            sessionForRedirect = {
+              accessToken: session.access_token,
+              refreshToken: session.refresh_token,
+            };
             try {
               const { data: existingUser } = await supabase
                 .from('users')
                 .select('id')
-                .eq('id', exchangeData.session.user.id)
+                .eq('id', session.user.id)
                 .maybeSingle();
 
               if (!existingUser) {
                 await supabase.from('users').insert({
-                  id: exchangeData.session.user.id,
-                  email: exchangeData.session.user.email!,
-                  name: exchangeData.session.user.user_metadata?.name || exchangeData.session.user.email?.split('@')[0],
+                  id: session.user.id,
+                  email: session.user.email!,
+                  name: session.user.user_metadata?.name || session.user.email?.split('@')[0],
                   role: 'user',
-                  google_id: exchangeData.session.user.app_metadata?.provider === 'google' ? exchangeData.session.user.id : null,
+                  google_id: session.user.app_metadata?.provider === 'google' ? session.user.id : null,
                 });
-                await supabase.from('credits').insert({ user_id: exchangeData.session.user.id, balance: 100 });
+                await supabase.from('credits').insert({ user_id: session.user.id, balance: 100 });
                 await supabase.from('subscriptions').insert({
-                  user_id: exchangeData.session.user.id,
+                  user_id: session.user.id,
                   plan_type: 'free',
                   status: 'active',
                 });
@@ -120,47 +157,14 @@ export default function AuthCallbackPage() {
               console.error('[AUTH CALLBACK] Database error (non-fatal):', dbError);
             }
           }
-        } else {
-          const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-          if (sessionError || !session) {
-            setStatus('error');
-            setErrorMessage(sessionError?.message || 'Failed to get session.');
-            setTimeout(() => router.replace(loginErrorUrl('session_failed')), 2000);
-            return;
-          }
+        }
 
-          if (session) {
-            sessionForRedirect = {
-              accessToken: session.access_token,
-              refreshToken: session.refresh_token,
-            };
-          }
-
-          try {
-            const { data: existingUser } = await supabase
-              .from('users')
-              .select('id')
-              .eq('id', session.user.id)
-              .maybeSingle();
-
-            if (!existingUser) {
-              await supabase.from('users').insert({
-                id: session.user.id,
-                email: session.user.email!,
-                name: session.user.user_metadata?.name || session.user.email?.split('@')[0],
-                role: 'user',
-                google_id: session.user.app_metadata?.provider === 'google' ? session.user.id : null,
-              });
-              await supabase.from('credits').insert({ user_id: session.user.id, balance: 100 });
-              await supabase.from('subscriptions').insert({
-                user_id: session.user.id,
-                plan_type: 'free',
-                status: 'active',
-              });
-            }
-          } catch (dbError) {
-            console.error('[AUTH CALLBACK] Database error (non-fatal):', dbError);
-          }
+        if (!sessionForRedirect.accessToken) {
+          console.log('[AUTH CALLBACK] No session found at all');
+          setStatus('error');
+          setErrorMessage('Failed to obtain session. Please try again.');
+          setTimeout(() => router.replace(loginErrorUrl('no_session')), 2000);
+          return;
         }
 
         setStatus('success');

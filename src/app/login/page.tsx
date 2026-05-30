@@ -162,36 +162,28 @@ function LoginContent() {
     const tokenEmail = user?.email || email;
     const tokenUserId = user?.id || '';
     const tokenName = user?.name || '';
-
-    const deepLink = buildDesktopDeepLink({
+    const payload = {
       token,
       refreshToken: currentRefreshToken || undefined,
       email: tokenEmail,
       userId: tokenUserId,
       name: tokenName,
-    });
-    console.log('[DesktopAuth] Button clicked - Opening deep link');
+    };
+
+    if (savedCallbackUrl) {
+      const redirectUrl = buildDesktopLoginRedirectUrl(savedCallbackUrl, payload);
+      if (redirectUrl) {
+        console.log('[DesktopAuth] Navigating to local auth callback server:', redirectUrl);
+        window.location.href = redirectUrl;
+        return;
+      }
+    }
+
+    const deepLink = buildDesktopDeepLink(payload);
+    console.log('[DesktopAuth] No callback URL, trying deep link:', deepLink.substring(0, 50));
     try {
       window.location.href = deepLink;
     } catch {}
-
-    if (savedCallbackUrl) {
-      const redirectUrl = buildDesktopLoginRedirectUrl(savedCallbackUrl, {
-        token,
-        refreshToken: currentRefreshToken || undefined,
-        email: tokenEmail,
-        userId: tokenUserId,
-        name: tokenName,
-      });
-      if (redirectUrl) {
-        setTimeout(() => {
-          try {
-            const img = new Image();
-            img.src = redirectUrl;
-          } catch {}
-        }, 500);
-      }
-    }
   };
 
   if (showDesktopSuccess) {

@@ -303,7 +303,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const checkAuthState = useCallback(async () => {
     try {
-      const isDesktop = !!(window.clipopDesktop || window.electronAPI);
+      const isDesktop = !!(window.clipopDesktop || window.electronAPI) ||
+        (typeof window !== 'undefined' &&
+         (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost') &&
+         window.location.protocol === 'http:');
 
       if (isDesktop) {
         let token: string | null = null;
