@@ -28,6 +28,8 @@ let embeddedWebUrl = '';
 let authCallbackServer = null;
 let authCallbackPort = 0;
 
+let lastInjectedToken = '';
+
 const SERVER_URL = 'https://vidshorterai.vercel.app';
 
 // ==================== LOGGING ====================
@@ -184,18 +186,13 @@ function startAuthCallbackServer() {
 
           if (webWindow && !webWindow.isDestroyed()) {
             appendLog('[AuthCallback] Injecting token into webWindow...');
-            await injectAuthToWebWindow(token, email, userId, name, refreshToken);
+            lastInjectedToken = token;
+            await injectAuthToWebWindow(token, email, userId, name, refreshToken, true);
             if (!webWindow.isDestroyed()) {
               webWindow.show();
               webWindow.focus();
               appendLog('[AuthCallback] webWindow focused');
             }
-            setTimeout(() => {
-              if (webWindow && !webWindow.isDestroyed()) {
-                appendLog('[AuthCallback] Fallback: reloading webWindow to ensure auth state');
-                webWindow.reload();
-              }
-            }, 2000);
           } else {
             appendLog('[AuthCallback] No webWindow, will inject on next load');
           }
@@ -242,18 +239,13 @@ function startAuthCallbackServer() {
         await saveConfig(cfg);
 
         if (webWindow && !webWindow.isDestroyed()) {
-          await injectAuthToWebWindow(token, email, userId, name, refreshToken);
+          lastInjectedToken = token;
+          await injectAuthToWebWindow(token, email, userId, name, refreshToken, true);
           if (!webWindow.isDestroyed()) {
             webWindow.show();
             webWindow.focus();
             appendLog('[AuthCallback] Redirect login: webWindow focused');
           }
-          setTimeout(() => {
-            if (webWindow && !webWindow.isDestroyed()) {
-              appendLog('[AuthCallback] Redirect login: Fallback reload to ensure auth state');
-              webWindow.reload();
-            }
-          }, 2000);
         }
 
         await applyMenu();
@@ -288,8 +280,8 @@ function getAuthCallbackUrl() {
 }
 
 // ==================== INJECT AUTH ====================
-async function injectAuthToWebWindow(token, email, userId, name, refreshToken) {
-  appendLog(`[Inject] Starting... token=${!!token} refreshToken=${!!refreshToken}`);
+async function injectAuthToWebWindow(token, email, userId, name, refreshToken, shouldReload) {
+  appendLog(`[Inject] Starting... token=${!!token} refreshToken=${!!refreshToken} shouldReload=${!!shouldReload}`);
 
   if (!webWindow || webWindow.isDestroyed()) {
     appendLog('[Inject] No webWindow or destroyed');
@@ -324,33 +316,49 @@ async function injectAuthToWebWindow(token, email, userId, name, refreshToken) {
 
       var _rt = ${JSON.stringify(refreshToken || '')};
       var _at = ${JSON.stringify(token)};
-      if (_rt && _at && window.__supabaseClient) {
-        console.log('[DEBUG-INJECT] Calling supabase.auth.setSession...');
-        window.__supabaseClient.auth.setSession({
-          access_token: _at,
-          refresh_token: _rt
-        }).then(function(r) {
-          console.log('[DEBUG-INJECT] setSession result:', !!r.data.session);
-        }).catch(function(e) {
-          console.log('[DEBUG-INJECT] setSession error:', e.message);
-        });
-      }
+      var _email = ${JSON.stringify(email || '')};
+      var _userId = ${JSON.stringify(userId || '')};
+      var _name = ${JSON.stringify(name || '')};
 
-      for (var i = 0; i < 10; i++) {
+      function trySetSession() {
+        if (window.__supabaseClient && _rt && _at) {
+          console.log('[DEBUG-INJECT] Calling supabase.auth.setSession...');
+          window.__supabaseClient.auth.setSession({
+            access_token: _at,
+            refresh_token: _rt
+          }).then(function(r) {
+            console.log('[DEBUG-INJECT] setSession result:', !!r.data.session);
+            window.dispatchEvent(new Event('clipop-auth-change'));
+          }).catch(function(e) {
+            console.log('[DEBUG-INJECT] setSession error:', e.message);
+          });
+        } else if (_rt && _at) {
+          setTimeout(trySetSession, 500);
+        }
+      }
+      trySetSession();
+
+      for (var i = 0; i < 15; i++) {
         setTimeout(function() {
           var event = new CustomEvent('clipop-desktop-login', {
             detail: {
-              token: ${JSON.stringify(token)},
-              refreshToken: ${JSON.stringify(refreshToken || '')},
-              email: ${JSON.stringify(email)},
-              userId: ${JSON.stringify(userId)},
-              name: ${JSON.stringify(name)}
+              token: _at,
+              refreshToken: _rt,
+              email: _email,
+              userId: _userId,
+              name: _name
             }
           });
           window.dispatchEvent(event);
           window.dispatchEvent(new Event('clipop-auth-change'));
-          console.log('[DEBUG-INJECT] Events dispatched');
-        }, i * 300);
+        }, i * 500);
+      }
+
+      if (${shouldReload ? 'true' : 'false'}) {
+        setTimeout(function() {
+          console.log('[DEBUG-INJECT] Final reload to ensure UI update');
+          window.location.reload();
+        }, 5000);
       }
 
       console.log('[DEBUG-INJECT] ======== INJECT DONE ========');
@@ -417,7 +425,8 @@ async function handleDeepLink(rawUrl) {
   }
 
   if (webWindow && !webWindow.isDestroyed()) {
-    await injectAuthToWebWindow(parsed.token, parsed.email, parsed.userId, parsed.name, parsed.refreshToken);
+    lastInjectedToken = parsed.token;
+    await injectAuthToWebWindow(parsed.token, parsed.email, parsed.userId, parsed.name, parsed.refreshToken, true);
     if (!webWindow.isDestroyed()) {
       webWindow.show();
       webWindow.focus();
@@ -665,10 +674,10 @@ async function ensureWebWindow() {
 
       // 注入认证 token
       const cfg = await loadConfig();
-      if (cfg.authToken) {
-        appendLog('[WebWindow] Injecting saved token...');
+      if (cfg.authToken && cfg.authToken !== lastInjectedToken) {
+        appendLog('[WebWindow] Injecting saved token (changed)...');
         lastInjectedToken = cfg.authToken;
-        await injectAuthToWebWindow(cfg.authToken, cfg.authEmail, cfg.authUserId, cfg.authName, cfg.authRefreshToken);
+        await injectAuthToWebWindow(cfg.authToken, cfg.authEmail, cfg.authUserId, cfg.authName, cfg.authRefreshToken, false);
       }
 
       // 等待媒体服务器就绪
@@ -706,17 +715,16 @@ async function ensureWebWindow() {
   webWindow.on('focus', async () => {
     try {
       const cfg = await loadConfig();
-      if (cfg.authToken && webWindow && !webWindow.isDestroyed()) {
-        appendLog('[WebWindow] Focus event: re-injecting auth token');
+      if (cfg.authToken && cfg.authToken !== lastInjectedToken && webWindow && !webWindow.isDestroyed()) {
+        appendLog('[WebWindow] Focus event: new token detected, injecting...');
         lastInjectedToken = cfg.authToken;
-        await injectAuthToWebWindow(cfg.authToken, cfg.authEmail, cfg.authUserId, cfg.authName, cfg.authRefreshToken);
+        await injectAuthToWebWindow(cfg.authToken, cfg.authEmail, cfg.authUserId, cfg.authName, cfg.authRefreshToken, false);
       }
     } catch (e) {
       appendLog(`[WebWindow] Focus event error: ${e}`);
     }
   });
 
-  let lastInjectedToken = '';
   const tokenPollInterval = setInterval(async () => {
     try {
       if (!webWindow || webWindow.isDestroyed()) {
@@ -727,7 +735,7 @@ async function ensureWebWindow() {
       if (cfg.authToken && cfg.authToken !== lastInjectedToken) {
         appendLog('[WebWindow] Token poll: new token detected, injecting...');
         lastInjectedToken = cfg.authToken;
-        await injectAuthToWebWindow(cfg.authToken, cfg.authEmail, cfg.authUserId, cfg.authName, cfg.authRefreshToken);
+        await injectAuthToWebWindow(cfg.authToken, cfg.authEmail, cfg.authUserId, cfg.authName, cfg.authRefreshToken, false);
       }
     } catch {}
   }, 3000);
@@ -846,10 +854,12 @@ async function applyMenu() {
             if (isLoggedIn) {
               const cfg = await loadConfig();
               cfg.authToken = '';
+              cfg.authRefreshToken = '';
               cfg.authEmail = '';
               cfg.authName = '';
               cfg.authUserId = '';
               await saveConfig(cfg);
+              lastInjectedToken = '';
               if (webWindow && !webWindow.isDestroyed()) {
                 await webWindow.webContents.executeJavaScript(`
                   localStorage.removeItem('clipop_access_token');
@@ -920,10 +930,12 @@ ipcMain.handle('getAuthToken', async () => {
 ipcMain.handle('clearAuthToken', async () => {
   const cfg = await loadConfig();
   cfg.authToken = '';
+  cfg.authRefreshToken = '';
   cfg.authEmail = '';
   cfg.authUserId = '';
   cfg.authName = '';
   await saveConfig(cfg);
+  lastInjectedToken = '';
   if (webWindow && !webWindow.isDestroyed()) {
     await webWindow.webContents.executeJavaScript(`
       localStorage.removeItem('clipop_access_token');

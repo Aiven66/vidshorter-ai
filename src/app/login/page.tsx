@@ -70,6 +70,7 @@ function LoginContent() {
     const tokenEmail = user?.email || email;
     const tokenUserId = user?.id || '';
     const tokenName = user?.name || '';
+    const tokenRefreshToken = currentRefreshToken || undefined;
 
     setDesktopSendStatus('sending');
 
@@ -81,6 +82,7 @@ function LoginContent() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             token,
+            refreshToken: tokenRefreshToken,
             email: tokenEmail,
             userId: tokenUserId,
             name: tokenName,

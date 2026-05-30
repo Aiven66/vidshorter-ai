@@ -77,33 +77,41 @@ export default function AuthCallbackPage() {
           },
         });
 
+        let sessionForRedirect: { accessToken?: string; refreshToken?: string } = {};
+
         if (code) {
-          const { data, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+          const { data: exchangeData, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
           if (exchangeError) {
             setStatus('error');
             setErrorMessage(exchangeError.message);
             setTimeout(() => router.replace(loginErrorUrl(exchangeError.message)), 2000);
             return;
           }
-          if (data.session?.user) {
+          if (exchangeData.session) {
+            sessionForRedirect = {
+              accessToken: exchangeData.session.access_token,
+              refreshToken: exchangeData.session.refresh_token,
+            };
+          }
+          if (exchangeData.session?.user) {
             try {
               const { data: existingUser } = await supabase
                 .from('users')
                 .select('id')
-                .eq('id', data.session.user.id)
+                .eq('id', exchangeData.session.user.id)
                 .maybeSingle();
 
               if (!existingUser) {
                 await supabase.from('users').insert({
-                  id: data.session.user.id,
-                  email: data.session.user.email!,
-                  name: data.session.user.user_metadata?.name || data.session.user.email?.split('@')[0],
+                  id: exchangeData.session.user.id,
+                  email: exchangeData.session.user.email!,
+                  name: exchangeData.session.user.user_metadata?.name || exchangeData.session.user.email?.split('@')[0],
                   role: 'user',
-                  google_id: data.session.user.app_metadata?.provider === 'google' ? data.session.user.id : null,
+                  google_id: exchangeData.session.user.app_metadata?.provider === 'google' ? exchangeData.session.user.id : null,
                 });
-                await supabase.from('credits').insert({ user_id: data.session.user.id, balance: 100 });
+                await supabase.from('credits').insert({ user_id: exchangeData.session.user.id, balance: 100 });
                 await supabase.from('subscriptions').insert({
-                  user_id: data.session.user.id,
+                  user_id: exchangeData.session.user.id,
                   plan_type: 'free',
                   status: 'active',
                 });
@@ -119,6 +127,13 @@ export default function AuthCallbackPage() {
             setErrorMessage(sessionError?.message || 'Failed to get session.');
             setTimeout(() => router.replace(loginErrorUrl('session_failed')), 2000);
             return;
+          }
+
+          if (session) {
+            sessionForRedirect = {
+              accessToken: session.access_token,
+              refreshToken: session.refresh_token,
+            };
           }
 
           try {
@@ -149,17 +164,6 @@ export default function AuthCallbackPage() {
         }
 
         setStatus('success');
-
-        let sessionForRedirect: { accessToken?: string; refreshToken?: string } = {};
-        try {
-          const { data: { session: currentSession } } = await supabase.auth.getSession();
-          if (currentSession) {
-            sessionForRedirect = {
-              accessToken: currentSession.access_token,
-              refreshToken: currentSession.refresh_token,
-            };
-          }
-        } catch {}
 
         const next = isDesktopFlow
           ? (requestedNext !== '/' ? requestedNext : buildDesktopCallbackPath(callbackUrl))

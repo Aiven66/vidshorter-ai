@@ -65,6 +65,7 @@ function RegisterContent() {
     const tokenEmail = desktopEmail || user?.email || email;
     const tokenUserId = user?.id || '';
     const tokenName = user?.name || name;
+    const tokenRefreshToken = desktopRefreshToken || undefined;
 
     setDesktopSendStatus('sending');
 
@@ -76,6 +77,7 @@ function RegisterContent() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             token,
+            refreshToken: tokenRefreshToken,
             email: tokenEmail,
             userId: tokenUserId,
             name: tokenName,

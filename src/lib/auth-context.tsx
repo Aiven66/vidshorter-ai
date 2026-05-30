@@ -247,7 +247,10 @@ function applyDesktopToken(
   setUser: (u: User | null) => void,
   setAccessToken: (t: string | null) => void,
   setLoading: (l: boolean) => void,
-  setUseDemo?: (d: boolean) => void
+  setUseDemo?: (d: boolean) => void,
+  fallbackEmail?: string,
+  fallbackUserId?: string,
+  fallbackName?: string
 ) {
   if (!token) return;
 
@@ -268,6 +271,20 @@ function applyDesktopToken(
   if (jwtUser) {
     setAccessToken(token);
     setUser(jwtUser);
+    setLoading(false);
+
+    verifyTokenAndFetchUser(token).then((userData) => {
+      if (userData) setUser(userData);
+    }).catch(() => {});
+  } else if (fallbackEmail) {
+    setAccessToken(token);
+    setUser({
+      id: fallbackUserId || '',
+      email: fallbackEmail,
+      name: fallbackName || fallbackEmail.split('@')[0],
+      role: 'user',
+      avatarUrl: null,
+    });
     setLoading(false);
 
     verifyTokenAndFetchUser(token).then((userData) => {
@@ -324,6 +341,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               setAccessToken(token);
               setUser(jwtUser);
               setLoading(false);
+
+              const storedRefreshToken = typeof window !== 'undefined'
+                ? localStorage.getItem('clipop_refresh_token') : null;
+              if (storedRefreshToken) {
+                try {
+                  const client = await getSupabaseClient();
+                  await client.auth.setSession({
+                    access_token: token,
+                    refresh_token: storedRefreshToken,
+                  });
+                } catch {}
+              }
+
               verifyTokenAndFetchUser(token).then((userData) => {
                 if (userData) setUser(userData);
               }).catch(() => {});
@@ -511,7 +541,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     desktopHandler = async (event: Event) => {
       const detail = event instanceof CustomEvent ? event.detail : null;
       if (detail?.token) {
-        applyDesktopToken(detail.token, setUser, setAccessToken, setLoading, setUseDemo);
+        applyDesktopToken(
+          detail.token,
+          setUser,
+          setAccessToken,
+          setLoading,
+          setUseDemo,
+          detail.email,
+          detail.userId,
+          detail.name
+        );
         if (detail.refreshToken) {
           try {
             const client = await getSupabaseClient();
