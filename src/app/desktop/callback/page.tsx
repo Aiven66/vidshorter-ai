@@ -97,15 +97,9 @@ function DesktopCallbackContent() {
         }
       }
 
-      try {
-        console.log('[DesktopCallback] Method 2: Deep link');
-        const deepLink = `clipop://login-success?token=${encodeURIComponent(resolvedToken)}&email=${encodeURIComponent(resolvedEmail)}&userId=${encodeURIComponent(resolvedUserId)}&name=${encodeURIComponent(resolvedName)}`;
-        window.location.href = deepLink;
-        setAutoSendStatus('sent');
-      } catch (e) {
-        console.log('[DesktopCallback] ❌ Method 2 failed:', e);
-        setAutoSendStatus('failed');
-      }
+      // 不自动跳 deep link，让用户手动点击按钮
+      console.log('[DesktopCallback] Waiting for user to click button');
+      setAutoSendStatus('failed'); // 显示按钮让用户点击
     };
 
     const timer = setTimeout(tryAutoSend, 1000);

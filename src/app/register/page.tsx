@@ -75,16 +75,9 @@ function RegisterContent() {
       }
     }
 
-    try {
-      console.log('[DesktopAuth] Method 2: Deep link');
-      const deepLink = `clipop://login-success?token=${encodeURIComponent(token)}&email=${encodeURIComponent(tokenEmail)}&userId=${encodeURIComponent(tokenUserId)}&name=${encodeURIComponent(tokenName)}`;
-      console.log('[DesktopAuth] Deep link URL:', deepLink);
-      window.location.href = deepLink;
-      setDesktopSendStatus('sent');
-    } catch (e) {
-      console.log('[DesktopAuth] ❌ Method 2 failed:', e);
-      setDesktopSendStatus('failed');
-    }
+    // 不自动跳 deep link，让用户手动点击按钮
+    console.log('[DesktopAuth] Waiting for user to click return button');
+    setDesktopSendStatus('failed'); // 显示提示让用户点击按钮
   };
 
   useEffect(() => {
