@@ -10,7 +10,7 @@ import { useLocale } from '@/lib/locale-context';
 import { useAuth } from '@/lib/auth-context';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { Video, Mail, Lock, User, Loader2, CheckCircle, AlertCircle, KeyRound } from 'lucide-react';
+import { Video, Mail, Lock, User, Loader2, CheckCircle, AlertCircle, KeyRound, Monitor } from 'lucide-react';
 import { Suspense } from 'react';
 import { GoogleLoginButton } from '@/components/google-login-button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -36,28 +36,40 @@ function RegisterContent() {
   const [error, setError] = useState('');
   const [desktopToken, setDesktopToken] = useState<string | null>(null);
   const [desktopEmail, setDesktopEmail] = useState('');
-  const [sentToDesktop, setSentToDesktop] = useState(false);
+  const [desktopSendStatus, setDesktopSendStatus] = useState<'idle' | 'sending' | 'sent' | 'failed'>('idle');
   const [agreedToTerms, setAgreedToTerms] = useState(false);
 
   const fromDesktop = sp.get('from') === 'desktop' || sp.get('desktop') === '1';
   const callbackUrl = sp.get('callback') || '';
 
-  const sendTokenToDesktop = async (token: string | null) => {
-    if (!token || sentToDesktop) return;
-
-    console.log('[DesktopAuth] sendTokenToDesktop starting...');
-    setSentToDesktop(true);
+  const trySendTokenToDesktop = async (token: string | null) => {
+    if (!token) return;
 
     const tokenEmail = desktopEmail || user?.email || email;
     const tokenUserId = user?.id || '';
     const tokenName = user?.name || name;
 
+    setDesktopSendStatus('sending');
+
     if (callbackUrl) {
       try {
-        console.log('[DesktopAuth] Method 1: Redirect to callbackUrl (avoids mixed content blocking)');
-        const redirectUrl = `${callbackUrl}/api/desktop-login-redirect?token=${encodeURIComponent(token)}&email=${encodeURIComponent(tokenEmail)}&userId=${encodeURIComponent(tokenUserId)}&name=${encodeURIComponent(tokenName)}`;
-        window.location.href = redirectUrl;
-        return;
+        console.log('[DesktopAuth] Method 1: fetch POST to callbackUrl');
+        const res = await fetch(`${callbackUrl}/api/desktop-auth`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            token,
+            email: tokenEmail,
+            userId: tokenUserId,
+            name: tokenName,
+          }),
+        });
+        const data = await res.json();
+        if (data.ok) {
+          console.log('[DesktopAuth] ✅ Method 1 success');
+          setDesktopSendStatus('sent');
+          return;
+        }
       } catch (e) {
         console.log('[DesktopAuth] ❌ Method 1 failed:', e);
       }
@@ -68,17 +80,19 @@ function RegisterContent() {
       const deepLink = `clipop://login-success?token=${encodeURIComponent(token)}&email=${encodeURIComponent(tokenEmail)}&userId=${encodeURIComponent(tokenUserId)}&name=${encodeURIComponent(tokenName)}`;
       console.log('[DesktopAuth] Deep link URL:', deepLink);
       window.location.href = deepLink;
+      setDesktopSendStatus('sent');
     } catch (e) {
       console.log('[DesktopAuth] ❌ Method 2 failed:', e);
+      setDesktopSendStatus('failed');
     }
   };
 
   useEffect(() => {
-    if (step === 'done' && desktopToken && !sentToDesktop) {
-      console.log('[DesktopAuth] Step done, token present, calling sendTokenToDesktop...');
-      sendTokenToDesktop(desktopToken);
+    if (step === 'done' && desktopToken && desktopSendStatus === 'idle') {
+      console.log('[DesktopAuth] Step done, token present, calling trySendTokenToDesktop...');
+      trySendTokenToDesktop(desktopToken);
     }
-  }, [step, desktopToken, sentToDesktop]);
+  }, [step, desktopToken, desktopSendStatus]);
 
   const handleSendCode = async () => {
     if (!name.trim()) { setError(t('register.errorNameRequired')); return; }
@@ -156,9 +170,6 @@ function RegisterContent() {
         setDesktopToken(token);
         setDesktopEmail(email);
         setStep('done');
-        if (token) {
-          sendTokenToDesktop(token);
-        }
       } else {
         window.location.href = '/';
       }
@@ -169,24 +180,12 @@ function RegisterContent() {
 
   const handleReturnToDesktop = () => {
     const token = desktopToken || accessToken;
-    
-    const deepLink = `clipop://login-success?token=${encodeURIComponent(token || '')}&email=${encodeURIComponent(desktopEmail || user?.email || email)}&userId=${encodeURIComponent(user?.id || '')}&name=${encodeURIComponent(user?.name || name)}`;
+    const tokenEmail = desktopEmail || user?.email || email;
+    const tokenUserId = user?.id || '';
+    const tokenName = user?.name || name;
+
+    const deepLink = `clipop://login-success?token=${encodeURIComponent(token || '')}&email=${encodeURIComponent(tokenEmail)}&userId=${encodeURIComponent(tokenUserId)}&name=${encodeURIComponent(tokenName)}`;
     console.log('[DesktopAuth] Button clicked - Opening deep link:', deepLink);
-    
-    const startTime = Date.now();
-    const fallbackTimeout = 2000;
-    
-    const fallback = () => {
-      if (Date.now() - startTime < fallbackTimeout) return;
-      console.log('[DesktopAuth] Deep link timeout, fallback to HTTP');
-      if (callbackUrl) {
-        const redirectUrl = `${callbackUrl}/api/desktop-login-redirect?token=${encodeURIComponent(token || '')}&email=${encodeURIComponent(desktopEmail || user?.email || email)}&userId=${encodeURIComponent(user?.id || '')}&name=${encodeURIComponent(user?.name || name)}`;
-        window.location.href = redirectUrl;
-      }
-    };
-    
-    setTimeout(fallback, fallbackTimeout);
-    
     window.location.href = deepLink;
   };
 
@@ -211,6 +210,7 @@ function RegisterContent() {
               </p>
             </div>
             <Button className="w-full h-12 text-lg" onClick={handleReturnToDesktop}>
+              <Monitor className="w-5 h-5 mr-2" />
               {t('register.returnToDesktop')}
             </Button>
             <p className="text-center text-sm text-muted-foreground">

@@ -9,18 +9,15 @@ import { Monitor, CheckCircle, Loader2 } from 'lucide-react';
 
 function DesktopCallbackContent() {
   const sp = useSearchParams();
-  const [opened, setOpened] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [resolvedEmail, setResolvedEmail] = useState('');
   const [resolvedToken, setResolvedToken] = useState('');
   const [resolvedUserId, setResolvedUserId] = useState('');
   const [resolvedName, setResolvedName] = useState('');
-  const [autoRedirected, setAutoRedirected] = useState(false);
+  const [autoSendStatus, setAutoSendStatus] = useState<'idle' | 'sending' | 'sent' | 'failed'>('idle');
 
-  const redirectUri = useMemo(() => sp.get('redirect_uri') || 'clipop://login-success', [sp]);
   const callbackUrl = useMemo(() => sp.get('callback') || '', [sp]);
-  const state = useMemo(() => sp.get('state') || '', [sp]);
   const email = useMemo(() => sp.get('email') || '', [sp]);
   const accessToken = useMemo(() => sp.get('access_token') || '', [sp]);
   const code = useMemo(() => sp.get('code') || '', [sp]);
@@ -45,7 +42,7 @@ function DesktopCallbackContent() {
         const user = session?.user;
 
         if (!token || !user) {
-          throw new Error('No desktop session was returned. Please try signing in again.');
+          throw new Error('No session found. Please try signing in again.');
         }
 
         if (!cancelled) {
@@ -56,7 +53,7 @@ function DesktopCallbackContent() {
         }
       } catch (e) {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : 'Failed to complete desktop sign-in.');
+          setError(e instanceof Error ? e.message : 'Failed to complete sign-in.');
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -71,50 +68,54 @@ function DesktopCallbackContent() {
   }, [accessToken, code, email]);
 
   useEffect(() => {
-    if (!resolvedToken || autoRedirected) return;
+    if (!resolvedToken || autoSendStatus !== 'idle') return;
 
-    const timer = setTimeout(() => {
-      setAutoRedirected(true);
+    const tryAutoSend = async () => {
+      setAutoSendStatus('sending');
 
       if (callbackUrl) {
-        const redirectUrl = `${callbackUrl}/api/desktop-login-redirect?token=${encodeURIComponent(resolvedToken)}&email=${encodeURIComponent(resolvedEmail)}&userId=${encodeURIComponent(resolvedUserId)}&name=${encodeURIComponent(resolvedName)}`;
-        console.log('[DesktopCallback] Auto-redirecting to callback URL');
-        window.location.href = redirectUrl;
-      } else {
-        const url = new URL(redirectUri);
-        url.searchParams.set('state', state);
-        url.searchParams.set('token', resolvedToken);
-        url.searchParams.set('access_token', resolvedToken);
-        url.searchParams.set('email', resolvedEmail);
-        url.searchParams.set('userId', resolvedUserId);
-        url.searchParams.set('name', resolvedName);
-        console.log('[DesktopCallback] Auto-redirecting via deep link');
-        window.location.href = url.toString();
+        try {
+          console.log('[DesktopCallback] Method 1: fetch POST to callbackUrl');
+          const res = await fetch(`${callbackUrl}/api/desktop-auth`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              token: resolvedToken,
+              email: resolvedEmail,
+              userId: resolvedUserId,
+              name: resolvedName,
+            }),
+          });
+          const data = await res.json();
+          if (data.ok) {
+            console.log('[DesktopCallback] ✅ Method 1 success');
+            setAutoSendStatus('sent');
+            return;
+          }
+        } catch (e) {
+          console.log('[DesktopCallback] ❌ Method 1 failed:', e);
+        }
       }
 
-      setOpened(true);
-    }, 1500);
+      try {
+        console.log('[DesktopCallback] Method 2: Deep link');
+        const deepLink = `clipop://login-success?token=${encodeURIComponent(resolvedToken)}&email=${encodeURIComponent(resolvedEmail)}&userId=${encodeURIComponent(resolvedUserId)}&name=${encodeURIComponent(resolvedName)}`;
+        window.location.href = deepLink;
+        setAutoSendStatus('sent');
+      } catch (e) {
+        console.log('[DesktopCallback] ❌ Method 2 failed:', e);
+        setAutoSendStatus('failed');
+      }
+    };
 
+    const timer = setTimeout(tryAutoSend, 1000);
     return () => clearTimeout(timer);
-  }, [resolvedToken, callbackUrl, redirectUri, state, resolvedEmail, resolvedUserId, resolvedName, autoRedirected]);
+  }, [resolvedToken, callbackUrl, autoSendStatus]);
 
   const handleOpenDesktop = () => {
-    if (callbackUrl && resolvedToken) {
-      const redirectUrl = `${callbackUrl}/api/desktop-login-redirect?token=${encodeURIComponent(resolvedToken)}&email=${encodeURIComponent(resolvedEmail)}&userId=${encodeURIComponent(resolvedUserId)}&name=${encodeURIComponent(resolvedName)}`;
-      window.location.href = redirectUrl;
-    } else if (redirectUri) {
-      const url = new URL(redirectUri);
-      url.searchParams.set('state', state);
-      if (resolvedToken) {
-        url.searchParams.set('token', resolvedToken);
-        url.searchParams.set('access_token', resolvedToken);
-        url.searchParams.set('email', resolvedEmail);
-        url.searchParams.set('userId', resolvedUserId);
-        url.searchParams.set('name', resolvedName);
-      }
-      window.location.href = url.toString();
-    }
-    setOpened(true);
+    const deepLink = `clipop://login-success?token=${encodeURIComponent(resolvedToken)}&email=${encodeURIComponent(resolvedEmail)}&userId=${encodeURIComponent(resolvedUserId)}&name=${encodeURIComponent(resolvedName)}`;
+    console.log('[DesktopCallback] Button clicked - Opening deep link:', deepLink);
+    window.location.href = deepLink;
   };
 
   return (
@@ -128,11 +129,11 @@ function DesktopCallbackContent() {
           </div>
           <CardTitle className="text-2xl">Clipop Agent</CardTitle>
           <CardDescription>
-            {opened ? 'Returning to desktop app...' : loading ? 'Completing sign-in...' : 'Sign-in successful!'}
+            {loading ? 'Completing sign-in...' : error ? 'Sign-in failed' : 'Sign-in successful!'}
           </CardDescription>
         </CardHeader>
         <CardContent className="text-center space-y-6">
-          {(resolvedEmail || email) && (
+          {(resolvedEmail || email) && !error && (
             <div className="flex flex-col items-center gap-2">
               <div className="h-12 w-12 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
                 <CheckCircle className="h-7 w-7 text-green-500" />
@@ -154,35 +155,34 @@ function DesktopCallbackContent() {
             </div>
           )}
 
-          {!opened && !loading && resolvedToken && (
+          {!loading && resolvedToken && !error && (
             <div className="space-y-4">
-              <p className="text-sm text-muted-foreground">
-                Automatically returning to desktop app...
-              </p>
+              {autoSendStatus === 'sending' && (
+                <p className="text-sm text-muted-foreground animate-pulse">
+                  Returning to desktop app...
+                </p>
+              )}
+              {autoSendStatus === 'sent' && (
+                <p className="text-sm text-green-600">
+                  ✅ Returning to desktop app...
+                </p>
+              )}
+              {autoSendStatus === 'failed' && (
+                <p className="text-sm text-amber-600">
+                  ⚠️ Click the button below to return to the desktop app.
+                </p>
+              )}
               <Button
                 size="lg"
                 className="w-full"
                 onClick={handleOpenDesktop}
               >
                 <Monitor className="w-4 h-4 mr-2" />
-                Open Clipop Agent Now
+                Open Clipop Agent
               </Button>
-            </div>
-          )}
-
-          {opened && (
-            <div className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                If the desktop app didn&apos;t open, please open it manually.
+                If the desktop app didn&apos;t open, please switch to it manually.
               </p>
-              <Button
-                size="lg"
-                variant="outline"
-                className="w-full"
-                onClick={handleOpenDesktop}
-              >
-                Try Again
-              </Button>
             </div>
           )}
         </CardContent>
@@ -205,7 +205,8 @@ export default function DesktopCallbackPage() {
             <CardTitle className="text-2xl">Clipop Agent</CardTitle>
           </CardHeader>
           <CardContent className="text-center">
-            <p className="text-sm text-muted-foreground">Loading...</p>
+            <Loader2 className="h-6 w-6 animate-spin text-primary mx-auto" />
+            <p className="text-sm text-muted-foreground mt-2">Loading...</p>
           </CardContent>
         </Card>
       </div>

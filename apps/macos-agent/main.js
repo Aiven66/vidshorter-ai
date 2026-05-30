@@ -650,10 +650,6 @@ async function ensureWebWindow() {
     }
   });
 
-  webWindow.on('closed', () => {
-    webWindow = null;
-  });
-
   webWindow.on('focus', async () => {
     try {
       const cfg = await loadConfig();
@@ -664,6 +660,27 @@ async function ensureWebWindow() {
     } catch (e) {
       appendLog(`[WebWindow] Focus event error: ${e}`);
     }
+  });
+
+  let lastInjectedToken = '';
+  const tokenPollInterval = setInterval(async () => {
+    try {
+      if (!webWindow || webWindow.isDestroyed()) {
+        clearInterval(tokenPollInterval);
+        return;
+      }
+      const cfg = await loadConfig();
+      if (cfg.authToken && cfg.authToken !== lastInjectedToken) {
+        appendLog('[WebWindow] Token poll: new token detected, injecting...');
+        lastInjectedToken = cfg.authToken;
+        await injectAuthToWebWindow(cfg.authToken, cfg.authEmail, cfg.authUserId, cfg.authName);
+      }
+    } catch {}
+  }, 3000);
+
+  webWindow.on('closed', () => {
+    clearInterval(tokenPollInterval);
+    webWindow = null;
   });
 }
 

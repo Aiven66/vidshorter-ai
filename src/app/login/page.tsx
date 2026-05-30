@@ -10,7 +10,7 @@ import { useLocale } from '@/lib/locale-context';
 import { useAuth } from '@/lib/auth-context';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { Video, CheckCircle, Mail, Lock } from 'lucide-react';
+import { Video, CheckCircle, Mail, Lock, Monitor } from 'lucide-react';
 import { GoogleLoginButton } from '@/components/google-login-button';
 import { posthog } from '@/lib/posthog';
 
@@ -24,6 +24,8 @@ function LoginContent() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [loginSuccess, setLoginSuccess] = useState(false);
+  const [currentToken, setCurrentToken] = useState<string | null>(null);
+  const [desktopSendStatus, setDesktopSendStatus] = useState<'idle' | 'sending' | 'sent' | 'failed'>('idle');
 
   useEffect(() => {
     const urlError = sp.get('error');
@@ -31,30 +33,40 @@ function LoginContent() {
       setError(decodeURIComponent(urlError));
     }
   }, [sp]);
-  const [currentToken, setCurrentToken] = useState<string | null>(null);
-  const [sentToDesktop, setSentToDesktop] = useState(false);
 
   const fromDesktop = sp.get('from') === 'desktop' || sp.get('desktop') === '1';
   const callbackUrl = sp.get('callback') || '';
 
   const showDesktopSuccess = fromDesktop && (loginSuccess || (!authLoading && !!user));
 
-  const sendTokenToDesktop = async (token: string | null) => {
-    if (!token || sentToDesktop) return;
-
-    console.log('[DesktopAuth] sendTokenToDesktop starting...');
-    setSentToDesktop(true);
+  const trySendTokenToDesktop = async (token: string | null) => {
+    if (!token) return;
 
     const tokenEmail = user?.email || email;
     const tokenUserId = user?.id || '';
     const tokenName = user?.name || '';
 
+    setDesktopSendStatus('sending');
+
     if (callbackUrl) {
       try {
-        console.log('[DesktopAuth] Method 1: Redirect to callbackUrl (avoids mixed content blocking)');
-        const redirectUrl = `${callbackUrl}/api/desktop-login-redirect?token=${encodeURIComponent(token)}&email=${encodeURIComponent(tokenEmail)}&userId=${encodeURIComponent(tokenUserId)}&name=${encodeURIComponent(tokenName)}`;
-        window.location.href = redirectUrl;
-        return;
+        console.log('[DesktopAuth] Method 1: fetch POST to callbackUrl');
+        const res = await fetch(`${callbackUrl}/api/desktop-auth`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            token,
+            email: tokenEmail,
+            userId: tokenUserId,
+            name: tokenName,
+          }),
+        });
+        const data = await res.json();
+        if (data.ok) {
+          console.log('[DesktopAuth] ✅ Method 1 success');
+          setDesktopSendStatus('sent');
+          return;
+        }
       } catch (e) {
         console.log('[DesktopAuth] ❌ Method 1 failed:', e);
       }
@@ -65,21 +77,22 @@ function LoginContent() {
       const deepLink = `clipop://login-success?token=${encodeURIComponent(token)}&email=${encodeURIComponent(tokenEmail)}&userId=${encodeURIComponent(tokenUserId)}&name=${encodeURIComponent(tokenName)}`;
       console.log('[DesktopAuth] Deep link URL:', deepLink);
       window.location.href = deepLink;
+      setDesktopSendStatus('sent');
     } catch (e) {
       console.log('[DesktopAuth] ❌ Method 2 failed:', e);
+      setDesktopSendStatus('failed');
     }
   };
 
   useEffect(() => {
-    if (showDesktopSuccess && !sentToDesktop) {
+    if (showDesktopSuccess && desktopSendStatus === 'idle') {
       const token = currentToken || accessToken;
       console.log('[DesktopAuth] showDesktopSuccess is true, token present:', !!token);
       if (token) {
-        console.log('[DesktopAuth] Calling sendTokenToDesktop from useEffect...');
-        sendTokenToDesktop(token);
+        trySendTokenToDesktop(token);
       }
     }
-  }, [showDesktopSuccess, sentToDesktop]);
+  }, [showDesktopSuccess, desktopSendStatus]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -87,7 +100,7 @@ function LoginContent() {
     setError('');
 
     const result = await signIn(email, password);
-    
+
     if (result.error) {
       setError(result.error);
       setLoading(false);
@@ -107,9 +120,6 @@ function LoginContent() {
       setCurrentToken(token);
       setLoginSuccess(true);
       setLoading(false);
-      if (token) {
-        sendTokenToDesktop(token);
-      }
     } else {
       window.location.href = '/';
     }
@@ -121,40 +131,17 @@ function LoginContent() {
     if (result.error) {
       setError(result.error);
       setLoading(false);
-    } else {
-      if (posthog) {
-        posthog.capture('user_logged_in', {
-          email: user?.email,
-          login_method: 'google',
-        });
-      }
-      if (fromDesktop) {
-        setLoginSuccess(true);
-        setLoading(false);
-      }
     }
   };
 
   const handleReturnToDesktop = () => {
     const token = currentToken || accessToken;
-    
-    const deepLink = `clipop://login-success?token=${encodeURIComponent(token || '')}&email=${encodeURIComponent(user?.email || email)}&userId=${encodeURIComponent(user?.id || '')}&name=${encodeURIComponent(user?.name || '')}`;
+    const tokenEmail = user?.email || email;
+    const tokenUserId = user?.id || '';
+    const tokenName = user?.name || '';
+
+    const deepLink = `clipop://login-success?token=${encodeURIComponent(token || '')}&email=${encodeURIComponent(tokenEmail)}&userId=${encodeURIComponent(tokenUserId)}&name=${encodeURIComponent(tokenName)}`;
     console.log('[DesktopAuth] Button clicked - Opening deep link:', deepLink);
-    
-    const startTime = Date.now();
-    const fallbackTimeout = 2000;
-    
-    const fallback = () => {
-      if (Date.now() - startTime < fallbackTimeout) return;
-      console.log('[DesktopAuth] Deep link timeout, fallback to HTTP');
-      if (callbackUrl) {
-        const redirectUrl = `${callbackUrl}/api/desktop-login-redirect?token=${encodeURIComponent(token || '')}&email=${encodeURIComponent(user?.email || email)}&userId=${encodeURIComponent(user?.id || '')}&name=${encodeURIComponent(user?.name || '')}`;
-        window.location.href = redirectUrl;
-      }
-    };
-    
-    setTimeout(fallback, fallbackTimeout);
-    
     window.location.href = deepLink;
   };
 
@@ -175,10 +162,26 @@ function LoginContent() {
                 <CheckCircle className="h-10 w-10 text-green-500" />
               </div>
               <p className="text-center text-muted-foreground">
-                {t('login.successMessage')} <strong>{user?.email || email}</strong>。{t('login.successDesktopHint')}
+                {t('login.successMessage')} <strong>{user?.email || email}</strong>
               </p>
+              {desktopSendStatus === 'sending' && (
+                <p className="text-sm text-muted-foreground animate-pulse">
+                  {t('login.successDesktopHint')}
+                </p>
+              )}
+              {desktopSendStatus === 'sent' && (
+                <p className="text-sm text-green-600">
+                  ✅ {t('login.successDesktopHint')}
+                </p>
+              )}
+              {desktopSendStatus === 'failed' && (
+                <p className="text-sm text-amber-600">
+                  ⚠️ {t('login.desktopNotOpened')}
+                </p>
+              )}
             </div>
             <Button className="w-full h-12 text-lg" onClick={handleReturnToDesktop}>
+              <Monitor className="w-5 h-5 mr-2" />
               {t('login.returnToDesktop')}
             </Button>
             <p className="text-center text-sm text-muted-foreground">
@@ -207,7 +210,7 @@ function LoginContent() {
               <span>{error}</span>
             </div>
           )}
-          
+
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="email" className="text-sm font-medium">{t('login.emailLabel')}</Label>
@@ -243,7 +246,7 @@ function LoginContent() {
               {loading ? t('common.loading') : t('login.submitButton')}
             </Button>
           </form>
-          
+
           <div className="relative">
             <div className="absolute inset-0 flex items-center">
               <Separator className="w-full" />
@@ -254,9 +257,9 @@ function LoginContent() {
               </span>
             </div>
           </div>
-          
+
           <GoogleLoginButton />
-          
+
           <div className="text-center text-sm pt-1">
             {t('login.dontHaveAccount')}{' '}
             <Link href={fromDesktop ? `/register?from=desktop${callbackUrl ? `&callback=${encodeURIComponent(callbackUrl)}` : ''}` : '/register'} className="text-primary font-medium hover:underline">
