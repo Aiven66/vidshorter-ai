@@ -64,55 +64,6 @@ function LoginContent() {
     }
   }, [isDesktopFlow, loginSuccess, authLoading, user, accessToken]);
 
-  const trySendTokenToDesktop = async (token: string | null) => {
-    if (!token) return;
-
-    const tokenEmail = user?.email || email;
-    const tokenUserId = user?.id || '';
-    const tokenName = user?.name || '';
-    const tokenRefreshToken = currentRefreshToken || undefined;
-
-    setDesktopSendStatus('sending');
-
-    if (savedCallbackUrl) {
-      try {
-        console.log('[DesktopAuth] Method 1: fetch POST to callbackUrl');
-        const res = await fetch(`${savedCallbackUrl}/api/desktop-auth`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            token,
-            refreshToken: tokenRefreshToken,
-            email: tokenEmail,
-            userId: tokenUserId,
-            name: tokenName,
-          }),
-        });
-        const data = await res.json();
-        if (data.ok) {
-          console.log('[DesktopAuth] ✅ Method 1 success');
-          setDesktopSendStatus('sent');
-          return;
-        }
-      } catch (e) {
-        console.log('[DesktopAuth] ❌ Method 1 failed:', e);
-      }
-    }
-
-    console.log('[DesktopAuth] Waiting for user to click return button');
-    setDesktopSendStatus('failed');
-  };
-
-  useEffect(() => {
-    if (showDesktopSuccess && desktopSendStatus === 'idle') {
-      const token = currentToken || accessToken;
-      console.log('[DesktopAuth] showDesktopSuccess is true, token present:', !!token);
-      if (token) {
-        trySendTokenToDesktop(token);
-      }
-    }
-  }, [showDesktopSuccess, desktopSendStatus]);
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -205,21 +156,6 @@ function LoginContent() {
               <p className="text-center text-muted-foreground">
                 {t('login.successMessage')} <strong>{user?.email || email}</strong>
               </p>
-              {desktopSendStatus === 'sending' && (
-                <p className="text-sm text-muted-foreground animate-pulse">
-                  {t('login.successDesktopHint')}
-                </p>
-              )}
-              {desktopSendStatus === 'sent' && (
-                <p className="text-sm text-green-600">
-                  ✅ {t('login.successDesktopHint')}
-                </p>
-              )}
-              {desktopSendStatus === 'failed' && (
-                <p className="text-sm text-amber-600">
-                  ⚠️ {t('login.desktopNotOpened')}
-                </p>
-              )}
             </div>
             <Button className="w-full h-12 text-lg" onClick={handleReturnToDesktop}>
               <Monitor className="w-5 h-5 mr-2" />

@@ -59,52 +59,6 @@ function RegisterContent() {
   const isDesktopFlow = isDesktopAuthRequest(sp);
   const savedCallbackUrl = getDesktopCallbackFromSearch(sp);
 
-  const trySendTokenToDesktop = async (token: string | null) => {
-    if (!token) return;
-
-    const tokenEmail = desktopEmail || user?.email || email;
-    const tokenUserId = user?.id || '';
-    const tokenName = user?.name || name;
-    const tokenRefreshToken = desktopRefreshToken || undefined;
-
-    setDesktopSendStatus('sending');
-
-    if (savedCallbackUrl) {
-      try {
-        console.log('[DesktopAuth] Method 1: fetch POST to callbackUrl');
-        const res = await fetch(`${savedCallbackUrl}/api/desktop-auth`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            token,
-            refreshToken: tokenRefreshToken,
-            email: tokenEmail,
-            userId: tokenUserId,
-            name: tokenName,
-          }),
-        });
-        const data = await res.json();
-        if (data.ok) {
-          console.log('[DesktopAuth] ✅ Method 1 success');
-          setDesktopSendStatus('sent');
-          return;
-        }
-      } catch (e) {
-        console.log('[DesktopAuth] ❌ Method 1 failed:', e);
-      }
-    }
-
-    console.log('[DesktopAuth] Waiting for user to click return button');
-    setDesktopSendStatus('failed');
-  };
-
-  useEffect(() => {
-    if (step === 'done' && desktopToken && desktopSendStatus === 'idle') {
-      console.log('[DesktopAuth] Step done, token present, calling trySendTokenToDesktop...');
-      trySendTokenToDesktop(desktopToken);
-    }
-  }, [step, desktopToken, desktopSendStatus]);
-
   const handleSendCode = async () => {
     if (!name.trim()) { setError(t('register.errorNameRequired')); return; }
     if (!email.trim()) { setError(t('register.errorEmailRequired')); return; }

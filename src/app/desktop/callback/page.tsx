@@ -9,6 +9,7 @@ import {
   buildDesktopDeepLink,
   buildDesktopLoginRedirectUrl,
   getDesktopCallbackFromSearch,
+  isDesktopAuthRequest,
   rememberDesktopAuth,
   type DesktopAuthPayload,
 } from '@/lib/desktop-auth';
@@ -87,6 +88,7 @@ function DesktopCallbackContent() {
           userId: session.user.id || '',
           name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || '',
         });
+        setLoading(false);
         return;
       }
 
@@ -102,6 +104,7 @@ function DesktopCallbackContent() {
               userId: authUser.id || '',
               name: authUser.user_metadata?.name || authUser.email?.split('@')[0] || '',
             });
+            setLoading(false);
             return;
           }
         } catch {}
@@ -113,6 +116,7 @@ function DesktopCallbackContent() {
           token: accessToken,
           refreshToken: refreshToken || undefined,
         });
+        setLoading(false);
         return;
       }
 
@@ -156,6 +160,7 @@ function DesktopCallbackContent() {
   };
 
   const hasToken = !!payload.token;
+  const shouldShowButton = isDesktop || hasToken || payload.email;
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-muted/30 py-12 px-4">
@@ -199,7 +204,7 @@ function DesktopCallbackContent() {
             </div>
           )}
 
-          {!loading && !error && (hasToken || payload.email || isDesktop) && (
+          {!loading && !error && shouldShowButton && (
             <div className="space-y-4">
               <Button
                 size="lg"
@@ -210,7 +215,7 @@ function DesktopCallbackContent() {
                 Open Clipop Agent
               </Button>
               <p className="text-xs text-muted-foreground">
-                If the desktop app didn&apos;t open, please switch to it manually or click the button again.
+                If the desktop app didn't open, please switch to it manually or click the button again.
               </p>
             </div>
           )}
