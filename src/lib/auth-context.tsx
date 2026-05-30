@@ -470,7 +470,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               window.history.replaceState(null, '', window.location.pathname);
               window.dispatchEvent(new Event('clipop-auth-change'));
 
-              if (window.location.pathname === '/login' || window.location.pathname === '/register') {
+              const urlParams = new URLSearchParams(window.location.search);
+              const isDesktopAuth = sessionStorage.getItem('clipop_desktop_auth') === '1'
+                || urlParams.get('from') === 'desktop'
+                || urlParams.get('desktop') === '1'
+                || window.location.pathname.startsWith('/desktop/');
+              if (!isDesktopAuth && (window.location.pathname === '/login' || window.location.pathname === '/register')) {
                 window.location.href = '/';
                 return;
               }
@@ -745,9 +750,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const client = await getSupabaseClient();
       const params = new URLSearchParams(window.location.search);
       const fromDesktop = params.get('from') === 'desktop';
-      const callbackParam = params.get('callback') || '';
+      const callbackParam = params.get('callback') || sessionStorage.getItem('clipop_desktop_callback') || '';
+      const isDesktopAuth = fromDesktop || sessionStorage.getItem('clipop_desktop_auth') === '1';
 
-      const redirectUrl = fromDesktop
+      const redirectUrl = isDesktopAuth
         ? `${window.location.origin}/desktop/callback?from=desktop${callbackParam ? `&callback=${encodeURIComponent(callbackParam)}` : ''}`
         : `${window.location.origin}/auth/callback`;
 

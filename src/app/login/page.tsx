@@ -27,6 +27,9 @@ function LoginContent() {
   const [currentToken, setCurrentToken] = useState<string | null>(null);
   const [desktopSendStatus, setDesktopSendStatus] = useState<'idle' | 'sending' | 'sent' | 'failed'>('idle');
 
+  const fromDesktop = sp.get('from') === 'desktop' || sp.get('desktop') === '1';
+  const callbackUrl = sp.get('callback') || '';
+
   useEffect(() => {
     const urlError = sp.get('error');
     if (urlError) {
@@ -34,10 +37,27 @@ function LoginContent() {
     }
   }, [sp]);
 
-  const fromDesktop = sp.get('from') === 'desktop' || sp.get('desktop') === '1';
-  const callbackUrl = sp.get('callback') || '';
+  useEffect(() => {
+    if (fromDesktop) {
+      sessionStorage.setItem('clipop_desktop_auth', '1');
+      if (callbackUrl) {
+        sessionStorage.setItem('clipop_desktop_callback', callbackUrl);
+      }
+    }
+  }, [fromDesktop, callbackUrl]);
 
-  const showDesktopSuccess = fromDesktop && (loginSuccess || (!authLoading && !!user));
+  const isDesktopFlow = fromDesktop || sessionStorage.getItem('clipop_desktop_auth') === '1';
+  const savedCallbackUrl = callbackUrl || sessionStorage.getItem('clipop_desktop_callback') || '';
+
+  const showDesktopSuccess = isDesktopFlow && (loginSuccess || (!authLoading && !!user));
+
+  useEffect(() => {
+    if (isDesktopFlow && !loginSuccess && !authLoading && !!user && !!accessToken) {
+      console.log('[DesktopAuth] User authenticated in desktop flow, forcing loginSuccess');
+      setCurrentToken(accessToken);
+      setLoginSuccess(true);
+    }
+  }, [isDesktopFlow, loginSuccess, authLoading, user, accessToken]);
 
   const trySendTokenToDesktop = async (token: string | null) => {
     if (!token) return;
@@ -48,10 +68,10 @@ function LoginContent() {
 
     setDesktopSendStatus('sending');
 
-    if (callbackUrl) {
+    if (savedCallbackUrl) {
       try {
         console.log('[DesktopAuth] Method 1: fetch POST to callbackUrl');
-        const res = await fetch(`${callbackUrl}/api/desktop-auth`, {
+        const res = await fetch(`${savedCallbackUrl}/api/desktop-auth`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -72,9 +92,8 @@ function LoginContent() {
       }
     }
 
-    // 不自动跳 deep link，让用户手动点击按钮
     console.log('[DesktopAuth] Waiting for user to click return button');
-    setDesktopSendStatus('failed'); // 显示提示让用户点击按钮
+    setDesktopSendStatus('failed');
   };
 
   useEffect(() => {
@@ -107,7 +126,7 @@ function LoginContent() {
       });
     }
 
-    if (fromDesktop) {
+    if (isDesktopFlow) {
       const token = result.token || accessToken;
       console.log('[DesktopAuth] Login complete, token received:', !!token);
       setCurrentToken(token);
@@ -120,6 +139,12 @@ function LoginContent() {
 
   const handleGoogleSignIn = async () => {
     setLoading(true);
+    if (isDesktopFlow) {
+      sessionStorage.setItem('clipop_desktop_auth', '1');
+      if (savedCallbackUrl) {
+        sessionStorage.setItem('clipop_desktop_callback', savedCallbackUrl);
+      }
+    }
     const result = await signInWithGoogle();
     if (result.error) {
       setError(result.error);
@@ -132,6 +157,17 @@ function LoginContent() {
     const tokenEmail = user?.email || email;
     const tokenUserId = user?.id || '';
     const tokenName = user?.name || '';
+
+    if (savedCallbackUrl) {
+      try {
+        const redirectUrl = `${savedCallbackUrl}/api/desktop-login-redirect?token=${encodeURIComponent(token || '')}&email=${encodeURIComponent(tokenEmail)}&userId=${encodeURIComponent(tokenUserId)}&name=${encodeURIComponent(tokenName)}`;
+        console.log('[DesktopAuth] Button clicked - Redirecting to callback URL');
+        window.location.href = redirectUrl;
+        return;
+      } catch (e) {
+        console.log('[DesktopAuth] Redirect failed, trying deep link:', e);
+      }
+    }
 
     const deepLink = `clipop://login-success?token=${encodeURIComponent(token || '')}&email=${encodeURIComponent(tokenEmail)}&userId=${encodeURIComponent(tokenUserId)}&name=${encodeURIComponent(tokenName)}`;
     console.log('[DesktopAuth] Button clicked - Opening deep link:', deepLink);
@@ -251,11 +287,11 @@ function LoginContent() {
             </div>
           </div>
 
-          <GoogleLoginButton />
+          <GoogleLoginButton onGoogleClick={handleGoogleSignIn} />
 
           <div className="text-center text-sm pt-1">
             {t('login.dontHaveAccount')}{' '}
-            <Link href={fromDesktop ? `/register?from=desktop${callbackUrl ? `&callback=${encodeURIComponent(callbackUrl)}` : ''}` : '/register'} className="text-primary font-medium hover:underline">
+            <Link href={isDesktopFlow ? `/register?from=desktop${savedCallbackUrl ? `&callback=${encodeURIComponent(savedCallbackUrl)}` : ''}` : '/register'} className="text-primary font-medium hover:underline">
               {t('login.signUp')}
             </Link>
           </div>

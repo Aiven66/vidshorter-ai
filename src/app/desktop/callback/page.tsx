@@ -6,21 +6,46 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { Monitor, CheckCircle, Loader2 } from 'lucide-react';
+import { useLocale } from '@/lib/locale-context';
 
 function DesktopCallbackContent() {
   const sp = useSearchParams();
-  const [loading, setLoading] = useState(false);
+  const { t } = useLocale();
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [resolvedEmail, setResolvedEmail] = useState('');
   const [resolvedToken, setResolvedToken] = useState('');
   const [resolvedUserId, setResolvedUserId] = useState('');
   const [resolvedName, setResolvedName] = useState('');
   const [autoSendStatus, setAutoSendStatus] = useState<'idle' | 'sending' | 'sent' | 'failed'>('idle');
+  const [retryCount, setRetryCount] = useState(0);
 
-  const callbackUrl = useMemo(() => sp.get('callback') || '', [sp]);
-  const email = useMemo(() => sp.get('email') || '', [sp]);
-  const accessToken = useMemo(() => sp.get('access_token') || '', [sp]);
-  const code = useMemo(() => sp.get('code') || '', [sp]);
+  const callbackUrl = useMemo(() => sp.get('callback') || sessionStorage.getItem('clipop_desktop_callback') || '', [sp]);
+  const emailParam = useMemo(() => sp.get('email') || '', [sp]);
+  const codeParam = useMemo(() => sp.get('code') || '', [sp]);
+
+  const queryAccessToken = useMemo(() => sp.get('access_token') || '', [sp]);
+
+  const hashAccessToken = useMemo(() => {
+    if (typeof window === 'undefined') return '';
+    try {
+      const hash = window.location.hash;
+      if (!hash) return '';
+      const hashParams = new URLSearchParams(hash.substring(1));
+      return hashParams.get('access_token') || '';
+    } catch {
+      return '';
+    }
+  }, []);
+
+  const accessTokenParam = queryAccessToken || hashAccessToken;
+
+  useEffect(() => {
+    sessionStorage.setItem('clipop_desktop_auth', '1');
+    if (callbackUrl) {
+      sessionStorage.setItem('clipop_desktop_callback', callbackUrl);
+    }
+  }, [callbackUrl]);
 
   useEffect(() => {
     let cancelled = false;
@@ -32,14 +57,21 @@ function DesktopCallbackContent() {
       try {
         const client = getSupabaseClient();
 
-        if (code) {
-          const { error: exchangeError } = await client.auth.exchangeCodeForSession(code);
-          if (exchangeError) throw exchangeError;
+        if (codeParam) {
+          console.log('[DesktopCallback] Exchanging code for session...');
+          const { error: exchangeError } = await client.auth.exchangeCodeForSession(codeParam);
+          if (exchangeError) {
+            console.log('[DesktopCallback] Code exchange error:', exchangeError.message);
+            throw exchangeError;
+          }
+          console.log('[DesktopCallback] Code exchange success');
         }
 
         const { data: { session } } = await client.auth.getSession();
-        const token = accessToken || session?.access_token || '';
+        const token = accessTokenParam || session?.access_token || '';
         const user = session?.user;
+
+        console.log('[DesktopCallback] Session check - token:', !!token, 'user:', !!user, 'accessTokenParam:', !!accessTokenParam);
 
         if (!token || !user) {
           throw new Error('No session found. Please try signing in again.');
@@ -47,13 +79,15 @@ function DesktopCallbackContent() {
 
         if (!cancelled) {
           setResolvedToken(token);
-          setResolvedEmail(email || user.email || '');
+          setResolvedEmail(emailParam || user.email || '');
           setResolvedUserId(user.id || '');
           setResolvedName(user.user_metadata?.name || user.email?.split('@')[0] || '');
         }
       } catch (e) {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : 'Failed to complete sign-in.');
+          const msg = e instanceof Error ? e.message : 'Failed to complete sign-in.';
+          console.log('[DesktopCallback] Resolve error:', msg);
+          setError(msg);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -65,7 +99,7 @@ function DesktopCallbackContent() {
     return () => {
       cancelled = true;
     };
-  }, [accessToken, code, email]);
+  }, [accessTokenParam, codeParam, emailParam, retryCount]);
 
   useEffect(() => {
     if (!resolvedToken || autoSendStatus !== 'idle') return;
@@ -75,7 +109,7 @@ function DesktopCallbackContent() {
 
       if (callbackUrl) {
         try {
-          console.log('[DesktopCallback] Method 1: fetch POST to callbackUrl');
+          console.log('[DesktopCallback] Auto-send: fetch POST to callbackUrl');
           const res = await fetch(`${callbackUrl}/api/desktop-auth`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -88,28 +122,43 @@ function DesktopCallbackContent() {
           });
           const data = await res.json();
           if (data.ok) {
-            console.log('[DesktopCallback] ✅ Method 1 success');
+            console.log('[DesktopCallback] ✅ Auto-send success');
             setAutoSendStatus('sent');
             return;
           }
         } catch (e) {
-          console.log('[DesktopCallback] ❌ Method 1 failed:', e);
+          console.log('[DesktopCallback] ❌ Auto-send failed (expected: mixed content):', e);
         }
       }
 
-      // 不自动跳 deep link，让用户手动点击按钮
-      console.log('[DesktopCallback] Waiting for user to click button');
-      setAutoSendStatus('failed'); // 显示按钮让用户点击
+      console.log('[DesktopCallback] Auto-send failed, showing button for user');
+      setAutoSendStatus('failed');
     };
 
-    const timer = setTimeout(tryAutoSend, 1000);
+    const timer = setTimeout(tryAutoSend, 500);
     return () => clearTimeout(timer);
   }, [resolvedToken, callbackUrl, autoSendStatus]);
 
   const handleOpenDesktop = () => {
+    if (callbackUrl) {
+      try {
+        const redirectUrl = `${callbackUrl}/api/desktop-login-redirect?token=${encodeURIComponent(resolvedToken)}&email=${encodeURIComponent(resolvedEmail)}&userId=${encodeURIComponent(resolvedUserId)}&name=${encodeURIComponent(resolvedName)}`;
+        console.log('[DesktopCallback] Button clicked - Redirecting to callback URL');
+        window.location.href = redirectUrl;
+        return;
+      } catch (e) {
+        console.log('[DesktopCallback] Redirect failed, trying deep link:', e);
+      }
+    }
+
     const deepLink = `clipop://login-success?token=${encodeURIComponent(resolvedToken)}&email=${encodeURIComponent(resolvedEmail)}&userId=${encodeURIComponent(resolvedUserId)}&name=${encodeURIComponent(resolvedName)}`;
     console.log('[DesktopCallback] Button clicked - Opening deep link:', deepLink);
     window.location.href = deepLink;
+  };
+
+  const handleRetry = () => {
+    setError('');
+    setRetryCount(prev => prev + 1);
   };
 
   return (
@@ -127,19 +176,24 @@ function DesktopCallbackContent() {
           </CardDescription>
         </CardHeader>
         <CardContent className="text-center space-y-6">
-          {(resolvedEmail || email) && !error && (
+          {(resolvedEmail || emailParam) && !error && !loading && (
             <div className="flex flex-col items-center gap-2">
               <div className="h-12 w-12 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
                 <CheckCircle className="h-7 w-7 text-green-500" />
               </div>
               <p className="text-sm text-foreground">
-                Signed in as: <span className="font-medium">{resolvedEmail || email}</span>
+                Signed in as: <span className="font-medium">{resolvedEmail || emailParam}</span>
               </p>
             </div>
           )}
 
           {error && (
-            <p className="text-sm text-destructive">{error}</p>
+            <div className="space-y-3">
+              <p className="text-sm text-destructive">{error}</p>
+              <Button variant="outline" size="sm" onClick={handleRetry}>
+                Retry
+              </Button>
+            </div>
           )}
 
           {loading && (

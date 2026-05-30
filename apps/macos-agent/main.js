@@ -183,6 +183,11 @@ function startAuthCallbackServer() {
           if (webWindow && !webWindow.isDestroyed()) {
             appendLog('[AuthCallback] Injecting token into webWindow...');
             await injectAuthToWebWindow(token, email, userId, name);
+            if (!webWindow.isDestroyed()) {
+              webWindow.show();
+              webWindow.focus();
+              appendLog('[AuthCallback] webWindow focused');
+            }
           } else {
             appendLog('[AuthCallback] No webWindow, will inject on next load');
           }
@@ -228,6 +233,11 @@ function startAuthCallbackServer() {
 
         if (webWindow && !webWindow.isDestroyed()) {
           await injectAuthToWebWindow(token, email, userId, name);
+          if (!webWindow.isDestroyed()) {
+            webWindow.show();
+            webWindow.focus();
+            appendLog('[AuthCallback] Redirect login: webWindow focused');
+          }
         }
 
         await applyMenu();
@@ -615,6 +625,7 @@ async function ensureWebWindow() {
       const cfg = await loadConfig();
       if (cfg.authToken) {
         appendLog('[WebWindow] Injecting saved token...');
+        lastInjectedToken = cfg.authToken;
         await injectAuthToWebWindow(cfg.authToken, cfg.authEmail, cfg.authUserId, cfg.authName);
       }
 
@@ -655,6 +666,7 @@ async function ensureWebWindow() {
       const cfg = await loadConfig();
       if (cfg.authToken && webWindow && !webWindow.isDestroyed()) {
         appendLog('[WebWindow] Focus event: re-injecting auth token');
+        lastInjectedToken = cfg.authToken;
         await injectAuthToWebWindow(cfg.authToken, cfg.authEmail, cfg.authUserId, cfg.authName);
       }
     } catch (e) {
@@ -805,7 +817,13 @@ async function applyMenu() {
                 webWindow.webContents.reload();
               }
             } else {
-              await shell.openExternal(SERVER_URL + '/login?from=desktop');
+              const callbackUrl = authCallbackPort ? `http://127.0.0.1:${authCallbackPort}` : '';
+              const loginUrl = new URL('/login', SERVER_URL);
+              loginUrl.searchParams.set('from', 'desktop');
+              if (callbackUrl) {
+                loginUrl.searchParams.set('callback', callbackUrl);
+              }
+              await shell.openExternal(loginUrl.toString());
             }
             await applyMenu();
           },
