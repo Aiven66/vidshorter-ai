@@ -398,6 +398,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const handleOAuthCallback = async () => {
         if (typeof window === 'undefined') return;
 
+        if (window.location.pathname.startsWith('/desktop/')) {
+          checkAuthState();
+          return;
+        }
+
         const hash = window.location.hash;
         const search = window.location.search;
         const params = new URLSearchParams();

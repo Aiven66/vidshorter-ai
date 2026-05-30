@@ -188,6 +188,12 @@ function startAuthCallbackServer() {
               webWindow.focus();
               appendLog('[AuthCallback] webWindow focused');
             }
+            setTimeout(() => {
+              if (webWindow && !webWindow.isDestroyed()) {
+                appendLog('[AuthCallback] Fallback: reloading webWindow to ensure auth state');
+                webWindow.reload();
+              }
+            }, 2000);
           } else {
             appendLog('[AuthCallback] No webWindow, will inject on next load');
           }
@@ -238,6 +244,12 @@ function startAuthCallbackServer() {
             webWindow.focus();
             appendLog('[AuthCallback] Redirect login: webWindow focused');
           }
+          setTimeout(() => {
+            if (webWindow && !webWindow.isDestroyed()) {
+              appendLog('[AuthCallback] Redirect login: Fallback reload to ensure auth state');
+              webWindow.reload();
+            }
+          }, 2000);
         }
 
         await applyMenu();
@@ -301,7 +313,7 @@ async function injectAuthToWebWindow(token, email, userId, name) {
       window.__clipopDesktopName = ${JSON.stringify(name)};
       console.log('[DEBUG-INJECT] Window vars set');
 
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 10; i++) {
         setTimeout(() => {
           var event = new CustomEvent('clipop-desktop-login', {
             detail: {
@@ -314,7 +326,7 @@ async function injectAuthToWebWindow(token, email, userId, name) {
           window.dispatchEvent(event);
           window.dispatchEvent(new Event('clipop-auth-change'));
           console.log('[DEBUG-INJECT] Events dispatched, attempt ' + (i+1));
-        }, i * 200);
+        }, i * 300);
       }
 
       console.log('[DEBUG-INJECT] ======== INJECT DONE ========');

@@ -6,11 +6,9 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { Monitor, CheckCircle, Loader2 } from 'lucide-react';
-import { useLocale } from '@/lib/locale-context';
 
 function DesktopCallbackContent() {
   const sp = useSearchParams();
-  const { t } = useLocale();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [resolvedEmail, setResolvedEmail] = useState('');
@@ -21,24 +19,6 @@ function DesktopCallbackContent() {
   const [retryCount, setRetryCount] = useState(0);
 
   const callbackUrl = useMemo(() => sp.get('callback') || sessionStorage.getItem('clipop_desktop_callback') || '', [sp]);
-  const emailParam = useMemo(() => sp.get('email') || '', [sp]);
-  const codeParam = useMemo(() => sp.get('code') || '', [sp]);
-
-  const queryAccessToken = useMemo(() => sp.get('access_token') || '', [sp]);
-
-  const hashAccessToken = useMemo(() => {
-    if (typeof window === 'undefined') return '';
-    try {
-      const hash = window.location.hash;
-      if (!hash) return '';
-      const hashParams = new URLSearchParams(hash.substring(1));
-      return hashParams.get('access_token') || '';
-    } catch {
-      return '';
-    }
-  }, []);
-
-  const accessTokenParam = queryAccessToken || hashAccessToken;
 
   useEffect(() => {
     sessionStorage.setItem('clipop_desktop_auth', '1');
@@ -57,6 +37,40 @@ function DesktopCallbackContent() {
       try {
         const client = getSupabaseClient();
 
+        const codeParam = sp.get('code') || '';
+
+        let hashAccessToken = '';
+        let hashRefreshToken = '';
+        try {
+          const hash = window.location.hash;
+          if (hash) {
+            const hashParams = new URLSearchParams(hash.substring(1));
+            hashAccessToken = hashParams.get('access_token') || '';
+            hashRefreshToken = hashParams.get('refresh_token') || '';
+          }
+        } catch {}
+
+        const queryAccessToken = sp.get('access_token') || '';
+        const queryRefreshToken = sp.get('refresh_token') || '';
+
+        const accessTokenParam = queryAccessToken || hashAccessToken;
+        const refreshTokenParam = queryRefreshToken || hashRefreshToken;
+
+        console.log('[DesktopCallback] Params - code:', !!codeParam, 'accessToken:', !!accessTokenParam, 'refreshToken:', !!refreshTokenParam, 'callback:', !!callbackUrl);
+
+        if (accessTokenParam && refreshTokenParam) {
+          console.log('[DesktopCallback] Setting session from hash tokens...');
+          const { error: sessionError } = await client.auth.setSession({
+            access_token: accessTokenParam,
+            refresh_token: refreshTokenParam,
+          });
+          if (sessionError) {
+            console.log('[DesktopCallback] setSession error:', sessionError.message);
+          } else {
+            console.log('[DesktopCallback] setSession success');
+          }
+        }
+
         if (codeParam) {
           console.log('[DesktopCallback] Exchanging code for session...');
           const { error: exchangeError } = await client.auth.exchangeCodeForSession(codeParam);
@@ -71,17 +85,57 @@ function DesktopCallbackContent() {
         const token = accessTokenParam || session?.access_token || '';
         const user = session?.user;
 
-        console.log('[DesktopCallback] Session check - token:', !!token, 'user:', !!user, 'accessTokenParam:', !!accessTokenParam);
+        console.log('[DesktopCallback] Session check - token:', !!token, 'user:', !!user);
 
-        if (!token || !user) {
+        if (!token) {
+          throw new Error('No authentication token found. Please try signing in again.');
+        }
+
+        if (!user && token) {
+          try {
+            const { data: { user: authUser } } = await client.auth.getUser(token);
+            if (authUser) {
+              if (!cancelled) {
+                setResolvedToken(token);
+                setResolvedEmail(authUser.email || '');
+                setResolvedUserId(authUser.id || '');
+                setResolvedName(authUser.user_metadata?.name || authUser.email?.split('@')[0] || '');
+              }
+              return;
+            }
+          } catch (e) {
+            console.log('[DesktopCallback] getUser error:', e);
+          }
+        }
+
+        if (!user) {
           throw new Error('No session found. Please try signing in again.');
         }
 
         if (!cancelled) {
           setResolvedToken(token);
-          setResolvedEmail(emailParam || user.email || '');
+          setResolvedEmail(user.email || '');
           setResolvedUserId(user.id || '');
           setResolvedName(user.user_metadata?.name || user.email?.split('@')[0] || '');
+
+          try {
+            const { data: existingUser } = await client
+              .from('users')
+              .select('id')
+              .eq('id', user.id)
+              .maybeSingle();
+            if (!existingUser) {
+              await client.from('users').insert({
+                id: user.id,
+                email: user.email!,
+                name: user.user_metadata?.name || user.email?.split('@')[0],
+                role: 'user',
+                google_id: user.app_metadata?.provider === 'google' ? user.id : null,
+              });
+              await client.from('credits').insert({ user_id: user.id, balance: 100 });
+              await client.from('subscriptions').insert({ user_id: user.id, plan_type: 'free', status: 'active' });
+            }
+          } catch {}
         }
       } catch (e) {
         if (!cancelled) {
@@ -99,7 +153,7 @@ function DesktopCallbackContent() {
     return () => {
       cancelled = true;
     };
-  }, [accessTokenParam, codeParam, emailParam, retryCount]);
+  }, [sp, callbackUrl, retryCount]);
 
   useEffect(() => {
     if (!resolvedToken || autoSendStatus !== 'idle') return;
@@ -137,7 +191,7 @@ function DesktopCallbackContent() {
 
     const timer = setTimeout(tryAutoSend, 500);
     return () => clearTimeout(timer);
-  }, [resolvedToken, callbackUrl, autoSendStatus]);
+  }, [resolvedToken, callbackUrl, autoSendStatus, resolvedEmail, resolvedUserId, resolvedName]);
 
   const handleOpenDesktop = () => {
     if (callbackUrl) {
@@ -176,13 +230,13 @@ function DesktopCallbackContent() {
           </CardDescription>
         </CardHeader>
         <CardContent className="text-center space-y-6">
-          {(resolvedEmail || emailParam) && !error && !loading && (
+          {resolvedEmail && !error && !loading && (
             <div className="flex flex-col items-center gap-2">
               <div className="h-12 w-12 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
                 <CheckCircle className="h-7 w-7 text-green-500" />
               </div>
               <p className="text-sm text-foreground">
-                Signed in as: <span className="font-medium">{resolvedEmail || emailParam}</span>
+                Signed in as: <span className="font-medium">{resolvedEmail}</span>
               </p>
             </div>
           )}
