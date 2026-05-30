@@ -10,6 +10,7 @@
     "agent:mac": "node dist/agent/cli.js",
     "preinstall": "npx only-allow pnpm",
     "lint": "eslint",
+    "test:desktop-auth": "node --import tsx scripts/check-desktop-auth-flow.ts",
     "start": "bash ./scripts/start.sh",
     "ts-check": "tsc -p tsconfig.json"
   },

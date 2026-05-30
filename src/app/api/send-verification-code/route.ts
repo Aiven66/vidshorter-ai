@@ -216,7 +216,7 @@ export async function POST(request: NextRequest) {
   console.log('[send-verification-code] Generated code:', code);
   const expiresAt = Date.now() + 5 * 60 * 1000;
 
-  const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL || process.env.SERVER_URL || 'https://clipopai.vercel.app';
+  const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL || process.env.SERVER_URL || 'https://vidshorterai.vercel.app';
 
   if (isDesktop && SERVER_URL && !SERVER_URL.includes('127.0.0.1') && !SERVER_URL.includes('localhost')) {
     console.log('[send-verification-code] Desktop mode, proxying to server:', SERVER_URL);
@@ -328,7 +328,7 @@ export async function PUT(request: NextRequest) {
     return Response.json({ error: 'Email and code are required' }, { status: 400 });
   }
 
-  const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL || process.env.SERVER_URL || 'https://clipopai.vercel.app';
+  const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL || process.env.SERVER_URL || 'https://vidshorterai.vercel.app';
 
   if (isDesktop && SERVER_URL && !SERVER_URL.includes('127.0.0.1') && !SERVER_URL.includes('localhost')) {
     console.log('[verify-code] Desktop mode, proxying verification to server:', SERVER_URL);

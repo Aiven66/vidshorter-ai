@@ -6,6 +6,7 @@ import { useLocale } from '@/lib/locale-context';
 import { useRouter } from 'next/navigation';
 import { Video, ExternalLink, ArrowLeft, RefreshCw, Loader2 } from 'lucide-react';
 import { useState, useEffect } from 'react';
+import { DESKTOP_WEB_APP_URL } from '@/lib/desktop-auth';
 
 export default function DesktopLoginPage() {
   const { t } = useLocale();
@@ -23,7 +24,7 @@ export default function DesktopLoginPage() {
           return;
         }
 
-        const response = await fetch('https://clipopai.vercel.app/api/check-login', {
+        const response = await fetch(`${DESKTOP_WEB_APP_URL}/api/check-login`, {
           credentials: 'include',
           mode: 'cors'
         });
@@ -48,7 +49,7 @@ export default function DesktopLoginPage() {
     } else if (typeof window.agent !== 'undefined' && window.agent.openWebLogin) {
       await window.agent.openWebLogin();
     } else {
-      window.open('https://clipopai.vercel.app/login?from=desktop', '_blank');
+      window.open(`${DESKTOP_WEB_APP_URL}/login?from=desktop`, '_blank');
     }
     setTimeout(() => {
       window.location.href = '/';

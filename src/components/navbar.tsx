@@ -9,6 +9,7 @@ import { Sheet, SheetContent, SheetTrigger, SheetTitle } from '@/components/ui/s
 import { useLocale } from '@/lib/locale-context';
 import { Menu, Globe, Video, Sun, Moon } from 'lucide-react';
 import dynamic from 'next/dynamic';
+import { DESKTOP_WEB_APP_URL } from '@/lib/desktop-auth';
 
 const NavbarUserSection = dynamic(
   () => import('@/components/navbar/navbar-user-section').then(m => ({ default: m.NavbarUserSection })),
@@ -63,7 +64,7 @@ export function Navbar() {
   const navItems = isDesktop
     ? [
         { href: '/', label: t('nav.home') },
-        { href: `${process.env.NEXT_PUBLIC_APP_URL || 'https://clipopai.vercel.app'}/pricing`, label: t('nav.pricing'), external: true },
+        { href: `${process.env.NEXT_PUBLIC_APP_URL || DESKTOP_WEB_APP_URL}/pricing`, label: t('nav.pricing'), external: true },
       ]
     : [
         { href: '/', label: t('nav.home') },

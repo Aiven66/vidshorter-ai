@@ -6,13 +6,14 @@ import { useLocale } from '@/lib/locale-context';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Video, ExternalLink, ArrowLeft } from 'lucide-react';
+import { DESKTOP_WEB_APP_URL } from '@/lib/desktop-auth';
 
 export default function DesktopRegisterPage() {
   const { t } = useLocale();
   const router = useRouter();
 
   const handleOpenWebRegister = () => {
-    window.location.href = 'https://clipopai.vercel.app/register?from=desktop';
+    window.location.href = `${DESKTOP_WEB_APP_URL}/register?from=desktop`;
   };
 
   return (

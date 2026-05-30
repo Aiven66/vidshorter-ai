@@ -6,6 +6,12 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { Monitor, CheckCircle, Loader2 } from 'lucide-react';
+import {
+  buildDesktopDeepLink,
+  buildDesktopLoginRedirectUrl,
+  getDesktopCallbackFromSearch,
+  rememberDesktopAuth,
+} from '@/lib/desktop-auth';
 
 function DesktopCallbackContent() {
   const sp = useSearchParams();
@@ -18,13 +24,10 @@ function DesktopCallbackContent() {
   const [autoSendStatus, setAutoSendStatus] = useState<'idle' | 'sending' | 'sent' | 'failed'>('idle');
   const [retryCount, setRetryCount] = useState(0);
 
-  const callbackUrl = useMemo(() => sp.get('callback') || sessionStorage.getItem('clipop_desktop_callback') || '', [sp]);
+  const callbackUrl = useMemo(() => getDesktopCallbackFromSearch(sp), [sp]);
 
   useEffect(() => {
-    sessionStorage.setItem('clipop_desktop_auth', '1');
-    if (callbackUrl) {
-      sessionStorage.setItem('clipop_desktop_callback', callbackUrl);
-    }
+    rememberDesktopAuth(callbackUrl);
   }, [callbackUrl]);
 
   useEffect(() => {
@@ -196,7 +199,13 @@ function DesktopCallbackContent() {
   const handleOpenDesktop = () => {
     if (callbackUrl) {
       try {
-        const redirectUrl = `${callbackUrl}/api/desktop-login-redirect?token=${encodeURIComponent(resolvedToken)}&email=${encodeURIComponent(resolvedEmail)}&userId=${encodeURIComponent(resolvedUserId)}&name=${encodeURIComponent(resolvedName)}`;
+        const redirectUrl = buildDesktopLoginRedirectUrl(callbackUrl, {
+          token: resolvedToken,
+          email: resolvedEmail,
+          userId: resolvedUserId,
+          name: resolvedName,
+        });
+        if (!redirectUrl) throw new Error('Invalid desktop callback URL');
         console.log('[DesktopCallback] Button clicked - Redirecting to callback URL');
         window.location.href = redirectUrl;
         return;
@@ -205,7 +214,12 @@ function DesktopCallbackContent() {
       }
     }
 
-    const deepLink = `clipop://login-success?token=${encodeURIComponent(resolvedToken)}&email=${encodeURIComponent(resolvedEmail)}&userId=${encodeURIComponent(resolvedUserId)}&name=${encodeURIComponent(resolvedName)}`;
+    const deepLink = buildDesktopDeepLink({
+      token: resolvedToken,
+      email: resolvedEmail,
+      userId: resolvedUserId,
+      name: resolvedName,
+    });
     console.log('[DesktopCallback] Button clicked - Opening deep link:', deepLink);
     window.location.href = deepLink;
   };

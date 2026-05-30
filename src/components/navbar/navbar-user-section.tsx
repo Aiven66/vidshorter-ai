@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { User, LogOut, CreditCard, LayoutDashboard, Shield } from 'lucide-react';
 import Link from 'next/link';
+import { DESKTOP_WEB_APP_URL } from '@/lib/desktop-auth';
 
 export function NavbarUserSection({ mounted, isDesktop }: { mounted: boolean; isDesktop: boolean }) {
   const { user, signOut } = useAuth();
@@ -27,7 +28,7 @@ export function NavbarUserSection({ mounted, isDesktop }: { mounted: boolean; is
               } else if ((window as any).agent?.openWebLogin) {
                 await (window as any).agent.openWebLogin();
               } else {
-                window.open('https://clipopai.vercel.app/login?from=desktop', '_blank');
+                window.open(`${DESKTOP_WEB_APP_URL}/login?from=desktop`, '_blank');
               }
             }}>
               {t('nav.login')}
@@ -38,7 +39,7 @@ export function NavbarUserSection({ mounted, isDesktop }: { mounted: boolean; is
               } else if ((window as any).agent?.openWebRegister) {
                 await (window as any).agent.openWebRegister();
               } else {
-                window.open('https://clipopai.vercel.app/register?from=desktop', '_blank');
+                window.open(`${DESKTOP_WEB_APP_URL}/register?from=desktop`, '_blank');
               }
             }}>
               {t('nav.register')}

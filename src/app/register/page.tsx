@@ -15,6 +15,13 @@ import { Suspense } from 'react';
 import { GoogleLoginButton } from '@/components/google-login-button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { posthog } from '@/lib/posthog';
+import {
+  buildDesktopDeepLink,
+  buildDesktopLoginRedirectUrl,
+  getDesktopCallbackFromSearch,
+  isDesktopAuthRequest,
+  rememberDesktopAuth,
+} from '@/lib/desktop-auth';
 
 type Step = 'info' | 'verify' | 'done';
 
@@ -44,15 +51,12 @@ function RegisterContent() {
 
   useEffect(() => {
     if (fromDesktop) {
-      sessionStorage.setItem('clipop_desktop_auth', '1');
-      if (callbackUrl) {
-        sessionStorage.setItem('clipop_desktop_callback', callbackUrl);
-      }
+      rememberDesktopAuth(callbackUrl);
     }
   }, [fromDesktop, callbackUrl]);
 
-  const isDesktopFlow = fromDesktop || sessionStorage.getItem('clipop_desktop_auth') === '1';
-  const savedCallbackUrl = callbackUrl || sessionStorage.getItem('clipop_desktop_callback') || '';
+  const isDesktopFlow = isDesktopAuthRequest(sp);
+  const savedCallbackUrl = getDesktopCallbackFromSearch(sp);
 
   const trySendTokenToDesktop = async (token: string | null) => {
     if (!token) return;
@@ -190,7 +194,13 @@ function RegisterContent() {
 
     if (savedCallbackUrl) {
       try {
-        const redirectUrl = `${savedCallbackUrl}/api/desktop-login-redirect?token=${encodeURIComponent(token || '')}&email=${encodeURIComponent(tokenEmail)}&userId=${encodeURIComponent(tokenUserId)}&name=${encodeURIComponent(tokenName)}`;
+        const redirectUrl = buildDesktopLoginRedirectUrl(savedCallbackUrl, {
+          token,
+          email: tokenEmail,
+          userId: tokenUserId,
+          name: tokenName,
+        });
+        if (!redirectUrl) throw new Error('Invalid desktop callback URL');
         console.log('[DesktopAuth] Button clicked - Redirecting to callback URL');
         window.location.href = redirectUrl;
         return;
@@ -199,7 +209,12 @@ function RegisterContent() {
       }
     }
 
-    const deepLink = `clipop://login-success?token=${encodeURIComponent(token || '')}&email=${encodeURIComponent(tokenEmail)}&userId=${encodeURIComponent(tokenUserId)}&name=${encodeURIComponent(tokenName)}`;
+    const deepLink = buildDesktopDeepLink({
+      token,
+      email: tokenEmail,
+      userId: tokenUserId,
+      name: tokenName,
+    });
     console.log('[DesktopAuth] Button clicked - Opening deep link:', deepLink);
     window.location.href = deepLink;
   };
@@ -412,10 +427,7 @@ function RegisterContent() {
           <Separator />
           <GoogleLoginButton onGoogleClick={async () => {
             if (isDesktopFlow) {
-              sessionStorage.setItem('clipop_desktop_auth', '1');
-              if (savedCallbackUrl) {
-                sessionStorage.setItem('clipop_desktop_callback', savedCallbackUrl);
-              }
+              rememberDesktopAuth(savedCallbackUrl);
             }
             return signInWithGoogle();
           }} />

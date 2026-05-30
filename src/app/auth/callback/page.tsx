@@ -3,6 +3,14 @@
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
+import {
+  buildDesktopCallbackPath,
+  getDesktopCallbackFromPath,
+  getDesktopCallbackFromSearch,
+  getSafeNextPath,
+  isDesktopAuthRequest,
+  rememberDesktopAuth,
+} from '@/lib/desktop-auth';
 
 export default function AuthCallbackPage() {
   const router = useRouter();
@@ -16,11 +24,23 @@ export default function AuthCallbackPage() {
         const code = searchParams.get('code');
         const error = searchParams.get('error');
         const errorDescription = searchParams.get('error_description');
+        const requestedNext = getSafeNextPath(searchParams.get('next'));
+        const callbackUrl = getDesktopCallbackFromSearch(searchParams) || getDesktopCallbackFromPath(requestedNext);
+        const isDesktopFlow = isDesktopAuthRequest(searchParams) || requestedNext.startsWith('/desktop/callback');
+        const loginErrorPath = isDesktopFlow
+          ? `/login?from=desktop${callbackUrl ? `&callback=${encodeURIComponent(callbackUrl)}` : ''}`
+          : '/login';
+        const loginErrorUrl = (message: string) =>
+          `${loginErrorPath}${loginErrorPath.includes('?') ? '&' : '?'}error=${encodeURIComponent(message)}`;
+
+        if (isDesktopFlow) {
+          rememberDesktopAuth(callbackUrl);
+        }
 
         if (error) {
           setStatus('error');
           setErrorMessage(errorDescription || error);
-          setTimeout(() => router.replace(`/login?error=${encodeURIComponent(errorDescription || error)}`), 2000);
+          setTimeout(() => router.replace(loginErrorUrl(errorDescription || error)), 2000);
           return;
         }
 
@@ -34,7 +54,7 @@ export default function AuthCallbackPage() {
         if (!code && !hasAccessToken) {
           setStatus('error');
           setErrorMessage('No authentication data received. Please try again.');
-          setTimeout(() => router.replace('/login?error=no_auth_data'), 2000);
+          setTimeout(() => router.replace(loginErrorUrl('no_auth_data')), 2000);
           return;
         }
 
@@ -44,7 +64,7 @@ export default function AuthCallbackPage() {
         if (!supabaseUrl || !supabaseKey) {
           setStatus('error');
           setErrorMessage('Authentication service is not configured.');
-          setTimeout(() => router.replace('/login?error=config_error'), 2000);
+          setTimeout(() => router.replace(loginErrorUrl('config_error')), 2000);
           return;
         }
 
@@ -62,7 +82,7 @@ export default function AuthCallbackPage() {
           if (exchangeError) {
             setStatus('error');
             setErrorMessage(exchangeError.message);
-            setTimeout(() => router.replace(`/login?error=${encodeURIComponent(exchangeError.message)}`), 2000);
+            setTimeout(() => router.replace(loginErrorUrl(exchangeError.message)), 2000);
             return;
           }
           if (data.session?.user) {
@@ -97,7 +117,7 @@ export default function AuthCallbackPage() {
           if (sessionError || !session) {
             setStatus('error');
             setErrorMessage(sessionError?.message || 'Failed to get session.');
-            setTimeout(() => router.replace('/login?error=session_failed'), 2000);
+            setTimeout(() => router.replace(loginErrorUrl('session_failed')), 2000);
             return;
           }
 
@@ -129,12 +149,22 @@ export default function AuthCallbackPage() {
         }
 
         setStatus('success');
-        const next = searchParams.get('next') || '/';
+        const next = isDesktopFlow
+          ? (requestedNext !== '/' ? requestedNext : buildDesktopCallbackPath(callbackUrl))
+          : requestedNext;
         setTimeout(() => router.replace(next), 500);
       } catch (err) {
         setStatus('error');
         setErrorMessage(err instanceof Error ? err.message : 'Authentication failed.');
-        setTimeout(() => router.replace('/login?error=callback_failed'), 2000);
+        const fallbackNext = getSafeNextPath(searchParams.get('next'));
+        const fallbackCallbackUrl = getDesktopCallbackFromSearch(searchParams) || getDesktopCallbackFromPath(fallbackNext);
+        const fallbackDesktopFlow = isDesktopAuthRequest(searchParams) || fallbackNext.startsWith('/desktop/callback');
+        const fallbackLoginPath = fallbackDesktopFlow
+          ? `/login?from=desktop${fallbackCallbackUrl ? `&callback=${encodeURIComponent(fallbackCallbackUrl)}` : ''}`
+          : '/login';
+        setTimeout(() => {
+          router.replace(`${fallbackLoginPath}${fallbackLoginPath.includes('?') ? '&' : '?'}error=callback_failed`);
+        }, 2000);
       }
     }
 

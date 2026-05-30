@@ -6,6 +6,7 @@ import { useCredits } from '@/lib/credits-context';
 import { Button } from '@/components/ui/button';
 import { LogOut, CreditCard, LayoutDashboard, Shield } from 'lucide-react';
 import Link from 'next/link';
+import { DESKTOP_WEB_APP_URL } from '@/lib/desktop-auth';
 
 export function MobileUserSection({ mounted, isDesktop, onCloseMobile }: { mounted: boolean; isDesktop: boolean; onCloseMobile: () => void }) {
   const { user, signOut } = useAuth();
@@ -27,7 +28,7 @@ export function MobileUserSection({ mounted, isDesktop, onCloseMobile }: { mount
               } else if ((window as any).agent?.openWebLogin) {
                 await (window as any).agent.openWebLogin();
               } else {
-                window.open('https://clipopai.vercel.app/login?from=desktop', '_blank');
+                window.open(`${DESKTOP_WEB_APP_URL}/login?from=desktop`, '_blank');
               }
             }}>
               {t('nav.login')}
@@ -39,7 +40,7 @@ export function MobileUserSection({ mounted, isDesktop, onCloseMobile }: { mount
               } else if ((window as any).agent?.openWebRegister) {
                 await (window as any).agent.openWebRegister();
               } else {
-                window.open('https://clipopai.vercel.app/register?from=desktop', '_blank');
+                window.open(`${DESKTOP_WEB_APP_URL}/register?from=desktop`, '_blank');
               }
             }}>
               {t('nav.register')}
