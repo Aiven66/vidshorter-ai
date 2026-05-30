@@ -307,7 +307,7 @@ async function injectAuthToWebWindow(token, email, userId, name, refreshToken) {
       console.log('[DEBUG-INJECT] ======== INJECT START ========');
       console.log('[DEBUG-INJECT] Token length:', ${JSON.stringify(token.length)});
       console.log('[DEBUG-INJECT] Email:', ${JSON.stringify(email)});
-      console.log('[DEBUG-INJECT] RefreshToken:', ${!!${JSON.stringify(refreshToken || '')}});
+      console.log('[DEBUG-INJECT] RefreshToken:', !!${JSON.stringify(refreshToken || '')});
 
       localStorage.setItem('clipop_access_token', ${JSON.stringify(token)});
       if (${JSON.stringify(refreshToken || '')}) {
