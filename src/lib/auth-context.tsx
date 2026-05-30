@@ -745,9 +745,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const client = await getSupabaseClient();
       const params = new URLSearchParams(window.location.search);
       const fromDesktop = params.get('from') === 'desktop';
+      const callbackParam = params.get('callback') || '';
 
       const redirectUrl = fromDesktop
-        ? `${window.location.origin}/desktop/callback?from=desktop`
+        ? `${window.location.origin}/desktop/callback?from=desktop${callbackParam ? `&callback=${encodeURIComponent(callbackParam)}` : ''}`
         : `${window.location.origin}/auth/callback`;
 
       const { data, error: oauthError } = await client.auth.signInWithOAuth({

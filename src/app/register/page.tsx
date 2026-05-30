@@ -48,25 +48,16 @@ function RegisterContent() {
     console.log('[DesktopAuth] sendTokenToDesktop starting...');
     setSentToDesktop(true);
 
+    const tokenEmail = desktopEmail || user?.email || email;
+    const tokenUserId = user?.id || '';
+    const tokenName = user?.name || name;
+
     if (callbackUrl) {
       try {
-        console.log('[DesktopAuth] Method 1: HTTP POST to callbackUrl:', callbackUrl);
-        const res = await fetch(`${callbackUrl}/api/desktop-auth`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            token,
-            email: desktopEmail || user?.email || email,
-            userId: user?.id || '',
-            name: user?.name || name,
-          }),
-        });
-        const data = await res.json();
-        console.log('[DesktopAuth] HTTP callback response:', data);
-        if (data.ok) {
-          console.log('[DesktopAuth] ✅ Method 1 success');
-          return;
-        }
+        console.log('[DesktopAuth] Method 1: Redirect to callbackUrl (avoids mixed content blocking)');
+        const redirectUrl = `${callbackUrl}/api/desktop-login-redirect?token=${encodeURIComponent(token)}&email=${encodeURIComponent(tokenEmail)}&userId=${encodeURIComponent(tokenUserId)}&name=${encodeURIComponent(tokenName)}`;
+        window.location.href = redirectUrl;
+        return;
       } catch (e) {
         console.log('[DesktopAuth] ❌ Method 1 failed:', e);
       }
@@ -74,7 +65,7 @@ function RegisterContent() {
 
     try {
       console.log('[DesktopAuth] Method 2: Deep link');
-      const deepLink = `clipop://login-success?token=${encodeURIComponent(token)}&email=${encodeURIComponent(desktopEmail || user?.email || email)}&userId=${encodeURIComponent(user?.id || '')}&name=${encodeURIComponent(user?.name || name)}`;
+      const deepLink = `clipop://login-success?token=${encodeURIComponent(token)}&email=${encodeURIComponent(tokenEmail)}&userId=${encodeURIComponent(tokenUserId)}&name=${encodeURIComponent(tokenName)}`;
       console.log('[DesktopAuth] Deep link URL:', deepLink);
       window.location.href = deepLink;
     } catch (e) {

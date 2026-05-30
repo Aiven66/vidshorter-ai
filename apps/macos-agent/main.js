@@ -653,6 +653,18 @@ async function ensureWebWindow() {
   webWindow.on('closed', () => {
     webWindow = null;
   });
+
+  webWindow.on('focus', async () => {
+    try {
+      const cfg = await loadConfig();
+      if (cfg.authToken && webWindow && !webWindow.isDestroyed()) {
+        appendLog('[WebWindow] Focus event: re-injecting auth token');
+        await injectAuthToWebWindow(cfg.authToken, cfg.authEmail, cfg.authUserId, cfg.authName);
+      }
+    } catch (e) {
+      appendLog(`[WebWindow] Focus event error: ${e}`);
+    }
+  });
 }
 
 // ==================== MEDIA SERVER ====================

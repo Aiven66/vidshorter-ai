@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
-import { Monitor } from 'lucide-react';
+import { Monitor, CheckCircle, Loader2 } from 'lucide-react';
 
 function DesktopCallbackContent() {
   const sp = useSearchParams();
@@ -16,8 +16,10 @@ function DesktopCallbackContent() {
   const [resolvedToken, setResolvedToken] = useState('');
   const [resolvedUserId, setResolvedUserId] = useState('');
   const [resolvedName, setResolvedName] = useState('');
+  const [autoRedirected, setAutoRedirected] = useState(false);
 
   const redirectUri = useMemo(() => sp.get('redirect_uri') || 'clipop://login-success', [sp]);
+  const callbackUrl = useMemo(() => sp.get('callback') || '', [sp]);
   const state = useMemo(() => sp.get('state') || '', [sp]);
   const email = useMemo(() => sp.get('email') || '', [sp]);
   const accessToken = useMemo(() => sp.get('access_token') || '', [sp]);
@@ -68,25 +70,51 @@ function DesktopCallbackContent() {
     };
   }, [accessToken, code, email]);
 
-  const handleOpenDesktop = () => {
-    if (!redirectUri) return;
-    
-    const url = new URL(redirectUri);
-    url.searchParams.set('state', state);
-    if (resolvedToken) {
-      url.searchParams.set('token', resolvedToken);
-      url.searchParams.set('access_token', resolvedToken);
-      url.searchParams.set('email', resolvedEmail);
-      url.searchParams.set('userId', resolvedUserId);
-      url.searchParams.set('name', resolvedName);
-    }
-    
-    try {
-      window.location.href = url.toString();
+  useEffect(() => {
+    if (!resolvedToken || autoRedirected) return;
+
+    const timer = setTimeout(() => {
+      setAutoRedirected(true);
+
+      if (callbackUrl) {
+        const redirectUrl = `${callbackUrl}/api/desktop-login-redirect?token=${encodeURIComponent(resolvedToken)}&email=${encodeURIComponent(resolvedEmail)}&userId=${encodeURIComponent(resolvedUserId)}&name=${encodeURIComponent(resolvedName)}`;
+        console.log('[DesktopCallback] Auto-redirecting to callback URL');
+        window.location.href = redirectUrl;
+      } else {
+        const url = new URL(redirectUri);
+        url.searchParams.set('state', state);
+        url.searchParams.set('token', resolvedToken);
+        url.searchParams.set('access_token', resolvedToken);
+        url.searchParams.set('email', resolvedEmail);
+        url.searchParams.set('userId', resolvedUserId);
+        url.searchParams.set('name', resolvedName);
+        console.log('[DesktopCallback] Auto-redirecting via deep link');
+        window.location.href = url.toString();
+      }
+
       setOpened(true);
-    } catch (e) {
-      console.error('Failed to open desktop', e);
+    }, 1500);
+
+    return () => clearTimeout(timer);
+  }, [resolvedToken, callbackUrl, redirectUri, state, resolvedEmail, resolvedUserId, resolvedName, autoRedirected]);
+
+  const handleOpenDesktop = () => {
+    if (callbackUrl && resolvedToken) {
+      const redirectUrl = `${callbackUrl}/api/desktop-login-redirect?token=${encodeURIComponent(resolvedToken)}&email=${encodeURIComponent(resolvedEmail)}&userId=${encodeURIComponent(resolvedUserId)}&name=${encodeURIComponent(resolvedName)}`;
+      window.location.href = redirectUrl;
+    } else if (redirectUri) {
+      const url = new URL(redirectUri);
+      url.searchParams.set('state', state);
+      if (resolvedToken) {
+        url.searchParams.set('token', resolvedToken);
+        url.searchParams.set('access_token', resolvedToken);
+        url.searchParams.set('email', resolvedEmail);
+        url.searchParams.set('userId', resolvedUserId);
+        url.searchParams.set('name', resolvedName);
+      }
+      window.location.href = url.toString();
     }
+    setOpened(true);
   };
 
   return (
@@ -100,44 +128,57 @@ function DesktopCallbackContent() {
           </div>
           <CardTitle className="text-2xl">Clipop Agent</CardTitle>
           <CardDescription>
-            {opened ? 'Opening desktop app...' : loading ? 'Completing sign-in...' : 'Complete the sign-in process'}
+            {opened ? 'Returning to desktop app...' : loading ? 'Completing sign-in...' : 'Sign-in successful!'}
           </CardDescription>
         </CardHeader>
         <CardContent className="text-center space-y-6">
           {(resolvedEmail || email) && (
-            <p className="text-sm text-foreground">
-              Signed in as: <span className="font-medium">{resolvedEmail || email}</span>
-            </p>
+            <div className="flex flex-col items-center gap-2">
+              <div className="h-12 w-12 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
+                <CheckCircle className="h-7 w-7 text-green-500" />
+              </div>
+              <p className="text-sm text-foreground">
+                Signed in as: <span className="font-medium">{resolvedEmail || email}</span>
+              </p>
+            </div>
           )}
 
           {error && (
             <p className="text-sm text-destructive">{error}</p>
           )}
-          
-          {!opened ? (
+
+          {loading && (
+            <div className="flex flex-col items-center gap-2">
+              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              <p className="text-sm text-muted-foreground">Completing sign-in...</p>
+            </div>
+          )}
+
+          {!opened && !loading && resolvedToken && (
             <div className="space-y-4">
-              <Button 
-                size="lg" 
-                className="w-full" 
+              <p className="text-sm text-muted-foreground">
+                Automatically returning to desktop app...
+              </p>
+              <Button
+                size="lg"
+                className="w-full"
                 onClick={handleOpenDesktop}
-                disabled={loading || !resolvedToken}
               >
                 <Monitor className="w-4 h-4 mr-2" />
-                Open Clipop Agent
+                Open Clipop Agent Now
               </Button>
-              <p className="text-xs text-muted-foreground">
-                Click the button to return to the desktop app
-              </p>
             </div>
-          ) : (
+          )}
+
+          {opened && (
             <div className="space-y-4">
               <p className="text-sm text-muted-foreground">
                 If the desktop app didn&apos;t open, please open it manually.
               </p>
-              <Button 
-                size="lg" 
-                variant="outline" 
-                className="w-full" 
+              <Button
+                size="lg"
+                variant="outline"
+                className="w-full"
                 onClick={handleOpenDesktop}
               >
                 Try Again
