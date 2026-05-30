@@ -32,6 +32,7 @@ function LoginContent() {
   const [error, setError] = useState('');
   const [loginSuccess, setLoginSuccess] = useState(false);
   const [currentToken, setCurrentToken] = useState<string | null>(null);
+  const [currentRefreshToken, setCurrentRefreshToken] = useState<string | null>(null);
   const [desktopSendStatus, setDesktopSendStatus] = useState<'idle' | 'sending' | 'sent' | 'failed'>('idle');
 
   const fromDesktop = sp.get('from') === 'desktop' || sp.get('desktop') === '1';
@@ -134,6 +135,7 @@ function LoginContent() {
       const token = result.token || accessToken;
       console.log('[DesktopAuth] Login complete, token received:', !!token);
       setCurrentToken(token);
+      if (result.refreshToken) setCurrentRefreshToken(result.refreshToken);
       setLoginSuccess(true);
       setLoading(false);
     } else {
@@ -159,31 +161,35 @@ function LoginContent() {
     const tokenUserId = user?.id || '';
     const tokenName = user?.name || '';
 
-    if (savedCallbackUrl) {
-      try {
-        const redirectUrl = buildDesktopLoginRedirectUrl(savedCallbackUrl, {
-          token,
-          email: tokenEmail,
-          userId: tokenUserId,
-          name: tokenName,
-        });
-        if (!redirectUrl) throw new Error('Invalid desktop callback URL');
-        console.log('[DesktopAuth] Button clicked - Redirecting to callback URL');
-        window.location.href = redirectUrl;
-        return;
-      } catch (e) {
-        console.log('[DesktopAuth] Redirect failed, trying deep link:', e);
-      }
-    }
-
     const deepLink = buildDesktopDeepLink({
       token,
+      refreshToken: currentRefreshToken || undefined,
       email: tokenEmail,
       userId: tokenUserId,
       name: tokenName,
     });
-    console.log('[DesktopAuth] Button clicked - Opening deep link:', deepLink);
-    window.location.href = deepLink;
+    console.log('[DesktopAuth] Button clicked - Opening deep link');
+    try {
+      window.location.href = deepLink;
+    } catch {}
+
+    if (savedCallbackUrl) {
+      const redirectUrl = buildDesktopLoginRedirectUrl(savedCallbackUrl, {
+        token,
+        refreshToken: currentRefreshToken || undefined,
+        email: tokenEmail,
+        userId: tokenUserId,
+        name: tokenName,
+      });
+      if (redirectUrl) {
+        setTimeout(() => {
+          try {
+            const img = new Image();
+            img.src = redirectUrl;
+          } catch {}
+        }, 500);
+      }
+    }
   };
 
   if (showDesktopSuccess) {

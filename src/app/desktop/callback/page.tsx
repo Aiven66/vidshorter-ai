@@ -1,27 +1,25 @@
 'use client';
 
-import { Suspense, useEffect, useMemo, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
-import { Monitor, CheckCircle, Loader2 } from 'lucide-react';
 import {
   buildDesktopDeepLink,
   buildDesktopLoginRedirectUrl,
   getDesktopCallbackFromSearch,
+  isDesktopAuthRequest,
   rememberDesktopAuth,
+  type DesktopAuthPayload,
 } from '@/lib/desktop-auth';
+import { Monitor, CheckCircle, Loader2, ExternalLink } from 'lucide-react';
 
 function DesktopCallbackContent() {
   const sp = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [resolvedEmail, setResolvedEmail] = useState('');
-  const [resolvedToken, setResolvedToken] = useState('');
-  const [resolvedUserId, setResolvedUserId] = useState('');
-  const [resolvedName, setResolvedName] = useState('');
-  const [autoSendStatus, setAutoSendStatus] = useState<'idle' | 'sending' | 'sent' | 'failed'>('idle');
+  const [payload, setPayload] = useState<DesktopAuthPayload>({});
   const [retryCount, setRetryCount] = useState(0);
 
   const callbackUrl = useMemo(() => getDesktopCallbackFromSearch(sp), [sp]);
@@ -30,204 +28,135 @@ function DesktopCallbackContent() {
     rememberDesktopAuth(callbackUrl);
   }, [callbackUrl]);
 
-  useEffect(() => {
-    let cancelled = false;
+  const resolveAndSetPayload = useCallback(async () => {
+    setLoading(true);
+    setError('');
 
-    async function resolveSession() {
-      setLoading(true);
-      setError('');
+    try {
+      const client = getSupabaseClient();
 
+      const queryAccessToken = sp.get('access_token') || '';
+      const queryRefreshToken = sp.get('refresh_token') || '';
+      const codeParam = sp.get('code') || '';
+
+      let hashAccessToken = '';
+      let hashRefreshToken = '';
       try {
-        const client = getSupabaseClient();
-
-        const codeParam = sp.get('code') || '';
-
-        let hashAccessToken = '';
-        let hashRefreshToken = '';
-        try {
-          const hash = window.location.hash;
-          if (hash) {
-            const hashParams = new URLSearchParams(hash.substring(1));
-            hashAccessToken = hashParams.get('access_token') || '';
-            hashRefreshToken = hashParams.get('refresh_token') || '';
-          }
-        } catch {}
-
-        const queryAccessToken = sp.get('access_token') || '';
-        const queryRefreshToken = sp.get('refresh_token') || '';
-
-        const accessTokenParam = queryAccessToken || hashAccessToken;
-        const refreshTokenParam = queryRefreshToken || hashRefreshToken;
-
-        console.log('[DesktopCallback] Params - code:', !!codeParam, 'accessToken:', !!accessTokenParam, 'refreshToken:', !!refreshTokenParam, 'callback:', !!callbackUrl);
-
-        if (accessTokenParam && refreshTokenParam) {
-          console.log('[DesktopCallback] Setting session from hash tokens...');
-          const { error: sessionError } = await client.auth.setSession({
-            access_token: accessTokenParam,
-            refresh_token: refreshTokenParam,
-          });
-          if (sessionError) {
-            console.log('[DesktopCallback] setSession error:', sessionError.message);
-          } else {
-            console.log('[DesktopCallback] setSession success');
-          }
+        const hash = window.location.hash;
+        if (hash) {
+          const hp = new URLSearchParams(hash.substring(1));
+          hashAccessToken = hp.get('access_token') || '';
+          hashRefreshToken = hp.get('refresh_token') || '';
         }
+      } catch {}
 
-        if (codeParam) {
-          console.log('[DesktopCallback] Exchanging code for session...');
-          const { error: exchangeError } = await client.auth.exchangeCodeForSession(codeParam);
-          if (exchangeError) {
-            console.log('[DesktopCallback] Code exchange error:', exchangeError.message);
-            throw exchangeError;
-          }
-          console.log('[DesktopCallback] Code exchange success');
+      const accessToken = queryAccessToken || hashAccessToken;
+      const refreshToken = queryRefreshToken || hashRefreshToken;
+
+      console.log('[DesktopCallback] accessToken:', !!accessToken, 'refreshToken:', !!refreshToken, 'code:', !!codeParam);
+
+      if (accessToken && refreshToken) {
+        console.log('[DesktopCallback] Calling setSession...');
+        const { error: se } = await client.auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        });
+        if (se) {
+          console.log('[DesktopCallback] setSession error:', se.message);
+        } else {
+          console.log('[DesktopCallback] setSession success');
         }
-
-        const { data: { session } } = await client.auth.getSession();
-        const token = accessTokenParam || session?.access_token || '';
-        const user = session?.user;
-
-        console.log('[DesktopCallback] Session check - token:', !!token, 'user:', !!user);
-
-        if (!token) {
-          throw new Error('No authentication token found. Please try signing in again.');
-        }
-
-        if (!user && token) {
-          try {
-            const { data: { user: authUser } } = await client.auth.getUser(token);
-            if (authUser) {
-              if (!cancelled) {
-                setResolvedToken(token);
-                setResolvedEmail(authUser.email || '');
-                setResolvedUserId(authUser.id || '');
-                setResolvedName(authUser.user_metadata?.name || authUser.email?.split('@')[0] || '');
-              }
-              return;
-            }
-          } catch (e) {
-            console.log('[DesktopCallback] getUser error:', e);
-          }
-        }
-
-        if (!user) {
-          throw new Error('No session found. Please try signing in again.');
-        }
-
-        if (!cancelled) {
-          setResolvedToken(token);
-          setResolvedEmail(user.email || '');
-          setResolvedUserId(user.id || '');
-          setResolvedName(user.user_metadata?.name || user.email?.split('@')[0] || '');
-
-          try {
-            const { data: existingUser } = await client
-              .from('users')
-              .select('id')
-              .eq('id', user.id)
-              .maybeSingle();
-            if (!existingUser) {
-              await client.from('users').insert({
-                id: user.id,
-                email: user.email!,
-                name: user.user_metadata?.name || user.email?.split('@')[0],
-                role: 'user',
-                google_id: user.app_metadata?.provider === 'google' ? user.id : null,
-              });
-              await client.from('credits').insert({ user_id: user.id, balance: 100 });
-              await client.from('subscriptions').insert({ user_id: user.id, plan_type: 'free', status: 'active' });
-            }
-          } catch {}
-        }
-      } catch (e) {
-        if (!cancelled) {
-          const msg = e instanceof Error ? e.message : 'Failed to complete sign-in.';
-          console.log('[DesktopCallback] Resolve error:', msg);
-          setError(msg);
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
       }
-    }
 
-    resolveSession();
+      if (codeParam) {
+        console.log('[DesktopCallback] Exchanging code...');
+        const { error: ce } = await client.auth.exchangeCodeForSession(codeParam);
+        if (ce) {
+          console.log('[DesktopCallback] Code exchange error:', ce.message);
+        }
+      }
 
-    return () => {
-      cancelled = true;
-    };
-  }, [sp, callbackUrl, retryCount]);
+      const { data: { session } } = await client.auth.getSession();
 
-  useEffect(() => {
-    if (!resolvedToken || autoSendStatus !== 'idle') return;
+      if (session?.user) {
+        console.log('[DesktopCallback] Got session user:', session.user.email);
+        setPayload({
+          token: accessToken || session.access_token,
+          refreshToken: refreshToken || session.refresh_token,
+          email: session.user.email || '',
+          userId: session.user.id || '',
+          name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || '',
+        });
+        return;
+      }
 
-    const tryAutoSend = async () => {
-      setAutoSendStatus('sending');
-
-      if (callbackUrl) {
+      if (accessToken) {
+        console.log('[DesktopCallback] No session, trying getUser with token...');
         try {
-          console.log('[DesktopCallback] Auto-send: fetch POST to callbackUrl');
-          const res = await fetch(`${callbackUrl}/api/desktop-auth`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              token: resolvedToken,
-              email: resolvedEmail,
-              userId: resolvedUserId,
-              name: resolvedName,
-            }),
-          });
-          const data = await res.json();
-          if (data.ok) {
-            console.log('[DesktopCallback] ✅ Auto-send success');
-            setAutoSendStatus('sent');
+          const { data: { user: authUser } } = await client.auth.getUser(accessToken);
+          if (authUser) {
+            setPayload({
+              token: accessToken,
+              refreshToken: refreshToken || undefined,
+              email: authUser.email || '',
+              userId: authUser.id || '',
+              name: authUser.user_metadata?.name || authUser.email?.split('@')[0] || '',
+            });
             return;
           }
-        } catch (e) {
-          console.log('[DesktopCallback] ❌ Auto-send failed (expected: mixed content):', e);
-        }
+        } catch {}
       }
 
-      console.log('[DesktopCallback] Auto-send failed, showing button for user');
-      setAutoSendStatus('failed');
-    };
+      if (accessToken) {
+        console.log('[DesktopCallback] Token exists but no user resolved, using token as-is');
+        setPayload({
+          token: accessToken,
+          refreshToken: refreshToken || undefined,
+        });
+        return;
+      }
 
-    const timer = setTimeout(tryAutoSend, 500);
-    return () => clearTimeout(timer);
-  }, [resolvedToken, callbackUrl, autoSendStatus, resolvedEmail, resolvedUserId, resolvedName]);
+      setError('No authentication token found. Please try signing in again.');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Failed to complete sign-in.';
+      console.log('[DesktopCallback] Error:', msg);
+      setError(msg);
+    } finally {
+      setLoading(false);
+    }
+  }, [sp, retryCount]);
+
+  useEffect(() => {
+    resolveAndSetPayload();
+  }, [resolveAndSetPayload]);
 
   const handleOpenDesktop = () => {
+    const deepLink = buildDesktopDeepLink(payload);
+    console.log('[DesktopCallback] Opening deep link:', deepLink.substring(0, 80) + '...');
+
+    try {
+      window.location.href = deepLink;
+    } catch {}
+
     if (callbackUrl) {
-      try {
-        const redirectUrl = buildDesktopLoginRedirectUrl(callbackUrl, {
-          token: resolvedToken,
-          email: resolvedEmail,
-          userId: resolvedUserId,
-          name: resolvedName,
-        });
-        if (!redirectUrl) throw new Error('Invalid desktop callback URL');
-        console.log('[DesktopCallback] Button clicked - Redirecting to callback URL');
-        window.location.href = redirectUrl;
-        return;
-      } catch (e) {
-        console.log('[DesktopCallback] Redirect failed, trying deep link:', e);
+      const redirectUrl = buildDesktopLoginRedirectUrl(callbackUrl, payload);
+      if (redirectUrl) {
+        setTimeout(() => {
+          try {
+            const img = new Image();
+            img.src = redirectUrl;
+          } catch {}
+        }, 500);
       }
     }
-
-    const deepLink = buildDesktopDeepLink({
-      token: resolvedToken,
-      email: resolvedEmail,
-      userId: resolvedUserId,
-      name: resolvedName,
-    });
-    console.log('[DesktopCallback] Button clicked - Opening deep link:', deepLink);
-    window.location.href = deepLink;
   };
 
   const handleRetry = () => {
     setError('');
     setRetryCount(prev => prev + 1);
   };
+
+  const hasToken = !!payload.token;
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-muted/30 py-12 px-4">
@@ -244,23 +173,14 @@ function DesktopCallbackContent() {
           </CardDescription>
         </CardHeader>
         <CardContent className="text-center space-y-6">
-          {resolvedEmail && !error && !loading && (
+          {payload.email && !loading && (
             <div className="flex flex-col items-center gap-2">
               <div className="h-12 w-12 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
                 <CheckCircle className="h-7 w-7 text-green-500" />
               </div>
               <p className="text-sm text-foreground">
-                Signed in as: <span className="font-medium">{resolvedEmail}</span>
+                Signed in as: <span className="font-medium">{payload.email}</span>
               </p>
-            </div>
-          )}
-
-          {error && (
-            <div className="space-y-3">
-              <p className="text-sm text-destructive">{error}</p>
-              <Button variant="outline" size="sm" onClick={handleRetry}>
-                Retry
-              </Button>
             </div>
           )}
 
@@ -271,34 +191,45 @@ function DesktopCallbackContent() {
             </div>
           )}
 
-          {!loading && resolvedToken && !error && (
+          {error && !loading && (
+            <div className="space-y-3">
+              <p className="text-sm text-destructive">{error}</p>
+              <Button variant="outline" size="sm" onClick={handleRetry}>
+                Retry
+              </Button>
+            </div>
+          )}
+
+          {!loading && (hasToken || payload.email) && (
             <div className="space-y-4">
-              {autoSendStatus === 'sending' && (
-                <p className="text-sm text-muted-foreground animate-pulse">
-                  Returning to desktop app...
-                </p>
-              )}
-              {autoSendStatus === 'sent' && (
-                <p className="text-sm text-green-600">
-                  ✅ Returning to desktop app...
-                </p>
-              )}
-              {autoSendStatus === 'failed' && (
-                <p className="text-sm text-amber-600">
-                  ⚠️ Click the button below to return to the desktop app.
-                </p>
-              )}
+              <Button
+                size="lg"
+                className="w-full text-base"
+                onClick={handleOpenDesktop}
+              >
+                <Monitor className="w-5 h-5 mr-2" />
+                Open Clipop Agent
+              </Button>
+              <p className="text-xs text-muted-foreground">
+                If the desktop app didn&apos;t open, please switch to it manually or click the button again.
+              </p>
+            </div>
+          )}
+
+          {!loading && !hasToken && !payload.email && !error && (
+            <div className="space-y-4">
+              <p className="text-sm text-amber-600">
+                Sign-in completed but token not detected. Please return to the desktop app.
+              </p>
               <Button
                 size="lg"
                 className="w-full"
                 onClick={handleOpenDesktop}
+                variant="outline"
               >
-                <Monitor className="w-4 h-4 mr-2" />
-                Open Clipop Agent
+                <ExternalLink className="w-4 h-4 mr-2" />
+                Try Open Desktop App
               </Button>
-              <p className="text-sm text-muted-foreground">
-                If the desktop app didn&apos;t open, please switch to it manually.
-              </p>
             </div>
           )}
         </CardContent>

@@ -42,6 +42,7 @@ function RegisterContent() {
   const [countdown, setCountdown] = useState(0);
   const [error, setError] = useState('');
   const [desktopToken, setDesktopToken] = useState<string | null>(null);
+  const [desktopRefreshToken, setDesktopRefreshToken] = useState<string | null>(null);
   const [desktopEmail, setDesktopEmail] = useState('');
   const [desktopSendStatus, setDesktopSendStatus] = useState<'idle' | 'sending' | 'sent' | 'failed'>('idle');
   const [agreedToTerms, setAgreedToTerms] = useState(false);
@@ -176,6 +177,7 @@ function RegisterContent() {
         const token = result.token || accessToken;
         console.log('[DesktopAuth] Registration complete, token received:', !!token);
         setDesktopToken(token);
+        if (result.refreshToken) setDesktopRefreshToken(result.refreshToken);
         setDesktopEmail(email);
         setStep('done');
       } else {
@@ -192,31 +194,35 @@ function RegisterContent() {
     const tokenUserId = user?.id || '';
     const tokenName = user?.name || name;
 
-    if (savedCallbackUrl) {
-      try {
-        const redirectUrl = buildDesktopLoginRedirectUrl(savedCallbackUrl, {
-          token,
-          email: tokenEmail,
-          userId: tokenUserId,
-          name: tokenName,
-        });
-        if (!redirectUrl) throw new Error('Invalid desktop callback URL');
-        console.log('[DesktopAuth] Button clicked - Redirecting to callback URL');
-        window.location.href = redirectUrl;
-        return;
-      } catch (e) {
-        console.log('[DesktopAuth] Redirect failed, trying deep link:', e);
-      }
-    }
-
     const deepLink = buildDesktopDeepLink({
       token,
+      refreshToken: desktopRefreshToken || undefined,
       email: tokenEmail,
       userId: tokenUserId,
       name: tokenName,
     });
-    console.log('[DesktopAuth] Button clicked - Opening deep link:', deepLink);
-    window.location.href = deepLink;
+    console.log('[DesktopAuth] Button clicked - Opening deep link');
+    try {
+      window.location.href = deepLink;
+    } catch {}
+
+    if (savedCallbackUrl) {
+      const redirectUrl = buildDesktopLoginRedirectUrl(savedCallbackUrl, {
+        token,
+        refreshToken: desktopRefreshToken || undefined,
+        email: tokenEmail,
+        userId: tokenUserId,
+        name: tokenName,
+      });
+      if (redirectUrl) {
+        setTimeout(() => {
+          try {
+            const img = new Image();
+            img.src = redirectUrl;
+          } catch {}
+        }, 500);
+      }
+    }
   };
 
   if (step === 'done') {

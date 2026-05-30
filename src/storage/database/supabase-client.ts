@@ -110,6 +110,9 @@ function getSupabaseClient(token?: string) {
             },
           });
           cachedClient = this._realClient;
+          if (typeof window !== 'undefined') {
+            (window as any).__supabaseClient = this._realClient;
+          }
           return this._realClient;
         });
         return this._initPromise;

@@ -1,13 +1,15 @@
 {
   "name": "clipop-macos-agent",
   "private": true,
-  "version": "0.9.13",
+  "version": "0.9.15",
   "main": "main.js",
   "scripts": {
     "prepare:runner": "node scripts/prepare-runner.js",
+    "prebuild:dmg": "node scripts/cleanup-dmg-mounts.js",
+    "dist:dmg:fallback": "node scripts/build-dmg-hybrid.js",
     "dev": "pnpm prepare:runner && electron .",
     "start": "electron .",
-    "dist": "pnpm prepare:runner && electron-builder --mac --arm64",
+    "dist": "pnpm prepare:runner && (pnpm prebuild:dmg || true) && (electron-builder --mac --arm64 || pnpm dist:dmg:fallback)",
     "dist:zip": "pnpm prepare:runner && electron-builder --mac --arm64 --config.mac.target=zip",
     "pack": "electron-builder --mac --arm64 --dir",
     "dist:x64": "pnpm prepare:runner && electron-builder --mac --x64",

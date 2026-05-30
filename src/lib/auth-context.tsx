@@ -508,10 +508,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     handleOAuthCallback();
 
-    desktopHandler = (event: Event) => {
+    desktopHandler = async (event: Event) => {
       const detail = event instanceof CustomEvent ? event.detail : null;
       if (detail?.token) {
         applyDesktopToken(detail.token, setUser, setAccessToken, setLoading, setUseDemo);
+        if (detail.refreshToken) {
+          try {
+            const client = await getSupabaseClient();
+            await client.auth.setSession({
+              access_token: detail.token,
+              refresh_token: detail.refreshToken,
+            });
+          } catch {}
+        }
       }
     };
 
@@ -591,6 +600,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (data.session) {
         const token = data.session.access_token || null;
+        const refreshToken = data.session.refresh_token || null;
         setAccessToken(token);
         if (token && typeof window !== 'undefined') {
           localStorage.setItem('clipop_access_token', token);
@@ -599,7 +609,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (userData) {
           setUser(userData);
         }
-        return { error: null, token, email: data.session.user?.email };
+        return { error: null, token, refreshToken, email: data.session.user?.email };
       }
 
       return { error: null, token: null };

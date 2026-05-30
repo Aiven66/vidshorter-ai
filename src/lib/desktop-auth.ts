@@ -4,6 +4,7 @@ export const DESKTOP_WEB_APP_URL = 'https://vidshorterai.vercel.app';
 
 export interface DesktopAuthPayload {
   token?: string | null;
+  refreshToken?: string | null;
   email?: string | null;
   userId?: string | null;
   name?: string | null;
@@ -107,6 +108,7 @@ export function buildDesktopLoginRedirectUrl(callbackUrl: string, payload: Deskt
 
   const url = new URL('/api/desktop-login-redirect', safeCallbackUrl);
   url.searchParams.set('token', payload.token || '');
+  if (payload.refreshToken) url.searchParams.set('refreshToken', payload.refreshToken);
   url.searchParams.set('email', payload.email || '');
   url.searchParams.set('userId', payload.userId || '');
   url.searchParams.set('name', payload.name || '');
@@ -116,6 +118,7 @@ export function buildDesktopLoginRedirectUrl(callbackUrl: string, payload: Deskt
 export function buildDesktopDeepLink(payload: DesktopAuthPayload): string {
   const params = new URLSearchParams();
   params.set('token', payload.token || '');
+  if (payload.refreshToken) params.set('refreshToken', payload.refreshToken);
   params.set('email', payload.email || '');
   params.set('userId', payload.userId || '');
   params.set('name', payload.name || '');

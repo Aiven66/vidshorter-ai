@@ -149,10 +149,33 @@ export default function AuthCallbackPage() {
         }
 
         setStatus('success');
+
+        let sessionForRedirect: { accessToken?: string; refreshToken?: string } = {};
+        try {
+          const { data: { session: currentSession } } = await supabase.auth.getSession();
+          if (currentSession) {
+            sessionForRedirect = {
+              accessToken: currentSession.access_token,
+              refreshToken: currentSession.refresh_token,
+            };
+          }
+        } catch {}
+
         const next = isDesktopFlow
           ? (requestedNext !== '/' ? requestedNext : buildDesktopCallbackPath(callbackUrl))
           : requestedNext;
-        setTimeout(() => router.replace(next), 500);
+
+        let redirectUrl = next;
+        if (isDesktopFlow && sessionForRedirect.accessToken) {
+          const nextUrl = new URL(next, window.location.origin);
+          nextUrl.searchParams.set('access_token', sessionForRedirect.accessToken);
+          if (sessionForRedirect.refreshToken) {
+            nextUrl.searchParams.set('refresh_token', sessionForRedirect.refreshToken);
+          }
+          redirectUrl = nextUrl.pathname + '?' + nextUrl.searchParams.toString();
+        }
+
+        setTimeout(() => router.replace(redirectUrl), 500);
       } catch (err) {
         setStatus('error');
         setErrorMessage(err instanceof Error ? err.message : 'Authentication failed.');
