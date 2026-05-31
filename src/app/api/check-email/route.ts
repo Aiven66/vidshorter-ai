@@ -1,7 +1,40 @@
 import { NextRequest } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
 import { getSupabaseClient, isSupabaseConfigured } from '@/storage/database/supabase-client';
 
 export const runtime = 'nodejs';
+
+function getSupabaseAdminClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.COZE_SUPABASE_URL || '';
+  const serviceRoleKey =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SERVICE_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE ||
+    process.env.SUPABASE_SERVICE_ROLE_TOKEN ||
+    '';
+
+  if (!url || !serviceRoleKey) return null;
+
+  return createClient(url, serviceRoleKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
+}
+
+async function findAuthUserByEmail(adminClient: any, email: string) {
+  for (let page = 1; page <= 20; page += 1) {
+    const { data, error } = await adminClient.auth.admin.listUsers({ page, perPage: 1000 });
+    if (error) throw error;
+
+    const found = data?.users?.find((user: any) => user.email?.toLowerCase() === email);
+    if (found) return found;
+    if (!data?.users || data.users.length < 1000) break;
+  }
+
+  return null;
+}
 
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
@@ -44,55 +77,13 @@ export async function POST(request: NextRequest) {
       return Response.json({ exists: true });
     }
 
-    // Try to use auth admin API if service role key is available
-    try {
-      const { data: { users }, error: authError } = await client.auth.admin.listUsers({
-        email: email,
-        limit: 1,
-      });
-      
-      if (!authError && users && users.length > 0) {
+    const adminClient = getSupabaseAdminClient();
+    if (adminClient) {
+      const authUser = await findAuthUserByEmail(adminClient, email);
+      if (authUser) {
         console.log(`[check-email] Found in auth users: ${email}`);
         return Response.json({ exists: true });
       }
-    } catch (adminError) {
-      console.log(`[check-email] Admin API not available, trying alternative method`);
-    }
-
-    // Alternative: Try signUp to check if user exists
-    // This will fail if user already exists, but won't create a new user
-    try {
-      const { error: signUpError } = await client.auth.signUp({
-        email: email,
-        password: 'temp-password-that-will-never-be-used-123',
-      });
-      
-      if (signUpError) {
-        // Check if error indicates user already exists
-        if (
-          signUpError.message.includes('already registered') ||
-          signUpError.message.includes('user already exists') ||
-          signUpError.message.includes('email already in use')
-        ) {
-          console.log(`[check-email] Signup failed because user exists: ${email}`);
-          return Response.json({ exists: true });
-        }
-      }
-      
-      // If signUp succeeded, we need to delete the user we just created
-      if (!signUpError) {
-        try {
-          const { data: { session } } = await client.auth.getSession();
-          if (session?.user) {
-            await client.auth.admin.deleteUser(session.user.id);
-            console.log(`[check-email] Cleaned up test user: ${email}`);
-          }
-        } catch {
-          // Ignore cleanup errors
-        }
-      }
-    } catch (signUpCatchError) {
-      // Ignore errors from this fallback method
     }
 
     console.log(`[check-email] User does not exist: ${email}`);

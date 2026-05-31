@@ -864,7 +864,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     try {
       const client = await getSupabaseClient();
-      const { error: authError } = await client.auth.signUp({
+      const { data: authData, error: authError } = await client.auth.signUp({
         email,
         password,
         options: {
@@ -899,6 +899,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           localStorage.setItem('clipop_access_token', demoToken);
         }
         return { error: null, token: demoToken, email: demoUser.email };
+      }
+
+      if (authData?.user) {
+        try {
+          await client.from('users').upsert({
+            id: authData.user.id,
+            email,
+            name,
+            role: 'user',
+            google_id: null,
+          }, { onConflict: 'id' });
+          await client.from('credits').insert({ user_id: authData.user.id, balance: 100 });
+          await client.from('subscriptions').insert({ user_id: authData.user.id, plan_type: 'free', status: 'active' });
+        } catch {}
       }
 
       const { data: { session } } = await client.auth.getSession();

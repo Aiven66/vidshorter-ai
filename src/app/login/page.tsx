@@ -228,6 +228,11 @@ function LoginContent() {
                 />
               </div>
             </div>
+            <div className="text-right">
+              <Link href="/forgot-password" className="text-sm text-primary font-medium hover:underline">
+                {t('login.forgotPassword')}
+              </Link>
+            </div>
             <Button type="submit" className="w-full h-11 text-base" disabled={loading}>
               {loading ? t('common.loading') : t('login.submitButton')}
             </Button>

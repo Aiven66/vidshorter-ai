@@ -38,5 +38,29 @@ assert.match(authContextSource, /window\.removeEventListener\('clipop-auth-sessi
 assert.match(authContextSource, /client\.auth\.getUser\(token\)/);
 assert.match(authContextSource, /getSignInProviderHint/);
 assert.match(authContextSource, /already connected to Google sign-in/);
+assert.match(authContextSource, /client\.from\('users'\)\.upsert/);
+
+const checkEmailSource = readProjectFile('src/app/api/check-email/route.ts');
+assert.doesNotMatch(checkEmailSource, /temp-password-that-will-never-be-used/);
+assert.doesNotMatch(checkEmailSource, /client\.auth\.signUp/);
+assert.match(checkEmailSource, /findAuthUserByEmail/);
+
+const registerSource = readProjectFile('src/app/register/page.tsx');
+assert.match(registerSource, /method: 'PUT'/);
+assert.match(registerSource, /\/api\/send-verification-code/);
+assert.match(registerSource, /href="\/terms"/);
+assert.match(registerSource, /href="\/privacy"/);
+
+const loginSource = readProjectFile('src/app/login/page.tsx');
+assert.match(loginSource, /href="\/forgot-password"/);
+
+const forgotPasswordSource = readProjectFile('src/app/forgot-password/page.tsx');
+assert.match(forgotPasswordSource, /\/api\/reset-password/);
+assert.match(forgotPasswordSource, /\/api\/send-verification-code/);
+
+const resetRouteSource = readProjectFile('src/app/api/reset-password/route.ts');
+assert.match(resetRouteSource, /SUPABASE_SERVICE_ROLE_KEY/);
+assert.match(resetRouteSource, /updateUserById/);
+assert.match(resetRouteSource, /verifyCode/);
 
 console.log('Web auth regression checks passed.');

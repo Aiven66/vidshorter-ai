@@ -123,6 +123,17 @@ function RegisterContent() {
     setError('');
 
     try {
+      const verifyRes = await fetch('/api/send-verification-code', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, code }),
+      });
+      const verifyData = await verifyRes.json().catch(() => ({}));
+      if (!verifyRes.ok) {
+        setError(verifyData.error || t('register.errorInvalidCode'));
+        return;
+      }
+
       const result = await signUp(email, password, name);
       if (result.error) {
         setError(result.error);
@@ -316,15 +327,16 @@ function RegisterContent() {
                   onCheckedChange={(checked) => setAgreedToTerms(!!checked)}
                   className="mt-0.5"
                 />
-                <label
-                  htmlFor="agree-terms"
-                  className="text-sm text-muted-foreground leading-relaxed cursor-pointer"
-                  dangerouslySetInnerHTML={{
-                    __html: t('register.agreeTerms')
-                      .replace('{terms}', `<a href="/terms" class="text-primary hover:underline font-medium">${t('register.termsLink')}</a>`)
-                      .replace('{privacy}', `<a href="/privacy" class="text-primary hover:underline font-medium">${t('register.privacyLink')}</a>`)
-                  }}
-                />
+                <label htmlFor="agree-terms" className="text-sm text-muted-foreground leading-relaxed cursor-pointer">
+                  {t('register.agreePrefix')}{' '}
+                  <Link href="/terms" className="text-primary hover:underline font-medium">
+                    {t('register.termsLink')}
+                  </Link>
+                  {' '}{t('register.agreeAnd')}{' '}
+                  <Link href="/privacy" className="text-primary hover:underline font-medium">
+                    {t('register.privacyLink')}
+                  </Link>
+                </label>
               </div>
               <Button type="submit" className="w-full h-11 text-base" disabled={sendingCode}>
                 {sendingCode ? (
@@ -391,6 +403,16 @@ function RegisterContent() {
               >
                 {t('register.backButton')}
               </Button>
+              <p className="text-center text-xs text-muted-foreground leading-relaxed">
+                {t('register.agreePrefix')}{' '}
+                <Link href="/terms" className="text-primary hover:underline font-medium">
+                  {t('register.termsLink')}
+                </Link>
+                {' '}{t('register.agreeAnd')}{' '}
+                <Link href="/privacy" className="text-primary hover:underline font-medium">
+                  {t('register.privacyLink')}
+                </Link>
+              </p>
             </form>
           )}
 
