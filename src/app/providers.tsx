@@ -6,6 +6,7 @@ import { AuthProvider } from '@/lib/auth-context';
 import { CreditsProvider } from '@/lib/credits-context';
 import { LocaleProvider } from '@/lib/locale-context';
 import dynamic from 'next/dynamic';
+import { DesktopAuthReturnBanner } from '@/components/desktop-auth-return-banner';
 
 const Toaster = dynamic(
   () => import('@/components/ui/sonner').then(m => ({ default: m.Toaster })),
@@ -56,6 +57,7 @@ export function Providers({ children }: { children: ReactNode }) {
               <ProviderErrorBoundary name="Credits">
                 <CreditsProvider>
                   {children}
+                  <DesktopAuthReturnBanner />
                   <Toaster />
                 </CreditsProvider>
               </ProviderErrorBoundary>

@@ -118,8 +118,15 @@ const returnResult = openDesktopAuthReturn(localCallback, {
   email: 'desktop@example.com',
 });
 assert.equal(returnResult.redirectUrl.includes('/api/desktop-login-redirect'), true);
-assert.equal(navigations[0].startsWith('clipop://login-success?'), true);
-assert.equal(new URL(navigations[1]).origin, localCallback);
+assert.equal(navigations.length, 1);
+assert.equal(new URL(navigations[0]).origin, localCallback);
+
+const deepLinkOnlyResult = openDesktopAuthReturn('', {
+  token: 'token.no-callback',
+  email: 'fallback@example.com',
+});
+assert.equal(deepLinkOnlyResult.redirectUrl, '');
+assert.equal(navigations[1].startsWith('clipop://login-success?'), true);
 
 const authContextSource = readFileSync('src/lib/auth-context.tsx', 'utf8');
 assert.match(authContextSource, /buildDesktopOAuthRedirectUrl/);
@@ -127,6 +134,13 @@ assert.match(authContextSource, /buildDesktopOAuthRedirectUrl/);
 const authCallbackSource = readFileSync('src/app/auth/callback/page.tsx', 'utf8');
 assert.match(authCallbackSource, /buildDesktopCallbackPath/);
 assert.match(authCallbackSource, /rememberDesktopAuth/);
+
+const providersSource = readFileSync('src/app/providers.tsx', 'utf8');
+assert.match(providersSource, /DesktopAuthReturnBanner/);
+
+const desktopBannerSource = readFileSync('src/components/desktop-auth-return-banner.tsx', 'utf8');
+assert.match(desktopBannerSource, /isDesktopAuthRequest/);
+assert.match(desktopBannerSource, /Return to Clipop Agent/);
 
 const desktopMainSource = readFileSync('apps/macos-agent/main.js', 'utf8');
 assert.match(desktopMainSource, /const SERVER_URL = 'https:\/\/vidshorterai\.vercel\.app'/);

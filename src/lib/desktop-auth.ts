@@ -175,14 +175,12 @@ export function openDesktopAuthReturn(callbackUrl: string, payload: DesktopAuthP
   const redirectUrl = buildDesktopLoginRedirectUrl(callbackUrl, payload);
 
   if (typeof window !== 'undefined') {
-    try {
-      window.location.href = deepLink;
-    } catch {}
-
     if (redirectUrl) {
-      window.setTimeout(() => {
-        window.location.href = redirectUrl;
-      }, 900);
+      window.location.href = redirectUrl;
+    } else {
+      try {
+        window.location.href = deepLink;
+      } catch {}
     }
   }
 
