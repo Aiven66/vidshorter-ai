@@ -11,6 +11,7 @@ import {
   DESKTOP_CALLBACK_SESSION_KEY,
   getDesktopCallbackFromBridge,
   getDesktopCallbackFromPath,
+  getDesktopOAuthOrigin,
   getSafeNextPath,
   isDesktopAuthRequest,
   isDesktopRuntime,
@@ -34,9 +35,11 @@ const desktopPath = buildDesktopCallbackPath(localCallback);
 assert.equal(desktopPath, '/desktop/callback?from=desktop&callback=http%3A%2F%2F127.0.0.1%3A49231');
 assert.equal(getDesktopCallbackFromPath(desktopPath), localCallback);
 
-const oauthRedirect = buildDesktopOAuthRedirectUrl('https://vidshorterai.vercel.app', localCallback);
+assert.equal(DESKTOP_WEB_APP_URL, 'https://clipopai.vercel.app');
+
+const oauthRedirect = buildDesktopOAuthRedirectUrl('https://clipopai.vercel.app', localCallback);
 const oauthUrl = new URL(oauthRedirect);
-assert.equal(oauthUrl.origin, 'https://vidshorterai.vercel.app');
+assert.equal(oauthUrl.origin, 'https://clipopai.vercel.app');
 assert.equal(oauthUrl.pathname, '/auth/callback');
 assert.equal(oauthUrl.searchParams.get('from'), 'desktop');
 assert.equal(oauthUrl.searchParams.get('callback'), localCallback);
@@ -109,6 +112,7 @@ const fetches: Array<{ url: string; body: string }> = [];
     return 1;
   },
   location: {
+    origin: 'https://clipopai.vercel.app',
     pathname: '/login',
     set href(value: string) {
       navigations.push(value);
@@ -121,6 +125,7 @@ const fetches: Array<{ url: string; body: string }> = [];
 
 assert.equal(isDesktopRuntime(), true);
 assert.equal(isDesktopAuthRequest(new URLSearchParams()), true);
+assert.equal(getDesktopOAuthOrigin(), 'https://clipopai.vercel.app');
 
 rememberDesktopAuth(localCallback);
 assert.equal(sessionStorageMock.getItem(DESKTOP_AUTH_SESSION_KEY), '1');
@@ -179,9 +184,11 @@ async function checkAsyncDesktopReturn() {
 
 const authContextSource = readFileSync('src/lib/auth-context.tsx', 'utf8');
 assert.match(authContextSource, /buildDesktopOAuthRedirectUrl/);
-assert.match(authContextSource, /DESKTOP_WEB_APP_URL/);
+assert.match(authContextSource, /buildDesktopCallbackPath/);
+assert.match(authContextSource, /getDesktopOAuthOrigin/);
 assert.match(authContextSource, /getDesktopCallbackFromBridge/);
-assert.match(authContextSource, /buildDesktopOAuthRedirectUrl\(DESKTOP_WEB_APP_URL, callbackParam\)/);
+assert.match(authContextSource, /buildDesktopOAuthRedirectUrl\(getDesktopOAuthOrigin\(\), callbackParam\)/);
+assert.match(authContextSource, /window\.location\.replace\(`\$\{desktopUrl\.pathname\}\?\$\{desktopUrl\.searchParams\.toString\(\)\}`\)/);
 assert.doesNotMatch(authContextSource, /setAccessToken\(null\);\n\s*return \{ error: null, token: null \}/);
 assert.match(authContextSource, /generateDemoToken\(adminUser\)/);
 assert.match(authContextSource, /return \{ error: null, token: demoToken, email: adminUser\.email \}/);
@@ -209,8 +216,8 @@ assert.match(registerPageSource, /setStep\('done'\)/);
 assert.match(registerPageSource, /setDesktopToken\(accessToken\)/);
 
 const desktopMainSource = readFileSync('apps/macos-agent/main.js', 'utf8');
-assert.match(desktopMainSource, /const SERVER_URL = 'https:\/\/vidshorterai\.vercel\.app'/);
-assert.doesNotMatch(desktopMainSource, /SERVER_URL: 'https:\/\/clipopai\.vercel\.app'/);
+assert.match(desktopMainSource, /const SERVER_URL = 'https:\/\/clipopai\.vercel\.app'/);
+assert.doesNotMatch(desktopMainSource, /const SERVER_URL = 'https:\/\/vidshorterai\.vercel\.app'/);
 assert.match(desktopMainSource, /persistAndSyncAuth/);
 assert.match(desktopMainSource, /Access-Control-Allow-Private-Network/);
 assert.match(desktopMainSource, /waitForAuthCallbackUrl/);

@@ -1,7 +1,10 @@
 export const DESKTOP_AUTH_SESSION_KEY = 'clipop_desktop_auth';
 export const DESKTOP_CALLBACK_SESSION_KEY = 'clipop_desktop_callback';
 export const DESKTOP_AUTH_STORAGE_KEY = 'clipop_desktop_auth_state';
-export const DESKTOP_WEB_APP_URL = 'https://vidshorterai.vercel.app';
+export const DESKTOP_WEB_APP_URL = (
+  process.env.NEXT_PUBLIC_DESKTOP_WEB_APP_URL ||
+  'https://clipopai.vercel.app'
+).replace(/\/$/, '');
 
 export interface DesktopAuthPayload {
   token?: string | null;
@@ -181,6 +184,25 @@ export function buildDesktopOAuthRedirectUrl(origin: string, callbackUrl?: strin
   }
 
   return `${origin}/auth/callback?${params.toString()}`;
+}
+
+export function getDesktopOAuthOrigin(): string {
+  if (typeof window === 'undefined') return DESKTOP_WEB_APP_URL;
+
+  const origin = window.location?.origin || '';
+  if (!origin) return DESKTOP_WEB_APP_URL;
+
+  try {
+    const url = new URL(origin);
+    const isLocalOrigin =
+      url.hostname === '127.0.0.1' ||
+      url.hostname === 'localhost' ||
+      url.hostname === '::1' ||
+      url.hostname === '[::1]';
+    return isLocalOrigin ? DESKTOP_WEB_APP_URL : origin;
+  } catch {
+    return DESKTOP_WEB_APP_URL;
+  }
 }
 
 export function getSafeNextPath(next?: string | null): string {

@@ -30,7 +30,7 @@ let authCallbackPort = 0;
 
 let lastInjectedToken = '';
 
-const SERVER_URL = 'https://vidshorterai.vercel.app';
+const SERVER_URL = 'https://clipopai.vercel.app';
 
 // ==================== LOGGING ====================
 function nowIso() {
@@ -883,7 +883,7 @@ async function applyMenu() {
                 webWindow.webContents.reload();
               }
             } else {
-              const callbackUrl = authCallbackPort ? `http://127.0.0.1:${authCallbackPort}` : '';
+              const callbackUrl = await waitForAuthCallbackUrl();
               const loginUrl = new URL('/login', SERVER_URL);
               loginUrl.searchParams.set('from', 'desktop');
               if (callbackUrl) {

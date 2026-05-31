@@ -2,10 +2,11 @@
 
 import { createContext, useContext, useEffect, useState, ReactNode, useCallback, useRef } from 'react';
 import {
+  buildDesktopCallbackPath,
   buildDesktopOAuthRedirectUrl,
-  DESKTOP_WEB_APP_URL,
   getDesktopCallbackFromBridge,
   getDesktopCallbackFromSearch,
+  getDesktopOAuthOrigin,
   isDesktopAuthRequest,
   rememberDesktopAuth,
 } from '@/lib/desktop-auth';
@@ -446,7 +447,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         const hash = window.location.hash;
         const search = window.location.search;
-        const params = new URLSearchParams();
 
       if (hash) {
         const hashParams = new URLSearchParams(hash.substring(1));
@@ -473,6 +473,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             } else if (data?.session) {
               setAccessToken(data.session.access_token);
               localStorage.setItem('clipop_access_token', data.session.access_token);
+              if (data.session.refresh_token) {
+                localStorage.setItem('clipop_refresh_token', data.session.refresh_token);
+              }
 
               const user = data.session.user;
               if (user) {
@@ -513,12 +516,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 }
               }
 
-              window.history.replaceState(null, '', window.location.pathname);
-              window.dispatchEvent(new Event('clipop-auth-change'));
-
               const urlParams = new URLSearchParams(window.location.search);
               const isDesktopAuth = isDesktopAuthRequest(urlParams)
                 || window.location.pathname.startsWith('/desktop/');
+              if (isDesktopAuth) {
+                const callbackUrl = getDesktopCallbackFromSearch(urlParams);
+                rememberDesktopAuth(callbackUrl);
+                const desktopCallbackPath = buildDesktopCallbackPath(callbackUrl);
+                const desktopUrl = new URL(desktopCallbackPath, window.location.origin);
+                desktopUrl.searchParams.set('access_token', data.session.access_token);
+                if (data.session.refresh_token) {
+                  desktopUrl.searchParams.set('refresh_token', data.session.refresh_token);
+                }
+                window.location.replace(`${desktopUrl.pathname}?${desktopUrl.searchParams.toString()}`);
+                return;
+              }
+
+              window.history.replaceState(null, '', window.location.pathname);
+              window.dispatchEvent(new Event('clipop-auth-change'));
+
               if (!isDesktopAuth && (window.location.pathname === '/login' || window.location.pathname === '/register')) {
                 window.location.href = '/';
                 return;
@@ -536,7 +552,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      if (!hash || !params.get('access_token')) {
+      if (!hash) {
         checkAuthState();
       }
     };
@@ -847,7 +863,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       const redirectUrl = isDesktopAuth
-        ? buildDesktopOAuthRedirectUrl(DESKTOP_WEB_APP_URL, callbackParam)
+        ? buildDesktopOAuthRedirectUrl(getDesktopOAuthOrigin(), callbackParam)
         : `${window.location.origin}/auth/callback`;
 
       const { data, error: oauthError } = await client.auth.signInWithOAuth({
