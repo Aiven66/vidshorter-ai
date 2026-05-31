@@ -240,6 +240,15 @@ function getAuthCallbackUrl() {
   return `http://127.0.0.1:${authCallbackPort}`;
 }
 
+async function waitForAuthCallbackUrl(timeoutMs = 1500) {
+  if (!authCallbackServer) startAuthCallbackServer();
+  const startedAt = Date.now();
+  while (!authCallbackPort && Date.now() - startedAt < timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return authCallbackPort ? getAuthCallbackUrl() : '';
+}
+
 async function persistAndSyncAuth(payload, source) {
   const token = payload.token || '';
   const refreshToken = payload.refreshToken || '';
@@ -636,6 +645,11 @@ async function ensureWebWindow() {
               if (nativeDesktop.openWebRegister) return await nativeDesktop.openWebRegister();
               if (window.electronAPI && window.electronAPI.openWebRegister) return await window.electronAPI.openWebRegister();
             },
+            getAuthCallbackUrl: async function() {
+              if (nativeDesktop.getAuthCallbackUrl) return await nativeDesktop.getAuthCallbackUrl();
+              if (window.electronAPI && window.electronAPI.getAuthCallbackUrl) return await window.electronAPI.getAuthCallbackUrl();
+              return '';
+            },
             getMediaBaseUrl: async function() {
               if (nativeDesktop.getMediaBaseUrl) return await nativeDesktop.getMediaBaseUrl();
               if (window.electronAPI && window.electronAPI.getMediaBaseUrl) return await window.electronAPI.getMediaBaseUrl();
@@ -664,6 +678,9 @@ async function ensureWebWindow() {
             },
             openWebRegister: async function() {
               return await desktopBridge.openWebRegister();
+            },
+            getAuthCallbackUrl: async function() {
+              return await desktopBridge.getAuthCallbackUrl();
             },
           };
         })();
@@ -924,6 +941,11 @@ ipcMain.handle('getAuthToken', async () => {
   return { token: cfg.authToken || '' };
 });
 
+ipcMain.handle('get-auth-callback-url', async () => {
+  const callbackUrl = await waitForAuthCallbackUrl();
+  return { callbackUrl };
+});
+
 ipcMain.handle('clearAuthToken', async () => {
   const cfg = await loadConfig();
   cfg.authToken = '';
@@ -945,7 +967,7 @@ ipcMain.handle('clearAuthToken', async () => {
 });
 
 ipcMain.handle('openAuth', async () => {
-  const callbackUrl = authCallbackPort ? `http://127.0.0.1:${authCallbackPort}` : '';
+  const callbackUrl = await waitForAuthCallbackUrl();
   const loginUrl = new URL('/login', SERVER_URL);
   loginUrl.searchParams.set('from', 'desktop');
   if (callbackUrl) {
@@ -963,7 +985,7 @@ ipcMain.handle('testDeepLink', async () => {
 });
 
 ipcMain.handle('open-web-login', async () => {
-  const callbackUrl = authCallbackPort ? `http://127.0.0.1:${authCallbackPort}` : '';
+  const callbackUrl = await waitForAuthCallbackUrl();
   const loginUrl = new URL('/login', SERVER_URL);
   loginUrl.searchParams.set('from', 'desktop');
   if (callbackUrl) {
@@ -974,7 +996,7 @@ ipcMain.handle('open-web-login', async () => {
 });
 
 ipcMain.handle('open-web-register', async () => {
-  const callbackUrl = authCallbackPort ? `http://127.0.0.1:${authCallbackPort}` : '';
+  const callbackUrl = await waitForAuthCallbackUrl();
   const registerUrl = new URL('/register', SERVER_URL);
   registerUrl.searchParams.set('from', 'desktop');
   if (callbackUrl) {

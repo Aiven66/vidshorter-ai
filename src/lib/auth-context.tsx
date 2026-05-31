@@ -3,6 +3,8 @@
 import { createContext, useContext, useEffect, useState, ReactNode, useCallback, useRef } from 'react';
 import {
   buildDesktopOAuthRedirectUrl,
+  DESKTOP_WEB_APP_URL,
+  getDesktopCallbackFromBridge,
   getDesktopCallbackFromSearch,
   isDesktopAuthRequest,
   rememberDesktopAuth,
@@ -835,14 +837,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const client = await getSupabaseClient();
       const params = new URLSearchParams(window.location.search);
-      const callbackParam = getDesktopCallbackFromSearch(params);
+      let callbackParam = getDesktopCallbackFromSearch(params);
       const isDesktopAuth = isDesktopAuthRequest(params);
+      if (isDesktopAuth && !callbackParam) {
+        callbackParam = await getDesktopCallbackFromBridge();
+      }
       if (isDesktopAuth) {
         rememberDesktopAuth(callbackParam);
       }
 
       const redirectUrl = isDesktopAuth
-        ? buildDesktopOAuthRedirectUrl(window.location.origin, callbackParam)
+        ? buildDesktopOAuthRedirectUrl(DESKTOP_WEB_APP_URL, callbackParam)
         : `${window.location.origin}/auth/callback`;
 
       const { data, error: oauthError } = await client.auth.signInWithOAuth({

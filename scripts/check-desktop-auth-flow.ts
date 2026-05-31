@@ -5,12 +5,15 @@ import {
   buildDesktopDeepLink,
   buildDesktopLoginRedirectUrl,
   buildDesktopOAuthRedirectUrl,
+  DESKTOP_WEB_APP_URL,
   DESKTOP_AUTH_SESSION_KEY,
   DESKTOP_AUTH_STORAGE_KEY,
   DESKTOP_CALLBACK_SESSION_KEY,
+  getDesktopCallbackFromBridge,
   getDesktopCallbackFromPath,
   getSafeNextPath,
   isDesktopAuthRequest,
+  isDesktopRuntime,
   normalizeDesktopCallbackUrl,
   openDesktopLocalCallback,
   openDesktopAuthReturn,
@@ -98,11 +101,15 @@ const fetches: Array<{ url: string; body: string }> = [];
 (globalThis as any).window = {
   sessionStorage: sessionStorageMock,
   localStorage: localStorageMock,
+  clipopDesktop: {
+    getAuthCallbackUrl: async () => localCallback,
+  },
   setTimeout: (fn: () => void) => {
     fn();
     return 1;
   },
   location: {
+    pathname: '/login',
     set href(value: string) {
       navigations.push(value);
     },
@@ -111,6 +118,9 @@ const fetches: Array<{ url: string; body: string }> = [];
     },
   },
 };
+
+assert.equal(isDesktopRuntime(), true);
+assert.equal(isDesktopAuthRequest(new URLSearchParams()), true);
 
 rememberDesktopAuth(localCallback);
 assert.equal(sessionStorageMock.getItem(DESKTOP_AUTH_SESSION_KEY), '1');
@@ -146,6 +156,8 @@ assert.equal(deepLinkOnlyResult.redirectUrl, '');
 assert.equal(navigations[2].startsWith('clipop://login-success?'), true);
 
 async function checkAsyncDesktopReturn() {
+  assert.equal(await getDesktopCallbackFromBridge(), localCallback);
+
   const postResult = await postDesktopAuthToLocalCallback(localCallback, {
     token: 'token.post',
     refreshToken: 'refresh.post',
@@ -167,6 +179,9 @@ async function checkAsyncDesktopReturn() {
 
 const authContextSource = readFileSync('src/lib/auth-context.tsx', 'utf8');
 assert.match(authContextSource, /buildDesktopOAuthRedirectUrl/);
+assert.match(authContextSource, /DESKTOP_WEB_APP_URL/);
+assert.match(authContextSource, /getDesktopCallbackFromBridge/);
+assert.match(authContextSource, /buildDesktopOAuthRedirectUrl\(DESKTOP_WEB_APP_URL, callbackParam\)/);
 assert.doesNotMatch(authContextSource, /setAccessToken\(null\);\n\s*return \{ error: null, token: null \}/);
 assert.match(authContextSource, /generateDemoToken\(adminUser\)/);
 assert.match(authContextSource, /return \{ error: null, token: demoToken, email: adminUser\.email \}/);
@@ -198,6 +213,11 @@ assert.match(desktopMainSource, /const SERVER_URL = 'https:\/\/vidshorterai\.ver
 assert.doesNotMatch(desktopMainSource, /SERVER_URL: 'https:\/\/clipopai\.vercel\.app'/);
 assert.match(desktopMainSource, /persistAndSyncAuth/);
 assert.match(desktopMainSource, /Access-Control-Allow-Private-Network/);
+assert.match(desktopMainSource, /waitForAuthCallbackUrl/);
+assert.match(desktopMainSource, /get-auth-callback-url/);
+
+const preloadWebSource = readFileSync('apps/macos-agent/preload-web.js', 'utf8');
+assert.match(preloadWebSource, /getAuthCallbackUrl/);
 
 checkAsyncDesktopReturn().then(() => {
   console.log('Desktop auth flow checks passed.');

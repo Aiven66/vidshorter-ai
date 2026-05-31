@@ -30,6 +30,10 @@ const desktopBridge = {
   openAuth: () => ipcRenderer.invoke('open-auth'),
   openWebLogin: () => ipcRenderer.invoke('open-web-login'),
   openWebRegister: () => ipcRenderer.invoke('open-web-register'),
+  getAuthCallbackUrl: async () => {
+    const r = await ipcRenderer.invoke('get-auth-callback-url');
+    return r?.callbackUrl || '';
+  },
   getAuthToken: async () => {
     const r = await ipcRenderer.invoke('getAuthToken');
     return r?.token || '';
@@ -57,6 +61,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openAuth: () => ipcRenderer.invoke('open-auth'),
   openWebLogin: () => ipcRenderer.invoke('open-web-login'),
   openWebRegister: () => ipcRenderer.invoke('open-web-register'),
+  getAuthCallbackUrl: async () => {
+    const r = await ipcRenderer.invoke('get-auth-callback-url');
+    return r?.callbackUrl || '';
+  },
   getMediaBaseUrl: async () => {
     const r = await ipcRenderer.invoke('get-media-base-url');
     return r?.baseUrl || '';

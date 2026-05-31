@@ -18,6 +18,18 @@ interface StoredDesktopAuthState {
   createdAt?: number;
 }
 
+export function isDesktopRuntime(): boolean {
+  if (typeof window === 'undefined') return false;
+  const desktopWindow = window as any;
+  return !!(
+    desktopWindow.clipopDesktop ||
+    desktopWindow.vidshorterDesktop ||
+    desktopWindow.electronAPI ||
+    desktopWindow.agent?.openWebLogin ||
+    desktopWindow.agent?.openWebRegister
+  );
+}
+
 export function normalizeDesktopCallbackUrl(callbackUrl?: string | null): string {
   const raw = (callbackUrl || '').trim();
   if (!raw) return '';
@@ -66,6 +78,29 @@ export function rememberDesktopAuth(callbackUrl?: string | null) {
   }));
 }
 
+export async function getDesktopCallbackFromBridge(): Promise<string> {
+  if (typeof window === 'undefined') return '';
+
+  const desktopWindow = window as any;
+  const candidates = [
+    desktopWindow.clipopDesktop?.getAuthCallbackUrl,
+    desktopWindow.vidshorterDesktop?.getAuthCallbackUrl,
+    desktopWindow.electronAPI?.getAuthCallbackUrl,
+    desktopWindow.agent?.getAuthCallbackUrl,
+  ].filter(Boolean);
+
+  for (const getUrl of candidates) {
+    try {
+      const result = await getUrl();
+      const callbackUrl = typeof result === 'string' ? result : result?.callbackUrl;
+      const safeCallbackUrl = normalizeDesktopCallbackUrl(callbackUrl);
+      if (safeCallbackUrl) return safeCallbackUrl;
+    } catch {}
+  }
+
+  return '';
+}
+
 export function isDesktopAuthRequest(searchParams?: SearchParamsLike | null): boolean {
   const fromSearch =
     searchParams?.get('from') === 'desktop' ||
@@ -73,6 +108,18 @@ export function isDesktopAuthRequest(searchParams?: SearchParamsLike | null): bo
 
   if (fromSearch) return true;
   if (typeof window === 'undefined') return false;
+
+  if (isDesktopRuntime()) {
+    const pathname = window.location?.pathname || '';
+    if (
+      pathname === '/login' ||
+      pathname === '/register' ||
+      pathname === '/auth/callback' ||
+      pathname.startsWith('/desktop/')
+    ) {
+      return true;
+    }
+  }
 
   if (sessionStorage.getItem(DESKTOP_AUTH_SESSION_KEY) === '1') return true;
 
