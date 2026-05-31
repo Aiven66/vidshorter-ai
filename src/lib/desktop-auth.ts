@@ -175,14 +175,18 @@ export function openDesktopAuthReturn(callbackUrl: string, payload: DesktopAuthP
   const redirectUrl = buildDesktopLoginRedirectUrl(callbackUrl, payload);
 
   if (typeof window !== 'undefined') {
-    if (redirectUrl) {
-      window.location.href = redirectUrl;
-    } else {
-      try {
-        window.location.href = deepLink;
-      } catch {}
-    }
+    try {
+      window.location.href = deepLink;
+    } catch {}
   }
 
   return { deepLink, redirectUrl };
+}
+
+export function openDesktopLocalCallback(callbackUrl: string, payload: DesktopAuthPayload): string {
+  const redirectUrl = buildDesktopLoginRedirectUrl(callbackUrl, payload);
+  if (typeof window !== 'undefined' && redirectUrl) {
+    window.location.href = redirectUrl;
+  }
+  return redirectUrl;
 }

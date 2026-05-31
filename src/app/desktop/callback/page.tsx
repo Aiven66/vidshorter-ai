@@ -8,6 +8,7 @@ import { getSupabaseClient } from '@/storage/database/supabase-client';
 import {
   getDesktopCallbackFromSearch,
   isDesktopAuthRequest,
+  openDesktopLocalCallback,
   openDesktopAuthReturn,
   rememberDesktopAuth,
   type DesktopAuthPayload,
@@ -138,9 +139,16 @@ function DesktopCallbackContent() {
 
   const handleOpenDesktop = () => {
     const result = openDesktopAuthReturn(callbackUrl, payload);
-    console.log('[DesktopCallback] Returning via deep link and local callback:', {
+    console.log('[DesktopCallback] Returning via desktop deep link:', {
       hasDeepLink: !!result.deepLink,
       hasRedirectUrl: !!result.redirectUrl,
+    });
+  };
+
+  const handleLocalSync = () => {
+    const redirectUrl = openDesktopLocalCallback(callbackUrl, payload);
+    console.log('[DesktopCallback] Returning via local callback fallback:', {
+      hasRedirectUrl: !!redirectUrl,
     });
   };
 
@@ -204,6 +212,15 @@ function DesktopCallbackContent() {
                 <Monitor className="w-5 h-5 mr-2" />
                 Open Clipop Agent
               </Button>
+              {callbackUrl && (
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={handleLocalSync}
+                >
+                  Sync via local callback
+                </Button>
+              )}
               <p className="text-xs text-muted-foreground">
                 If the desktop app didn't open, please switch to it manually or click the button again.
               </p>

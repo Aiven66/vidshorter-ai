@@ -18,6 +18,7 @@ import { posthog } from '@/lib/posthog';
 import {
   getDesktopCallbackFromSearch,
   isDesktopAuthRequest,
+  openDesktopLocalCallback,
   openDesktopAuthReturn,
   rememberDesktopAuth,
 } from '@/lib/desktop-auth';
@@ -143,23 +144,33 @@ function RegisterContent() {
     }
   };
 
-  const handleReturnToDesktop = () => {
+  const buildDesktopPayload = () => {
     const token = desktopToken || accessToken;
     const tokenEmail = desktopEmail || user?.email || email;
     const tokenUserId = user?.id || '';
     const tokenName = user?.name || name;
-    const payload = {
+    return {
       token,
       refreshToken: desktopRefreshToken || undefined,
       email: tokenEmail,
       userId: tokenUserId,
       name: tokenName,
     };
+  };
 
+  const handleReturnToDesktop = () => {
+    const payload = buildDesktopPayload();
     const result = openDesktopAuthReturn(savedCallbackUrl, payload);
-    console.log('[DesktopAuth] Returning via deep link and local callback:', {
+    console.log('[DesktopAuth] Returning via desktop deep link:', {
       hasDeepLink: !!result.deepLink,
       hasRedirectUrl: !!result.redirectUrl,
+    });
+  };
+
+  const handleLocalDesktopSync = () => {
+    const redirectUrl = openDesktopLocalCallback(savedCallbackUrl, buildDesktopPayload());
+    console.log('[DesktopAuth] Returning via local callback fallback:', {
+      hasRedirectUrl: !!redirectUrl,
     });
   };
 
@@ -187,6 +198,11 @@ function RegisterContent() {
               <Monitor className="w-5 h-5 mr-2" />
               {t('register.returnToDesktop')}
             </Button>
+            {savedCallbackUrl && (
+              <Button variant="outline" className="w-full h-11" onClick={handleLocalDesktopSync}>
+                Sync via local callback
+              </Button>
+            )}
             <p className="text-center text-sm text-muted-foreground">
               {t('register.desktopNotOpened')}
             </p>

@@ -8,6 +8,7 @@ import { useAuth } from '@/lib/auth-context';
 import {
   getStoredDesktopCallbackUrl,
   isDesktopAuthRequest,
+  openDesktopLocalCallback,
   openDesktopAuthReturn,
   type DesktopAuthPayload,
 } from '@/lib/desktop-auth';
@@ -17,18 +18,24 @@ export function DesktopAuthReturnBanner() {
   const { user, accessToken, loading } = useAuth();
   const [pendingDesktopReturn, setPendingDesktopReturn] = useState(false);
   const [callbackUrl, setCallbackUrl] = useState('');
+  const [storedAccessToken, setStoredAccessToken] = useState('');
+  const [storedRefreshToken, setStoredRefreshToken] = useState('');
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
     setPendingDesktopReturn(isDesktopAuthRequest(new URLSearchParams(window.location.search)));
     setCallbackUrl(getStoredDesktopCallbackUrl());
+    setStoredAccessToken(localStorage.getItem('clipop_access_token') || '');
+    setStoredRefreshToken(localStorage.getItem('clipop_refresh_token') || '');
   }, [pathname, user, accessToken]);
+
+  const desktopToken = accessToken || storedAccessToken;
 
   if (
     loading ||
     !pendingDesktopReturn ||
     !user ||
-    !accessToken ||
+    !desktopToken ||
     pathname === '/login' ||
     pathname === '/register' ||
     pathname.startsWith('/desktop/')
@@ -38,13 +45,24 @@ export function DesktopAuthReturnBanner() {
 
   const handleReturn = () => {
     const payload: DesktopAuthPayload = {
-      token: accessToken,
-      refreshToken: typeof window !== 'undefined' ? localStorage.getItem('clipop_refresh_token') : '',
+      token: desktopToken,
+      refreshToken: storedRefreshToken,
       email: user.email,
       userId: user.id,
       name: user.name || user.email.split('@')[0],
     };
     openDesktopAuthReturn(callbackUrl, payload);
+  };
+
+  const handleLocalSync = () => {
+    const payload: DesktopAuthPayload = {
+      token: desktopToken,
+      refreshToken: storedRefreshToken,
+      email: user.email,
+      userId: user.id,
+      name: user.name || user.email.split('@')[0],
+    };
+    openDesktopLocalCallback(callbackUrl, payload);
   };
 
   return (
@@ -60,10 +78,17 @@ export function DesktopAuthReturnBanner() {
               </p>
             </div>
           </div>
-          <Button onClick={handleReturn} className="shrink-0">
-            <Monitor className="h-4 w-4 mr-2" />
-            Return to Clipop Agent
-          </Button>
+          <div className="flex flex-col gap-2 sm:items-end">
+            <Button onClick={handleReturn} className="shrink-0">
+              <Monitor className="h-4 w-4 mr-2" />
+              Return to Clipop Agent
+            </Button>
+            {callbackUrl && (
+              <Button variant="outline" size="sm" onClick={handleLocalSync} className="shrink-0">
+                Sync via local callback
+              </Button>
+            )}
+          </div>
         </div>
       </div>
     </div>
