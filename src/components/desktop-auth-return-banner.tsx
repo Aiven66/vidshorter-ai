@@ -36,8 +36,6 @@ export function DesktopAuthReturnBanner() {
     !pendingDesktopReturn ||
     !user ||
     !desktopToken ||
-    pathname === '/login' ||
-    pathname === '/register' ||
     pathname.startsWith('/desktop/')
   ) {
     return null;

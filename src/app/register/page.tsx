@@ -59,6 +59,14 @@ function RegisterContent() {
   const isDesktopFlow = isDesktopAuthRequest(sp);
   const savedCallbackUrl = getDesktopCallbackFromSearch(sp);
 
+  useEffect(() => {
+    if (isDesktopFlow && user && accessToken && step !== 'done') {
+      setDesktopToken(accessToken);
+      setDesktopEmail(user.email);
+      setStep('done');
+    }
+  }, [isDesktopFlow, user, accessToken, step]);
+
   const handleSendCode = async () => {
     if (!name.trim()) { setError(t('register.errorNameRequired')); return; }
     if (!email.trim()) { setError(t('register.errorEmailRequired')); return; }

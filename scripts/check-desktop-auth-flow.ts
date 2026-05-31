@@ -167,6 +167,10 @@ async function checkAsyncDesktopReturn() {
 
 const authContextSource = readFileSync('src/lib/auth-context.tsx', 'utf8');
 assert.match(authContextSource, /buildDesktopOAuthRedirectUrl/);
+assert.doesNotMatch(authContextSource, /setAccessToken\(null\);\n\s*return \{ error: null, token: null \}/);
+assert.match(authContextSource, /generateDemoToken\(adminUser\)/);
+assert.match(authContextSource, /return \{ error: null, token: demoToken, email: adminUser\.email \}/);
+assert.match(authContextSource, /return \{ error: null, token: demoToken, email: demoUser\.email \}/);
 
 const authCallbackSource = readFileSync('src/app/auth/callback/page.tsx', 'utf8');
 assert.match(authCallbackSource, /buildDesktopCallbackPath/);
@@ -182,6 +186,12 @@ assert.match(desktopBannerSource, /Return to Clipop Agent/);
 assert.match(desktopBannerSource, /clipop_access_token/);
 assert.match(desktopBannerSource, /openDesktopLocalCallback/);
 assert.match(desktopBannerSource, /syncDesktopAuthAndOpen/);
+assert.doesNotMatch(desktopBannerSource, /pathname === '\/login'/);
+assert.doesNotMatch(desktopBannerSource, /pathname === '\/register'/);
+
+const registerPageSource = readFileSync('src/app/register/page.tsx', 'utf8');
+assert.match(registerPageSource, /setStep\('done'\)/);
+assert.match(registerPageSource, /setDesktopToken\(accessToken\)/);
 
 const desktopMainSource = readFileSync('apps/macos-agent/main.js', 'utf8');
 assert.match(desktopMainSource, /const SERVER_URL = 'https:\/\/vidshorterai\.vercel\.app'/);

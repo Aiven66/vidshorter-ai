@@ -631,11 +631,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (authError) {
         if (isDemoAdmin(email, password)) {
           const adminUser = getDemoAdminUser(email);
+          const demoToken = generateDemoToken(adminUser);
           setUser(adminUser);
           saveDemoUser(adminUser);
           setUseDemo(true);
-          setAccessToken(null);
-          return { error: null, token: null };
+          setAccessToken(demoToken);
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('clipop_access_token', demoToken);
+          }
+          return { error: null, token: demoToken, email: adminUser.email };
         }
         return { error: authError.message, token: null };
       }
@@ -659,11 +663,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       if (isDemoAdmin(email, password)) {
         const adminUser = getDemoAdminUser(email);
+        const demoToken = generateDemoToken(adminUser);
         setUser(adminUser);
         saveDemoUser(adminUser);
         setUseDemo(true);
-        setAccessToken(null);
-        return { error: null };
+        setAccessToken(demoToken);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('clipop_access_token', demoToken);
+        }
+        return { error: null, token: demoToken, email: adminUser.email };
       }
       const registered = findRegisteredUser(email, password);
       if (registered) {
@@ -674,11 +682,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           role: 'user',
           avatarUrl: null,
         };
+        const demoToken = generateDemoToken(demoUser);
         setUser(demoUser);
         saveDemoUser(demoUser);
         setUseDemo(true);
-        setAccessToken(null);
-        return { error: null };
+        setAccessToken(demoToken);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('clipop_access_token', demoToken);
+        }
+        return { error: null, token: demoToken, email: demoUser.email };
       }
       return { error: 'Network error. Please try again later.' };
     }
@@ -745,8 +757,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(demoUser);
         saveDemoUser(demoUser);
         setUseDemo(true);
-        setAccessToken(null);
-        return { error: null };
+        const demoToken = generateDemoToken(demoUser);
+        setAccessToken(demoToken);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('clipop_access_token', demoToken);
+        }
+        return { error: null, token: demoToken, email: demoUser.email };
       }
 
       const { data: { session } } = await client.auth.getSession();
@@ -795,8 +811,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(demoUser);
       saveDemoUser(demoUser);
       setUseDemo(true);
-      setAccessToken(null);
-      return { error: null };
+      const demoToken = generateDemoToken(demoUser);
+      setAccessToken(demoToken);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('clipop_access_token', demoToken);
+      }
+      return { error: null, token: demoToken, email: demoUser.email };
     }
   }
 
