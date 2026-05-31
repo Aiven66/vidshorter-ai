@@ -201,6 +201,13 @@ const authCallbackSource = readFileSync('src/app/auth/callback/page.tsx', 'utf8'
 assert.match(authCallbackSource, /buildDesktopCallbackPath/);
 assert.match(authCallbackSource, /rememberDesktopAuth/);
 assert.match(authCallbackSource, /clipop_access_token/);
+assert.match(authCallbackSource, /flowType: 'implicit'/);
+assert.match(authCallbackSource, /recoverHashSession/);
+assert.match(authCallbackSource, /getSessionWithRetry/);
+assert.match(authCallbackSource, /recoverStoredSession/);
+
+const supabaseClientSource = readFileSync('src/storage/database/supabase-client.ts', 'utf8');
+assert.match(supabaseClientSource, /flowType: 'implicit'/);
 
 const desktopCallbackSource = readFileSync('src/app/desktop/callback/page.tsx', 'utf8');
 assert.match(desktopCallbackSource, /publishDesktopAuth/);

@@ -107,6 +107,7 @@ function getSupabaseClient(token?: string) {
               autoRefreshToken: true,
               persistSession: true,
               detectSessionInUrl: true,
+              flowType: 'implicit',
             },
           });
           cachedClient = this._realClient;

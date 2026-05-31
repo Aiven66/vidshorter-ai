@@ -12,6 +12,8 @@ import {
   rememberDesktopAuth,
 } from '@/lib/desktop-auth';
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export default function AuthCallbackPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -78,85 +80,147 @@ export default function AuthCallbackPage() {
             autoRefreshToken: true,
             persistSession: true,
             detectSessionInUrl: false,
+            flowType: 'implicit',
           },
         });
 
         let sessionForRedirect: { accessToken?: string; refreshToken?: string } = {};
 
-        if (code) {
+        const persistSessionUser = async (session: any) => {
+          if (!session?.user) return;
+
+          try {
+            const { data: existingUser } = await supabase
+              .from('users')
+              .select('id')
+              .eq('id', session.user.id)
+              .maybeSingle();
+
+            if (!existingUser) {
+              await supabase.from('users').insert({
+                id: session.user.id,
+                email: session.user.email!,
+                name: session.user.user_metadata?.name || session.user.email?.split('@')[0],
+                role: 'user',
+                google_id: session.user.app_metadata?.provider === 'google' ? session.user.id : null,
+              });
+              await supabase.from('credits').insert({ user_id: session.user.id, balance: 100 });
+              await supabase.from('subscriptions').insert({
+                user_id: session.user.id,
+                plan_type: 'free',
+                status: 'active',
+              });
+            }
+          } catch (dbError) {
+            console.error('[AUTH CALLBACK] Database error (non-fatal):', dbError);
+          }
+        };
+
+        const applySession = async (session: any) => {
+          if (!session?.access_token) return false;
+          sessionForRedirect = {
+            accessToken: session.access_token,
+            refreshToken: session.refresh_token,
+          };
+          await persistSessionUser(session);
+          return true;
+        };
+
+        const getSessionWithRetry = async () => {
+          for (let attempt = 0; attempt < 8; attempt += 1) {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (session?.access_token) return session;
+            await sleep(150 + attempt * 100);
+          }
+          return null;
+        };
+
+        const recoverStoredSession = async () => {
+          if (typeof window === 'undefined') return false;
+
+          const storedAccessToken = localStorage.getItem('clipop_access_token') || '';
+          const storedRefreshToken = localStorage.getItem('clipop_refresh_token') || '';
+          if (!storedAccessToken) return false;
+
+          if (storedRefreshToken) {
+            const { data } = await supabase.auth.setSession({
+              access_token: storedAccessToken,
+              refresh_token: storedRefreshToken,
+            });
+            if (await applySession(data.session)) return true;
+          }
+
+          try {
+            const { data: { user } } = await supabase.auth.getUser(storedAccessToken);
+            if (user) {
+              sessionForRedirect = {
+                accessToken: storedAccessToken,
+                refreshToken: storedRefreshToken || undefined,
+              };
+              await persistSessionUser({ user });
+              return true;
+            }
+          } catch {}
+
+          return false;
+        };
+
+        const recoverHashSession = async () => {
+          if (!hashFragment) return false;
+
+          const hashParams = new URLSearchParams(hashFragment.replace(/^#/, ''));
+          const hashAccessToken = hashParams.get('access_token') || '';
+          const hashRefreshToken = hashParams.get('refresh_token') || '';
+          if (!hashAccessToken) return false;
+
+          if (hashRefreshToken) {
+            const { data, error: setSessionError } = await supabase.auth.setSession({
+              access_token: hashAccessToken,
+              refresh_token: hashRefreshToken,
+            });
+            if (setSessionError) {
+              console.log('[AUTH CALLBACK] setSession from hash error:', setSessionError.message);
+            }
+            if (await applySession(data.session)) return true;
+          }
+
+          try {
+            const { data: { user } } = await supabase.auth.getUser(hashAccessToken);
+            if (user) {
+              sessionForRedirect = {
+                accessToken: hashAccessToken,
+                refreshToken: hashRefreshToken || undefined,
+              };
+              await persistSessionUser({ user });
+              return true;
+            }
+          } catch {}
+
+          sessionForRedirect = {
+            accessToken: hashAccessToken,
+            refreshToken: hashRefreshToken || undefined,
+          };
+          return true;
+        };
+
+        await recoverHashSession();
+
+        if (!sessionForRedirect.accessToken && code) {
           const { data: exchangeData, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
           if (exchangeError) {
             console.log('[AUTH CALLBACK] exchangeCodeForSession error:', exchangeError.message);
           }
-          if (exchangeData.session) {
-            sessionForRedirect = {
-              accessToken: exchangeData.session.access_token,
-              refreshToken: exchangeData.session.refresh_token,
-            };
-            if (exchangeData.session.user) {
-              try {
-                const { data: existingUser } = await supabase
-                  .from('users')
-                  .select('id')
-                  .eq('id', exchangeData.session.user.id)
-                  .maybeSingle();
-
-                if (!existingUser) {
-                  await supabase.from('users').insert({
-                    id: exchangeData.session.user.id,
-                    email: exchangeData.session.user.email!,
-                    name: exchangeData.session.user.user_metadata?.name || exchangeData.session.user.email?.split('@')[0],
-                    role: 'user',
-                    google_id: exchangeData.session.user.app_metadata?.provider === 'google' ? exchangeData.session.user.id : null,
-                  });
-                  await supabase.from('credits').insert({ user_id: exchangeData.session.user.id, balance: 100 });
-                  await supabase.from('subscriptions').insert({
-                    user_id: exchangeData.session.user.id,
-                    plan_type: 'free',
-                    status: 'active',
-                  });
-                }
-              } catch (dbError) {
-                console.error('[AUTH CALLBACK] Database error (non-fatal):', dbError);
-              }
-            }
-          }
+          await applySession(exchangeData.session);
         }
 
         if (!sessionForRedirect.accessToken) {
           console.log('[AUTH CALLBACK] No session from exchangeCode, trying getSession...');
-          const { data: { session } } = await supabase.auth.getSession();
-          if (session) {
-            sessionForRedirect = {
-              accessToken: session.access_token,
-              refreshToken: session.refresh_token,
-            };
-            try {
-              const { data: existingUser } = await supabase
-                .from('users')
-                .select('id')
-                .eq('id', session.user.id)
-                .maybeSingle();
+          await applySession(await getSessionWithRetry());
+        }
 
-              if (!existingUser) {
-                await supabase.from('users').insert({
-                  id: session.user.id,
-                  email: session.user.email!,
-                  name: session.user.user_metadata?.name || session.user.email?.split('@')[0],
-                  role: 'user',
-                  google_id: session.user.app_metadata?.provider === 'google' ? session.user.id : null,
-                });
-                await supabase.from('credits').insert({ user_id: session.user.id, balance: 100 });
-                await supabase.from('subscriptions').insert({
-                  user_id: session.user.id,
-                  plan_type: 'free',
-                  status: 'active',
-                });
-              }
-            } catch (dbError) {
-              console.error('[AUTH CALLBACK] Database error (non-fatal):', dbError);
-            }
-          }
+        if (!sessionForRedirect.accessToken) {
+          console.log('[AUTH CALLBACK] No session from getSession, trying stored token recovery...');
+          await recoverStoredSession();
         }
 
         if (!sessionForRedirect.accessToken) {
