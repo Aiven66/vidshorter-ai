@@ -6,10 +6,9 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
 import {
-  buildDesktopDeepLink,
-  buildDesktopLoginRedirectUrl,
   getDesktopCallbackFromSearch,
   isDesktopAuthRequest,
+  openDesktopAuthReturn,
   rememberDesktopAuth,
   type DesktopAuthPayload,
 } from '@/lib/desktop-auth';
@@ -138,20 +137,11 @@ function DesktopCallbackContent() {
   }, [resolveAndSetPayload]);
 
   const handleOpenDesktop = () => {
-    if (callbackUrl) {
-      const redirectUrl = buildDesktopLoginRedirectUrl(callbackUrl, payload);
-      if (redirectUrl) {
-        console.log('[DesktopCallback] Navigating to local auth callback server:', redirectUrl);
-        window.location.href = redirectUrl;
-        return;
-      }
-    }
-
-    const deepLink = buildDesktopDeepLink(payload);
-    console.log('[DesktopCallback] No callback URL, trying deep link:', deepLink.substring(0, 50));
-    try {
-      window.location.href = deepLink;
-    } catch {}
+    const result = openDesktopAuthReturn(callbackUrl, payload);
+    console.log('[DesktopCallback] Returning via deep link and local callback:', {
+      hasDeepLink: !!result.deepLink,
+      hasRedirectUrl: !!result.redirectUrl,
+    });
   };
 
   const handleRetry = () => {

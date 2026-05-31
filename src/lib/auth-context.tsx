@@ -53,8 +53,8 @@ interface AuthContextType {
   accessToken: string | null;
   loading: boolean;
   error: string | null;
-  signIn: (email: string, password: string) => Promise<{ error: string | null; token?: string | null; email?: string }>;
-  signUp: (email: string, password: string, name: string) => Promise<{ error: string | null; token?: string | null; email?: string }>;
+  signIn: (email: string, password: string) => Promise<{ error: string | null; token?: string | null; refreshToken?: string | null; email?: string }>;
+  signUp: (email: string, password: string, name: string) => Promise<{ error: string | null; token?: string | null; refreshToken?: string | null; email?: string }>;
   signInWithGoogle: () => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
   clearError: () => void;
@@ -646,6 +646,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setAccessToken(token);
         if (token && typeof window !== 'undefined') {
           localStorage.setItem('clipop_access_token', token);
+          if (refreshToken) localStorage.setItem('clipop_refresh_token', refreshToken);
         }
         const userData = await verifyTokenAndFetchUser(data.session.access_token!);
         if (userData) {
@@ -751,29 +752,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { data: { session } } = await client.auth.getSession();
       if (session) {
         const token = session.access_token || null;
+        const refreshToken = session.refresh_token || null;
         setAccessToken(token);
         if (token && typeof window !== 'undefined') {
           localStorage.setItem('clipop_access_token', token);
+          if (refreshToken) localStorage.setItem('clipop_refresh_token', refreshToken);
         }
         const userData = await verifyTokenAndFetchUser(session.access_token!);
         if (userData) {
           setUser(userData);
         }
-        return { error: null, token, email: session.user.email || email };
+        return { error: null, token, refreshToken, email: session.user.email || email };
       }
 
       const { data: signInData, error: signInError } = await client.auth.signInWithPassword({ email, password });
       if (!signInError && signInData.session) {
         const token = signInData.session.access_token || null;
+        const refreshToken = signInData.session.refresh_token || null;
         setAccessToken(token);
         if (token && typeof window !== 'undefined') {
           localStorage.setItem('clipop_access_token', token);
+          if (refreshToken) localStorage.setItem('clipop_refresh_token', refreshToken);
         }
         const userData = await verifyTokenAndFetchUser(signInData.session.access_token!);
         if (userData) {
           setUser(userData);
         }
-        return { error: null, token, email: signInData.session.user?.email || email };
+        return { error: null, token, refreshToken, email: signInData.session.user?.email || email };
       }
 
       return { error: null, token: null };

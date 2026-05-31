@@ -14,10 +14,9 @@ import { Video, CheckCircle, Mail, Lock, Monitor } from 'lucide-react';
 import { GoogleLoginButton } from '@/components/google-login-button';
 import { posthog } from '@/lib/posthog';
 import {
-  buildDesktopDeepLink,
-  buildDesktopLoginRedirectUrl,
   getDesktopCallbackFromSearch,
   isDesktopAuthRequest,
+  openDesktopAuthReturn,
   rememberDesktopAuth,
 } from '@/lib/desktop-auth';
 
@@ -121,20 +120,11 @@ function LoginContent() {
       name: tokenName,
     };
 
-    if (savedCallbackUrl) {
-      const redirectUrl = buildDesktopLoginRedirectUrl(savedCallbackUrl, payload);
-      if (redirectUrl) {
-        console.log('[DesktopAuth] Navigating to local auth callback server:', redirectUrl);
-        window.location.href = redirectUrl;
-        return;
-      }
-    }
-
-    const deepLink = buildDesktopDeepLink(payload);
-    console.log('[DesktopAuth] No callback URL, trying deep link:', deepLink.substring(0, 50));
-    try {
-      window.location.href = deepLink;
-    } catch {}
+    const result = openDesktopAuthReturn(savedCallbackUrl, payload);
+    console.log('[DesktopAuth] Returning via deep link and local callback:', {
+      hasDeepLink: !!result.deepLink,
+      hasRedirectUrl: !!result.redirectUrl,
+    });
   };
 
   if (showDesktopSuccess) {

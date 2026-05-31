@@ -176,29 +176,7 @@ function startAuthCallbackServer() {
         appendLog(`[AuthCallback] Token: ${!!token}, RefreshToken: ${!!refreshToken}, Email: ${email}`);
 
         if (token) {
-          const cfg = await loadConfig();
-          cfg.authToken = token;
-          cfg.authRefreshToken = refreshToken;
-          cfg.authEmail = email;
-          cfg.authUserId = userId;
-          cfg.authName = name;
-          await saveConfig(cfg);
-
-          if (webWindow && !webWindow.isDestroyed()) {
-            appendLog('[AuthCallback] Injecting token into webWindow...');
-            lastInjectedToken = token;
-            await injectAuthToWebWindow(token, email, userId, name, refreshToken, true);
-            if (!webWindow.isDestroyed()) {
-              webWindow.show();
-              webWindow.focus();
-              appendLog('[AuthCallback] webWindow focused');
-            }
-          } else {
-            appendLog('[AuthCallback] No webWindow, will inject on next load');
-          }
-
-          await applyMenu();
-
+          await persistAndSyncAuth({ token, refreshToken, email, userId, name }, 'POST /api/desktop-auth');
           res.writeHead(200, { 'Content-Type': 'application/json', ...corsHeaders });
           res.end(JSON.stringify({ ok: true, message: 'Token received' }));
         } else {
@@ -230,25 +208,7 @@ function startAuthCallbackServer() {
       appendLog(`[AuthCallback] Redirect login: token=${!!token}, refreshToken=${!!refreshToken}, email=${email}`);
 
       if (token) {
-        const cfg = await loadConfig();
-        cfg.authToken = token;
-        cfg.authRefreshToken = refreshToken;
-        cfg.authEmail = email;
-        cfg.authUserId = userId;
-        cfg.authName = name;
-        await saveConfig(cfg);
-
-        if (webWindow && !webWindow.isDestroyed()) {
-          lastInjectedToken = token;
-          await injectAuthToWebWindow(token, email, userId, name, refreshToken, true);
-          if (!webWindow.isDestroyed()) {
-            webWindow.show();
-            webWindow.focus();
-            appendLog('[AuthCallback] Redirect login: webWindow focused');
-          }
-        }
-
-        await applyMenu();
+        await persistAndSyncAuth({ token, refreshToken, email, userId, name }, 'GET /api/desktop-login-redirect');
       }
 
       res.writeHead(200, { 'Content-Type': 'text/html', ...corsHeaders });
@@ -277,6 +237,59 @@ function startAuthCallbackServer() {
 
 function getAuthCallbackUrl() {
   return `http://127.0.0.1:${authCallbackPort}`;
+}
+
+async function persistAndSyncAuth(payload, source) {
+  const token = payload.token || '';
+  const refreshToken = payload.refreshToken || '';
+  const email = payload.email || '';
+  const userId = payload.userId || '';
+  const name = payload.name || '';
+
+  appendLog(`[AuthSync] ${source}: token=${!!token}, refreshToken=${!!refreshToken}, email=${email}`);
+  if (!token) return false;
+
+  const cfg = await loadConfig();
+  cfg.authToken = token;
+  cfg.authRefreshToken = refreshToken;
+  cfg.authEmail = email;
+  cfg.authUserId = userId;
+  cfg.authName = name;
+  await saveConfig(cfg);
+
+  if (!webWindow || webWindow.isDestroyed()) {
+    appendLog(`[AuthSync] ${source}: opening webWindow for sync`);
+    await ensureWebWindow();
+  }
+
+  if (webWindow && !webWindow.isDestroyed()) {
+    lastInjectedToken = '';
+    await injectAuthToWebWindow(token, email, userId, name, refreshToken, false);
+
+    if (!webWindow.isDestroyed()) {
+      webWindow.show();
+      webWindow.focus();
+      appendLog(`[AuthSync] ${source}: webWindow focused`);
+    }
+
+    setTimeout(() => {
+      if (webWindow && !webWindow.isDestroyed()) {
+        injectAuthToWebWindow(token, email, userId, name, refreshToken, false).catch((e) => {
+          appendLog(`[AuthSync] ${source}: delayed inject failed: ${e}`);
+        });
+      }
+    }, 1200);
+
+    setTimeout(() => {
+      if (webWindow && !webWindow.isDestroyed()) {
+        appendLog(`[AuthSync] ${source}: reloading webWindow to finalize auth state`);
+        try { webWindow.webContents.reload(); } catch (e) { appendLog(`[AuthSync] reload error: ${e}`); }
+      }
+    }, 2500);
+  }
+
+  await applyMenu();
+  return true;
 }
 
 // ==================== INJECT AUTH ====================
@@ -415,27 +428,10 @@ async function handleDeepLink(rawUrl) {
   }
 
   if (parsed.token) {
-    const cfg = await loadConfig();
-    cfg.authToken = parsed.token;
-    cfg.authRefreshToken = parsed.refreshToken || '';
-    cfg.authEmail = parsed.email;
-    cfg.authUserId = parsed.userId;
-    cfg.authName = parsed.name;
-    await saveConfig(cfg);
-  }
-
-  if (webWindow && !webWindow.isDestroyed()) {
-    lastInjectedToken = parsed.token;
-    await injectAuthToWebWindow(parsed.token, parsed.email, parsed.userId, parsed.name, parsed.refreshToken, true);
-    if (!webWindow.isDestroyed()) {
-      webWindow.show();
-      webWindow.focus();
-    }
-  } else {
+    await persistAndSyncAuth(parsed, 'clipop:// deep link');
+  } else if (!webWindow || webWindow.isDestroyed()) {
     await ensureWebWindow();
   }
-
-  await applyMenu();
 }
 
 // ==================== WEB WINDOW ====================
