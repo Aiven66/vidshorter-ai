@@ -4,6 +4,9 @@ import { createContext, useContext, useEffect, useState, ReactNode, useCallback,
 import {
   buildDesktopCallbackPath,
   buildDesktopOAuthRedirectUrl,
+  DESKTOP_AUTH_SESSION_KEY,
+  DESKTOP_AUTH_STORAGE_KEY,
+  DESKTOP_CALLBACK_SESSION_KEY,
   getDesktopCallbackFromBridge,
   getDesktopCallbackFromSearch,
   getDesktopOAuthOrigin,
@@ -147,6 +150,39 @@ function saveDemoUser(user: User) {
 function clearDemoUser() {
   if (typeof window === 'undefined') return;
   localStorage.removeItem(DEMO_USER_KEY);
+}
+
+function clearLocalAuthStorage() {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem('clipop_access_token');
+  localStorage.removeItem('clipop_refresh_token');
+  localStorage.removeItem(DEMO_USER_KEY);
+  localStorage.removeItem(DESKTOP_AUTH_STORAGE_KEY);
+  sessionStorage.removeItem(DESKTOP_AUTH_SESSION_KEY);
+  sessionStorage.removeItem(DESKTOP_CALLBACK_SESSION_KEY);
+  (window as any).__clipopDesktopToken = '';
+  (window as any).__clipopDesktopRefreshToken = '';
+  (window as any).__clipopDesktopEmail = '';
+  (window as any).__clipopDesktopUserId = '';
+  (window as any).__clipopDesktopName = '';
+}
+
+async function clearDesktopNativeAuth() {
+  if (typeof window === 'undefined') return;
+  const desktopWindow = window as any;
+  const clearers = [
+    desktopWindow.clipopDesktop?.clearAuthToken,
+    desktopWindow.vidshorterDesktop?.clearAuthToken,
+    desktopWindow.electronAPI?.clearAuthToken,
+    desktopWindow.api?.clearAuthToken,
+    desktopWindow.agent?.clearAuthToken,
+  ].filter(Boolean);
+
+  for (const clearAuthToken of clearers) {
+    try {
+      await clearAuthToken();
+    } catch {}
+  }
 }
 
 async function verifyTokenAndFetchUser(token: string): Promise<User | null> {
@@ -365,6 +401,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               }).catch(() => {});
               return;
             }
+          }
+        }
+      }
+
+      if (typeof window !== 'undefined' && window.location.pathname.startsWith('/desktop/')) {
+        const storedToken = localStorage.getItem('clipop_access_token');
+        if (storedToken) {
+          const jwtUser = createUserFromJwt(storedToken);
+          if (jwtUser) {
+            setAccessToken(storedToken);
+            setUser(jwtUser);
+            setLoading(false);
+            verifyTokenAndFetchUser(storedToken).then((userData) => {
+              if (userData) setUser(userData);
+            }).catch(() => {});
+            return;
           }
         }
       }
@@ -905,29 +957,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function signOut() {
-    if (useDemo) {
-      clearDemoUser();
-      setUser(null);
-      setAccessToken(null);
-      return;
-    }
-
     try {
-      const isDesktop = !!(window.clipopDesktop || window.electronAPI);
-      if (isDesktop) {
-        if ((window as any).api?.clearAuthToken) {
-          await (window as any).api.clearAuthToken();
-        } else if (window.electronAPI?.clearAuthToken) {
-          await window.electronAPI.clearAuthToken();
-        }
-        localStorage.removeItem('clipop_access_token');
-      }
+      await clearDesktopNativeAuth();
 
-      const client = await getSupabaseClient();
-      await client.auth.signOut();
+      if (!useDemo && isSupabaseConfigured()) {
+        try {
+          const client = await getSupabaseClient();
+          await client.auth.signOut();
+        } catch {}
+      }
+    } finally {
+      clearLocalAuthStorage();
+      setUseDemo(false);
       setUser(null);
       setAccessToken(null);
-    } catch {
+      setLoading(false);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('clipop-auth-change'));
+      }
     }
   }
 

@@ -25,6 +25,20 @@ function DesktopCallbackContent() {
   const callbackUrl = useMemo(() => getDesktopCallbackFromSearch(sp), [sp]);
   const isDesktop = isDesktopAuthRequest(sp);
 
+  const publishDesktopAuth = useCallback((nextPayload: DesktopAuthPayload) => {
+    setPayload(nextPayload);
+
+    if (nextPayload.token) {
+      localStorage.setItem('clipop_access_token', nextPayload.token);
+    }
+    if (nextPayload.refreshToken) {
+      localStorage.setItem('clipop_refresh_token', nextPayload.refreshToken);
+    }
+
+    window.dispatchEvent(new CustomEvent('clipop-desktop-login', { detail: nextPayload }));
+    window.dispatchEvent(new Event('clipop-auth-change'));
+  }, []);
+
   useEffect(() => {
     rememberDesktopAuth(callbackUrl);
   }, [callbackUrl]);
@@ -81,7 +95,7 @@ function DesktopCallbackContent() {
 
       if (session?.user) {
         console.log('[DesktopCallback] Got session user:', session.user.email);
-        setPayload({
+        publishDesktopAuth({
           token: accessToken || session.access_token,
           refreshToken: refreshToken || session.refresh_token,
           email: session.user.email || '',
@@ -97,7 +111,7 @@ function DesktopCallbackContent() {
         try {
           const { data: { user: authUser } } = await client.auth.getUser(accessToken);
           if (authUser) {
-            setPayload({
+            publishDesktopAuth({
               token: accessToken,
               refreshToken: refreshToken || undefined,
               email: authUser.email || '',
@@ -112,7 +126,7 @@ function DesktopCallbackContent() {
 
       if (accessToken) {
         console.log('[DesktopCallback] Token exists but no user resolved, using token as-is');
-        setPayload({
+        publishDesktopAuth({
           token: accessToken,
           refreshToken: refreshToken || undefined,
         });
@@ -131,7 +145,7 @@ function DesktopCallbackContent() {
     } finally {
       setLoading(false);
     }
-  }, [sp, retryCount]);
+  }, [sp, retryCount, publishDesktopAuth]);
 
   useEffect(() => {
     resolveAndSetPayload();

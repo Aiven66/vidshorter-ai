@@ -189,6 +189,9 @@ assert.match(authContextSource, /getDesktopOAuthOrigin/);
 assert.match(authContextSource, /getDesktopCallbackFromBridge/);
 assert.match(authContextSource, /buildDesktopOAuthRedirectUrl\(getDesktopOAuthOrigin\(\), callbackParam\)/);
 assert.match(authContextSource, /window\.location\.replace\(`\$\{desktopUrl\.pathname\}\?\$\{desktopUrl\.searchParams\.toString\(\)\}`\)/);
+assert.match(authContextSource, /clearLocalAuthStorage/);
+assert.match(authContextSource, /clearDesktopNativeAuth/);
+assert.match(authContextSource, /window\.location\.pathname\.startsWith\('\/desktop\/'\)/);
 assert.doesNotMatch(authContextSource, /setAccessToken\(null\);\n\s*return \{ error: null, token: null \}/);
 assert.match(authContextSource, /generateDemoToken\(adminUser\)/);
 assert.match(authContextSource, /return \{ error: null, token: demoToken, email: adminUser\.email \}/);
@@ -198,6 +201,12 @@ const authCallbackSource = readFileSync('src/app/auth/callback/page.tsx', 'utf8'
 assert.match(authCallbackSource, /buildDesktopCallbackPath/);
 assert.match(authCallbackSource, /rememberDesktopAuth/);
 assert.match(authCallbackSource, /clipop_access_token/);
+
+const desktopCallbackSource = readFileSync('src/app/desktop/callback/page.tsx', 'utf8');
+assert.match(desktopCallbackSource, /publishDesktopAuth/);
+assert.match(desktopCallbackSource, /clipop-desktop-login/);
+assert.match(desktopCallbackSource, /clipop-auth-change/);
+assert.match(desktopCallbackSource, /clipop_refresh_token/);
 
 const providersSource = readFileSync('src/app/providers.tsx', 'utf8');
 assert.match(providersSource, /DesktopAuthReturnBanner/);
@@ -222,9 +231,13 @@ assert.match(desktopMainSource, /persistAndSyncAuth/);
 assert.match(desktopMainSource, /Access-Control-Allow-Private-Network/);
 assert.match(desktopMainSource, /waitForAuthCallbackUrl/);
 assert.match(desktopMainSource, /get-auth-callback-url/);
+assert.match(desktopMainSource, /clipop_refresh_token/);
 
 const preloadWebSource = readFileSync('apps/macos-agent/preload-web.js', 'utf8');
 assert.match(preloadWebSource, /getAuthCallbackUrl/);
+
+const preloadSource = readFileSync('apps/macos-agent/preload.js', 'utf8');
+assert.match(preloadSource, /clearAuthToken/);
 
 checkAsyncDesktopReturn().then(() => {
   console.log('Desktop auth flow checks passed.');

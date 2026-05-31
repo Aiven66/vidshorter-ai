@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('agent', {
   copyLogs: () => ipcRenderer.invoke('copy-logs'),
   openWebLogin: () => ipcRenderer.invoke('open-web-login'),
   openWebRegister: () => ipcRenderer.invoke('open-web-register'),
+  clearAuthToken: () => ipcRenderer.invoke('clearAuthToken'),
   onLog: (fn) => {
     ipcRenderer.on('log', (_evt, line) => fn(line));
   },

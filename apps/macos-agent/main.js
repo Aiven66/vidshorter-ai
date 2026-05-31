@@ -877,7 +877,13 @@ async function applyMenu() {
               if (webWindow && !webWindow.isDestroyed()) {
                 await webWindow.webContents.executeJavaScript(`
                   localStorage.removeItem('clipop_access_token');
+                  localStorage.removeItem('clipop_refresh_token');
+                  localStorage.removeItem('clipop_demo_user');
                   window.__clipopDesktopToken = '';
+                  window.__clipopDesktopRefreshToken = '';
+                  window.__clipopDesktopEmail = '';
+                  window.__clipopDesktopUserId = '';
+                  window.__clipopDesktopName = '';
                   window.dispatchEvent(new Event('clipop-auth-change'));
                 `, true).catch(() => {});
                 webWindow.webContents.reload();
@@ -958,7 +964,13 @@ ipcMain.handle('clearAuthToken', async () => {
   if (webWindow && !webWindow.isDestroyed()) {
     await webWindow.webContents.executeJavaScript(`
       localStorage.removeItem('clipop_access_token');
+      localStorage.removeItem('clipop_refresh_token');
+      localStorage.removeItem('clipop_demo_user');
       window.__clipopDesktopToken = '';
+      window.__clipopDesktopRefreshToken = '';
+      window.__clipopDesktopEmail = '';
+      window.__clipopDesktopUserId = '';
+      window.__clipopDesktopName = '';
       window.dispatchEvent(new Event('clipop-auth-change'));
     `, true).catch(() => {});
     webWindow.webContents.reload();
