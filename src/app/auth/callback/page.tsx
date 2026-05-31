@@ -236,6 +236,13 @@ export default function AuthCallbackPage() {
           if (sessionForRedirect.refreshToken) {
             localStorage.setItem('clipop_refresh_token', sessionForRedirect.refreshToken);
           }
+          window.dispatchEvent(new CustomEvent('clipop-auth-session', {
+            detail: {
+              accessToken: sessionForRedirect.accessToken,
+              refreshToken: sessionForRedirect.refreshToken,
+            },
+          }));
+          window.dispatchEvent(new Event('clipop-auth-change'));
           if (isDesktopFlow) {
             rememberDesktopAuth(callbackUrl);
           }

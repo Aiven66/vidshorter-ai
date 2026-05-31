@@ -1,9 +1,10 @@
+import { createClient } from '@supabase/supabase-js';
+
 interface SupabaseCredentials {
   url: string;
   anonKey: string;
 }
 
-let SupabaseClientClass: any = null;
 let cachedClient: any = null;
 
 function isSupabaseConfigured(): boolean {
@@ -56,18 +57,7 @@ function getSupabaseCredentials(): SupabaseCredentials {
   return { url, anonKey };
 }
 
-async function loadSupabaseModule() {
-  if (SupabaseClientClass) return SupabaseClientClass;
-  const mod = await import('@supabase/supabase-js');
-  SupabaseClientClass = mod.createClient;
-  return SupabaseClientClass;
-}
-
 function getSupabaseClient(token?: string) {
-  if (cachedClient && !token) {
-    return cachedClient;
-  }
-
   const { url, anonKey } = getSupabaseCredentials();
 
   if (!url || !anonKey) {
@@ -92,56 +82,33 @@ function getSupabaseClient(token?: string) {
     return createPlaceholderClient();
   }
 
-  if (typeof window !== 'undefined' && !cachedClient) {
-    const lazyClient: any = {
-      _realClient: null,
-      _initPromise: null,
-      _ensureClient: async function() {
-        if (this._realClient) return this._realClient;
-        if (this._initPromise) return this._initPromise;
-        this._initPromise = loadSupabaseModule().then(createClient => {
-          this._realClient = createClient(url, anonKey, {
-            global: token ? { headers: { Authorization: `Bearer ${token}` } } : undefined,
-            db: { timeout: 60000 },
-            auth: {
-              autoRefreshToken: true,
-              persistSession: true,
-              detectSessionInUrl: true,
-              flowType: 'implicit',
-            },
-          });
-          cachedClient = this._realClient;
-          if (typeof window !== 'undefined') {
-            (window as any).__supabaseClient = this._realClient;
-          }
-          return this._realClient;
-        });
-        return this._initPromise;
+  if (token) {
+    return createClient(url, anonKey, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+      db: { timeout: 60000 },
+      auth: {
+        autoRefreshToken: true,
+        persistSession: false,
+        detectSessionInUrl: false,
+        flowType: 'implicit',
       },
-      get auth() {
-        const self = this;
-        return new Proxy({}, {
-          get(_, prop) {
-            return async (...args: any[]) => {
-              const client = await self._ensureClient();
-              return client.auth[prop](...args);
-            };
-          }
-        });
+    });
+  }
+
+  if (!cachedClient) {
+    cachedClient = createClient(url, anonKey, {
+      db: { timeout: 60000 },
+      auth: {
+        autoRefreshToken: true,
+        persistSession: true,
+        detectSessionInUrl: true,
+        flowType: 'implicit',
       },
-      from(table: string) {
-        const self = this;
-        return new Proxy({}, {
-          get(_, prop) {
-            return async (...args: any[]) => {
-              const client = await self._ensureClient();
-              return client.from(table)[prop](...args);
-            };
-          }
-        });
-      },
-    };
-    return lazyClient;
+    });
+
+    if (typeof window !== 'undefined') {
+      (window as any).__supabaseClient = cachedClient;
+    }
   }
 
   return cachedClient;

@@ -188,7 +188,7 @@ async function clearDesktopNativeAuth() {
 async function verifyTokenAndFetchUser(token: string): Promise<User | null> {
   try {
     const client = await getSupabaseClient(token);
-    const { data: { user: authUser } } = await client.auth.getUser();
+    const { data: { user: authUser } } = await client.auth.getUser(token);
     if (!authUser) return null;
 
     const { data: userData } = await client
@@ -217,6 +217,22 @@ async function verifyTokenAndFetchUser(token: string): Promise<User | null> {
   } catch {
     return null;
   }
+}
+
+async function getSignInProviderHint(email: string): Promise<'google' | 'password' | null> {
+  try {
+    const client = await getSupabaseClient();
+    const { data } = await client
+      .from('users')
+      .select('google_id,password_hash')
+      .eq('email', email.trim().toLowerCase())
+      .maybeSingle();
+
+    if (data?.google_id && !data?.password_hash) return 'google';
+    if (data?.password_hash) return 'password';
+  } catch {}
+
+  return null;
 }
 
 function generateDemoToken(user: User): string {
@@ -487,6 +503,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     let desktopHandler: ((event: Event) => void) | null = null;
     let authChangeHandler: (() => void) | null = null;
+    let authSessionHandler: ((event: Event) => void) | null = null;
 
     const init = () => {
       const handleOAuthCallback = async () => {
@@ -640,8 +657,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       checkAuthState();
     };
 
+    authSessionHandler = async (event: Event) => {
+      const detail = event instanceof CustomEvent ? event.detail : null;
+      const token = typeof detail?.accessToken === 'string' ? detail.accessToken : '';
+      const refreshToken = typeof detail?.refreshToken === 'string' ? detail.refreshToken : '';
+      if (!token) return;
+
+      localStorage.setItem('clipop_access_token', token);
+      if (refreshToken) {
+        localStorage.setItem('clipop_refresh_token', refreshToken);
+        try {
+          const client = await getSupabaseClient();
+          await client.auth.setSession({
+            access_token: token,
+            refresh_token: refreshToken,
+          });
+        } catch {}
+      }
+
+      const jwtUser = createUserFromJwt(token);
+      if (jwtUser) {
+        setAccessToken(token);
+        setUser(jwtUser);
+        setLoading(false);
+      }
+
+      verifyTokenAndFetchUser(token).then((userData) => {
+        if (userData) {
+          setAccessToken(token);
+          setUser(userData);
+          setLoading(false);
+        }
+      }).catch(() => {});
+    };
+
     window.addEventListener('clipop-desktop-login', desktopHandler);
     window.addEventListener('clipop-auth-change', authChangeHandler);
+    window.addEventListener('clipop-auth-session', authSessionHandler);
     };
 
     if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
@@ -653,6 +705,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       if (desktopHandler) window.removeEventListener('clipop-desktop-login', desktopHandler);
       if (authChangeHandler) window.removeEventListener('clipop-auth-change', authChangeHandler);
+      if (authSessionHandler) window.removeEventListener('clipop-auth-session', authSessionHandler);
     };
   }, [checkAuthState]);
 
@@ -711,6 +764,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
           return { error: null, token: demoToken, email: adminUser.email };
         }
+
+        if (authError.message.toLowerCase().includes('invalid login credentials')) {
+          const providerHint = await getSignInProviderHint(email);
+          if (providerHint === 'google') {
+            return {
+              error: 'This email is already connected to Google sign-in. Please use Continue with Google.',
+              token: null,
+            };
+          }
+
+          return { error: 'Invalid email or password. Please check your password or register a new account.', token: null };
+        }
+
         return { error: authError.message, token: null };
       }
 
