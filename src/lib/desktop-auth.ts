@@ -183,6 +183,43 @@ export function openDesktopAuthReturn(callbackUrl: string, payload: DesktopAuthP
   return { deepLink, redirectUrl };
 }
 
+export async function postDesktopAuthToLocalCallback(callbackUrl: string, payload: DesktopAuthPayload): Promise<{
+  ok: boolean;
+  url: string;
+  error?: string;
+}> {
+  const safeCallbackUrl = normalizeDesktopCallbackUrl(callbackUrl);
+  if (!safeCallbackUrl || !payload.token) {
+    return { ok: false, url: '' };
+  }
+
+  const url = new URL('/api/desktop-auth', safeCallbackUrl).toString();
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      credentials: 'omit',
+      mode: 'cors',
+    });
+
+    return { ok: response.ok, url, error: response.ok ? undefined : `HTTP ${response.status}` };
+  } catch (error) {
+    return { ok: false, url, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+export async function syncDesktopAuthAndOpen(callbackUrl: string, payload: DesktopAuthPayload): Promise<{
+  deepLink: string;
+  redirectUrl: string;
+  localSync: { ok: boolean; url: string; error?: string };
+}> {
+  const localSync = await postDesktopAuthToLocalCallback(callbackUrl, payload);
+  const result = openDesktopAuthReturn(callbackUrl, payload);
+  return { ...result, localSync };
+}
+
 export function openDesktopLocalCallback(callbackUrl: string, payload: DesktopAuthPayload): string {
   const redirectUrl = buildDesktopLoginRedirectUrl(callbackUrl, payload);
   if (typeof window !== 'undefined' && redirectUrl) {

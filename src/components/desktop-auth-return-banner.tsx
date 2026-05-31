@@ -9,7 +9,7 @@ import {
   getStoredDesktopCallbackUrl,
   isDesktopAuthRequest,
   openDesktopLocalCallback,
-  openDesktopAuthReturn,
+  syncDesktopAuthAndOpen,
   type DesktopAuthPayload,
 } from '@/lib/desktop-auth';
 
@@ -43,7 +43,7 @@ export function DesktopAuthReturnBanner() {
     return null;
   }
 
-  const handleReturn = () => {
+  const handleReturn = async () => {
     const payload: DesktopAuthPayload = {
       token: desktopToken,
       refreshToken: storedRefreshToken,
@@ -51,7 +51,7 @@ export function DesktopAuthReturnBanner() {
       userId: user.id,
       name: user.name || user.email.split('@')[0],
     };
-    openDesktopAuthReturn(callbackUrl, payload);
+    await syncDesktopAuthAndOpen(callbackUrl, payload);
   };
 
   const handleLocalSync = () => {

@@ -167,6 +167,16 @@ export default function AuthCallbackPage() {
           return;
         }
 
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('clipop_access_token', sessionForRedirect.accessToken);
+          if (sessionForRedirect.refreshToken) {
+            localStorage.setItem('clipop_refresh_token', sessionForRedirect.refreshToken);
+          }
+          if (isDesktopFlow) {
+            rememberDesktopAuth(callbackUrl);
+          }
+        }
+
         setStatus('success');
 
         const next = isDesktopFlow

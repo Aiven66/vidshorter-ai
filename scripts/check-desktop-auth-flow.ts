@@ -14,7 +14,9 @@ import {
   normalizeDesktopCallbackUrl,
   openDesktopLocalCallback,
   openDesktopAuthReturn,
+  postDesktopAuthToLocalCallback,
   rememberDesktopAuth,
+  syncDesktopAuthAndOpen,
 } from '../src/lib/desktop-auth';
 
 const localCallback = 'http://127.0.0.1:49231';
@@ -86,8 +88,13 @@ function makeStorage() {
 const sessionStorageMock = makeStorage();
 const localStorageMock = makeStorage();
 const navigations: string[] = [];
+const fetches: Array<{ url: string; body: string }> = [];
 (globalThis as any).sessionStorage = sessionStorageMock;
 (globalThis as any).localStorage = localStorageMock;
+(globalThis as any).fetch = async (url: string, init?: RequestInit) => {
+  fetches.push({ url, body: String(init?.body || '') });
+  return { ok: true, status: 200 };
+};
 (globalThis as any).window = {
   sessionStorage: sessionStorageMock,
   localStorage: localStorageMock,
@@ -138,12 +145,33 @@ const deepLinkOnlyResult = openDesktopAuthReturn('', {
 assert.equal(deepLinkOnlyResult.redirectUrl, '');
 assert.equal(navigations[2].startsWith('clipop://login-success?'), true);
 
+async function checkAsyncDesktopReturn() {
+  const postResult = await postDesktopAuthToLocalCallback(localCallback, {
+    token: 'token.post',
+    refreshToken: 'refresh.post',
+    email: 'post@example.com',
+  });
+  assert.equal(postResult.ok, true);
+  assert.equal(postResult.url, `${localCallback}/api/desktop-auth`);
+  assert.match(fetches.at(-1)?.body || '', /token\.post/);
+
+  const syncAndOpenResult = await syncDesktopAuthAndOpen(localCallback, {
+    token: 'token.sync',
+    refreshToken: 'refresh.sync',
+    email: 'sync@example.com',
+  });
+  assert.equal(syncAndOpenResult.localSync.ok, true);
+  assert.equal(navigations.at(-1)?.startsWith('clipop://login-success?'), true);
+  assert.match(fetches.at(-1)?.body || '', /token\.sync/);
+}
+
 const authContextSource = readFileSync('src/lib/auth-context.tsx', 'utf8');
 assert.match(authContextSource, /buildDesktopOAuthRedirectUrl/);
 
 const authCallbackSource = readFileSync('src/app/auth/callback/page.tsx', 'utf8');
 assert.match(authCallbackSource, /buildDesktopCallbackPath/);
 assert.match(authCallbackSource, /rememberDesktopAuth/);
+assert.match(authCallbackSource, /clipop_access_token/);
 
 const providersSource = readFileSync('src/app/providers.tsx', 'utf8');
 assert.match(providersSource, /DesktopAuthReturnBanner/);
@@ -153,10 +181,14 @@ assert.match(desktopBannerSource, /isDesktopAuthRequest/);
 assert.match(desktopBannerSource, /Return to Clipop Agent/);
 assert.match(desktopBannerSource, /clipop_access_token/);
 assert.match(desktopBannerSource, /openDesktopLocalCallback/);
+assert.match(desktopBannerSource, /syncDesktopAuthAndOpen/);
 
 const desktopMainSource = readFileSync('apps/macos-agent/main.js', 'utf8');
 assert.match(desktopMainSource, /const SERVER_URL = 'https:\/\/vidshorterai\.vercel\.app'/);
 assert.doesNotMatch(desktopMainSource, /SERVER_URL: 'https:\/\/clipopai\.vercel\.app'/);
 assert.match(desktopMainSource, /persistAndSyncAuth/);
+assert.match(desktopMainSource, /Access-Control-Allow-Private-Network/);
 
-console.log('Desktop auth flow checks passed.');
+checkAsyncDesktopReturn().then(() => {
+  console.log('Desktop auth flow checks passed.');
+});

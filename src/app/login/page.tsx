@@ -17,8 +17,8 @@ import {
   getDesktopCallbackFromSearch,
   isDesktopAuthRequest,
   openDesktopLocalCallback,
-  openDesktopAuthReturn,
   rememberDesktopAuth,
+  syncDesktopAuthAndOpen,
 } from '@/lib/desktop-auth';
 
 function LoginContent() {
@@ -123,12 +123,14 @@ function LoginContent() {
     };
   };
 
-  const handleReturnToDesktop = () => {
+  const handleReturnToDesktop = async () => {
     const payload = buildDesktopPayload();
-    const result = openDesktopAuthReturn(savedCallbackUrl, payload);
-    console.log('[DesktopAuth] Returning via desktop deep link:', {
+    const result = await syncDesktopAuthAndOpen(savedCallbackUrl, payload);
+    console.log('[DesktopAuth] Local sync and desktop deep link:', {
       hasDeepLink: !!result.deepLink,
       hasRedirectUrl: !!result.redirectUrl,
+      localSyncOk: result.localSync.ok,
+      localSyncError: result.localSync.error,
     });
   };
 

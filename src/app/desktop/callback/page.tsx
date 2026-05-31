@@ -9,8 +9,8 @@ import {
   getDesktopCallbackFromSearch,
   isDesktopAuthRequest,
   openDesktopLocalCallback,
-  openDesktopAuthReturn,
   rememberDesktopAuth,
+  syncDesktopAuthAndOpen,
   type DesktopAuthPayload,
 } from '@/lib/desktop-auth';
 import { Monitor, CheckCircle, Loader2, ExternalLink } from 'lucide-react';
@@ -137,11 +137,13 @@ function DesktopCallbackContent() {
     resolveAndSetPayload();
   }, [resolveAndSetPayload]);
 
-  const handleOpenDesktop = () => {
-    const result = openDesktopAuthReturn(callbackUrl, payload);
-    console.log('[DesktopCallback] Returning via desktop deep link:', {
+  const handleOpenDesktop = async () => {
+    const result = await syncDesktopAuthAndOpen(callbackUrl, payload);
+    console.log('[DesktopCallback] Local sync and desktop deep link:', {
       hasDeepLink: !!result.deepLink,
       hasRedirectUrl: !!result.redirectUrl,
+      localSyncOk: result.localSync.ok,
+      localSyncError: result.localSync.error,
     });
   };
 
