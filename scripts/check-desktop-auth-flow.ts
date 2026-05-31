@@ -35,11 +35,11 @@ const desktopPath = buildDesktopCallbackPath(localCallback);
 assert.equal(desktopPath, '/desktop/callback?from=desktop&callback=http%3A%2F%2F127.0.0.1%3A49231');
 assert.equal(getDesktopCallbackFromPath(desktopPath), localCallback);
 
-assert.equal(DESKTOP_WEB_APP_URL, 'https://clipopai.vercel.app');
+assert.equal(DESKTOP_WEB_APP_URL, 'https://www.clipopai.com');
 
-const oauthRedirect = buildDesktopOAuthRedirectUrl('https://clipopai.vercel.app', localCallback);
+const oauthRedirect = buildDesktopOAuthRedirectUrl('https://www.clipopai.com', localCallback);
 const oauthUrl = new URL(oauthRedirect);
-assert.equal(oauthUrl.origin, 'https://clipopai.vercel.app');
+assert.equal(oauthUrl.origin, 'https://www.clipopai.com');
 assert.equal(oauthUrl.pathname, '/auth/callback');
 assert.equal(oauthUrl.searchParams.get('from'), 'desktop');
 assert.equal(oauthUrl.searchParams.get('callback'), localCallback);
@@ -112,7 +112,7 @@ const fetches: Array<{ url: string; body: string }> = [];
     return 1;
   },
   location: {
-    origin: 'https://clipopai.vercel.app',
+    origin: 'https://www.clipopai.com',
     pathname: '/login',
     set href(value: string) {
       navigations.push(value);
@@ -125,7 +125,7 @@ const fetches: Array<{ url: string; body: string }> = [];
 
 assert.equal(isDesktopRuntime(), true);
 assert.equal(isDesktopAuthRequest(new URLSearchParams()), true);
-assert.equal(getDesktopOAuthOrigin(), 'https://clipopai.vercel.app');
+assert.equal(getDesktopOAuthOrigin(), 'https://www.clipopai.com');
 
 rememberDesktopAuth(localCallback);
 assert.equal(sessionStorageMock.getItem(DESKTOP_AUTH_SESSION_KEY), '1');
@@ -232,7 +232,8 @@ assert.match(registerPageSource, /setStep\('done'\)/);
 assert.match(registerPageSource, /setDesktopToken\(accessToken\)/);
 
 const desktopMainSource = readFileSync('apps/macos-agent/main.js', 'utf8');
-assert.match(desktopMainSource, /const SERVER_URL = 'https:\/\/clipopai\.vercel\.app'/);
+assert.match(desktopMainSource, /const SERVER_URL = 'https:\/\/www\.clipopai\.com'/);
+assert.doesNotMatch(desktopMainSource, /const SERVER_URL = 'https:\/\/clipopai\.vercel\.app'/);
 assert.doesNotMatch(desktopMainSource, /const SERVER_URL = 'https:\/\/vidshorterai\.vercel\.app'/);
 assert.match(desktopMainSource, /persistAndSyncAuth/);
 assert.match(desktopMainSource, /Access-Control-Allow-Private-Network/);

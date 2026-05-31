@@ -30,7 +30,7 @@ let authCallbackPort = 0;
 
 let lastInjectedToken = '';
 
-const SERVER_URL = 'https://clipopai.vercel.app';
+const SERVER_URL = 'https://www.clipopai.com';
 
 // ==================== LOGGING ====================
 function nowIso() {

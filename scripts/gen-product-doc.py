@@ -76,7 +76,7 @@ doc.add_paragraph()
 add_para('AI-Powered Long-to-Short Video Clipping Platform', size=14, align=WD_ALIGN_PARAGRAPH.CENTER, color=RGBColor(0x66, 0x66, 0x66))
 doc.add_paragraph()
 add_para('Version 1.0 | May 2026', size=12, align=WD_ALIGN_PARAGRAPH.CENTER, color=RGBColor(0x88, 0x88, 0x88))
-add_para('https://clipopai.vercel.app', size=12, align=WD_ALIGN_PARAGRAPH.CENTER, color=RGBColor(0x00, 0x66, 0xCC))
+add_para('https://www.clipopai.com', size=12, align=WD_ALIGN_PARAGRAPH.CENTER, color=RGBColor(0x00, 0x66, 0xCC))
 
 doc.add_page_break()
 
@@ -106,7 +106,7 @@ add_para('Clipop AI is an AI-powered video clipping platform that transforms lon
 
 add_para('Product Name: Clipop AI', bold=True, size=12)
 add_para('Tagline: Transform Long Videos into Viral Shorts', bold=True, size=12)
-add_para('Website: https://clipopai.vercel.app', size=12)
+add_para('Website: https://www.clipopai.com', size=12)
 add_para('Desktop App: Clipop Agent (macOS, Apple Silicon)', size=12)
 add_para('Current Version: v0.9.5', size=12)
 
@@ -261,7 +261,7 @@ add_bullet('CDN & Hosting: Vercel Edge Network for global low-latency access')
 add_heading_styled('5.2 Key User Flows', level=2)
 
 add_para('Flow 1: Web Video Processing', bold=True, size=11)
-add_bullet('User visits clipopai.vercel.app')
+add_bullet('User visits www.clipopai.com')
 add_bullet('Pastes YouTube/Bilibili URL or uploads a video file')
 add_bullet('Clicks "Process Video" (costs 30 credits)')
 add_bullet('AI analyzes video: frame extraction, highlight detection, engagement scoring')
@@ -447,10 +447,10 @@ add_bullet('SEO-optimized blog with AI-generated articles targeting long-tail qu
 # ==================== 10. CONTACT ====================
 add_heading_styled('10. Contact & Links', level=1)
 
-add_para('Website: https://clipopai.vercel.app', size=12)
-add_para('Download Page: https://clipopai.vercel.app/download', size=12)
-add_para('Pricing: https://clipopai.vercel.app/pricing', size=12)
-add_para('Blog: https://clipopai.vercel.app/blog', size=12)
+add_para('Website: https://www.clipopai.com', size=12)
+add_para('Download Page: https://www.clipopai.com/download', size=12)
+add_para('Pricing: https://www.clipopai.com/pricing', size=12)
+add_para('Blog: https://www.clipopai.com/blog', size=12)
 add_para('GitHub Repository: https://github.com/Aiven66/vidshorter-ai', size=12)
 add_para('Desktop App Release: https://github.com/Aiven66/vidshorter-ai/releases/tag/v0.9.5', size=12)
 

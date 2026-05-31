@@ -146,7 +146,7 @@ VidShorter AI 是一个 AI 驱动的长视频转短视频平台，支持 YouTube
 
 ## 🌐 Web 端
 
-访问在线版本：https://projects-pi-kohl.vercel.app/
+访问在线版本：https://www.clipopai.com/
 
 ## 🆕 本次更新
 

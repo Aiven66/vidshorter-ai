@@ -937,7 +937,7 @@ async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInf
 // The edge function runs on Vercel's global CDN nodes (non-AWS, non-datacenter
 // IPs) that YouTube does NOT block.  The serverless function calls its own
 // co-deployed edge function to resolve the stream URL from safe IPs.
-// VERCEL_URL is automatically injected by Vercel (e.g. "projects-pi-kohl.vercel.app").
+// VERCEL_URL is automatically injected by Vercel (e.g. "www.clipopai.com").
 async function getYouTubeInfoViaEdgeFunction(videoId: string): Promise<PipedVideoInfo> {
   const baseUrl = getAppBaseUrl();
   if (!baseUrl) throw new Error('APP_BASE_URL/NEXT_PUBLIC_APP_URL/VERCEL_URL env var not set — edge function unavailable');

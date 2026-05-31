@@ -6,7 +6,10 @@ import { Footer } from '@/components/footer';
 import { DevInspector } from '@/components/dev-inspector';
 import LazyPostHog from '@/components/lazy-posthog';
 
+const siteUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://www.clipopai.com').replace(/\/$/, '');
+
 export const metadata: Metadata = {
+  metadataBase: new URL(siteUrl),
   title: {
     default: 'Clipop AI - Transform Long Videos into Viral Shorts',
     template: '%s | Clipop AI',
@@ -30,7 +33,12 @@ export const metadata: Metadata = {
     title: 'Clipop AI - Transform Long Videos into Viral Shorts',
     description:
       'AI-powered video clipping tool that automatically extracts the best moments from your long-form content.',
+    url: siteUrl,
+    siteName: 'Clipop AI',
     type: 'website',
+  },
+  alternates: {
+    canonical: '/',
   },
   robots: {
     index: true,

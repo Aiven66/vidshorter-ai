@@ -3,7 +3,7 @@ export const DESKTOP_CALLBACK_SESSION_KEY = 'clipop_desktop_callback';
 export const DESKTOP_AUTH_STORAGE_KEY = 'clipop_desktop_auth_state';
 export const DESKTOP_WEB_APP_URL = (
   process.env.NEXT_PUBLIC_DESKTOP_WEB_APP_URL ||
-  'https://clipopai.vercel.app'
+  'https://www.clipopai.com'
 ).replace(/\/$/, '');
 
 export interface DesktopAuthPayload {

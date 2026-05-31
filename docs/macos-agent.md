@@ -13,7 +13,7 @@ pnpm agent:build
 ### 2. 安装（launchd 自启动）
 
 ```bash
-pnpm agent:mac install --server https://projects-pi-kohl.vercel.app --secret <AGENT_SECRET>
+pnpm agent:mac install --server https://www.clipopai.com --secret <AGENT_SECRET>
 ```
 
 可选参数：
