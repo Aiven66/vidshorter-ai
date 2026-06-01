@@ -10,6 +10,8 @@
     "agent:mac": "node dist/agent/cli.js",
     "preinstall": "npx only-allow pnpm",
     "lint": "eslint",
+    "test:alipay-payment": "node --import tsx scripts/check-alipay-payment-flow.ts",
+    "test:creem-payment": "node --import tsx scripts/check-creem-payment-flow.ts",
     "test:desktop-auth": "node --import tsx scripts/check-desktop-auth-flow.ts",
     "test:web-auth": "node --import tsx scripts/check-web-auth-regressions.ts",
     "start": "bash ./scripts/start.sh",

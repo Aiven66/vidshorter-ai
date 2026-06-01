@@ -23,7 +23,24 @@ function toPem(base64Key: string, type: 'PRIVATE KEY' | 'PUBLIC KEY'): string {
   return `-----BEGIN ${type}-----\n${lines}\n-----END ${type}-----`;
 }
 
+function getAppUrl(request: NextRequest) {
+  return (process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin).replace(/\/$/, '');
+}
+
+function buildPassbackParams(userId: string | undefined, planId: string) {
+  if (!userId) return undefined;
+  return encodeURIComponent(JSON.stringify({ user_id: userId, plan_id: planId }));
+}
+
 export async function POST(request: NextRequest) {
+  const contentType = request.headers.get('content-type') || '';
+  if (
+    contentType.includes('application/x-www-form-urlencoded') ||
+    contentType.includes('multipart/form-data')
+  ) {
+    return handleAlipayNotify(request);
+  }
+
   const body = await request.json().catch(() => ({}));
   const { planId, amount, subject, userId } = body as {
     planId?: string;
@@ -38,9 +55,10 @@ export async function POST(request: NextRequest) {
 
   const appId = process.env.ALIPAY_APP_ID;
   const privateKeyB64 = process.env.ALIPAY_PRIVATE_KEY;
+  const appUrl = getAppUrl(request);
   const notifyUrl =
     process.env.ALIPAY_NOTIFY_URL ||
-    `${request.nextUrl.origin}/api/payment/alipay`;
+    `${appUrl}/api/payment/alipay`;
   const sandbox = process.env.ALIPAY_SANDBOX === 'true';
 
   if (!appId || !privateKeyB64) {
@@ -66,7 +84,7 @@ export async function POST(request: NextRequest) {
       total_amount: amount.toFixed(2),
       subject: subject || 'VidShorter AI 订阅',
       product_code: 'FACE_TO_FACE_PAYMENT',
-      passback_params: userId ? encodeURIComponent(JSON.stringify({ user_id: userId, plan_id: planId })) : undefined,
+      passback_params: buildPassbackParams(userId, planId),
     }),
   };
 
@@ -104,12 +122,13 @@ export async function POST(request: NextRequest) {
     const pagePayParams: Record<string, string> = {
       ...commonParams,
       method: 'alipay.trade.page.pay',
-      return_url: `${request.nextUrl.origin}/dashboard?payment=success&plan=${planId}`,
+      return_url: `${appUrl}/dashboard?payment=success&plan=${planId}`,
       biz_content: JSON.stringify({
         out_trade_no: outTradeNo,
         total_amount: amount.toFixed(2),
         subject: subject || 'VidShorter AI 订阅',
         product_code: 'FAST_INSTANT_TRADE_PAY',
+        passback_params: buildPassbackParams(userId, planId),
       }),
     };
     delete pagePayParams.sign;
@@ -130,7 +149,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-export async function PUT(request: NextRequest) {
+async function handleAlipayNotify(request: NextRequest) {
   try {
     const formData = await request.formData();
     const params: Record<string, string> = {};
@@ -142,7 +161,10 @@ export async function PUT(request: NextRequest) {
     if (publicKeyB64 && params.sign) {
       try {
         const publicKeyPem = toPem(publicKeyB64, 'PUBLIC KEY');
-        const { sign: sig, sign_type, ...rest } = params;
+        const sig = params.sign;
+        const rest = { ...params };
+        delete rest.sign;
+        delete rest.sign_type;
         const keys = Object.keys(rest).sort();
         const str = keys.map(k => `${k}=${rest[k]}`).join('&');
         const verifier = createVerify('RSA-SHA256');
@@ -177,4 +199,8 @@ export async function PUT(request: NextRequest) {
   } catch {
     return new Response('fail', { status: 400 });
   }
+}
+
+export async function PUT(request: NextRequest) {
+  return handleAlipayNotify(request);
 }
