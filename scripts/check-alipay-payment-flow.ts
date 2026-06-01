@@ -40,7 +40,7 @@ async function main() {
   assert.equal(missingPlan.status, 400);
   assert.equal((await json(missingPlan)).error, 'planId and amount are required');
 
-  const demoPayment = await POST(new NextRequest('https://www.clipopai.com/api/payment/alipay', {
+  const missingConfigPayment = await POST(new NextRequest('https://www.clipopai.com/api/payment/alipay', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
@@ -50,11 +50,11 @@ async function main() {
       userId: 'user_123',
     }),
   }));
-  assert.equal(demoPayment.status, 200);
-  const demoPaymentJson = await json(demoPayment);
-  assert.equal(demoPaymentJson.demo, true);
-  assert.match(demoPaymentJson.qrCode, /^https:\/\/qr\.alipay\.com\/DEMO_starter_/);
-  assert.match(demoPaymentJson.orderId, /^alipay_demo_/);
+  assert.equal(missingConfigPayment.status, 503);
+  const missingConfigJson = await json(missingConfigPayment);
+  assert.equal(missingConfigJson.configMissing, true);
+  assert.match(String(missingConfigJson.error), /ALIPAY_APP_ID/);
+  assert.equal('qrCode' in missingConfigJson, false);
 
   const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const privateKeyPem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
@@ -93,6 +93,7 @@ async function main() {
   assert.match(alipayGatewayCalls[0].url, /^https:\/\/openapi\.alipay\.com\/gateway\.do$/);
   assert.equal(alipayGatewayCalls[0].body.get('method'), 'alipay.trade.precreate');
   assert.equal(alipayGatewayCalls[0].body.get('notify_url'), 'https://www.clipopai.com/api/payment/alipay');
+  assert.match(String(alipayGatewayCalls[0].body.get('timestamp')), /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
   const bizContent = JSON.parse(alipayGatewayCalls[0].body.get('biz_content') || '{}');
   assert.equal(bizContent.product_code, 'FACE_TO_FACE_PAYMENT');
   assert.equal(bizContent.total_amount, '99.00');
@@ -101,6 +102,29 @@ async function main() {
     plan_id: 'pro',
   });
   assert.equal(typeof alipayGatewayCalls[0].body.get('sign'), 'string');
+
+  globalThis.fetch = async () => Response.json({
+    alipay_trade_precreate_response: {
+      code: '40004',
+      msg: 'Business Failed',
+      sub_code: 'isv.invalid-signature',
+      sub_msg: '验签出错',
+    },
+  }, { status: 200 });
+  const rejectedPayment = await POST(new NextRequest('https://www.clipopai.com/api/payment/alipay', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      planId: 'pro',
+      amount: 99,
+      subject: 'Clipop AI Pro',
+      userId: 'user_456',
+    }),
+  }));
+  assert.equal(rejectedPayment.status, 502);
+  const rejectedPaymentJson = await json(rejectedPayment);
+  assert.equal(rejectedPaymentJson.error, '验签出错');
+  assert.equal('qrCode' in rejectedPaymentJson, false);
 
   const formBody = new URLSearchParams({
     trade_status: 'TRADE_SUCCESS',
@@ -126,13 +150,16 @@ async function main() {
   assert.match(routeSource, /ALIPAY_NOTIFY_URL/);
   assert.match(routeSource, /application\/x-www-form-urlencoded/);
   assert.match(routeSource, /passback_params: buildPassbackParams\(userId, planId\)/);
-  assert.match(routeSource, /return_url: `\$\{appUrl\}\/dashboard\?payment=success&plan=\$\{planId\}`/);
+  assert.match(routeSource, /configMissing/);
+  assert.doesNotMatch(routeSource, /DEMO_/);
+  assert.doesNotMatch(routeSource, /demoQr/);
   assert.match(routeSource, /export async function PUT/);
 
   const modalSource = readFileSync('src/components/payment-modal.tsx', 'utf8');
   assert.match(modalSource, /Pay with Alipay/);
   assert.match(modalSource, /\/api\/payment\/alipay/);
   assert.match(modalSource, /qrCode/);
+  assert.doesNotMatch(modalSource, /qr\.alipay\.com\/demo/);
 
   console.log('Alipay payment flow checks passed.');
 }

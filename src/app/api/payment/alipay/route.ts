@@ -17,10 +17,20 @@ function signAlipay(params: Record<string, string>, privateKeyPem: string): stri
 }
 
 function toPem(base64Key: string, type: 'PRIVATE KEY' | 'PUBLIC KEY'): string {
-  if (base64Key.includes('-----BEGIN')) return base64Key;
-  const clean = base64Key.replace(/\s+/g, '');
+  const normalized = base64Key.trim().replace(/\\n/g, '\n');
+  if (normalized.includes('-----BEGIN')) return normalized;
+  const clean = normalized.replace(/\s+/g, '');
   const lines = clean.match(/.{1,64}/g)?.join('\n') ?? clean;
   return `-----BEGIN ${type}-----\n${lines}\n-----END ${type}-----`;
+}
+
+function formatAlipayTimestamp(date = new Date()) {
+  const pad = (value: number) => value.toString().padStart(2, '0');
+  return [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate()),
+  ].join('-') + ` ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
 function getAppUrl(request: NextRequest) {
@@ -30,6 +40,14 @@ function getAppUrl(request: NextRequest) {
 function buildPassbackParams(userId: string | undefined, planId: string) {
   if (!userId) return undefined;
   return encodeURIComponent(JSON.stringify({ user_id: userId, plan_id: planId }));
+}
+
+function alipayConfigError(missing: string[]) {
+  return Response.json({
+    error: `Alipay is not configured. Missing: ${missing.join(', ')}`,
+    configMissing: true,
+    required: ['ALIPAY_APP_ID', 'ALIPAY_PRIVATE_KEY', 'ALIPAY_PUBLIC_KEY', 'ALIPAY_NOTIFY_URL'],
+  }, { status: 503 });
 }
 
 export async function POST(request: NextRequest) {
@@ -49,7 +67,7 @@ export async function POST(request: NextRequest) {
     userId?: string;
   };
 
-  if (!planId || !amount) {
+  if (!planId || !amount || Number(amount) <= 0) {
     return Response.json({ error: 'planId and amount are required' }, { status: 400 });
   }
 
@@ -61,11 +79,11 @@ export async function POST(request: NextRequest) {
     `${appUrl}/api/payment/alipay`;
   const sandbox = process.env.ALIPAY_SANDBOX === 'true';
 
-  if (!appId || !privateKeyB64) {
-    console.log('[Alipay] Running in demo mode (env vars not set)');
-    const demoQr = `https://qr.alipay.com/DEMO_${planId}_${Date.now()}`;
-    return Response.json({ qrCode: demoQr, demo: true, orderId: `alipay_demo_${Date.now()}` });
-  }
+  const missing = [
+    !appId && 'ALIPAY_APP_ID',
+    !privateKeyB64 && 'ALIPAY_PRIVATE_KEY',
+  ].filter(Boolean) as string[];
+  if (missing.length > 0) return alipayConfigError(missing);
 
   const privateKeyPem = toPem(privateKeyB64, 'PRIVATE KEY');
   const outTradeNo = `vids_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -76,7 +94,7 @@ export async function POST(request: NextRequest) {
     method: 'alipay.trade.precreate',
     charset: 'utf-8',
     sign_type: 'RSA2',
-    timestamp: new Date().toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-'),
+    timestamp: formatAlipayTimestamp(),
     version: '1.0',
     notify_url: notifyUrl,
     biz_content: JSON.stringify({
@@ -108,8 +126,10 @@ export async function POST(request: NextRequest) {
       data = JSON.parse(text);
     } catch {
       console.error('[Alipay] Non-JSON response:', text.slice(0, 200));
-      const demoQr = `https://qr.alipay.com/ERR_${planId}_${Date.now()}`;
-      return Response.json({ qrCode: demoQr, demo: true, orderId: outTradeNo });
+      return Response.json({
+        error: 'Alipay returned an invalid response',
+        orderId: outTradeNo,
+      }, { status: 502 });
     }
 
     const responseKey = 'alipay_trade_precreate_response';
@@ -119,33 +139,19 @@ export async function POST(request: NextRequest) {
       return Response.json({ qrCode: resp.qr_code, orderId: outTradeNo, demo: false });
     }
 
-    const pagePayParams: Record<string, string> = {
-      ...commonParams,
-      method: 'alipay.trade.page.pay',
-      return_url: `${appUrl}/dashboard?payment=success&plan=${planId}`,
-      biz_content: JSON.stringify({
-        out_trade_no: outTradeNo,
-        total_amount: amount.toFixed(2),
-        subject: subject || 'VidShorter AI 订阅',
-        product_code: 'FAST_INSTANT_TRADE_PAY',
-        passback_params: buildPassbackParams(userId, planId),
-      }),
-    };
-    delete pagePayParams.sign;
-    pagePayParams.sign = signAlipay(pagePayParams, privateKeyPem);
-
-    const pageFormBody = new URLSearchParams();
-    for (const [k, v] of Object.entries(pagePayParams)) {
-      pageFormBody.set(k, v);
-    }
-    const payUrl = `${gateway}?${pageFormBody.toString()}`;
-
-    console.log('[Alipay] precreate failed, returning page pay URL. Error:', resp);
-    return Response.json({ payUrl, orderId: outTradeNo, demo: false });
+    console.warn('[Alipay] precreate failed:', resp || data);
+    return Response.json({
+      error: resp?.sub_msg || resp?.msg || 'Alipay rejected the payment request',
+      alipayCode: resp?.code,
+      alipaySubCode: resp?.sub_code,
+      orderId: outTradeNo,
+    }, { status: 502 });
   } catch (err) {
     console.error('[Alipay] Request failed:', err);
-    const demoQr = `https://qr.alipay.com/FAIL_${planId}_${Date.now()}`;
-    return Response.json({ qrCode: demoQr, demo: true, orderId: outTradeNo });
+    return Response.json({
+      error: 'Failed to create Alipay payment',
+      orderId: outTradeNo,
+    }, { status: 502 });
   }
 }
 

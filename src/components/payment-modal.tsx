@@ -158,8 +158,12 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
           }),
         });
         const data = await res.json();
-        if (data.error) {
-          setPaymentError(data.error);
+        if (!res.ok || data.error) {
+          setPaymentError(
+            data.configMissing
+              ? 'Alipay is not configured yet. Please complete the Alipay Open Platform keys before using QR payment.'
+              : data.error || 'Failed to create Alipay payment'
+          );
           setPayState('selecting');
           return;
         }
@@ -168,10 +172,12 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
         } else if (data.payUrl) {
           window.open(data.payUrl, '_blank');
         } else {
-          setQrCodeUrl(qrUrl(`https://qr.alipay.com/demo?plan=${plan.id}&t=${Date.now()}`));
+          setPaymentError('Alipay did not return a payment QR code. Please try again.');
+          setPayState('selecting');
         }
       } catch {
-        setQrCodeUrl(qrUrl(`https://qr.alipay.com/demo?plan=${plan.id}&t=${Date.now()}`));
+        setPaymentError('Network error, please try again');
+        setPayState('selecting');
       }
       return;
     }
