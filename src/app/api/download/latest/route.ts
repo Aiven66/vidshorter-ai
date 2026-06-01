@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 const GITHUB_REPO = 'Aiven66/vidshorter-ai';
+const DESKTOP_RELEASE_TAG = 'v0.9.29';
 const CACHE_DURATION = 60;
 
 let cachedData: { timestamp: number; data: unknown } | null = null;
@@ -12,7 +13,7 @@ export async function GET() {
 
   try {
     const res = await fetch(
-      `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`,
+      `https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${DESKTOP_RELEASE_TAG}`,
       {
         headers: {
           Accept: 'application/vnd.github+json',
@@ -39,7 +40,7 @@ export async function GET() {
 
     const data = {
       available: !!dmgAsset,
-      version: release.tag_name?.replace(/^v/, '') || release.name || '',
+      version: release.tag_name?.replace(/^v/, '') || DESKTOP_RELEASE_TAG.replace(/^v/, ''),
       name: release.name || '',
       publishedAt: release.published_at || '',
       dmgUrl: dmgAsset?.browser_download_url || '',
