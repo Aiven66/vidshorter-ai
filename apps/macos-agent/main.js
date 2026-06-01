@@ -9,6 +9,7 @@ const net = require('node:net');
 const http = require('node:http');
 const { execFile, spawn } = require('node:child_process');
 const { promisify } = require('node:util');
+const { fileURLToPath } = require('node:url');
 const execFileAsync = promisify(execFile);
 const { generateHighlightsFromPath, ffmpegPath } = require('./local-highlights');
 const { runYtDlp } = require('./ytdlp');
@@ -913,6 +914,45 @@ async function applyMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+async function openDesktopAuth() {
+  const callbackUrl = await waitForAuthCallbackUrl();
+  const loginUrl = new URL('/login', SERVER_URL);
+  loginUrl.searchParams.set('from', 'desktop');
+  if (callbackUrl) {
+    loginUrl.searchParams.set('callback', callbackUrl);
+  }
+  appendLog(`[IPC] Opening auth: ${loginUrl.toString()}`);
+  await shell.openExternal(loginUrl.toString());
+  return { ok: true };
+}
+
+async function clearSavedAuth() {
+  const cfg = await loadConfig();
+  cfg.authToken = '';
+  cfg.authRefreshToken = '';
+  cfg.authEmail = '';
+  cfg.authUserId = '';
+  cfg.authName = '';
+  await saveConfig(cfg);
+  lastInjectedToken = '';
+  if (webWindow && !webWindow.isDestroyed()) {
+    await webWindow.webContents.executeJavaScript(`
+      localStorage.removeItem('clipop_access_token');
+      localStorage.removeItem('clipop_refresh_token');
+      localStorage.removeItem('clipop_demo_user');
+      window.__clipopDesktopToken = '';
+      window.__clipopDesktopRefreshToken = '';
+      window.__clipopDesktopEmail = '';
+      window.__clipopDesktopUserId = '';
+      window.__clipopDesktopName = '';
+      window.dispatchEvent(new Event('clipop-auth-change'));
+    `, true).catch(() => {});
+    webWindow.webContents.reload();
+  }
+  await applyMenu();
+  return { ok: true };
+}
+
 // ==================== IPC ====================
 ipcMain.handle('get-config', async () => {
   const cfg = await loadConfig();
@@ -942,6 +982,43 @@ ipcMain.handle('get-config', async () => {
   };
 });
 
+ipcMain.handle('save-config', async (_event, cfg) => {
+  await saveConfig({
+    authToken: cfg?.authToken || '',
+    authRefreshToken: cfg?.authRefreshToken || '',
+    authEmail: cfg?.authEmail || '',
+    authUserId: cfg?.authUserId || '',
+    authName: cfg?.authName || '',
+  });
+  await applyMenu();
+  return { ok: true };
+});
+
+ipcMain.handle('get-app-version', async () => {
+  return { version: APP_VERSION };
+});
+
+ipcMain.handle('open-settings', async () => {
+  ensureSettingsWindow();
+  return { ok: true };
+});
+
+ipcMain.handle('open-logs', async () => {
+  if (!logFilePath) return { ok: false, error: 'Log file is not ready' };
+  await shell.openPath(logFilePath);
+  return { ok: true };
+});
+
+ipcMain.handle('copy-logs', async () => {
+  clipboard.writeText(logBuffer.slice(-200).join('\n'));
+  return { ok: true };
+});
+
+ipcMain.handle('open-web-ui', async () => {
+  await ensureWebWindow();
+  return { ok: true };
+});
+
 ipcMain.handle('getAuthToken', async () => {
   const cfg = await loadConfig();
   return { token: cfg.authToken || '' };
@@ -953,45 +1030,29 @@ ipcMain.handle('get-auth-callback-url', async () => {
 });
 
 ipcMain.handle('clearAuthToken', async () => {
-  const cfg = await loadConfig();
-  cfg.authToken = '';
-  cfg.authRefreshToken = '';
-  cfg.authEmail = '';
-  cfg.authUserId = '';
-  cfg.authName = '';
-  await saveConfig(cfg);
-  lastInjectedToken = '';
-  if (webWindow && !webWindow.isDestroyed()) {
-    await webWindow.webContents.executeJavaScript(`
-      localStorage.removeItem('clipop_access_token');
-      localStorage.removeItem('clipop_refresh_token');
-      localStorage.removeItem('clipop_demo_user');
-      window.__clipopDesktopToken = '';
-      window.__clipopDesktopRefreshToken = '';
-      window.__clipopDesktopEmail = '';
-      window.__clipopDesktopUserId = '';
-      window.__clipopDesktopName = '';
-      window.dispatchEvent(new Event('clipop-auth-change'));
-    `, true).catch(() => {});
-    webWindow.webContents.reload();
-  }
-  return { ok: true };
+  return clearSavedAuth();
 });
 
 ipcMain.handle('openAuth', async () => {
-  const callbackUrl = await waitForAuthCallbackUrl();
-  const loginUrl = new URL('/login', SERVER_URL);
-  loginUrl.searchParams.set('from', 'desktop');
-  if (callbackUrl) {
-    loginUrl.searchParams.set('callback', callbackUrl);
-  }
-  appendLog(`[IPC] Opening auth: ${loginUrl.toString()}`);
-  await shell.openExternal(loginUrl.toString());
-  return { ok: true };
+  return openDesktopAuth();
 });
 
 ipcMain.handle('testDeepLink', async () => {
   appendLog('[IPC] testDeepLink called');
+  await handleDeepLink('clipop://login-success?token=test_token_12345&email=test%40example.com&userId=user_123&name=Test%20User');
+  return 'OK';
+});
+
+ipcMain.handle('open-auth', async () => {
+  return openDesktopAuth();
+});
+
+ipcMain.handle('clear-auth', async () => {
+  return clearSavedAuth();
+});
+
+ipcMain.handle('test-deep-link', async () => {
+  appendLog('[IPC] test-deep-link called');
   await handleDeepLink('clipop://login-success?token=test_token_12345&email=test%40example.com&userId=user_123&name=Test%20User');
   return 'OK';
 });
@@ -1022,6 +1083,26 @@ ipcMain.handle('get-media-base-url', async () => {
   startMediaServer();
   if (mediaReady) await mediaReady;
   return { baseUrl: mediaBaseUrl };
+});
+
+ipcMain.handle('local-generate-highlights', async (_event, input) => {
+  let inputPath = String(input?.url || '').trim();
+  if (inputPath.startsWith('file://')) {
+    inputPath = fileURLToPath(inputPath);
+  }
+  if (!inputPath || !fsSync.existsSync(inputPath)) {
+    throw new Error('Video file not found');
+  }
+
+  startMediaServer();
+  if (mediaReady) await mediaReady;
+  const outDir = path.join(app.getPath('userData'), 'generated-clips');
+  await fs.mkdir(outDir, { recursive: true });
+  return await generateHighlightsFromPath({
+    inputPath,
+    outDir,
+    clipBaseUrl: mediaBaseUrl,
+  });
 });
 
 // ==================== LIFECYCLE ====================
