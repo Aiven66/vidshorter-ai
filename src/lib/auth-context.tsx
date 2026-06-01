@@ -180,7 +180,10 @@ async function clearDesktopNativeAuth() {
 
   for (const clearAuthToken of clearers) {
     try {
-      await clearAuthToken();
+      await Promise.race([
+        Promise.resolve(clearAuthToken()),
+        new Promise((resolve) => setTimeout(resolve, 1200)),
+      ]);
     } catch {}
   }
 }
@@ -1037,6 +1040,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function signOut() {
+    clearLocalAuthStorage();
+    setUseDemo(false);
+    setUser(null);
+    setAccessToken(null);
+    setLoading(false);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('clipop-auth-change'));
+    }
+
     try {
       await clearDesktopNativeAuth();
 
@@ -1046,16 +1058,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           await client.auth.signOut();
         } catch {}
       }
-    } finally {
-      clearLocalAuthStorage();
-      setUseDemo(false);
-      setUser(null);
-      setAccessToken(null);
-      setLoading(false);
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new Event('clipop-auth-change'));
-      }
-    }
+    } catch {}
   }
 
   return (

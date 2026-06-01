@@ -191,6 +191,8 @@ assert.match(authContextSource, /buildDesktopOAuthRedirectUrl\(getDesktopOAuthOr
 assert.match(authContextSource, /window\.location\.replace\(`\$\{desktopUrl\.pathname\}\?\$\{desktopUrl\.searchParams\.toString\(\)\}`\)/);
 assert.match(authContextSource, /clearLocalAuthStorage/);
 assert.match(authContextSource, /clearDesktopNativeAuth/);
+assert.match(authContextSource, /Promise\.race\(\[/);
+assert.match(authContextSource, /clearLocalAuthStorage\(\);\n\s*setUseDemo\(false\);\n\s*setUser\(null\);\n\s*setAccessToken\(null\);/);
 assert.match(authContextSource, /window\.location\.pathname\.startsWith\('\/desktop\/'\)/);
 assert.doesNotMatch(authContextSource, /setAccessToken\(null\);\n\s*return \{ error: null, token: null \}/);
 assert.match(authContextSource, /generateDemoToken\(adminUser\)/);
@@ -243,6 +245,8 @@ assert.match(desktopMainSource, /Access-Control-Allow-Private-Network/);
 assert.match(desktopMainSource, /waitForAuthCallbackUrl/);
 assert.match(desktopMainSource, /get-auth-callback-url/);
 assert.match(desktopMainSource, /clipop_refresh_token/);
+assert.match(desktopMainSource, /logout reload error/);
+assert.match(desktopMainSource, /setTimeout\(\(\) => \{\n\s*if \(webWindow && !webWindow\.isDestroyed\(\)\) \{/);
 
 const preloadWebSource = readFileSync('apps/macos-agent/preload-web.js', 'utf8');
 assert.match(preloadWebSource, /getAuthCallbackUrl/);

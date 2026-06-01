@@ -159,7 +159,7 @@ async function testBuildConfiguration() {
   
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   assert(pkg.version, `Package version is set: ${pkg.version}`);
-  assert(pkg.version === '0.9.28', 'Package version is bumped to 0.9.28');
+  assert(pkg.version === '0.9.29', 'Package version is bumped to 0.9.29');
   assert(pkg.main === 'main.js', 'Main entry point is main.js');
   assert(pkg.build, 'Build configuration exists');
   assert(pkg.build.appId, 'App ID is set');
@@ -242,6 +242,7 @@ async function testElectronAppStartup() {
   assert(mainJs.includes("ipcMain.handle('test-deep-link'"), 'main.js handles test-deep-link IPC alias');
   assert(mainJs.includes("ipcMain.handle('open-web-ui'"), 'main.js handles open-web-ui IPC');
   assert(mainJs.includes("ipcMain.handle('local-generate-highlights'"), 'main.js handles local-generate-highlights IPC');
+  assert(mainJs.includes('logout reload error'), 'main.js delays logout reload until IPC can return');
   assert(!mainJs.includes("require('./nonexistent')"), 'main.js has no broken requires');
 }
 

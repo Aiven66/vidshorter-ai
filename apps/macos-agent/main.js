@@ -947,7 +947,11 @@ async function clearSavedAuth() {
       window.__clipopDesktopName = '';
       window.dispatchEvent(new Event('clipop-auth-change'));
     `, true).catch(() => {});
-    webWindow.webContents.reload();
+    setTimeout(() => {
+      if (webWindow && !webWindow.isDestroyed()) {
+        try { webWindow.webContents.reload(); } catch (e) { appendLog(`[AuthSync] logout reload error: ${e}`); }
+      }
+    }, 500);
   }
   await applyMenu();
   return { ok: true };
