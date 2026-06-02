@@ -3,7 +3,13 @@
 import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { TrendingUp, Users, CreditCard, Play, Calendar } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { useAuth } from '@/lib/auth-context';
+import { createLocalizedAdminPosts, saveAdminBlogPosts } from '@/lib/blog-content';
+import { TrendingUp, Users, CreditCard, Play, Calendar, FileText } from 'lucide-react';
 
 interface Stats {
   totalUsers: number;
@@ -15,6 +21,7 @@ interface Stats {
 }
 
 export function AdminDashboard() {
+  const { user, accessToken } = useAuth();
   const [stats, setStats] = useState<Stats>({
     totalUsers: 0,
     newUsersToday: 0,
@@ -24,6 +31,12 @@ export function AdminDashboard() {
     activeSubscriptions: 0,
   });
   const [loading, setLoading] = useState(true);
+  const [blogTitle, setBlogTitle] = useState('');
+  const [blogCategory, setBlogCategory] = useState('AI Video Clipping');
+  const [blogCoverImage, setBlogCoverImage] = useState('');
+  const [blogContent, setBlogContent] = useState('');
+  const [publishing, setPublishing] = useState(false);
+  const [publishStatus, setPublishStatus] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchStats = async () => {
@@ -115,6 +128,83 @@ export function AdminDashboard() {
     },
   ];
 
+  const isAdmin = user?.role === 'admin' || user?.email === 'admin@126.com';
+
+  async function publishBlog() {
+    setPublishStatus(null);
+
+    if (!isAdmin) {
+      setPublishStatus('Admin access required. Please sign in as admin@126.com.');
+      return;
+    }
+
+    if (!blogTitle.trim() || !blogContent.trim()) {
+      setPublishStatus('Please enter an English title and article content.');
+      return;
+    }
+
+    setPublishing(true);
+
+    try {
+      const payload = {
+        title: blogTitle.trim(),
+        category: blogCategory.trim() || 'AI Video Clipping',
+        coverImage: blogCoverImage.trim(),
+        content: blogContent.trim(),
+        publish: true,
+      };
+
+      let generatedCount = 0;
+      let remoteSaved = false;
+      if (accessToken) {
+        const res = await fetch('/api/blog/posts', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify(payload),
+        });
+
+        if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          if (Array.isArray(data.posts)) {
+            saveAdminBlogPosts(data.posts);
+            generatedCount = data.posts.length;
+          }
+          remoteSaved = true;
+        } else {
+          const data = await res.json().catch(() => ({}));
+          const localPosts = createLocalizedAdminPosts(payload);
+          saveAdminBlogPosts(localPosts);
+          generatedCount = localPosts.length;
+          setPublishStatus(`Saved local preview. Online save failed: ${data.error || res.statusText}`);
+        }
+      }
+
+      if (remoteSaved || !accessToken) {
+        if (!accessToken) {
+          const localPosts = createLocalizedAdminPosts(payload);
+          saveAdminBlogPosts(localPosts);
+          generatedCount = localPosts.length;
+        }
+        setPublishStatus(remoteSaved
+          ? `Published ${generatedCount} localized blog articles online.`
+          : `Created ${generatedCount} localized blog articles for preview. Sign in with Supabase admin to save online.`
+        );
+      }
+
+      setBlogTitle('');
+      setBlogCoverImage('');
+      setBlogContent('');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Publishing failed.';
+      setPublishStatus(message);
+    } finally {
+      setPublishing(false);
+    }
+  }
+
   return (
     <div className="p-6 max-w-6xl mx-auto">
       <div className="flex items-center justify-between mb-6">
@@ -147,6 +237,78 @@ export function AdminDashboard() {
       </div>
 
       <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <CardTitle className="flex items-center gap-2">
+                <FileText className="h-5 w-5" />
+                Publish Blog Article
+              </CardTitle>
+              <Badge variant="secondary">English source, auto localized</Badge>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4">
+              {!isAdmin && (
+                <div className="rounded-md border border-border bg-muted/50 p-3 text-sm text-muted-foreground">
+                  Sign in as admin@126.com to publish multilingual blog articles.
+                </div>
+              )}
+
+              <div className="grid gap-2">
+                <Label htmlFor="blog-title">English title</Label>
+                <Input
+                  id="blog-title"
+                  value={blogTitle}
+                  onChange={(event) => setBlogTitle(event.target.value)}
+                  placeholder="How to Turn Long Videos into AI Highlight Shorts"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="blog-category">Category</Label>
+                  <Input
+                    id="blog-category"
+                    value={blogCategory}
+                    onChange={(event) => setBlogCategory(event.target.value)}
+                    placeholder="AI Video Clipping"
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="blog-cover">Cover image URL</Label>
+                  <Input
+                    id="blog-cover"
+                    value={blogCoverImage}
+                    onChange={(event) => setBlogCoverImage(event.target.value)}
+                    placeholder="https://..."
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="blog-content">English content</Label>
+                <Textarea
+                  id="blog-content"
+                  value={blogContent}
+                  onChange={(event) => setBlogContent(event.target.value)}
+                  placeholder="<p>clipopai helps creators convert long videos into short highlight clips with AI...</p>"
+                  className="min-h-56"
+                />
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <Button onClick={publishBlog} disabled={publishing || !isAdmin}>
+                  {publishing ? 'Publishing...' : 'Publish multilingual article'}
+                </Button>
+                {publishStatus && (
+                  <span className="text-sm text-muted-foreground">{publishStatus}</span>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
         <Card>
           <CardHeader>
             <CardTitle>Recent Activity</CardTitle>

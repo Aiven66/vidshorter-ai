@@ -7,7 +7,7 @@ import { usePathname } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from '@/components/ui/sheet';
 import { useLocale } from '@/lib/locale-context';
-import { Menu, Globe, Video, Sun, Moon } from 'lucide-react';
+import { Menu, Globe, Video, Sun, Moon, MessageSquare } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { DESKTOP_WEB_APP_URL } from '@/lib/desktop-auth';
 
@@ -63,17 +63,17 @@ export function Navbar() {
 
   const toggleTheme = () => setTheme(theme === 'dark' ? 'light' : 'dark');
 
+  const feedbackItem = { href: USER_FEEDBACK_URL, label: t('nav.feedback'), external: true };
+
   const navItems = isDesktop
     ? [
         { href: '/', label: t('nav.home') },
         { href: `${process.env.NEXT_PUBLIC_APP_URL || DESKTOP_WEB_APP_URL}/pricing`, label: t('nav.pricing'), external: true },
-        { href: USER_FEEDBACK_URL, label: t('nav.feedback'), external: true },
       ]
     : [
         { href: '/', label: t('nav.home') },
         { href: '/blog', label: t('nav.blog') },
         { href: '/pricing', label: t('nav.pricing') },
-        { href: USER_FEEDBACK_URL, label: t('nav.feedback'), external: true },
       ];
 
   const isActive = (path: string) => pathname === path;
@@ -114,6 +114,13 @@ export function Navbar() {
           </div>
 
           <div className="hidden md:flex items-center gap-4">
+            <Button variant="outline" size="sm" asChild>
+              <a href={USER_FEEDBACK_URL} target="_blank" rel="noopener noreferrer">
+                <MessageSquare className="h-4 w-4 mr-2" />
+                {t('nav.feedback')}
+              </a>
+            </Button>
+
             <Button variant="ghost" size="icon" onClick={toggleTheme} title="Toggle theme">
               {mounted && theme === 'dark' ? (
                 <Sun className="h-5 w-5" />
@@ -182,6 +189,17 @@ export function Navbar() {
                     </Link>
                   )
                 )}
+
+                <a
+                  href={feedbackItem.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => setMobileOpen(false)}
+                  className="text-lg font-medium py-2 text-muted-foreground flex items-center gap-2"
+                >
+                  <MessageSquare className="h-5 w-5" />
+                  {feedbackItem.label}
+                </a>
 
                 <hr className="my-2" />
 
