@@ -3,6 +3,7 @@ export const commonTranslations = {
     home: 'Home',
     blog: 'Blog',
     pricing: 'Pricing',
+    feedback: 'Feedback',
     login: 'Login',
     register: 'Register',
     dashboard: 'Dashboard',

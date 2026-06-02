@@ -80,6 +80,7 @@ export const commonTranslations = {
     home: 'Home',
     blog: 'Blog',
     pricing: 'Pricing',
+    feedback: 'Feedback',
     login: 'Login',
     register: 'Register',
     dashboard: 'Dashboard',
@@ -386,7 +387,7 @@ export const translations: Record<Locale, Record<string, string>> = {
   zh: flattenTranslations({
     ...commonTranslations,
     nav: {
-      home: '首页', blog: '博客', pricing: '定价', login: '登录', register: '注册', dashboard: '控制台', admin: '管理后台', logout: '退出登录', credits: '积分', download: '下载客户端', light: '浅色', dark: '深色',
+      home: '首页', blog: '博客', pricing: '定价', feedback: '用户反馈', login: '登录', register: '注册', dashboard: '控制台', admin: '管理后台', logout: '退出登录', credits: '积分', download: '下载客户端', light: '浅色', dark: '深色',
     },
     common: {
       error: '错误', ready: '就绪', failed: '失败', saving: '保存中...', score: '评分', user: '用户',
@@ -538,7 +539,7 @@ export const translations: Record<Locale, Record<string, string>> = {
   'zh-Hant': flattenTranslations({
     ...commonTranslations,
     nav: {
-      home: '首頁', blog: '部落格', pricing: '定價', login: '登入', register: '註冊', dashboard: '儀錶板', admin: '管理後台', logout: '登出', credits: '積分', download: '下載應用程式', light: '淺色', dark: '深色',
+      home: '首頁', blog: '部落格', pricing: '定價', feedback: '使用者回饋', login: '登入', register: '註冊', dashboard: '儀錶板', admin: '管理後台', logout: '登出', credits: '積分', download: '下載應用程式', light: '淺色', dark: '深色',
     },
     common: {
       error: '發生錯誤', ready: '就緒', failed: '失敗', saving: '儲存中...', score: '評分', user: '使用者',

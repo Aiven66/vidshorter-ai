@@ -3,7 +3,7 @@ import { commonTranslations } from '../common';
 const translations = {
   ...commonTranslations,
   nav: {
-  home: '首頁', blog: '部落格', pricing: '定價', login: '登入', register: '註冊', dashboard: '儀錶板', admin: '管理後台', logout: '登出', credits: '積分', download: '下載應用程式', light: '淺色', dark: '深色',
+  home: '首頁', blog: '部落格', pricing: '定價', feedback: '使用者回饋', login: '登入', register: '註冊', dashboard: '儀錶板', admin: '管理後台', logout: '登出', credits: '積分', download: '下載應用程式', light: '淺色', dark: '深色',
   },
   common: {
   error: '發生錯誤', ready: '就緒', failed: '失敗', saving: '儲存中...', score: '評分', user: '使用者',

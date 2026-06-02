@@ -11,6 +11,8 @@ import { Menu, Globe, Video, Sun, Moon } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { DESKTOP_WEB_APP_URL } from '@/lib/desktop-auth';
 
+const USER_FEEDBACK_URL = 'https://tally.so/r/5BMYVb';
+
 const NavbarUserSection = dynamic(
   () => import('@/components/navbar/navbar-user-section').then(m => ({ default: m.NavbarUserSection })),
   {
@@ -65,11 +67,13 @@ export function Navbar() {
     ? [
         { href: '/', label: t('nav.home') },
         { href: `${process.env.NEXT_PUBLIC_APP_URL || DESKTOP_WEB_APP_URL}/pricing`, label: t('nav.pricing'), external: true },
+        { href: USER_FEEDBACK_URL, label: t('nav.feedback'), external: true },
       ]
     : [
         { href: '/', label: t('nav.home') },
         { href: '/blog', label: t('nav.blog') },
         { href: '/pricing', label: t('nav.pricing') },
+        { href: USER_FEEDBACK_URL, label: t('nav.feedback'), external: true },
       ];
 
   const isActive = (path: string) => pathname === path;
