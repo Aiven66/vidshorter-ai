@@ -42,6 +42,29 @@ function buildPassbackParams(userId: string | undefined, planId: string) {
   return encodeURIComponent(JSON.stringify({ user_id: userId, plan_id: planId }));
 }
 
+function buildSignedParams(params: Record<string, string>, privateKeyPem: string) {
+  const signed = { ...params };
+  signed.sign = signAlipay(signed, privateKeyPem);
+  return signed;
+}
+
+function paramsToBody(params: Record<string, string>) {
+  const formBody = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    formBody.set(k, v);
+  }
+  return formBody;
+}
+
+function getAlipayResponse(data: Record<string, unknown>, responseKey: string) {
+  return data[responseKey] as Record<string, string> | undefined;
+}
+
+function isInsufficientPermission(resp: Record<string, string> | undefined) {
+  const message = `${resp?.sub_code || ''} ${resp?.sub_msg || ''} ${resp?.msg || ''}`;
+  return /权限不足|接口调用权限不足|insufficient|permission/i.test(message);
+}
+
 function alipayConfigError(missing: string[]) {
   return Response.json({
     error: `Alipay is not configured. Missing: ${missing.join(', ')}`,
@@ -89,14 +112,18 @@ export async function POST(request: NextRequest) {
   const outTradeNo = `vids_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const gateway = getAlipayGateway(sandbox);
 
-  const commonParams: Record<string, string> = {
+  const baseParams: Record<string, string> = {
     app_id: appId,
-    method: 'alipay.trade.precreate',
     charset: 'utf-8',
     sign_type: 'RSA2',
     timestamp: formatAlipayTimestamp(),
     version: '1.0',
     notify_url: notifyUrl,
+  };
+
+  const precreateParams = buildSignedParams({
+    ...baseParams,
+    method: 'alipay.trade.precreate',
     biz_content: JSON.stringify({
       out_trade_no: outTradeNo,
       total_amount: amount.toFixed(2),
@@ -104,20 +131,26 @@ export async function POST(request: NextRequest) {
       product_code: 'FACE_TO_FACE_PAYMENT',
       passback_params: buildPassbackParams(userId, planId),
     }),
-  };
+  }, privateKeyPem);
 
-  commonParams.sign = signAlipay(commonParams, privateKeyPem);
-
-  const formBody = new URLSearchParams();
-  for (const [k, v] of Object.entries(commonParams)) {
-    formBody.set(k, v);
-  }
+  const pagePayParams = buildSignedParams({
+    ...baseParams,
+    method: 'alipay.trade.page.pay',
+    return_url: `${appUrl}/dashboard?payment=alipay&plan=${planId}`,
+    biz_content: JSON.stringify({
+      out_trade_no: outTradeNo,
+      total_amount: amount.toFixed(2),
+      subject: subject || 'VidShorter AI 订阅',
+      product_code: 'FAST_INSTANT_TRADE_PAY',
+      passback_params: buildPassbackParams(userId, planId),
+    }),
+  }, privateKeyPem);
 
   try {
     const res = await fetch(gateway, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8' },
-      body: formBody.toString(),
+      body: paramsToBody(precreateParams).toString(),
     });
 
     const text = await res.text();
@@ -133,10 +166,22 @@ export async function POST(request: NextRequest) {
     }
 
     const responseKey = 'alipay_trade_precreate_response';
-    const resp = data[responseKey] as Record<string, string> | undefined;
+    const resp = getAlipayResponse(data, responseKey);
 
     if (resp && resp.code === '10000' && resp.qr_code) {
       return Response.json({ qrCode: resp.qr_code, orderId: outTradeNo, demo: false });
+    }
+
+    if (isInsufficientPermission(resp)) {
+      const payUrl = `${gateway}?${paramsToBody(pagePayParams).toString()}`;
+      console.warn('[Alipay] precreate permission denied, falling back to page.pay:', resp);
+      return Response.json({
+        payUrl,
+        orderId: outTradeNo,
+        demo: false,
+        checkoutMode: 'page',
+        fallbackFrom: 'precreate_permission_denied',
+      });
     }
 
     console.warn('[Alipay] precreate failed:', resp || data);

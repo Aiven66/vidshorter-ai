@@ -36,6 +36,7 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
   const [payState, setPayState] = useState<PayState>('selecting');
   const [countdown, setCountdown] = useState(0);
   const [qrCodeUrl, setQrCodeUrl] = useState('');
+  const [alipayCheckoutUrl, setAlipayCheckoutUrl] = useState('');
   const [paymentError, setPaymentError] = useState('');
   const [creemSessionId, setCreemSessionId] = useState('');
   const [pollingPayment, setPollingPayment] = useState(false);
@@ -46,6 +47,7 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
       setPayState('selecting');
       setCountdown(0);
       setQrCodeUrl('');
+      setAlipayCheckoutUrl('');
       setPaymentError('');
       setCreemSessionId('');
       setPollingPayment(false);
@@ -170,9 +172,10 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
         if (data.qrCode) {
           setQrCodeUrl(qrUrl(data.qrCode));
         } else if (data.payUrl) {
-          window.open(data.payUrl, '_blank');
+          setAlipayCheckoutUrl(data.payUrl);
+          window.open(data.payUrl, '_blank', 'noopener,noreferrer');
         } else {
-          setPaymentError('Alipay did not return a payment QR code. Please try again.');
+          setPaymentError('Alipay did not return a payment QR code or checkout link. Please try again.');
           setPayState('selecting');
         }
       } catch {
@@ -224,6 +227,8 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
   const handleBack = () => {
     setPayState('selecting');
     setPaymentError('');
+    setQrCodeUrl('');
+    setAlipayCheckoutUrl('');
   };
 
   return (
@@ -301,48 +306,78 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
               </div>
             )}
 
-            <div className="flex flex-col items-center gap-6">
-              <div className="relative">
-                <div className="w-64 h-64 rounded-2xl border-2 border-muted bg-white p-4 shadow-lg">
-                  {qrCodeUrl ? (
-                    <img 
-                      src={qrCodeUrl} 
-                      alt="Alipay QR Code" 
-                      className="w-full h-full object-contain rounded-xl"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center">
-                      <Loader2 className="h-10 w-10 animate-spin text-primary" />
-                    </div>
-                  )}
+            {alipayCheckoutUrl ? (
+              <div className="flex flex-col items-center gap-6 py-8">
+                <div className="w-20 h-20 rounded-full bg-[#1677FF] flex items-center justify-center shadow-lg shadow-blue-500/30">
+                  <ExternalLink className="h-10 w-10 text-white" />
                 </div>
-                <div className="absolute -top-2 -right-2">
-                  <div className="w-8 h-5 bg-[#1677FF] rounded-lg flex items-center justify-center shadow-md">
-                    <span className="text-white text-[10px] font-bold">ALI</span>
+
+                <div className="text-center space-y-3">
+                  <h4 className="font-semibold text-lg">Alipay Checkout Opened</h4>
+                  <p className="text-sm text-muted-foreground leading-relaxed">
+                    Complete your payment in the Alipay checkout window.<br />
+                    If it did not open, click the button below.
+                  </p>
+                </div>
+
+                <div className="flex gap-3 w-full">
+                  <Button variant="outline" className="flex-1" onClick={handleBack}>
+                    <ArrowLeft className="h-4 w-4 mr-2" />
+                    Back
+                  </Button>
+                  <Button
+                    className="flex-1"
+                    onClick={() => window.open(alipayCheckoutUrl, '_blank', 'noopener,noreferrer')}
+                  >
+                    <ExternalLink className="h-4 w-4 mr-2" />
+                    Open Checkout
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center gap-6">
+                <div className="relative">
+                  <div className="w-64 h-64 rounded-2xl border-2 border-muted bg-white p-4 shadow-lg">
+                    {qrCodeUrl ? (
+                      <img
+                        src={qrCodeUrl}
+                        alt="Alipay QR Code"
+                        className="w-full h-full object-contain rounded-xl"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <Loader2 className="h-10 w-10 animate-spin text-primary" />
+                      </div>
+                    )}
+                  </div>
+                  <div className="absolute -top-2 -right-2">
+                    <div className="w-8 h-5 bg-[#1677FF] rounded-lg flex items-center justify-center shadow-md">
+                      <span className="text-white text-[10px] font-bold">ALI</span>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <div className="text-center space-y-2">
-                <h4 className="font-semibold text-foreground">Scan with Alipay</h4>
-                <p className="text-sm text-muted-foreground">
-                  Use Alipay app to scan the QR code and complete payment
-                </p>
-                <div className="flex items-center justify-center gap-2">
-                  <span className="text-xs text-muted-foreground">QR code expires in</span>
-                  <span className="text-lg font-bold text-primary tabular-nums">{countdown}s</span>
+                <div className="text-center space-y-2">
+                  <h4 className="font-semibold text-foreground">Scan with Alipay</h4>
+                  <p className="text-sm text-muted-foreground">
+                    Use Alipay app to scan the QR code and complete payment
+                  </p>
+                  <div className="flex items-center justify-center gap-2">
+                    <span className="text-xs text-muted-foreground">QR code expires in</span>
+                    <span className="text-lg font-bold text-primary tabular-nums">{countdown}s</span>
+                  </div>
                 </div>
+
+                <Badge className="gap-2 bg-primary/10 text-primary hover:bg-primary/20">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Waiting for payment...
+                </Badge>
+
+                <Button variant="outline" className="w-full" onClick={() => setPayState('success')}>
+                  I have completed the payment
+                </Button>
               </div>
-
-              <Badge className="gap-2 bg-primary/10 text-primary hover:bg-primary/20">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Waiting for payment...
-              </Badge>
-
-              <Button variant="outline" className="w-full" onClick={() => setPayState('success')}>
-                I have completed the payment
-              </Button>
-            </div>
+            )}
           </div>
         ) : payState === 'pending' && method === 'creem' ? (
           <div className="space-y-6 py-4">

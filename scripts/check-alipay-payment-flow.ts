@@ -107,6 +107,37 @@ async function main() {
     alipay_trade_precreate_response: {
       code: '40004',
       msg: 'Business Failed',
+      sub_code: 'isv.insufficient-permission',
+      sub_msg: '接口调用权限不足',
+    },
+  }, { status: 200 });
+  const pagePayFallback = await POST(new NextRequest('https://www.clipopai.com/api/payment/alipay', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      planId: 'starter',
+      amount: 49,
+      subject: 'Clipop AI Starter',
+      userId: 'user_789',
+    }),
+  }));
+  assert.equal(pagePayFallback.status, 200);
+  const pagePayFallbackJson = await json(pagePayFallback);
+  assert.equal(pagePayFallbackJson.checkoutMode, 'page');
+  assert.equal(pagePayFallbackJson.fallbackFrom, 'precreate_permission_denied');
+  assert.equal('qrCode' in pagePayFallbackJson, false);
+  const payUrl = new URL(String(pagePayFallbackJson.payUrl));
+  assert.equal(payUrl.origin + payUrl.pathname, 'https://openapi.alipay.com/gateway.do');
+  assert.equal(payUrl.searchParams.get('method'), 'alipay.trade.page.pay');
+  assert.equal(payUrl.searchParams.get('return_url'), 'https://www.clipopai.com/dashboard?payment=alipay&plan=starter');
+  const pagePayBiz = JSON.parse(payUrl.searchParams.get('biz_content') || '{}');
+  assert.equal(pagePayBiz.product_code, 'FAST_INSTANT_TRADE_PAY');
+  assert.equal(pagePayBiz.total_amount, '49.00');
+
+  globalThis.fetch = async () => Response.json({
+    alipay_trade_precreate_response: {
+      code: '40004',
+      msg: 'Business Failed',
       sub_code: 'isv.invalid-signature',
       sub_msg: '验签出错',
     },
@@ -150,6 +181,9 @@ async function main() {
   assert.match(routeSource, /ALIPAY_NOTIFY_URL/);
   assert.match(routeSource, /application\/x-www-form-urlencoded/);
   assert.match(routeSource, /passback_params: buildPassbackParams\(userId, planId\)/);
+  assert.match(routeSource, /alipay\.trade\.page\.pay/);
+  assert.match(routeSource, /FAST_INSTANT_TRADE_PAY/);
+  assert.match(routeSource, /precreate_permission_denied/);
   assert.match(routeSource, /configMissing/);
   assert.doesNotMatch(routeSource, /DEMO_/);
   assert.doesNotMatch(routeSource, /demoQr/);
@@ -159,6 +193,7 @@ async function main() {
   assert.match(modalSource, /Pay with Alipay/);
   assert.match(modalSource, /\/api\/payment\/alipay/);
   assert.match(modalSource, /qrCode/);
+  assert.match(modalSource, /alipayCheckoutUrl/);
   assert.doesNotMatch(modalSource, /qr\.alipay\.com\/demo/);
 
   console.log('Alipay payment flow checks passed.');
