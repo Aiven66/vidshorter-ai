@@ -94,6 +94,7 @@ async function main() {
     orderId: alipayGatewayCalls[0].body.get('biz_content') ? JSON.parse(alipayGatewayCalls[0].body.get('biz_content') || '{}').out_trade_no : '',
     demo: false,
     checkoutMode: 'precreate',
+    productCode: 'FACE_TO_FACE_PAYMENT',
   });
   assert.match(alipayGatewayCalls[0].url, /^https:\/\/openapi\.alipay\.com\/gateway\.do$/);
   assert.equal(alipayGatewayCalls[0].body.get('method'), 'alipay.trade.precreate');
@@ -133,6 +134,47 @@ async function main() {
   assert.equal('qrCode' in missingPermissionJson, false);
   assert.equal('payUrl' in missingPermissionJson, false);
 
+  let fallbackCallCount = 0;
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    fallbackCallCount++;
+    alipayGatewayCalls.push({
+      url: input.toString(),
+      body: new URLSearchParams(String(init?.body || '')),
+    });
+    const biz = JSON.parse(new URLSearchParams(String(init?.body || '')).get('biz_content') || '{}');
+    if (biz.product_code === 'FACE_TO_FACE_PAYMENT') {
+      return Response.json({
+        alipay_trade_precreate_response: {
+          code: '40006',
+          msg: 'Insufficient Permissions',
+          sub_code: 'isv.insufficient-isv-permissions',
+          sub_msg: '接口调用权限不足',
+        },
+      });
+    }
+    return Response.json({
+      alipay_trade_precreate_response: {
+        code: '10000',
+        qr_code: 'https://qr.alipay.com/FALLBACK_OFFLINE_PAYMENT_QR',
+      },
+    });
+  };
+  const fallbackPayment = await POST(new NextRequest('https://www.clipopai.com/api/payment/alipay', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      planId: 'starter',
+      amount: 49,
+      subject: 'Clipop AI Starter',
+      userId: 'user_789',
+    }),
+  }));
+  assert.equal(fallbackPayment.status, 200);
+  const fallbackJson = await json(fallbackPayment);
+  assert.equal(fallbackJson.qrCode, 'https://qr.alipay.com/FALLBACK_OFFLINE_PAYMENT_QR');
+  assert.equal(fallbackJson.productCode, 'OFFLINE_PAYMENT');
+  assert.equal(fallbackCallCount, 2);
+
   setEnv('ALIPAY_PAYMENT_MODE', 'page');
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     alipayGatewayCalls.push({
@@ -160,6 +202,7 @@ async function main() {
   const legacyPageModeJson = await json(legacyPageModePayment);
   assert.equal(legacyPageModeJson.checkoutMode, 'precreate');
   assert.equal(legacyPageModeJson.qrCode, 'https://qr.alipay.com/SAFE_QR_WHEN_PAGE_MODE_NOT_ENABLED');
+  assert.equal(legacyPageModeJson.productCode, 'FACE_TO_FACE_PAYMENT');
   assert.equal('payUrl' in legacyPageModeJson, false);
 
   setEnv('ALIPAY_PAGE_PAY_ENABLED', 'true');
@@ -239,6 +282,8 @@ async function main() {
   assert.match(routeSource, /productPermissionMissing/);
   assert.match(routeSource, /ALIPAY_PAYMENT_MODE/);
   assert.match(routeSource, /ALIPAY_PAGE_PAY_ENABLED/);
+  assert.match(routeSource, /OFFLINE_PAYMENT/);
+  assert.match(routeSource, /ALIPAY_PRODUCT_CODE/);
   assert.match(routeSource, /configMissing/);
   assert.doesNotMatch(routeSource, /DEMO_/);
   assert.doesNotMatch(routeSource, /demoQr/);

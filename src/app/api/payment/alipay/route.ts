@@ -2,6 +2,9 @@ import { NextRequest } from 'next/server';
 import { createSign, createVerify } from 'crypto';
 import { applyPlanPurchase, isPaidPlan } from '@/lib/server/subscriptions';
 
+export const runtime = 'nodejs';
+export const maxDuration = 30;
+
 function getAlipayGateway(sandbox: boolean) {
   return sandbox
     ? 'https://openapi-sandbox.dl.alipaydev.com/gateway.do'
@@ -58,6 +61,15 @@ function buildSignedParams(params: Record<string, string>, privateKeyPem: string
   return signed;
 }
 
+function getPrecreateProductCodes() {
+  const configured = process.env.ALIPAY_PRODUCT_CODE?.trim();
+  const productCodes = [
+    configured || 'FACE_TO_FACE_PAYMENT',
+    'OFFLINE_PAYMENT',
+  ];
+  return Array.from(new Set(productCodes.filter(Boolean)));
+}
+
 function paramsToBody(params: Record<string, string>) {
   const formBody = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
@@ -73,6 +85,40 @@ function getAlipayResponse(data: Record<string, unknown>, responseKey: string) {
 function isInsufficientPermission(resp: Record<string, string> | undefined) {
   const message = `${resp?.sub_code || ''} ${resp?.sub_msg || ''} ${resp?.msg || ''}`;
   return /权限不足|接口调用权限不足|insufficient|permission/i.test(message);
+}
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  return typeof error === 'string' ? error : 'Unknown request error';
+}
+
+async function requestAlipayGateway(gateway: string, params: Record<string, string>) {
+  const body = paramsToBody(params).toString();
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const res = await fetch(gateway, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
+          'User-Agent': 'ClipopAI-Alipay/1.0',
+        },
+        body,
+        cache: 'no-store',
+        signal: AbortSignal.timeout(15000),
+      });
+      return await res.text();
+    } catch (error) {
+      lastError = error;
+      if (attempt < 2) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+  }
+
+  throw lastError;
 }
 
 function alipayPermissionError(resp: Record<string, string> | undefined, options?: {
@@ -151,14 +197,14 @@ export async function POST(request: NextRequest) {
     notify_url: notifyUrl,
   };
 
-  const precreateParams = buildSignedParams({
+  const buildPrecreateParams = (productCode: string) => buildSignedParams({
     ...baseParams,
     method: 'alipay.trade.precreate',
     biz_content: JSON.stringify({
       out_trade_no: outTradeNo,
       total_amount: amount.toFixed(2),
       subject: subject || 'VidShorter AI 订阅',
-      product_code: 'FACE_TO_FACE_PAYMENT',
+      product_code: productCode,
       passback_params: buildPassbackParams(userId, planId),
     }),
   }, privateKeyPem);
@@ -185,14 +231,12 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  try {
-    const res = await fetch(gateway, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8' },
-      body: paramsToBody(precreateParams).toString(),
-    });
+  let lastPermissionResponse: Record<string, string> | undefined;
 
-    const text = await res.text();
+  for (const productCode of getPrecreateProductCodes()) {
+    try {
+      const precreateParams = buildPrecreateParams(productCode);
+      const text = await requestAlipayGateway(gateway, precreateParams);
     let data: Record<string, unknown>;
     try {
       data = JSON.parse(text);
@@ -208,17 +252,19 @@ export async function POST(request: NextRequest) {
     const resp = getAlipayResponse(data, responseKey);
 
     if (resp && resp.code === '10000' && resp.qr_code) {
-      return Response.json({ qrCode: resp.qr_code, orderId: outTradeNo, demo: false, checkoutMode: 'precreate' });
+      return Response.json({
+        qrCode: resp.qr_code,
+        orderId: outTradeNo,
+        demo: false,
+        checkoutMode: 'precreate',
+        productCode,
+      });
     }
 
     if (isInsufficientPermission(resp)) {
-      console.warn('[Alipay] precreate permission denied:', resp);
-      return alipayPermissionError(resp, {
-        requiredProduct: '当面付',
-        requiredApi: 'alipay.trade.precreate',
-        alternativeProduct: '电脑网站支付',
-        alternativeMode: 'Set ALIPAY_PAYMENT_MODE=page and ALIPAY_PAGE_PAY_ENABLED=true only after Web Payment is approved',
-      });
+      console.warn('[Alipay] precreate permission denied:', { productCode, resp });
+      lastPermissionResponse = resp;
+      continue;
     }
 
     console.warn('[Alipay] precreate failed:', resp || data);
@@ -231,10 +277,20 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     console.error('[Alipay] Request failed:', err);
     return Response.json({
-      error: 'Failed to create Alipay payment',
+      error: 'Alipay gateway request failed. Please retry, and confirm the Vercel server can reach openapi.alipay.com.',
+      upstreamRequestFailed: true,
+      upstreamError: getErrorMessage(err),
       orderId: outTradeNo,
     }, { status: 502 });
   }
+  }
+
+  return alipayPermissionError(lastPermissionResponse, {
+    requiredProduct: '当面付',
+    requiredApi: 'alipay.trade.precreate',
+    alternativeProduct: '电脑网站支付',
+    alternativeMode: 'Set ALIPAY_PRODUCT_CODE=OFFLINE_PAYMENT if your contract is Face-to-Face Payment Lite. Only enable page mode after Web Payment is approved.',
+  });
 }
 
 async function handleAlipayNotify(request: NextRequest) {
