@@ -9,7 +9,13 @@ function getAlipayGateway(sandbox: boolean) {
 }
 
 function getAlipayPaymentMode() {
-  return process.env.ALIPAY_PAYMENT_MODE === 'page' ? 'page' : 'precreate';
+  if (
+    process.env.ALIPAY_PAYMENT_MODE === 'page' &&
+    process.env.ALIPAY_PAGE_PAY_ENABLED === 'true'
+  ) {
+    return 'page';
+  }
+  return 'precreate';
 }
 
 function signAlipay(params: Record<string, string>, privateKeyPem: string): string {
@@ -69,14 +75,19 @@ function isInsufficientPermission(resp: Record<string, string> | undefined) {
   return /权限不足|接口调用权限不足|insufficient|permission/i.test(message);
 }
 
-function alipayPermissionError(resp: Record<string, string> | undefined) {
+function alipayPermissionError(resp: Record<string, string> | undefined, options?: {
+  requiredProduct?: string;
+  requiredApi?: string;
+  alternativeProduct?: string;
+  alternativeMode?: string;
+}) {
   return Response.json({
-    error: 'Alipay product permission is missing. Please enable Face-to-Face Payment or switch to Web Payment after signing the product.',
+    error: 'Alipay product permission is not active yet. Please complete the corresponding Alipay Open Platform product signing and wait until it takes effect.',
     productPermissionMissing: true,
-    requiredProduct: '当面付',
-    requiredApi: 'alipay.trade.precreate',
-    alternativeProduct: '电脑网站支付',
-    alternativeMode: 'Set ALIPAY_PAYMENT_MODE=page after Web Payment is approved',
+    requiredProduct: options?.requiredProduct || '当面付',
+    requiredApi: options?.requiredApi || 'alipay.trade.precreate',
+    alternativeProduct: options?.alternativeProduct || '电脑网站支付',
+    alternativeMode: options?.alternativeMode || 'Only set ALIPAY_PAYMENT_MODE=page together with ALIPAY_PAGE_PAY_ENABLED=true after Web Payment is approved',
     alipayCode: resp?.code,
     alipaySubCode: resp?.sub_code,
     alipaySubMessage: resp?.sub_msg,
@@ -197,12 +208,17 @@ export async function POST(request: NextRequest) {
     const resp = getAlipayResponse(data, responseKey);
 
     if (resp && resp.code === '10000' && resp.qr_code) {
-      return Response.json({ qrCode: resp.qr_code, orderId: outTradeNo, demo: false });
+      return Response.json({ qrCode: resp.qr_code, orderId: outTradeNo, demo: false, checkoutMode: 'precreate' });
     }
 
     if (isInsufficientPermission(resp)) {
       console.warn('[Alipay] precreate permission denied:', resp);
-      return alipayPermissionError(resp);
+      return alipayPermissionError(resp, {
+        requiredProduct: '当面付',
+        requiredApi: 'alipay.trade.precreate',
+        alternativeProduct: '电脑网站支付',
+        alternativeMode: 'Set ALIPAY_PAYMENT_MODE=page and ALIPAY_PAGE_PAY_ENABLED=true only after Web Payment is approved',
+      });
     }
 
     console.warn('[Alipay] precreate failed:', resp || data);

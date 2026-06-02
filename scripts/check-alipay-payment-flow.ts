@@ -18,6 +18,7 @@ const originalEnv = {
   ALIPAY_PUBLIC_KEY: process.env.ALIPAY_PUBLIC_KEY,
   ALIPAY_NOTIFY_URL: process.env.ALIPAY_NOTIFY_URL,
   ALIPAY_PAYMENT_MODE: process.env.ALIPAY_PAYMENT_MODE,
+  ALIPAY_PAGE_PAY_ENABLED: process.env.ALIPAY_PAGE_PAY_ENABLED,
   NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
 };
 const originalFetch = globalThis.fetch;
@@ -32,6 +33,7 @@ async function main() {
   setEnv('ALIPAY_PUBLIC_KEY', undefined);
   setEnv('ALIPAY_NOTIFY_URL', undefined);
   setEnv('ALIPAY_PAYMENT_MODE', undefined);
+  setEnv('ALIPAY_PAGE_PAY_ENABLED', undefined);
   setEnv('NEXT_PUBLIC_APP_URL', 'https://www.clipopai.com');
 
   const missingPlan = await POST(new NextRequest('https://www.clipopai.com/api/payment/alipay', {
@@ -91,6 +93,7 @@ async function main() {
     qrCode: 'https://qr.alipay.com/REAL_TEST_QR',
     orderId: alipayGatewayCalls[0].body.get('biz_content') ? JSON.parse(alipayGatewayCalls[0].body.get('biz_content') || '{}').out_trade_no : '',
     demo: false,
+    checkoutMode: 'precreate',
   });
   assert.match(alipayGatewayCalls[0].url, /^https:\/\/openapi\.alipay\.com\/gateway\.do$/);
   assert.equal(alipayGatewayCalls[0].body.get('method'), 'alipay.trade.precreate');
@@ -131,6 +134,35 @@ async function main() {
   assert.equal('payUrl' in missingPermissionJson, false);
 
   setEnv('ALIPAY_PAYMENT_MODE', 'page');
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    alipayGatewayCalls.push({
+      url: input.toString(),
+      body: new URLSearchParams(String(init?.body || '')),
+    });
+    return Response.json({
+      alipay_trade_precreate_response: {
+        code: '10000',
+        qr_code: 'https://qr.alipay.com/SAFE_QR_WHEN_PAGE_MODE_NOT_ENABLED',
+      },
+    });
+  };
+  const legacyPageModePayment = await POST(new NextRequest('https://www.clipopai.com/api/payment/alipay', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      planId: 'starter',
+      amount: 49,
+      subject: 'Clipop AI Starter',
+      userId: 'user_789',
+    }),
+  }));
+  assert.equal(legacyPageModePayment.status, 200);
+  const legacyPageModeJson = await json(legacyPageModePayment);
+  assert.equal(legacyPageModeJson.checkoutMode, 'precreate');
+  assert.equal(legacyPageModeJson.qrCode, 'https://qr.alipay.com/SAFE_QR_WHEN_PAGE_MODE_NOT_ENABLED');
+  assert.equal('payUrl' in legacyPageModeJson, false);
+
+  setEnv('ALIPAY_PAGE_PAY_ENABLED', 'true');
   const pagePayPayment = await POST(new NextRequest('https://www.clipopai.com/api/payment/alipay', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -153,6 +185,7 @@ async function main() {
   assert.equal(pagePayBiz.product_code, 'FAST_INSTANT_TRADE_PAY');
   assert.equal(pagePayBiz.total_amount, '49.00');
   setEnv('ALIPAY_PAYMENT_MODE', undefined);
+  setEnv('ALIPAY_PAGE_PAY_ENABLED', undefined);
 
   globalThis.fetch = async () => Response.json({
     alipay_trade_precreate_response: {
@@ -205,6 +238,7 @@ async function main() {
   assert.match(routeSource, /FAST_INSTANT_TRADE_PAY/);
   assert.match(routeSource, /productPermissionMissing/);
   assert.match(routeSource, /ALIPAY_PAYMENT_MODE/);
+  assert.match(routeSource, /ALIPAY_PAGE_PAY_ENABLED/);
   assert.match(routeSource, /configMissing/);
   assert.doesNotMatch(routeSource, /DEMO_/);
   assert.doesNotMatch(routeSource, /demoQr/);
@@ -216,6 +250,7 @@ async function main() {
   assert.match(modalSource, /qrCode/);
   assert.match(modalSource, /alipayCheckoutUrl/);
   assert.match(modalSource, /productPermissionMissing/);
+  assert.match(modalSource, /Face-to-Face Payment/);
   assert.doesNotMatch(modalSource, /qr\.alipay\.com\/demo/);
 
   console.log('Alipay payment flow checks passed.');
@@ -227,6 +262,7 @@ main().finally(() => {
   setEnv('ALIPAY_PUBLIC_KEY', originalEnv.ALIPAY_PUBLIC_KEY);
   setEnv('ALIPAY_NOTIFY_URL', originalEnv.ALIPAY_NOTIFY_URL);
   setEnv('ALIPAY_PAYMENT_MODE', originalEnv.ALIPAY_PAYMENT_MODE);
+  setEnv('ALIPAY_PAGE_PAY_ENABLED', originalEnv.ALIPAY_PAGE_PAY_ENABLED);
   setEnv('NEXT_PUBLIC_APP_URL', originalEnv.NEXT_PUBLIC_APP_URL);
   globalThis.fetch = originalFetch;
 });
