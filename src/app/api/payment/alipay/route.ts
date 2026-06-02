@@ -8,6 +8,10 @@ function getAlipayGateway(sandbox: boolean) {
     : 'https://openapi.alipay.com/gateway.do';
 }
 
+function getAlipayPaymentMode() {
+  return process.env.ALIPAY_PAYMENT_MODE === 'page' ? 'page' : 'precreate';
+}
+
 function signAlipay(params: Record<string, string>, privateKeyPem: string): string {
   const keys = Object.keys(params).sort();
   const str = keys.map(k => `${k}=${params[k]}`).join('&');
@@ -65,6 +69,20 @@ function isInsufficientPermission(resp: Record<string, string> | undefined) {
   return /权限不足|接口调用权限不足|insufficient|permission/i.test(message);
 }
 
+function alipayPermissionError(resp: Record<string, string> | undefined) {
+  return Response.json({
+    error: 'Alipay product permission is missing. Please enable Face-to-Face Payment or switch to Web Payment after signing the product.',
+    productPermissionMissing: true,
+    requiredProduct: '当面付',
+    requiredApi: 'alipay.trade.precreate',
+    alternativeProduct: '电脑网站支付',
+    alternativeMode: 'Set ALIPAY_PAYMENT_MODE=page after Web Payment is approved',
+    alipayCode: resp?.code,
+    alipaySubCode: resp?.sub_code,
+    alipaySubMessage: resp?.sub_msg,
+  }, { status: 403 });
+}
+
 function alipayConfigError(missing: string[]) {
   return Response.json({
     error: `Alipay is not configured. Missing: ${missing.join(', ')}`,
@@ -111,6 +129,7 @@ export async function POST(request: NextRequest) {
   const privateKeyPem = toPem(privateKeyB64, 'PRIVATE KEY');
   const outTradeNo = `vids_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const gateway = getAlipayGateway(sandbox);
+  const paymentMode = getAlipayPaymentMode();
 
   const baseParams: Record<string, string> = {
     app_id: appId,
@@ -146,6 +165,15 @@ export async function POST(request: NextRequest) {
     }),
   }, privateKeyPem);
 
+  if (paymentMode === 'page') {
+    return Response.json({
+      payUrl: `${gateway}?${paramsToBody(pagePayParams).toString()}`,
+      orderId: outTradeNo,
+      demo: false,
+      checkoutMode: 'page',
+    });
+  }
+
   try {
     const res = await fetch(gateway, {
       method: 'POST',
@@ -173,15 +201,8 @@ export async function POST(request: NextRequest) {
     }
 
     if (isInsufficientPermission(resp)) {
-      const payUrl = `${gateway}?${paramsToBody(pagePayParams).toString()}`;
-      console.warn('[Alipay] precreate permission denied, falling back to page.pay:', resp);
-      return Response.json({
-        payUrl,
-        orderId: outTradeNo,
-        demo: false,
-        checkoutMode: 'page',
-        fallbackFrom: 'precreate_permission_denied',
-      });
+      console.warn('[Alipay] precreate permission denied:', resp);
+      return alipayPermissionError(resp);
     }
 
     console.warn('[Alipay] precreate failed:', resp || data);

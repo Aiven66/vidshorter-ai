@@ -164,6 +164,8 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
           setPaymentError(
             data.configMissing
               ? 'Alipay is not configured yet. Please complete the Alipay Open Platform keys before using QR payment.'
+              : data.productPermissionMissing
+                ? 'Alipay product permission is not enabled yet. Please enable Face-to-Face Payment, or enable Web Payment and set ALIPAY_PAYMENT_MODE=page.'
               : data.error || 'Failed to create Alipay payment'
           );
           setPayState('selecting');
