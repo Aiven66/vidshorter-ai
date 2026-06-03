@@ -70,6 +70,10 @@ function getPrecreateProductCodes() {
   return Array.from(new Set(productCodes.filter(Boolean)));
 }
 
+function getAppAuthToken() {
+  return process.env.ALIPAY_APP_AUTH_TOKEN?.trim();
+}
+
 function paramsToBody(params: Record<string, string>) {
   const formBody = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
@@ -134,6 +138,8 @@ function alipayPermissionError(resp: Record<string, string> | undefined, options
     requiredApi: options?.requiredApi || 'alipay.trade.precreate',
     alternativeProduct: options?.alternativeProduct || '电脑网站支付',
     alternativeMode: options?.alternativeMode || 'Only set ALIPAY_PAYMENT_MODE=page together with ALIPAY_PAGE_PAY_ENABLED=true after Web Payment is approved',
+    appAuthTokenConfigured: Boolean(getAppAuthToken()),
+    appAuthTokenHint: 'If this is an ISV/third-party app, configure ALIPAY_APP_AUTH_TOKEN from merchant authorization.',
     alipayCode: resp?.code,
     alipaySubCode: resp?.sub_code,
     alipaySubMessage: resp?.sub_msg,
@@ -196,6 +202,10 @@ export async function POST(request: NextRequest) {
     version: '1.0',
     notify_url: notifyUrl,
   };
+  const appAuthToken = getAppAuthToken();
+  if (appAuthToken) {
+    baseParams.app_auth_token = appAuthToken;
+  }
 
   const buildPrecreateParams = (productCode: string) => buildSignedParams({
     ...baseParams,

@@ -19,6 +19,7 @@ const originalEnv = {
   ALIPAY_NOTIFY_URL: process.env.ALIPAY_NOTIFY_URL,
   ALIPAY_PAYMENT_MODE: process.env.ALIPAY_PAYMENT_MODE,
   ALIPAY_PAGE_PAY_ENABLED: process.env.ALIPAY_PAGE_PAY_ENABLED,
+  ALIPAY_APP_AUTH_TOKEN: process.env.ALIPAY_APP_AUTH_TOKEN,
   NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
 };
 const originalFetch = globalThis.fetch;
@@ -34,6 +35,7 @@ async function main() {
   setEnv('ALIPAY_NOTIFY_URL', undefined);
   setEnv('ALIPAY_PAYMENT_MODE', undefined);
   setEnv('ALIPAY_PAGE_PAY_ENABLED', undefined);
+  setEnv('ALIPAY_APP_AUTH_TOKEN', undefined);
   setEnv('NEXT_PUBLIC_APP_URL', 'https://www.clipopai.com');
 
   const missingPlan = await POST(new NextRequest('https://www.clipopai.com/api/payment/alipay', {
@@ -109,6 +111,35 @@ async function main() {
   });
   assert.equal(typeof alipayGatewayCalls[0].body.get('sign'), 'string');
 
+  setEnv('ALIPAY_APP_AUTH_TOKEN', 'merchant_auth_token_123');
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    alipayGatewayCalls.push({
+      url: input.toString(),
+      body: new URLSearchParams(String(init?.body || '')),
+    });
+    return Response.json({
+      alipay_trade_precreate_response: {
+        code: '10000',
+        qr_code: 'https://qr.alipay.com/AUTH_TOKEN_QR',
+      },
+    });
+  };
+  const authTokenPayment = await POST(new NextRequest('https://www.clipopai.com/api/payment/alipay', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      planId: 'starter',
+      amount: 49,
+      subject: 'Clipop AI Starter',
+      userId: 'user_auth_token',
+    }),
+  }));
+  assert.equal(authTokenPayment.status, 200);
+  const authTokenCall = alipayGatewayCalls.at(-1)!.body;
+  assert.equal(authTokenCall.get('app_auth_token'), 'merchant_auth_token_123');
+  assert.equal((await json(authTokenPayment)).qrCode, 'https://qr.alipay.com/AUTH_TOKEN_QR');
+  setEnv('ALIPAY_APP_AUTH_TOKEN', undefined);
+
   globalThis.fetch = async () => Response.json({
     alipay_trade_precreate_response: {
       code: '40004',
@@ -131,6 +162,7 @@ async function main() {
   const missingPermissionJson = await json(missingPermissionPayment);
   assert.equal(missingPermissionJson.productPermissionMissing, true);
   assert.equal(missingPermissionJson.requiredApi, 'alipay.trade.precreate');
+  assert.equal(missingPermissionJson.appAuthTokenConfigured, false);
   assert.equal('qrCode' in missingPermissionJson, false);
   assert.equal('payUrl' in missingPermissionJson, false);
 
@@ -284,6 +316,8 @@ async function main() {
   assert.match(routeSource, /ALIPAY_PAGE_PAY_ENABLED/);
   assert.match(routeSource, /OFFLINE_PAYMENT/);
   assert.match(routeSource, /ALIPAY_PRODUCT_CODE/);
+  assert.match(routeSource, /ALIPAY_APP_AUTH_TOKEN/);
+  assert.match(routeSource, /app_auth_token/);
   assert.match(routeSource, /configMissing/);
   assert.doesNotMatch(routeSource, /DEMO_/);
   assert.doesNotMatch(routeSource, /demoQr/);
@@ -308,6 +342,7 @@ main().finally(() => {
   setEnv('ALIPAY_NOTIFY_URL', originalEnv.ALIPAY_NOTIFY_URL);
   setEnv('ALIPAY_PAYMENT_MODE', originalEnv.ALIPAY_PAYMENT_MODE);
   setEnv('ALIPAY_PAGE_PAY_ENABLED', originalEnv.ALIPAY_PAGE_PAY_ENABLED);
+  setEnv('ALIPAY_APP_AUTH_TOKEN', originalEnv.ALIPAY_APP_AUTH_TOKEN);
   setEnv('NEXT_PUBLIC_APP_URL', originalEnv.NEXT_PUBLIC_APP_URL);
   globalThis.fetch = originalFetch;
 });
