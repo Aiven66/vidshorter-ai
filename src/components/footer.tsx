@@ -1,8 +1,14 @@
 import Link from 'next/link';
-import { Video } from 'lucide-react';
+import { Video, Youtube, Twitter, Music } from 'lucide-react';
 
 export function Footer() {
   const currentYear = new Date().getFullYear();
+
+  const socialLinks = [
+    { name: 'X', href: 'https://twitter.com/clipopai', icon: Twitter },
+    { name: 'YouTube', href: 'https://youtube.com/@clipopai', icon: Youtube },
+    { name: 'TikTok', href: 'https://tiktok.com/@clipopai', icon: Music },
+  ];
 
   return (
     <footer className="border-t border-border bg-background">
@@ -13,9 +19,27 @@ export function Footer() {
               <Video className="h-6 w-6 text-primary" />
               <span>Clipop AI</span>
             </Link>
-            <p className="text-muted-foreground max-w-md">
+            <p className="text-muted-foreground max-w-md mb-6">
               AI-powered video clipping tool that automatically extracts the best moments from your long-form content.
             </p>
+            <div className="flex items-center gap-4">
+              <span className="text-sm font-medium text-muted-foreground">Follow us:</span>
+              {socialLinks.map((social) => {
+                const Icon = social.icon;
+                return (
+                  <a
+                    key={social.name}
+                    href={social.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex h-10 w-10 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors hover:bg-primary hover:text-white"
+                    title={social.name}
+                  >
+                    <Icon className="h-5 w-5" />
+                  </a>
+                );
+              })}
+            </div>
           </div>
 
           <div>

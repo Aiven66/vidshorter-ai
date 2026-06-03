@@ -1,99 +1,112 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Card } from '@/components/ui/card';
+import { useState, useEffect } from 'react';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useLocale } from '@/lib/locale-context';
-import {
-  BlogPost,
-  getBuiltInBlogPosts,
-  getStoredBlogPosts,
-  isPostForLocale,
-  normalizeBlogRow,
-  normalizeLocale,
-  stripHtml,
-} from '@/lib/blog-content';
 import { Calendar, ArrowRight, FileText } from 'lucide-react';
 import Link from 'next/link';
 import { isSupabaseConfigured } from '@/storage/database/supabase-client';
 
-function mergePosts(posts: BlogPost[]) {
-  const seen = new Set<string>();
-  return posts
-    .filter(post => post.id && post.title && post.is_published !== false)
-    .filter(post => {
-      if (seen.has(post.id)) return false;
-      seen.add(post.id);
-      return true;
-    })
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+interface BlogPost {
+  id: string;
+  title: string;
+  category: string;
+  content: string;
+  cover_image: string | null;
+  created_at: string;
+  view_count: number;
 }
 
+// Demo posts for when Supabase is not configured
+const demoPosts: BlogPost[] = [
+  {
+    id: 'demo-1',
+    title: 'How AI is Revolutionizing Video Content Creation',
+    category: 'AI Technology',
+    content: '<p>AI-powered video tools are transforming how content creators produce and edit their videos...</p>',
+    cover_image: 'https://picsum.photos/800/400?random=1',
+    created_at: new Date().toISOString(),
+    view_count: 150,
+  },
+  {
+    id: 'demo-2',
+    title: '5 Tips for Creating Viral Short Videos',
+    category: 'Tips & Tricks',
+    content: '<p>Creating viral short videos requires a combination of creativity, timing, and understanding your audience...</p>',
+    cover_image: 'https://picsum.photos/800/400?random=2',
+    created_at: new Date(Date.now() - 86400000).toISOString(),
+    view_count: 230,
+  },
+  {
+    id: 'demo-3',
+    title: 'VidShorter AI 2.0: New Features and Improvements',
+    category: 'Product Updates',
+    content: '<p>We are excited to announce VidShorter AI 2.0 with many new features...</p>',
+    cover_image: 'https://picsum.photos/800/400?random=3',
+    created_at: new Date(Date.now() - 172800000).toISOString(),
+    view_count: 180,
+  },
+];
+
 export default function BlogPage() {
-  const { t, locale } = useLocale();
-  const activeLocale = normalizeLocale(locale);
+  const { t } = useLocale();
   const [posts, setPosts] = useState<BlogPost[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let cancelled = false;
+    fetchPosts();
+  }, []);
 
-    async function fetchPosts() {
-      const builtInPosts = getBuiltInBlogPosts(activeLocale);
-      const storedPosts = getStoredBlogPosts(activeLocale);
-      const fallbackPosts = mergePosts([...storedPosts, ...builtInPosts]);
-
-      if (!cancelled) {
-        setPosts(fallbackPosts);
-        setLoading(false);
-      }
-
-      if (!isSupabaseConfigured()) {
-        return;
-      }
-
-      try {
-        const { getSupabaseClient } = await import('@/storage/database/supabase-client');
-        const client = getSupabaseClient();
-        const { data, error } = await client
-          .from('blogs')
-          .select('*')
-          .eq('is_published', true)
-          .order('created_at', { ascending: false })
-          .limit(60);
-
-        if (error) throw error;
-
-        const databasePosts = (data || [])
-          .map(row => normalizeBlogRow(row))
-          .filter(post => isPostForLocale(post, activeLocale));
-
-        if (!cancelled) {
-          setPosts(mergePosts([...databasePosts, ...fallbackPosts]));
-        }
-      } catch {
-        if (!cancelled) setPosts(fallbackPosts);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+  async function fetchPosts() {
+    // Check if Supabase is configured
+    if (!isSupabaseConfigured()) {
+      // Use demo posts
+      setPosts(demoPosts);
+      setLoading(false);
+      return;
     }
 
-    setLoading(true);
-    fetchPosts();
+    try {
+      const { getSupabaseClient } = await import('@/storage/database/supabase-client');
+      const client = getSupabaseClient();
+      const { data, error } = await client
+        .from('blogs')
+        .select('*')
+        .eq('is_published', true)
+        .order('created_at', { ascending: false })
+        .limit(20);
 
-    return () => {
-      cancelled = true;
-    };
-  }, [activeLocale]);
+      if (error) throw error;
+      setPosts(data && data.length > 0 ? data : demoPosts);
+    } catch (error) {
+      // Network error - fall back to demo posts silently
+      console.warn('Blog posts fetch error, using demo mode');
+      setPosts(demoPosts);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   const formatDate = (dateString: string) => {
-    const dateLocale = activeLocale === 'zh' ? 'zh-CN' : activeLocale === 'zh-Hant' ? 'zh-TW' : activeLocale === 'en' ? 'en-US' : activeLocale;
-    return new Date(dateString).toLocaleDateString(dateLocale, {
+    const date = new Date(dateString);
+    return date.toLocaleString('en-US', {
       year: 'numeric',
-      month: 'long',
+      month: 'short',
       day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
     });
+  };
+
+  const stripHtml = (html: string) => {
+    if (typeof window === 'undefined') return html.replace(/<[^>]*>/g, '');
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    return tmp.textContent || tmp.innerText || '';
   };
 
   if (loading) {
@@ -110,7 +123,7 @@ export default function BlogPage() {
         <div className="max-w-4xl mx-auto">
           <h1 className="text-4xl font-bold mb-4">{t('blog.title')}</h1>
           <p className="text-muted-foreground mb-12">
-            {t('blog.subtitle')}
+            Latest news, tips, and updates from VidShorter AI
           </p>
 
           {posts.length === 0 ? (
@@ -133,19 +146,18 @@ export default function BlogPage() {
                       </div>
                     )}
                     <div className={`p-6 ${post.cover_image ? 'md:w-2/3' : 'w-full'}`}>
-                      <div className="flex flex-wrap items-center gap-4 mb-3">
+                      <div className="flex items-center gap-4 mb-3">
                         <Badge variant="secondary">{post.category}</Badge>
                         <span className="text-sm text-muted-foreground flex items-center gap-1">
                           <Calendar className="h-4 w-4" />
                           {formatDate(post.created_at)}
                         </span>
-                        {post.view_count && post.view_count > 0 && (
-                          <span className="text-xs text-muted-foreground">
-                            {post.view_count} {t('blog.views')}
-                          </span>
-                        )}
                       </div>
-                      <h2 className="text-2xl font-bold mb-3">{post.title}</h2>
+                      <h2 className="text-2xl font-bold mb-3">
+                      <Link href={`/blog/${post.id}`} className="text-primary hover:text-primary/80 transition-colors">
+                        {post.title}
+                      </Link>
+                    </h2>
                       <p className="text-muted-foreground mb-4 line-clamp-3">
                         {stripHtml(post.content).substring(0, 200)}...
                       </p>

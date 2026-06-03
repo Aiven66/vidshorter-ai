@@ -49,12 +49,12 @@ export function MobileUserSection({ mounted, isDesktop, onCloseMobile }: { mount
         ) : (
           <>
             <Button variant="outline" asChild>
-              <Link href="/login" onClick={() => onCloseMobile()}>
+              <Link href="/login" rel="nofollow" onClick={() => onCloseMobile()}>
                 {t('nav.login')}
               </Link>
             </Button>
             <Button asChild>
-              <Link href="/register" onClick={() => onCloseMobile()}>
+              <Link href="/register" rel="nofollow" onClick={() => onCloseMobile()}>
                 {t('nav.register')}
               </Link>
             </Button>

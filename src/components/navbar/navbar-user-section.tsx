@@ -48,10 +48,10 @@ export function NavbarUserSection({ mounted, isDesktop }: { mounted: boolean; is
         ) : (
           <>
             <Button variant="ghost" asChild>
-              <Link href="/login">{t('nav.login')}</Link>
+              <Link href="/login" rel="nofollow">{t('nav.login')}</Link>
             </Button>
             <Button asChild>
-              <Link href="/register">{t('nav.register')}</Link>
+              <Link href="/register" rel="nofollow">{t('nav.register')}</Link>
             </Button>
           </>
         )}

@@ -8,13 +8,14 @@ import { Button } from '@/components/ui/button';
 import { useLocale } from '@/lib/locale-context';
 import {
   BlogPost,
+  getBuiltInBlogPosts,
   getBuiltInBlogPost,
   getStoredBlogPosts,
   isPostForLocale,
   normalizeBlogRow,
   normalizeLocale,
 } from '@/lib/blog-content';
-import { Calendar, ArrowLeft } from 'lucide-react';
+import { Calendar, ArrowLeft, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
 import { isSupabaseConfigured } from '@/storage/database/supabase-client';
 
@@ -23,6 +24,7 @@ export default function BlogDetailPage() {
   const activeLocale = normalizeLocale(locale);
   const params = useParams();
   const [post, setPost] = useState<BlogPost | null>(null);
+  const [relatedPosts, setRelatedPosts] = useState<BlogPost[]>([]);
   const [loading, setLoading] = useState(true);
   const postId = String(params.id || '');
 
@@ -30,16 +32,27 @@ export default function BlogDetailPage() {
     let cancelled = false;
 
     async function fetchPost() {
-      const storedPost = getStoredBlogPosts(activeLocale).find(item => item.id === postId) || null;
+      const storedPosts = getStoredBlogPosts(activeLocale);
+      const storedPost = storedPosts.find(item => item.id === postId) || null;
+      const builtInPosts = getBuiltInBlogPosts(activeLocale);
       const builtInPost = getBuiltInBlogPost(postId, activeLocale);
       const fallbackPost = storedPost || builtInPost;
 
       if (!cancelled) {
         setPost(fallbackPost);
-        setLoading(false);
       }
 
+      const allPosts = [...storedPosts, ...builtInPosts];
+      const currentPost = allPosts.find(p => p.id === postId);
+      const category = currentPost?.category || '';
+
+      const related = allPosts
+        .filter(p => p.id !== postId && p.category === category)
+        .slice(0, 3);
+      setRelatedPosts(related);
+
       if (!isSupabaseConfigured()) {
+        setLoading(false);
         return;
       }
 
@@ -91,10 +104,15 @@ export default function BlogDetailPage() {
 
   const formatDate = (dateString: string) => {
     const dateLocale = activeLocale === 'zh' ? 'zh-CN' : activeLocale === 'zh-Hant' ? 'zh-TW' : activeLocale === 'en' ? 'en-US' : activeLocale;
-    return new Date(dateString).toLocaleDateString(dateLocale, {
+    const date = new Date(dateString);
+    return date.toLocaleString(dateLocale, {
       year: 'numeric',
-      month: 'long',
+      month: 'short',
       day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
     });
   };
 
@@ -157,6 +175,48 @@ export default function BlogDetailPage() {
               <div dangerouslySetInnerHTML={{ __html: post.content }} />
             </CardContent>
           </Card>
+
+          {relatedPosts.length > 0 && (
+            <section className="mt-12">
+              <h2 className="text-2xl font-bold mb-6 text-center">
+                {t('blog.relatedPosts') || 'Related Posts'}
+              </h2>
+              <div className="grid gap-4">
+                {relatedPosts.map((relatedPost) => (
+                  <Card key={relatedPost.id} className="overflow-hidden hover:shadow-md transition-shadow">
+                    <CardContent className="p-4">
+                      <div className="flex items-start gap-4">
+                        {relatedPost.cover_image && (
+                          <div className="flex-shrink-0">
+                            <img
+                              src={relatedPost.cover_image}
+                              alt={relatedPost.title}
+                              className="h-20 w-20 object-cover rounded-lg"
+                            />
+                          </div>
+                        )}
+                        <div className="flex-1">
+                          <Badge variant="secondary" className="mb-2">
+                            {relatedPost.category}
+                          </Badge>
+                          <h3 className="font-semibold mb-1">
+                            <Link href={`/blog/${relatedPost.id}`} className="text-primary hover:text-primary/80 transition-colors">
+                              {relatedPost.title}
+                            </Link>
+                          </h3>
+                          <p className="text-sm text-muted-foreground flex items-center gap-1">
+                            <Calendar className="h-3 w-3" />
+                            {formatDate(relatedPost.created_at)}
+                          </p>
+                        </div>
+                        <ArrowRight className="h-5 w-5 text-muted-foreground flex-shrink-0" />
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </section>
+          )}
         </div>
       </article>
     </div>
