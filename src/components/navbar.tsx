@@ -68,12 +68,14 @@ export function Navbar() {
   const navItems = isDesktop
     ? [
         { href: '/', label: t('nav.home') },
+        { href: `${process.env.NEXT_PUBLIC_APP_URL || DESKTOP_WEB_APP_URL}/about`, label: t('nav.about'), external: true },
         { href: `${process.env.NEXT_PUBLIC_APP_URL || DESKTOP_WEB_APP_URL}/pricing`, label: t('nav.pricing'), external: true },
       ]
     : [
         { href: '/', label: t('nav.home') },
         { href: '/blog', label: t('nav.blog') },
         { href: '/pricing', label: t('nav.pricing') },
+        { href: '/about', label: t('nav.about') },
       ];
 
   const isActive = (path: string) => pathname === path;

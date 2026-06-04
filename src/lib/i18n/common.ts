@@ -3,6 +3,7 @@ export const commonTranslations = {
     home: 'Home',
     blog: 'Blog',
     pricing: 'Pricing',
+    about: 'About',
     feedback: 'Feedback',
     login: 'Login',
     register: 'Register',
@@ -344,5 +345,70 @@ export const commonTranslations = {
     section8Content: 'We may update this Privacy Policy from time to time. We will notify you of significant changes through the Platform or by email.',
     section9Title: '9. Contact',
     section9Content: 'For privacy-related inquiries, please contact us at privacy@clipop.ai.',
+  },
+  about: {
+    title: 'About Clipop AI',
+    subtitle: 'Transforming Video Content Creation with AI',
+    hero: {
+      badge: 'AI-Powered Innovation',
+      title: 'Welcome to the Future of Video Editing',
+      subtitle: 'We build intelligent tools that help creators turn long-form video into engaging short clips automatically.',
+    },
+    mission: {
+      title: 'Our Mission',
+      content: 'At Clipop AI, we believe that every great video deserves to be seen. Our mission is to democratize content creation by making AI-powered video editing accessible to creators everywhere.',
+      values: [
+        { icon: 'sparkles', title: 'Innovation', desc: 'Pushing the boundaries of AI video technology' },
+        { icon: 'users', title: 'Creators First', desc: 'Building tools that actually solve real problems' },
+        { icon: 'zap', title: 'Efficiency', desc: 'Saving time with intelligent automation' },
+        { icon: 'shield', title: 'Privacy', desc: 'Keeping your content secure and your rights protected' },
+      ],
+    },
+    whatWeDo: {
+      title: 'What We Do',
+      intro: 'Clipop AI is an AI-powered platform that transforms long videos into shareable short clips. We combine cutting-edge AI algorithms with intuitive design to make video editing faster and smarter than ever before.',
+      features: [
+        {
+          title: 'AI Highlight Detection',
+          desc: 'Our AI analyzes video content to automatically identify the most engaging moments, saving you hours of manual reviewing.',
+        },
+        {
+          title: 'Multi-Platform Support',
+          desc: 'Import from YouTube, Bilibili, or upload your own local video files. We support all major video formats.',
+        },
+        {
+          title: 'Quick Export',
+          desc: 'Download your clips in multiple formats, optimized for every social platform from TikTok to YouTube Shorts.',
+        },
+      ],
+    },
+    whyChoose: {
+      title: 'Why Choose Clipop AI',
+      features: [
+        { title: 'Time-Saving', desc: 'Process videos in minutes, not hours' },
+        { title: 'High-Quality Results', desc: 'AI ensures the best highlights are captured' },
+        { title: 'User-Friendly', desc: 'Intuitive interface for creators of all levels' },
+        { title: 'Cost-Effective', desc: 'Affordable plans for every budget' },
+      ],
+    },
+    timeline: {
+      title: 'Our Journey',
+      events: [
+        { year: '2025', title: 'The Beginning', desc: 'Started as a vision to make video editing accessible' },
+        { year: '2025', title: 'First Launch', desc: 'Launched the beta version for early adopters' },
+        { year: '2026', title: 'Full Release', desc: 'Officially launched with AI-powered features' },
+        { year: '2026', title: 'Global Expansion', desc: 'Supporting 32 languages and counting' },
+      ],
+    },
+    team: {
+      title: 'Our Team',
+      intro: 'We are a passionate group of engineers, designers, and product thinkers building the future of content creation.',
+    },
+    cta: {
+      title: 'Ready to Transform Your Videos?',
+      subtitle: 'Join thousands of creators already using Clipop AI',
+      button: 'Get Started for Free',
+    },
+    seoKeywords: 'AI video editor, video highlight tool, automatic video clipping, YouTube Shorts generator, TikTok video maker, AI video processing, video content creation, short-form video, AI content creation, video editing tool, AI video clipping, content repurposing, VidShorter AI, Clipop AI',
   },
 };
