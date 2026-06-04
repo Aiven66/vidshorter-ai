@@ -4,56 +4,68 @@ import { useLocale } from '@/lib/locale-context';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { Sparkles, Users, Zap, Shield, ArrowRight, Target, Award, Globe, TrendingUp, Video, Lightbulb } from 'lucide-react';
+import { commonTranslations } from '@/lib/i18n/common';
 
 export default function AboutPage() {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
+  
+  // Get translations - use locale-specific or fallback to English
+  const translations = locale === 'en' || !locale ? commonTranslations.about : (commonTranslations.about as any);
 
   const stats = [
-    { value: '50K+', label: t('about.stats.activeUsers'), icon: Users },
-    { value: '1M+', label: t('about.stats.videosProcessed'), icon: Video },
-    { value: '98%', label: t('about.stats.userSatisfaction'), icon: Award },
-    { value: '32', label: t('about.stats.languages'), icon: Globe },
+    { value: '50K+', label: translations.stats?.activeUsers || commonTranslations.about.stats?.activeUsers || 'Active Users', icon: Users },
+    { value: '1M+', label: translations.stats?.videosProcessed || commonTranslations.about.stats?.videosProcessed || 'Videos Processed', icon: Video },
+    { value: '98%', label: translations.stats?.userSatisfaction || commonTranslations.about.stats?.userSatisfaction || 'User Satisfaction', icon: Award },
+    { value: '32', label: translations.stats?.languages || commonTranslations.about.stats?.languages || 'Languages', icon: Globe },
   ];
 
   const features = [
     {
       icon: Lightbulb,
-      title: t('about.features.aiIntelligence.title'),
-      desc: t('about.features.aiIntelligence.desc'),
+      title: translations.features?.aiIntelligence?.title || commonTranslations.about.features?.aiIntelligence?.title || 'AI-Powered Intelligence',
+      desc: translations.features?.aiIntelligence?.desc || commonTranslations.about.features?.aiIntelligence?.desc || 'Advanced AI algorithms automatically analyze video content.',
     },
     {
       icon: Zap,
-      title: t('about.features.fastProcessing.title'),
-      desc: t('about.features.fastProcessing.desc'),
+      title: translations.features?.fastProcessing?.title || commonTranslations.about.features?.fastProcessing?.title || 'Lightning Fast Processing',
+      desc: translations.features?.fastProcessing?.desc || commonTranslations.about.features?.fastProcessing?.desc || 'Process long-form videos in minutes.',
     },
     {
       icon: TrendingUp,
-      title: t('about.features.multiPlatform.title'),
-      desc: t('about.features.multiPlatform.desc'),
+      title: translations.features?.multiPlatform?.title || commonTranslations.about.features?.multiPlatform?.title || 'Multi-Platform Support',
+      desc: translations.features?.multiPlatform?.desc || commonTranslations.about.features?.multiPlatform?.desc || 'Import from YouTube, Bilibili, or upload local files.',
     },
     {
       icon: Shield,
-      title: t('about.features.privacyFirst.title'),
-      desc: t('about.features.privacyFirst.desc'),
+      title: translations.features?.privacyFirst?.title || commonTranslations.about.features?.privacyFirst?.title || 'Privacy First',
+      desc: translations.features?.privacyFirst?.desc || commonTranslations.about.features?.privacyFirst?.desc || 'Your content stays yours.',
     },
   ];
 
   const values = [
     {
       icon: Target,
-      title: t('about.values.userCentric.title'),
-      desc: t('about.values.userCentric.desc'),
+      title: translations.values?.userCentric?.title || commonTranslations.about.values?.userCentric?.title || 'User-Centric Innovation',
+      desc: translations.values?.userCentric?.desc || commonTranslations.about.values?.userCentric?.desc || 'We build tools that solve real problems.',
     },
     {
       icon: Zap,
-      title: t('about.values.continuous.title'),
-      desc: t('about.values.continuous.desc'),
+      title: translations.values?.continuous?.title || commonTranslations.about.values?.continuous?.title || 'Continuous Improvement',
+      desc: translations.values?.continuous?.desc || commonTranslations.about.values?.continuous?.desc || 'Regular updates based on user feedback.',
     },
     {
       icon: Users,
-      title: t('about.values.community.title'),
-      desc: t('about.values.community.desc'),
+      title: translations.values?.community?.title || commonTranslations.about.values?.community?.title || 'Global Community',
+      desc: translations.values?.community?.desc || commonTranslations.about.values?.community?.desc || 'Supporting creators in 32 languages.',
     },
+  ];
+
+  // Get benefits as array
+  const benefits = translations.productVision?.benefits || commonTranslations.about.productVision?.benefits || [
+    'Save 80% of your editing time',
+    'Increase content output by 3x',
+    'Boost engagement rates',
+    'Reach wider audiences',
   ];
 
   return (
@@ -70,21 +82,21 @@ export default function AboutPage() {
           <div className="max-w-5xl mx-auto text-center">
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 text-primary text-sm font-medium mb-8">
               <Sparkles className="w-4 h-4" />
-              {t('about.hero.badge')}
+              {translations.hero?.badge || commonTranslations.about.hero?.badge || 'AI-Powered Video Innovation'}
             </div>
 
             <h1 className="text-4xl md:text-5xl lg:text-7xl font-black tracking-tight mb-8 bg-gradient-to-r from-foreground via-primary/80 to-foreground bg-clip-text text-transparent">
-              {t('about.hero.title')}
+              {translations.hero?.title || commonTranslations.about.hero?.title || 'Transform Your Video Content'}
             </h1>
 
             <p className="text-lg md:text-xl text-muted-foreground mb-12 max-w-3xl mx-auto leading-relaxed">
-              {t('about.hero.subtitle')}
+              {translations.hero?.subtitle || commonTranslations.about.hero?.subtitle || 'Clipop AI is the leading AI-powered video clipping platform.'}
             </p>
 
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <Button size="lg" className="text-base px-8" asChild>
                 <Link href="/">
-                  {t('about.hero.getStarted')}
+                  {translations.hero?.getStarted || commonTranslations.about.hero?.getStarted || 'Get Started Free'}
                   <ArrowRight className="w-4 h-4 ml-2" />
                 </Link>
               </Button>
@@ -114,17 +126,17 @@ export default function AboutPage() {
         <div className="container mx-auto px-4">
           <div className="max-w-6xl mx-auto">
             <div className="text-center mb-16">
-              <h2 className="text-3xl md:text-4xl font-bold mb-4">{t('about.productVision.title')}</h2>
-              <p className="text-lg text-muted-foreground max-w-2xl mx-auto">{t('about.productVision.subtitle')}</p>
+              <h2 className="text-3xl md:text-4xl font-bold mb-4">{translations.productVision?.title || commonTranslations.about.productVision?.title || 'Our Product Vision'}</h2>
+              <p className="text-lg text-muted-foreground max-w-2xl mx-auto">{translations.productVision?.subtitle || commonTranslations.about.productVision?.subtitle || 'Clipop AI empowers content creators.'}</p>
             </div>
 
             <div className="grid md:grid-cols-2 gap-12 items-center">
               <div className="order-2 md:order-1">
-                <h3 className="text-2xl md:text-3xl font-bold mb-6">{t('about.productVision.futureTitle')}</h3>
-                <p className="text-muted-foreground mb-6 leading-relaxed">{t('about.productVision.futurePara1')}</p>
-                <p className="text-muted-foreground mb-8 leading-relaxed">{t('about.productVision.futurePara2')}</p>
+                <h3 className="text-2xl md:text-3xl font-bold mb-6">{translations.productVision?.futureTitle || commonTranslations.about.productVision?.futureTitle || 'The Future of Video Content Creation'}</h3>
+                <p className="text-muted-foreground mb-6 leading-relaxed">{translations.productVision?.futurePara1 || commonTranslations.about.productVision?.futurePara1 || "In today's fast-paced digital landscape..."}</p>
+                <p className="text-muted-foreground mb-8 leading-relaxed">{translations.productVision?.futurePara2 || commonTranslations.about.productVision?.futurePara2 || 'Clipop AI solves this problem...'}</p>
                 <ul className="space-y-4">
-                  {t('about.productVision.benefits').map((benefit, index) => (
+                  {benefits.map((benefit, index) => (
                     <li key={index} className="flex items-center gap-3">
                       <div className="w-2 h-2 rounded-full bg-primary"></div>
                       <span className="font-medium">{benefit}</span>
@@ -154,8 +166,8 @@ export default function AboutPage() {
         <div className="container mx-auto px-4">
           <div className="max-w-6xl mx-auto">
             <div className="text-center mb-16">
-              <h2 className="text-3xl md:text-4xl font-bold mb-4">{t('about.features.title')}</h2>
-              <p className="text-lg text-muted-foreground max-w-2xl mx-auto">{t('about.features.subtitle')}</p>
+              <h2 className="text-3xl md:text-4xl font-bold mb-4">{translations.features?.title || commonTranslations.about.features?.title || 'Core Features'}</h2>
+              <p className="text-lg text-muted-foreground max-w-2xl mx-auto">{translations.features?.subtitle || commonTranslations.about.features?.subtitle || 'Everything you need to transform your video content efficiently'}</p>
             </div>
 
             <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -184,8 +196,8 @@ export default function AboutPage() {
         <div className="container mx-auto px-4">
           <div className="max-w-6xl mx-auto">
             <div className="text-center mb-16">
-              <h2 className="text-3xl md:text-4xl font-bold mb-4">{t('about.values.title')}</h2>
-              <p className="text-lg text-muted-foreground max-w-2xl mx-auto">{t('about.values.subtitle')}</p>
+              <h2 className="text-3xl md:text-4xl font-bold mb-4">{translations.values?.title || commonTranslations.about.values?.title || 'Our Core Values'}</h2>
+              <p className="text-lg text-muted-foreground max-w-2xl mx-auto">{translations.values?.subtitle || commonTranslations.about.values?.subtitle || 'What drives us to deliver the best experience for our users'}</p>
             </div>
 
             <div className="grid md:grid-cols-3 gap-8">
@@ -211,22 +223,22 @@ export default function AboutPage() {
         <div className="container mx-auto px-4">
           <div className="max-w-4xl mx-auto">
             <div className="text-center mb-12">
-              <h2 className="text-3xl md:text-4xl font-bold mb-4">{t('about.geo.title')}</h2>
-              <p className="text-lg text-muted-foreground">{t('about.geo.subtitle')}</p>
+              <h2 className="text-3xl md:text-4xl font-bold mb-4">{translations.geo?.title || commonTranslations.about.geo?.title || 'Global Reach, Local Impact'}</h2>
+              <p className="text-lg text-muted-foreground">{translations.geo?.subtitle || commonTranslations.about.geo?.subtitle || 'Serving creators across the globe with localized experiences'}</p>
             </div>
 
             <div className="grid md:grid-cols-3 gap-8">
               <div className="p-6 rounded-2xl bg-primary/5 border border-primary/10">
-                <h3 className="text-lg font-semibold mb-3">{t('about.geo.seo.title')}</h3>
-                <p className="text-muted-foreground text-sm leading-relaxed">{t('about.geo.seo.desc')}</p>
+                <h3 className="text-lg font-semibold mb-3">{translations.geo?.seo?.title || commonTranslations.about.geo?.seo?.title || 'SEO Optimization'}</h3>
+                <p className="text-muted-foreground text-sm leading-relaxed">{translations.geo?.seo?.desc || commonTranslations.about.geo?.seo?.desc || 'Our platform is optimized for search engines.'}</p>
               </div>
               <div className="p-6 rounded-2xl bg-chart-4/5 border border-chart-4/10">
-                <h3 className="text-lg font-semibold mb-3">{t('about.geo.multiLang.title')}</h3>
-                <p className="text-muted-foreground text-sm leading-relaxed">{t('about.geo.multiLang.desc')}</p>
+                <h3 className="text-lg font-semibold mb-3">{translations.geo?.multiLang?.title || commonTranslations.about.geo?.multiLang?.title || 'Multi-Language Support'}</h3>
+                <p className="text-muted-foreground text-sm leading-relaxed">{translations.geo?.multiLang?.desc || commonTranslations.about.geo?.multiLang?.desc || 'Available in 32 languages worldwide.'}</p>
               </div>
               <div className="p-6 rounded-2xl bg-chart-3/5 border border-chart-3/10">
-                <h3 className="text-lg font-semibold mb-3">{t('about.geo.regional.title')}</h3>
-                <p className="text-muted-foreground text-sm leading-relaxed">{t('about.geo.regional.desc')}</p>
+                <h3 className="text-lg font-semibold mb-3">{translations.geo?.regional?.title || commonTranslations.about.geo?.regional?.title || 'Regional Optimization'}</h3>
+                <p className="text-muted-foreground text-sm leading-relaxed">{translations.geo?.regional?.desc || commonTranslations.about.geo?.regional?.desc || 'Optimized for regional content platforms.'}</p>
               </div>
             </div>
           </div>
@@ -243,11 +255,11 @@ export default function AboutPage() {
                 <div className="absolute -bottom-32 -left-32 w-64 h-64 bg-white/5 rounded-full blur-3xl"></div>
               </div>
               <div className="relative z-10 text-center text-white">
-                <h2 className="text-3xl md:text-4xl font-bold mb-4">{t('about.cta.title')}</h2>
-                <p className="text-white/80 text-lg mb-8 max-w-2xl mx-auto">{t('about.cta.subtitle')}</p>
+                <h2 className="text-3xl md:text-4xl font-bold mb-4">{translations.cta?.title || commonTranslations.about.cta?.title || 'Ready to Transform Your Videos?'}</h2>
+                <p className="text-white/80 text-lg mb-8 max-w-2xl mx-auto">{translations.cta?.subtitle || commonTranslations.about.cta?.subtitle || 'Join 50,000+ creators who are using Clipop AI'}</p>
                 <Button size="lg" className="bg-white text-primary hover:bg-white/90 text-base px-8" asChild>
                   <Link href="/">
-                    {t('about.cta.button')}
+                    {translations.cta?.button || commonTranslations.about.cta?.button || 'Get Started for Free'}
                     <ArrowRight className="w-4 h-4 ml-2" />
                   </Link>
                 </Button>
