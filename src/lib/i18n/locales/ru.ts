@@ -3,7 +3,7 @@ import { commonTranslations } from '../common';
 const translations = {
   ...commonTranslations,
   nav: {
-  home: 'Главная', blog: 'Блог', pricing: 'Цены', login: 'Войти', register: 'Регистрация', dashboard: 'Панель управления', admin: 'Панель администратора', logout: 'Выйти', credits: 'Кредиты', download: 'Скачать приложение', light: 'Светлая', dark: 'Тёмная',
+  home: 'Главная', blog: 'Блог', pricing: 'Цены', about: 'О нас', login: 'Войти', register: 'Регистрация', dashboard: 'Панель управления', admin: 'Панель администратора', logout: 'Выйти', credits: 'Кредиты', download: 'Скачать приложение', light: 'Светлая', dark: 'Тёмная',
   },
   common: {
   error: 'Произошла ошибка', ready: 'Готово', failed: 'Не удалось', saving: 'Сохранение...', score: 'Оценка', user: 'Пользователь',

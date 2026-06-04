@@ -3,7 +3,7 @@ import { commonTranslations } from '../common';
 const translations = {
   ...commonTranslations,
   nav: {
-  home: 'Start', blog: 'Blog', pricing: 'Preise', login: 'Anmelden', register: 'Registrieren', dashboard: 'Dashboard', admin: 'Admin-Panel', logout: 'Abmelden', credits: 'Guthaben', download: 'App Herunterladen', light: 'Hell', dark: 'Dunkel',
+  home: 'Start', blog: 'Blog', pricing: 'Preise', about: 'Über uns', login: 'Anmelden', register: 'Registrieren', dashboard: 'Dashboard', admin: 'Admin-Panel', logout: 'Abmelden', credits: 'Guthaben', download: 'App Herunterladen', light: 'Hell', dark: 'Dunkel',
   },
   footer: {
   desc: 'Verwandeln Sie Ihre langen Videos mit KI-gestützter Analyse und Bearbeitung in fesselnde kurze Clips.', quickLinks: 'Schnelllinks', legal: 'Rechtliches', privacy: 'Datenschutzrichtlinie', terms: 'Nutzungsbedingungen', contact: 'Kontakt', rights: 'Alle Rechte vorbehalten.',
@@ -78,6 +78,93 @@ const translations = {
   privacy: {
     title: 'Datenschutzrichtlinie',   lastUpdated: 'Letzte Aktualisierung: 29. Mai 2026',   section1Title: '1. Informationen, die wir sammeln',   section1Content: 'Wir sammeln Informationen, die Sie direkt angeben, einschließlich Ihres Namens, Ihrer E-Mail-Adresse und Ihrer Kontodaten bei der Registrierung. Wir sammeln auch Nutzungsdaten wie verarbeitete Videos und generierte Clips.',   section2Title: '2. Wie wir Ihre Informationen verwenden',   section2Content: 'Wir verwenden Ihre Informationen, um unsere Dienste bereitzustellen und zu verbessern, Transaktionen zu verarbeiten, wichtige Benachrichtigungen zu senden und die Plattformsicherheit zu gewährleisten.',   section3Title: '3. Datenspeicherung und Sicherheit',   section3Content: 'Ihre Daten werden auf sicheren Servern mit branchenüblicher Verschlüsselung gespeichert. Wir implementieren angemessene technische und organisatorische Maßnahmen zum Schutz Ihrer persönlichen Informationen.',   section4Title: '4. Drittanbieter-Dienste',   section4Content: 'Wir können Drittanbieter-Dienste für Authentifizierung (Google OAuth), Zahlungsabwicklung und Analysen nutzen. Diese Dienste haben eigene Datenschutzrichtlinien zur Datenerhebung.',   section5Title: '5. Cookies',   section5Content: 'Wir verwenden Cookies und ähnliche Technologien, um Ihre Sitzung aufrechtzuerhalten, Ihre Einstellungen zu speichern und Nutzungsmuster zu analysieren. Sie können Cookie-Einstellungen in Ihren Browser-Einstellungen verwalten.',   section6Title: '6. Ihre Rechte',   section6Content: 'Sie haben das Recht, auf Ihre persönlichen Informationen zuzugreifen, diese zu korrigieren oder zu löschen. Sie können Ihre Kontoeinstellungen verwalten oder uns kontaktieren, um diese Rechte auszuüben.',   section7Title: '7. Datenaufbewahrung',   section7Content: 'Wir bewahren Ihre persönlichen Informationen so lange auf, wie Ihr Konto aktiv ist oder wie für die Diensterbringung erforderlich. Verarbeitete Videoinhalte werden gemäß Ihrem Abonnementplan aufbewahrt.',   section8Title: '8. Änderungen an dieser Richtlinie',   section8Content: 'Wir können diese Datenschutzrichtlinie von Zeit zu Zeit aktualisieren. Wir werden Sie über bedeutende Änderungen über die Plattform oder per E-Mail informieren.',   section9Title: '9. Kontakt',   section9Content: 'Bei datenschutzbezogenen Anfragen kontaktieren Sie uns bitte unter privacy@clipop.ai.'
   },
+,
+{
+    about: {
+      hero: {
+        badge: KI-gestützte Video-Innovation,
+        title: Transformieren Sie Ihre Videoinhalte,
+        subtitle: Clipop AI ist die führende KI-gestützte Video-Clipping-Plattform, die lange Videos in ansprechende Kurzform-Inhalte transformiert. Von über 50.000 Creators weltweit genutzt,
+        getStarted: Kostenlos Starten
+      },
+      stats: {
+        activeUsers: Aktive Nutzer,
+        videosProcessed: Verarbeitete Videos,
+        userSatisfaction: Benutzerzufriedenheit,
+        languages: Sprachen
+      },
+      productVision: {
+        title: Unsere Produktvision,
+        subtitle: Clipop AI ermöglicht Content-Erstellern, das volle Potenzial ihrer Videoinhalte durch intelligente Automatisierung auszuschöpfen.,
+        futureTitle: Die Zukunft der Video-Content-Erstellung,
+        futurePara1: In der heutigen schnelllebigen digitalen Welt dominieren Kurzform-Videoinhalte die sozialen Plattformen. Das Erstellen ansprechender Kurzclips aus langen Videos ist jedoch zeit- und ressourcenintensiv.,
+        futurePara2: Clipop AI löst dieses Problem durch den Einsatz modernster KI-Technologie, um automatisch die ansprechendsten Momente in Ihren Videos zu identifizieren und Ihnen stundenlange manuelle Bearbeitung zu ersparen und gleichzeitig hochwertige Ergebnisse zu gewährleisten.,
+        benefits: [
+          Sparen Sie 80% Ihrer Bearbeitungszeit,
+          Erhöhen Sie die Content-Produktion um 3x,
+          Steigern Sie Engagement-Raten,
+          Erreichen Sie breitere Zielgruppen
+        ]
+      },
+      features: {
+        title: Kernfunktionen,
+        subtitle: Alles was Sie brauchen, um Ihre Videoinhalte effizient zu transformieren,
+        aiIntelligence: {
+          title: KI-gestützte Intelligenz,
+          desc: Fortschrittliche KI-Algorithmen analysieren automatisch Videoinhalte, um die ansprechendsten Momente zu identifizieren und Erstellern stundenlange manuelle Bearbeitung zu ersparen.
+        },
+        fastProcessing: {
+          title: Blitzschnelle Verarbeitung,
+          desc: Verarbeiten Sie lange Videos in Minuten, nicht Stunden. Unsere optimierte Pipeline liefert Highlights sofort.
+        },
+        multiPlatform: {
+          title: Multi-Plattform-Unterstützung,
+          desc: Importieren Sie von YouTube, Bilibili oder laden Sie lokale Dateien hoch. Exportieren Sie optimierte Clips für TikTok, YouTube Shorts, Instagram und mehr.
+        },
+        privacyFirst: {
+          title: Datenschutz Zuerst,
+          desc: Ihre Inhalte gehören Ihnen. Wir speichern Ihre Originalvideos niemals und verarbeiten alles sicher.
+        }
+      },
+      values: {
+        title: Unsere Kernwerte,
+        subtitle: Was uns antreibt, unseren Nutzern das beste Erlebnis zu bieten,
+        userCentric: {
+          title: Nutzerzentrierte Innovation,
+          desc: Wir bauen Werkzeuge, die echte Probleme für Content-Ersteller weltweit lösen.
+        },
+        continuous: {
+          title: Kontinuierliche Verbesserung,
+          desc: Regelmäßige Updates basierend auf Nutzer-Feedback zur Verbesserung Ihrer Erfahrung.
+        },
+        community: {
+          title: Globale Community,
+          desc: Unterstützung von Erstellern in 32 Sprachen auf jedem Kontinent.
+        }
+      },
+      geo: {
+        title: Globale Reichweite, Lokale Wirkung,
+        subtitle: Creators auf der ganzen Welt mit lokalisierten Erlebnissen dienen,
+        seo: {
+          title: SEO-Optimierung,
+          desc: Unsere Plattform ist für Suchmaschinen optimiert und hilft Ihren Inhalten, entdeckt zu werden. KI-generierte Metadaten und Tags verbessern die Auffindbarkeit auf allen Plattformen.
+        },
+        multiLang: {
+          title: Mehrsprachige Unterstützung,
+          desc: Verfügbar in 32 Sprachen weltweit. Lokalisierte Interfaces und Support stellen sicher, dass Creator überall Clipop AI in ihrer Muttersprache nutzen können.
+        },
+        regional: {
+          title: Regionale Optimierung,
+          desc: Optimiert für regionale Content-Plattformen einschließlich YouTube, Bilibili, TikTok und mehr. Maßgeschneiderte Export-Einstellungen für jeden Markt.
+        }
+      },
+      cta: {
+        title: Bereit, Ihre Videos zu transformieren?,
+        subtitle: Schließen Sie sich über 50.000 Erstellern an, die Clipop AI nutzen, um das Potenzial ihrer Inhalte zu maximieren,
+        button: Kostenlos Starten
+      }
+    }
+  }
 };
 
-export default translations;
+export default

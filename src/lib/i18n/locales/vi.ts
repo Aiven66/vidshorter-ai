@@ -3,7 +3,7 @@ import { commonTranslations } from '../common';
 const translations = {
   ...commonTranslations,
   nav: {
-  home: 'Trang Chủ', blog: 'Blog', pricing: 'Giá Cả', login: 'Đăng Nhập', register: 'Đăng Ký', dashboard: 'Bảng Điều Khiển', admin: 'Bảng Quản Trị', logout: 'Đăng Xuất', credits: 'Tín Dụng', download: 'Tải Ứng Dụng', light: 'Sáng', dark: 'Tối',
+  home: 'Trang Chủ', blog: 'Blog', pricing: 'Giá Cả', about: 'Về chúng tôi', login: 'Đăng Nhập', register: 'Đăng Ký', dashboard: 'Bảng Điều Khiển', admin: 'Bảng Quản Trị', logout: 'Đăng Xuất', credits: 'Tín Dụng', download: 'Tải Ứng Dụng', light: 'Sáng', dark: 'Tối',
   },
   common: {
   error: 'Lỗi', ready: 'Sẵn sàng', failed: 'Thất bại', saving: 'Đang lưu...', score: 'Điểm', user: 'Người dùng',

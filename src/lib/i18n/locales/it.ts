@@ -3,7 +3,7 @@ import { commonTranslations } from '../common';
 const translations = {
   ...commonTranslations,
   nav: {
-  home: 'Home', blog: 'Blog', pricing: 'Prezzi', login: 'Accedi', register: 'Registrati', dashboard: 'Dashboard', admin: 'Pannello admin', logout: 'Esci', credits: 'Crediti', download: 'Scarica App', light: 'Chiaro', dark: 'Scuro',
+  home: 'Home', blog: 'Blog', pricing: 'Prezzi', about: 'Chi siamo', login: 'Accedi', register: 'Registrati', dashboard: 'Dashboard', admin: 'Pannello admin', logout: 'Esci', credits: 'Crediti', download: 'Scarica App', light: 'Chiaro', dark: 'Scuro',
   },
   footer: {
   desc: 'Trasforma i tuoi video lunghi in clip brevi coinvolgenti con analisi e montaggio AI.', quickLinks: 'Link Rapidi', legal: 'Legale', privacy: 'Informativa sulla Privacy', terms: 'Termini di Servizio', contact: 'Contatti', rights: 'Tutti i diritti riservati.',

@@ -3,7 +3,7 @@ import { commonTranslations } from '../common';
 const translations = {
   ...commonTranslations,
   nav: {
-  home: 'Hjem', blog: 'Blog', pricing: 'Priser', login: 'Log ind', register: 'Opret', dashboard: 'Dashboard', admin: 'Admin Panel', logout: 'Log ud', credits: 'Krediter', download: 'Download App', light: 'Lyst', dark: 'Mørkt',
+  home: 'Hjem', blog: 'Blog', pricing: 'Priser', about: 'Om os', login: 'Log ind', register: 'Opret', dashboard: 'Dashboard', admin: 'Admin Panel', logout: 'Log ud', credits: 'Krediter', download: 'Download App', light: 'Lyst', dark: 'Mørkt',
   },
   footer: {
   desc: 'Forvandl dine lange videoer til fængende korte klip med AI-drevet analyse og redigering.', quickLinks: 'Hurtige Links', legal: 'Juridisk', privacy: 'Privatlivspolitik', terms: 'Servicevilkår', contact: 'Kontakt', rights: 'Alle rettigheder forbeholdes.',

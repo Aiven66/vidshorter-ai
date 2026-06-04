@@ -3,7 +3,7 @@ import { commonTranslations } from '../common';
 const translations = {
   ...commonTranslations,
   nav: {
-  home: 'Accueil', blog: 'Blog', pricing: 'Tarifs', login: 'Connexion', register: 'Inscription', dashboard: 'Tableau de bord', admin: 'Panel admin', logout: 'Déconnexion', credits: 'Crédits', download: 'Télécharger l\'App', light: 'Clair', dark: 'Sombre',
+  home: 'Accueil', blog: 'Blog', pricing: 'Tarifs', about: 'À propos', login: 'Connexion', register: 'Inscription', dashboard: 'Tableau de bord', admin: 'Panel admin', logout: 'Déconnexion', credits: 'Crédits', download: 'Télécharger l\'App', light: 'Clair', dark: 'Sombre',
   },
   footer: {
   desc: 'Transformez vos vidéos longues en clips courts captivants grâce à l\'analyse et au montage alimentés par l\'IA.', quickLinks: 'Liens rapides', legal: 'Mentions légales', privacy: 'Politique de confidentialité', terms: 'Conditions d\'utilisation', contact: 'Contact', rights: 'Tous droits réservés.',
@@ -78,6 +78,93 @@ const translations = {
   privacy: {
     title: 'Politique de confidentialité',   lastUpdated: 'Dernière mise à jour : 29 mai 2026',   section1Title: '1. Informations que nous collectons',   section1Content: 'Nous collectons les informations que vous fournissez directement, y compris votre nom, votre adresse e-mail et vos identifiants de compte lors de votre inscription. Nous collectons également des données d\'utilisation telles que les vidéos traitées et les clips générés.',   section2Title: '2. Comment nous utilisons vos informations',   section2Content: 'Nous utilisons vos informations pour fournir et améliorer nos services, traiter les transactions, envoyer des notifications importantes et assurer la sécurité de la plateforme.',   section3Title: '3. Stockage et sécurité des données',   section3Content: 'Vos données sont stockées sur des serveurs sécurisés avec un chiffrement conforme aux normes de l\'industrie. Nous mettons en œuvre des mesures techniques et organisationnelles appropriées pour protéger vos informations personnelles.',   section4Title: '4. Services tiers',   section4Content: 'Nous pouvons utiliser des services tiers pour l\'authentification (Google OAuth), le traitement des paiements et l\'analyse. Ces services ont leurs propres politiques de confidentialité régissant la collecte de données.',   section5Title: '5. Cookies',   section5Content: 'Nous utilisons des cookies et des technologies similaires pour maintenir votre session, mémoriser vos préférences et analyser les modes d\'utilisation. Vous pouvez gérer les préférences de cookies via les paramètres de votre navigateur.',   section6Title: '6. Vos droits',   section6Content: 'Vous avez le droit d\'accéder, de corriger ou de supprimer vos informations personnelles. Vous pouvez gérer les paramètres de votre compte ou nous contacter pour exercer ces droits.',   section7Title: '7. Conservation des données',   section7Content: 'Nous conservons vos informations personnelles aussi longtemps que votre compte est actif ou selon les besoins pour fournir les services. Le contenu vidéo traité est conservé conformément à votre plan d\'abonnement.',   section8Title: '8. Modifications de cette politique',   section8Content: 'Nous pouvons mettre à jour cette Politique de confidentialité de temps à autre. Nous vous informerons des changements importants via la Plateforme ou par e-mail.',   section9Title: '9. Contact',   section9Content: 'Pour les demandes relatives à la confidentialité, veuillez nous contacter à privacy@clipop.ai.'
   },
+,
+{
+    about: {
+      hero: {
+        badge: Innovation Vidéo Assistée par IA,
+        title: Transformez Votre Contenu Vidéo,
+        subtitle: Clipop AI est la principale plateforme de découpage vidéo assistée par IA qui transforme des vidéos longues en contenu court engageant. Utilisée par plus de 50 000 créateurs dans le monde entier,
+        getStarted: Commencer Gratuitement
+      },
+      stats: {
+        activeUsers: Utilisateurs Actifs,
+        videosProcessed: Vidéos Traitées,
+        userSatisfaction: Satisfaction Utilisateur,
+        languages: Langues
+      },
+      productVision: {
+        title: Notre Vision Produit,
+        subtitle: Clipop AI permet aux créateurs de contenu de libérer le plein potentiel de leur contenu vidéo grâce à l'automatisation intelligente.,
+        futureTitle: L'Avenir de la Création de Contenu Vidéo,
+        futurePara1: Dans le paysage numérique actuel, le contenu vidéo court domine les plateformes sociales. Cependant, créer des clips courts engageants à partir de vidéos longues prend du temps et des ressources.,
+        futurePara2: Clipop AI résout ce problème en utilisant l'intelligence artificielle la plus avancée pour identifier automatiquement les moments les plus engageants de vos vidéos, vous faisant économiser des heures de montage manuel tout en garantissant des résultats de haute qualité.,
+        benefits: [
+          Économisez 80% de votre temps de montage,
+          Augmentez la production de contenu de 3x,
+          Améliorez les taux d'engagement,
+          Touchez des audiences plus larges
+        ]
+      },
+      features: {
+        title: Fonctionnalités Principales,
+        subtitle: Tout ce dont vous avez besoin pour transformer efficacement votre contenu vidéo,
+        aiIntelligence: {
+          title: Intelligence Assistée par IA,
+          desc: Des algorithmes IA avancés analysent automatiquement le contenu vidéo pour identifier les moments les plus engageants, faisant gagner aux créateurs des heures de montage manuel.
+        },
+        fastProcessing: {
+          title: Traitement Ultra-Rapide,
+          desc: Traitez des vidéos longues en minutes, pas en heures. Notre pipeline optimisé livre les moments forts instantanément.
+        },
+        multiPlatform: {
+          title: Support Multiplateforme,
+          desc: Importez depuis YouTube, Bilibili, ou téléchargez des fichiers locaux. Exportez des clips optimisés pour TikTok, YouTube Shorts, Instagram et plus.
+        },
+        privacyFirst: {
+          title: Confidentialité Avant Tout,
+          desc: Votre contenu vous appartient. Nous ne stockons jamais vos vidéos originales et traitons tout en toute sécurité.
+        }
+      },
+      values: {
+        title: Nos Valeurs Fondamentales,
+        subtitle: Ce qui nous pousse à offrir la meilleure expérience à nos utilisateurs,
+        userCentric: {
+          title: Innovation Centrée sur l'Utilisateur,
+          desc: Nous construisons des outils qui résolvent de vrais problèmes pour les créateurs de contenu du monde entier.
+        },
+        continuous: {
+          title: Amélioration Continue,
+          desc: Mises à jour régulières basées sur les commentaires des utilisateurs pour améliorer votre expérience.
+        },
+        community: {
+          title: Communauté Mondiale,
+          desc: Soutenir les créateurs en 32 langues sur chaque continent.
+        }
+      },
+      geo: {
+        title: Portée Mondiale, Impact Local,
+        subtitle: Servir les créateurs du monde entier avec des expériences localisées,
+        seo: {
+          title: Optimisation SEO,
+          desc: Notre plateforme est optimisée pour les moteurs de recherche, aidant votre contenu à être découvert. Métadonnées et tags générés par IA améliorent la découverte sur toutes les plateformes.
+        },
+        multiLang: {
+          title: Support Multilingue,
+          desc: Disponible en 32 langues dans le monde entier. Interfaces et support localisés assurent que les créateurs partout peuvent utiliser Clipop AI dans leur langue maternelle.
+        },
+        regional: {
+          title: Optimisation Régionale,
+          desc: Optimisé pour les plateformes de contenu régionales incluant YouTube, Bilibili, TikTok et plus. Paramètres d'exportation adaptés pour chaque marché.
+        }
+      },
+      cta: {
+        title: Prêt à Transformer Vos Vidéos?,
+        subtitle: Rejoignez plus de 50 000 créateurs qui utilisent Clipop AI pour maximiser le potentiel de leur contenu,
+        button: Commencer Gratuitement
+      }
+    }
+  }
 };
 
-export default translations;
+export default

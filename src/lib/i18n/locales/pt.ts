@@ -3,7 +3,7 @@ import { commonTranslations } from '../common';
 const translations = {
   ...commonTranslations,
   nav: {
-  home: 'Início', blog: 'Blog', pricing: 'Preços', login: 'Entrar', register: 'Cadastrar', dashboard: 'Painel', admin: 'Painel admin', logout: 'Sair', credits: 'Créditos', download: 'Baixar App', light: 'Claro', dark: 'Escuro',
+  home: 'Início', blog: 'Blog', pricing: 'Preços', about: 'Sobre nós', login: 'Entrar', register: 'Cadastrar', dashboard: 'Painel', admin: 'Painel admin', logout: 'Sair', credits: 'Créditos', download: 'Baixar App', light: 'Claro', dark: 'Escuro',
   },
   footer: {
   desc: 'Transforme seus vídeos longos em clipes curtos envolventes com análise e edição impulsionadas por IA.', quickLinks: 'Links Rápidos', legal: 'Legal', privacy: 'Política de Privacidade', terms: 'Termos de Serviço', contact: 'Contato', rights: 'Todos os direitos reservados.',

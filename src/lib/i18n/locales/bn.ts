@@ -3,7 +3,7 @@ import { commonTranslations } from '../common';
 const translations = {
   ...commonTranslations,
   nav: {
-  home: 'হোম', blog: 'ব্লগ', pricing: 'মূল্য', login: 'লগইন', register: 'নিবন্ধন', dashboard: 'ড্যাশবোর্ড', admin: 'অ্যাডমিন প্যানেল', logout: 'লগআউট', credits: 'ক্রেডিট', download: 'অ্যাপ ডাউনলোড করুন', light: 'লাইট', dark: 'ডার্ক',
+  home: 'হোম', blog: 'ব্লগ', pricing: 'মূল্য', about: 'আমাদের সম্পর্কে', login: 'লগইন', register: 'নিবন্ধন', dashboard: 'ড্যাশবোর্ড', admin: 'অ্যাডমিন প্যানেল', logout: 'লগআউট', credits: 'ক্রেডিট', download: 'অ্যাপ ডাউনলোড করুন', light: 'লাইট', dark: 'ডার্ক',
   },
   footer: {
   desc: 'AI-চালিত বিশ্লেষণ এবং সম্পাদনার মাধ্যমে আপনার দীর্ঘ ভিডিওগুলোকে আকর্ষণীয় শর্ট ক্লিপে রূপান্তর করুন।', quickLinks: 'দ্রুত লিঙ্ক', legal: 'আইনি', privacy: 'গোপনীয়তা নীতি', terms: 'সেবার শর্তাবলী', contact: 'যোগাযোগ', rights: 'সর্বস্বত্ব সংরক্ষিত।',

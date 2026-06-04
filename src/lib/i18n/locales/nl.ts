@@ -3,7 +3,7 @@ import { commonTranslations } from '../common';
 const translations = {
   ...commonTranslations,
   nav: {
-  home: 'Home', blog: 'Blog', pricing: 'Prijzen', login: 'Inloggen', register: 'Registreren', dashboard: 'Dashboard', admin: 'Beheerderspaneel', logout: 'Uitloggen', credits: 'Credits', download: 'App Downloaden', light: 'Licht', dark: 'Donker',
+  home: 'Home', blog: 'Blog', pricing: 'Prijzen', about: 'Over ons', login: 'Inloggen', register: 'Registreren', dashboard: 'Dashboard', admin: 'Beheerderspaneel', logout: 'Uitloggen', credits: 'Credits', download: 'App Downloaden', light: 'Licht', dark: 'Donker',
   },
   footer: {
   desc: 'Transformeer je lange video\'s naar boeiende korte clips met AI-aangedreven analyse en bewerking.', quickLinks: 'Snelle Links', legal: 'Juridisch', privacy: 'Privacybeleid', terms: 'Servicevoorwaarden', contact: 'Contact', rights: 'Alle rechten voorbehouden.',

@@ -3,7 +3,7 @@ import { commonTranslations } from '../common';
 const translations = {
   ...commonTranslations,
   nav: {
-  home: 'Ana Sayfa', blog: 'Blog', pricing: 'Fiyatlar', login: 'Giriş Yap', register: 'Kayıt Ol', dashboard: 'Kontrol Paneli', admin: 'Yönetici Paneli', logout: 'Çıkış Yap', credits: 'Kredi', download: 'Uygulamayı İndir', light: 'Açık', dark: 'Koyu',
+  home: 'Ana Sayfa', blog: 'Blog', pricing: 'Fiyatlar', about: 'Hakkımızda', login: 'Giriş Yap', register: 'Kayıt Ol', dashboard: 'Kontrol Paneli', admin: 'Yönetici Paneli', logout: 'Çıkış Yap', credits: 'Kredi', download: 'Uygulamayı İndir', light: 'Açık', dark: 'Koyu',
   },
   common: {
   error: 'Hata', ready: 'Hazır', failed: 'Başarısız', saving: 'Kaydediliyor...', score: 'Puan', user: 'Kullanıcı',

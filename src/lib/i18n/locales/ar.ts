@@ -3,7 +3,7 @@ import { commonTranslations } from '../common';
 const translations = {
   ...commonTranslations,
   nav: {
-  home: 'الرئيسية', blog: 'المدونة', pricing: 'الأسعار', login: 'تسجيل الدخول', register: 'التسجيل', dashboard: 'لوحة التحكم', admin: 'لوحة المشرف', logout: 'تسجيل الخروج', credits: 'الرصيد', download: 'تنزيل التطبيق', light: 'فاتح', dark: 'داكن',
+  home: 'الرئيسية', blog: 'المدونة', pricing: 'الأسعار', about: 'من نحن', login: 'تسجيل الدخول', register: 'التسجيل', dashboard: 'لوحة التحكم', admin: 'لوحة المشرف', logout: 'تسجيل الخروج', credits: 'الرصيد', download: 'تنزيل التطبيق', light: 'فاتح', dark: 'داكن',
   },
   footer: {
   desc: 'حوّل مقاطع الفيديو الطويلة إلى مقاطع قصيرة جذابة باستخدام التحليل والتحرير بالذكاء الاصطناعي.', quickLinks: 'روابط سريعة', legal: 'قانوني', privacy: 'سياسة الخصوصية', terms: 'شروط الخدمة', contact: 'اتصل بنا', rights: 'جميع الحقوق محفوظة.',

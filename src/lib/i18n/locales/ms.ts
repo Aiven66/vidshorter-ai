@@ -3,7 +3,7 @@ import { commonTranslations } from '../common';
 const translations = {
   ...commonTranslations,
   nav: {
-  home: 'Laman Utama', blog: 'Blog', pricing: 'Harga', login: 'Log Masuk', register: 'Daftar', dashboard: 'Papan Pemuka', admin: 'Panel Admin', logout: 'Log Keluar', credits: 'Kredit', download: 'Muat Turun Aplikasi', light: 'Cerah', dark: 'Gelap',
+  home: 'Laman Utama', blog: 'Blog', pricing: 'Harga', about: 'Tentang kami', login: 'Log Masuk', register: 'Daftar', dashboard: 'Papan Pemuka', admin: 'Panel Admin', logout: 'Log Keluar', credits: 'Kredit', download: 'Muat Turun Aplikasi', light: 'Cerah', dark: 'Gelap',
   },
   footer: {
   desc: 'Tukar video panjang anda kepada klip pendek yang menarik dengan analisis dan penyuntingan berkuasa AI.', quickLinks: 'Pautan Pantas', legal: 'Undang-undang', privacy: 'Dasar Privasi', terms: 'Terma Perkhidmatan', contact: 'Hubungi', rights: 'Hak cipta terpelihara.',

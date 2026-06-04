@@ -3,7 +3,7 @@ import { commonTranslations } from '../common';
 const translations = {
   ...commonTranslations,
   nav: {
-  home: 'Koti', blog: 'Blogi', pricing: 'Hinnat', login: 'Kirjaudu sisään', register: 'Rekisteröidy', dashboard: 'Kojelauta', admin: 'Hallintapaneeli', logout: 'Kirjaudu ulos', credits: 'Luottokappaleet', download: 'Lataa Sovellus', light: 'Vaalea', dark: 'Tumma',
+  home: 'Koti', blog: 'Blogi', pricing: 'Hinnat', about: 'Meistä', login: 'Kirjaudu sisään', register: 'Rekisteröidy', dashboard: 'Kojelauta', admin: 'Hallintapaneeli', logout: 'Kirjaudu ulos', credits: 'Luottokappaleet', download: 'Lataa Sovellus', light: 'Vaalea', dark: 'Tumma',
   },
   footer: {
   desc: 'Muuta pitkät videosi kiehtoviksi lyhyiksi klipseiksi tekoälypohjaisella analyysillä ja editoinnilla.', quickLinks: 'Pikalinkit', legal: 'Lakiasiat', privacy: 'Tietosuojakäytäntö', terms: 'Käyttöehdot', contact: 'Yhteystiedot', rights: 'Kaikki oikeudet pidätetään.',
