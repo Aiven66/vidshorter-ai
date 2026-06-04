@@ -3,56 +3,56 @@
 import { useLocale } from '@/lib/locale-context';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
-import { Sparkles, Users, Zap, Shield, ArrowRight, Play, Target, Award, Globe, TrendingUp, Video, Layers, Lightbulb } from 'lucide-react';
+import { Sparkles, Users, Zap, Shield, ArrowRight, Target, Award, Globe, TrendingUp, Video, Lightbulb } from 'lucide-react';
 
 export default function AboutPage() {
   const { t } = useLocale();
 
   const stats = [
-    { value: '50K+', label: 'Active Users', icon: Users },
-    { value: '1M+', label: 'Videos Processed', icon: Video },
-    { value: '98%', label: 'User Satisfaction', icon: Award },
-    { value: '32', label: 'Languages', icon: Globe },
+    { value: '50K+', label: t('about.stats.activeUsers'), icon: Users },
+    { value: '1M+', label: t('about.stats.videosProcessed'), icon: Video },
+    { value: '98%', label: t('about.stats.userSatisfaction'), icon: Award },
+    { value: '32', label: t('about.stats.languages'), icon: Globe },
   ];
 
   const features = [
     {
       icon: Lightbulb,
-      title: 'AI-Powered Intelligence',
-      description: 'Advanced AI algorithms automatically analyze video content to identify the most engaging moments, saving creators hours of manual editing.',
+      title: t('about.features.aiIntelligence.title'),
+      desc: t('about.features.aiIntelligence.desc'),
     },
     {
       icon: Zap,
-      title: 'Lightning Fast Processing',
-      description: 'Process long-form videos in minutes, not hours. Our optimized pipeline delivers highlights instantly.',
+      title: t('about.features.fastProcessing.title'),
+      desc: t('about.features.fastProcessing.desc'),
     },
     {
-      icon: Layers,
-      title: 'Multi-Platform Support',
-      description: 'Import from YouTube, Bilibili, or upload local files. Export optimized clips for TikTok, YouTube Shorts, Instagram, and more.',
+      icon: TrendingUp,
+      title: t('about.features.multiPlatform.title'),
+      desc: t('about.features.multiPlatform.desc'),
     },
     {
       icon: Shield,
-      title: 'Privacy First',
-      description: 'Your content stays yours. We never store your original videos and process everything securely.',
+      title: t('about.features.privacyFirst.title'),
+      desc: t('about.features.privacyFirst.desc'),
     },
   ];
 
   const values = [
     {
       icon: Target,
-      title: 'User-Centric Innovation',
-      description: 'We build tools that solve real problems for content creators worldwide.',
+      title: t('about.values.userCentric.title'),
+      desc: t('about.values.userCentric.desc'),
     },
     {
-      icon: TrendingUp,
-      title: 'Continuous Improvement',
-      description: 'Regular updates based on user feedback to enhance your experience.',
+      icon: Zap,
+      title: t('about.values.continuous.title'),
+      desc: t('about.values.continuous.desc'),
     },
     {
       icon: Users,
-      title: 'Global Community',
-      description: 'Supporting creators in 32 languages across every continent.',
+      title: t('about.values.community.title'),
+      desc: t('about.values.community.desc'),
     },
   ];
 
@@ -70,26 +70,21 @@ export default function AboutPage() {
           <div className="max-w-5xl mx-auto text-center">
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 text-primary text-sm font-medium mb-8">
               <Sparkles className="w-4 h-4" />
-              AI-Powered Video Innovation
+              {t('about.hero.badge')}
             </div>
 
             <h1 className="text-4xl md:text-5xl lg:text-7xl font-black tracking-tight mb-8 bg-gradient-to-r from-foreground via-primary/80 to-foreground bg-clip-text text-transparent">
-              Transform Your Video Content
+              {t('about.hero.title')}
             </h1>
 
             <p className="text-lg md:text-xl text-muted-foreground mb-12 max-w-3xl mx-auto leading-relaxed">
-              Clipop AI is the leading AI-powered video clipping platform that transforms long-form videos into engaging short-form content. 
-              Used by over 50,000 creators worldwide to maximize their content reach and engagement.
+              {t('about.hero.subtitle')}
             </p>
 
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <Button size="lg" className="text-base px-8">
-                <Play className="w-4 h-4 mr-2" />
-                Watch Demo
-              </Button>
-              <Button size="lg" variant="outline" className="text-base px-8" asChild>
+              <Button size="lg" className="text-base px-8" asChild>
                 <Link href="/">
-                  Get Started Free
+                  {t('about.hero.getStarted')}
                   <ArrowRight className="w-4 h-4 ml-2" />
                 </Link>
               </Button>
@@ -114,35 +109,25 @@ export default function AboutPage() {
         </div>
       </section>
 
-      {/* Product Positioning Section */}
+      {/* Product Vision Section */}
       <section className="py-20 bg-background">
         <div className="container mx-auto px-4">
           <div className="max-w-6xl mx-auto">
             <div className="text-center mb-16">
-              <h2 className="text-3xl md:text-4xl font-bold mb-4">Our Product Vision</h2>
-              <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-                Clipop AI empowers content creators to unlock the full potential of their video content through intelligent automation.
-              </p>
+              <h2 className="text-3xl md:text-4xl font-bold mb-4">{t('about.productVision.title')}</h2>
+              <p className="text-lg text-muted-foreground max-w-2xl mx-auto">{t('about.productVision.subtitle')}</p>
             </div>
 
             <div className="grid md:grid-cols-2 gap-12 items-center">
               <div className="order-2 md:order-1">
-                <h3 className="text-2xl md:text-3xl font-bold mb-6">
-                  The Future of Video Content Creation
-                </h3>
-                <p className="text-muted-foreground mb-6 leading-relaxed">
-                  In today's fast-paced digital landscape, short-form video content dominates social platforms. 
-                  However, creating engaging short clips from long-form content is time-consuming and resource-intensive.
-                </p>
-                <p className="text-muted-foreground mb-8 leading-relaxed">
-                  Clipop AI solves this problem by leveraging cutting-edge artificial intelligence to automatically identify 
-                  the most engaging moments in your videos, saving you hours of manual editing while ensuring high-quality results.
-                </p>
+                <h3 className="text-2xl md:text-3xl font-bold mb-6">{t('about.productVision.futureTitle')}</h3>
+                <p className="text-muted-foreground mb-6 leading-relaxed">{t('about.productVision.futurePara1')}</p>
+                <p className="text-muted-foreground mb-8 leading-relaxed">{t('about.productVision.futurePara2')}</p>
                 <ul className="space-y-4">
-                  {['Save 80% of your editing time', 'Increase content output by 3x', 'Boost engagement rates', 'Reach wider audiences'].map((item, index) => (
+                  {t('about.productVision.benefits').map((benefit, index) => (
                     <li key={index} className="flex items-center gap-3">
                       <div className="w-2 h-2 rounded-full bg-primary"></div>
-                      <span className="font-medium">{item}</span>
+                      <span className="font-medium">{benefit}</span>
                     </li>
                   ))}
                 </ul>
@@ -151,7 +136,7 @@ export default function AboutPage() {
                 <div className="relative">
                   <div className="aspect-video rounded-2xl overflow-hidden shadow-2xl">
                     <img 
-                      src="https://neeko-copilot.bytedance.net/api/text_to_image?prompt=modern%20AI%20video%20editing%20interface%20with%20neon%20blue%20accents%20showing%20video%20timeline%20with%20AI%20highlight%20markers%2C%20professional%20dark%20theme%2C%20futuristic%20design&image_size=landscape_16_9" 
+                      src="https://neeko-copilot.bytedance.net/api/text-to-image?prompt=modern%20AI%20video%20editing%20interface%20with%20neon%20blue%20accents%20showing%20video%20timeline%20with%20AI%20highlight%20markers%2C%20professional%20dark%20theme%2C%20futuristic%20design&imageSize=landscape-16-9" 
                       alt="AI Video Editing" 
                       className="w-full h-full object-cover"
                     />
@@ -169,10 +154,8 @@ export default function AboutPage() {
         <div className="container mx-auto px-4">
           <div className="max-w-6xl mx-auto">
             <div className="text-center mb-16">
-              <h2 className="text-3xl md:text-4xl font-bold mb-4">Core Features</h2>
-              <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-                Everything you need to transform your video content efficiently
-              </p>
+              <h2 className="text-3xl md:text-4xl font-bold mb-4">{t('about.features.title')}</h2>
+              <p className="text-lg text-muted-foreground max-w-2xl mx-auto">{t('about.features.subtitle')}</p>
             </div>
 
             <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -187,7 +170,7 @@ export default function AboutPage() {
                       <Icon className="w-7 h-7 text-primary" />
                     </div>
                     <h3 className="text-lg font-semibold mb-2">{feature.title}</h3>
-                    <p className="text-sm text-muted-foreground leading-relaxed">{feature.description}</p>
+                    <p className="text-sm text-muted-foreground leading-relaxed">{feature.desc}</p>
                   </div>
                 );
               })}
@@ -201,10 +184,8 @@ export default function AboutPage() {
         <div className="container mx-auto px-4">
           <div className="max-w-6xl mx-auto">
             <div className="text-center mb-16">
-              <h2 className="text-3xl md:text-4xl font-bold mb-4">Our Core Values</h2>
-              <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-                What drives us to deliver the best experience for our users
-              </p>
+              <h2 className="text-3xl md:text-4xl font-bold mb-4">{t('about.values.title')}</h2>
+              <p className="text-lg text-muted-foreground max-w-2xl mx-auto">{t('about.values.subtitle')}</p>
             </div>
 
             <div className="grid md:grid-cols-3 gap-8">
@@ -216,7 +197,7 @@ export default function AboutPage() {
                       <Icon className="w-8 h-8 text-primary" />
                     </div>
                     <h3 className="text-xl font-semibold mb-3">{value.title}</h3>
-                    <p className="text-muted-foreground leading-relaxed">{value.description}</p>
+                    <p className="text-muted-foreground leading-relaxed">{value.desc}</p>
                   </div>
                 );
               })}
@@ -230,33 +211,22 @@ export default function AboutPage() {
         <div className="container mx-auto px-4">
           <div className="max-w-4xl mx-auto">
             <div className="text-center mb-12">
-              <h2 className="text-3xl md:text-4xl font-bold mb-4">Global Reach, Local Impact</h2>
-              <p className="text-lg text-muted-foreground">
-                Serving creators across the globe with localized experiences
-              </p>
+              <h2 className="text-3xl md:text-4xl font-bold mb-4">{t('about.geo.title')}</h2>
+              <p className="text-lg text-muted-foreground">{t('about.geo.subtitle')}</p>
             </div>
 
             <div className="grid md:grid-cols-3 gap-8">
               <div className="p-6 rounded-2xl bg-primary/5 border border-primary/10">
-                <h3 className="text-lg font-semibold mb-3">SEO Optimization</h3>
-                <p className="text-muted-foreground text-sm leading-relaxed">
-                  Our platform is optimized for search engines, helping your content get discovered. 
-                  AI-generated metadata and tags improve discoverability across platforms.
-                </p>
+                <h3 className="text-lg font-semibold mb-3">{t('about.geo.seo.title')}</h3>
+                <p className="text-muted-foreground text-sm leading-relaxed">{t('about.geo.seo.desc')}</p>
               </div>
               <div className="p-6 rounded-2xl bg-chart-4/5 border border-chart-4/10">
-                <h3 className="text-lg font-semibold mb-3">Multi-Language Support</h3>
-                <p className="text-muted-foreground text-sm leading-relaxed">
-                  Available in 32 languages worldwide. Localized interfaces and support ensure 
-                  creators everywhere can use Clipop AI in their native language.
-                </p>
+                <h3 className="text-lg font-semibold mb-3">{t('about.geo.multiLang.title')}</h3>
+                <p className="text-muted-foreground text-sm leading-relaxed">{t('about.geo.multiLang.desc')}</p>
               </div>
               <div className="p-6 rounded-2xl bg-chart-3/5 border border-chart-3/10">
-                <h3 className="text-lg font-semibold mb-3">Regional Optimization</h3>
-                <p className="text-muted-foreground text-sm leading-relaxed">
-                  Optimized for regional content platforms including YouTube, Bilibili, TikTok, 
-                  and more. Tailored export settings for each market.
-                </p>
+                <h3 className="text-lg font-semibold mb-3">{t('about.geo.regional.title')}</h3>
+                <p className="text-muted-foreground text-sm leading-relaxed">{t('about.geo.regional.desc')}</p>
               </div>
             </div>
           </div>
@@ -273,15 +243,13 @@ export default function AboutPage() {
                 <div className="absolute -bottom-32 -left-32 w-64 h-64 bg-white/5 rounded-full blur-3xl"></div>
               </div>
               <div className="relative z-10 text-center text-white">
-                <h2 className="text-3xl md:text-4xl font-bold mb-4">
-                  Ready to Transform Your Videos?
-                </h2>
-                <p className="text-white/80 text-lg mb-8 max-w-2xl mx-auto">
-                  Join 50,000+ creators who are using Clipop AI to maximize their content potential
-                </p>
-                <Button size="lg" className="bg-white text-primary hover:bg-white/90 text-base px-8">
-                  Get Started for Free
-                  <ArrowRight className="w-4 h-4 ml-2" />
+                <h2 className="text-3xl md:text-4xl font-bold mb-4">{t('about.cta.title')}</h2>
+                <p className="text-white/80 text-lg mb-8 max-w-2xl mx-auto">{t('about.cta.subtitle')}</p>
+                <Button size="lg" className="bg-white text-primary hover:bg-white/90 text-base px-8" asChild>
+                  <Link href="/">
+                    {t('about.cta.button')}
+                    <ArrowRight className="w-4 h-4 ml-2" />
+                  </Link>
                 </Button>
               </div>
             </div>

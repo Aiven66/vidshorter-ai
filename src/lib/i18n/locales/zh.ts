@@ -186,69 +186,67 @@ dashboard: { title: '控制台', credits: '可用积分', creditsReset: '每天0
   },
   common: { loading: '加载中...', error: '发生错误', success: '成功', cancel: '取消', save: '保存', delete: '删除', edit: '编辑', search: '搜索' },
   about: {
-    title: '关于 Clipop AI',
-    subtitle: '用 AI 改变视频内容创作',
     hero: {
-      badge: 'AI 驱动的创新',
-      title: '欢迎来到视频剪辑的未来',
-      subtitle: '我们打造智能工具，帮助创作者将长视频自动转换为吸引人的短视频片段。',
+      badge: 'AI 驱动的视频创新',
+      title: '改变您的视频内容',
+      subtitle: 'Clipop AI 是领先的 AI 驱动视频剪辑平台，将长视频转换为引人入胜的短视频内容。全球超过 50,000 名创作者使用，最大化内容传播和参与度。',
+      getStarted: '免费开始',
     },
-    mission: {
-      title: '我们的使命',
-      content: '在 Clipop AI，我们相信每一个精彩视频都值得被看到。我们的使命是让 AI 驱动的视频编辑工具触手可及，让每个地方的创作者都能受益。',
-      values: [
-        { icon: 'sparkles', title: '创新', desc: '不断突破 AI 视频技术的边界' },
-        { icon: 'users', title: '创作者优先', desc: '打造真正解决问题的工具' },
-        { icon: 'zap', title: '效率', desc: '用智能自动化节省时间' },
-        { icon: 'shield', title: '隐私', desc: '保护您的内容安全和权利' },
+    stats: {
+      activeUsers: '活跃用户',
+      videosProcessed: '处理视频',
+      userSatisfaction: '用户满意度',
+      languages: '语言支持',
+    },
+    productVision: {
+      title: '我们的产品愿景',
+      subtitle: 'Clipop AI 赋能内容创作者，通过智能自动化释放视频内容的全部潜力。',
+      futureTitle: '视频内容创作的未来',
+      futurePara1: '在当今快节奏的数字世界中，短视频内容占据了社交平台的主导地位。然而，从长视频制作引人入胜的短视频片段既耗时又费力。',
+      futurePara2: 'Clipop AI 通过利用最先进的人工智能技术解决了这个问题，自动识别视频中最吸引人的时刻，为您节省数小时的手动编辑时间，同时确保高质量的结果。',
+      benefits: [
+        '节省 80% 的编辑时间',
+        '内容产出提升 3 倍',
+        '提高参与率',
+        '覆盖更广泛的受众',
       ],
     },
-    whatWeDo: {
-      title: '我们做什么',
-      intro: 'Clipop AI 是一个 AI 驱动的平台，将长视频转换为可分享的短视频片段。我们结合前沿的 AI 算法和直观的设计，让视频编辑比以往任何时候都更快、更智能。',
-      features: [
-        {
-          title: 'AI 亮点检测',
-          desc: '我们的 AI 分析视频内容，自动识别最吸引人的时刻，为您节省数小时的人工筛选。',
-        },
-        {
-          title: '多平台支持',
-          desc: '支持从 YouTube、B站 导入，或上传自己的本地视频文件。我们支持所有主流视频格式。',
-        },
-        {
-          title: '快速导出',
-          desc: '以多种格式下载您的片段，优化适配从 TikTok 到 YouTube Shorts 的每个社交平台。',
-        },
-      ],
+    features: {
+      title: '核心功能',
+      subtitle: '高效转换视频内容所需的一切',
+      aiIntelligence: { title: 'AI 智能分析', desc: '先进的 AI 算法自动分析视频内容，识别最吸引人的时刻，为创作者节省数小时的手动编辑。' },
+      fastProcessing: { title: '极速处理', desc: '几分钟内完成长视频处理，而不是数小时。我们优化的管道即时交付精彩片段。' },
+      multiPlatform: { title: '多平台支持', desc: '从 YouTube、B站 导入或上传本地文件。为 TikTok、YouTube Shorts、Instagram 等平台导出优化的片段。' },
+      privacyFirst: { title: '隐私优先', desc: '您的内容只属于您。我们从不存储原始视频，所有处理都安全进行。' },
     },
-    whyChoose: {
-      title: '为什么选择 Clipop AI',
-      features: [
-        { title: '节省时间', desc: '几分钟内完成视频处理，而不是数小时' },
-        { title: '高质量结果', desc: 'AI 确保捕捉到最佳亮点' },
-        { title: '用户友好', desc: '适合各级创作者的直观界面' },
-        { title: '高性价比', desc: '每个预算都能负担的方案' },
-      ],
+    values: {
+      title: '我们的核心价值观',
+      subtitle: '驱动我们为用户提供最佳体验的动力',
+      userCentric: { title: '用户至上的创新', desc: '我们构建的工具解决全球内容创作者的实际问题。' },
+      continuous: { title: '持续改进', desc: '基于用户反馈的定期更新，提升您的体验。' },
+      community: { title: '全球社区', desc: '支持全球各大洲的 32 种语言的创作者。' },
     },
-    timeline: {
-      title: '我们的旅程',
-      events: [
-        { year: '2025', title: '启程', desc: '让视频编辑变得触手可及的愿景开始' },
-        { year: '2025', title: '首次发布', desc: '为早期采用者推出测试版本' },
-        { year: '2026', title: '正式发布', desc: 'AI 功能全面上线' },
-        { year: '2026', title: '全球扩展', desc: '已支持 32 种语言，并在持续增加' },
-      ],
-    },
-    team: {
-      title: '我们的团队',
-      intro: '我们是一群充满热情的工程师、设计师和产品思考者，共同打造内容创作的未来。',
+    geo: {
+      title: '全球覆盖，本地影响',
+      subtitle: '通过本地化体验服务全球创作者',
+      seo: {
+        title: 'SEO 优化',
+        desc: '我们的平台针对搜索引擎进行了优化，帮助您的内容被发现。AI 生成的元数据和标签提高了在各个平台的可发现性。',
+      },
+      multiLang: {
+        title: '多语言支持',
+        desc: '全球支持 32 种语言。本地化界面和支持确保各地创作者都能以母语使用 Clipop AI。',
+      },
+      regional: {
+        title: '区域优化',
+        desc: '针对 YouTube、B站、TikTok 等区域内容平台进行了优化。为每个市场量身定制的导出设置。',
+      },
     },
     cta: {
       title: '准备好改变您的视频了吗？',
-      subtitle: '加入成千上万已经使用 Clipop AI 的创作者',
-      button: '免费开始',
+      subtitle: '加入 50,000+ 使用 Clipop AI 最大化内容潜力的创作者',
+      button: '免费开始使用',
     },
-    seoKeywords: 'AI视频编辑器,视频亮点工具,自动视频剪辑,YouTube Shorts生成器,TikTok视频制作器,AI视频处理,视频内容创作,短视频,AI内容创作,视频编辑工具,AI视频剪辑,内容再利用,VidShorter AI,Clipop AI',
   },
 };
 

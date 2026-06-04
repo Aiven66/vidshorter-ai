@@ -347,68 +347,66 @@ export const commonTranslations = {
     section9Content: 'For privacy-related inquiries, please contact us at privacy@clipop.ai.',
   },
   about: {
-    title: 'About Clipop AI',
-    subtitle: 'Transforming Video Content Creation with AI',
     hero: {
-      badge: 'AI-Powered Innovation',
-      title: 'Welcome to the Future of Video Editing',
-      subtitle: 'We build intelligent tools that help creators turn long-form video into engaging short clips automatically.',
+      badge: 'AI-Powered Video Innovation',
+      title: 'Transform Your Video Content',
+      subtitle: 'Clipop AI is the leading AI-powered video clipping platform that transforms long-form videos into engaging short-form content. Used by over 50,000 creators worldwide to maximize their content reach and engagement.',
+      getStarted: 'Get Started Free',
     },
-    mission: {
-      title: 'Our Mission',
-      content: 'At Clipop AI, we believe that every great video deserves to be seen. Our mission is to democratize content creation by making AI-powered video editing accessible to creators everywhere.',
-      values: [
-        { icon: 'sparkles', title: 'Innovation', desc: 'Pushing the boundaries of AI video technology' },
-        { icon: 'users', title: 'Creators First', desc: 'Building tools that actually solve real problems' },
-        { icon: 'zap', title: 'Efficiency', desc: 'Saving time with intelligent automation' },
-        { icon: 'shield', title: 'Privacy', desc: 'Keeping your content secure and your rights protected' },
+    stats: {
+      activeUsers: 'Active Users',
+      videosProcessed: 'Videos Processed',
+      userSatisfaction: 'User Satisfaction',
+      languages: 'Languages',
+    },
+    productVision: {
+      title: 'Our Product Vision',
+      subtitle: 'Clipop AI empowers content creators to unlock the full potential of their video content through intelligent automation.',
+      futureTitle: 'The Future of Video Content Creation',
+      futurePara1: 'In today\'s fast-paced digital landscape, short-form video content dominates social platforms. However, creating engaging short clips from long-form content is time-consuming and resource-intensive.',
+      futurePara2: 'Clipop AI solves this problem by leveraging cutting-edge artificial intelligence to automatically identify the most engaging moments in your videos, saving you hours of manual editing while ensuring high-quality results.',
+      benefits: [
+        'Save 80% of your editing time',
+        'Increase content output by 3x',
+        'Boost engagement rates',
+        'Reach wider audiences',
       ],
     },
-    whatWeDo: {
-      title: 'What We Do',
-      intro: 'Clipop AI is an AI-powered platform that transforms long videos into shareable short clips. We combine cutting-edge AI algorithms with intuitive design to make video editing faster and smarter than ever before.',
-      features: [
-        {
-          title: 'AI Highlight Detection',
-          desc: 'Our AI analyzes video content to automatically identify the most engaging moments, saving you hours of manual reviewing.',
-        },
-        {
-          title: 'Multi-Platform Support',
-          desc: 'Import from YouTube, Bilibili, or upload your own local video files. We support all major video formats.',
-        },
-        {
-          title: 'Quick Export',
-          desc: 'Download your clips in multiple formats, optimized for every social platform from TikTok to YouTube Shorts.',
-        },
-      ],
+    features: {
+      title: 'Core Features',
+      subtitle: 'Everything you need to transform your video content efficiently',
+      aiIntelligence: { title: 'AI-Powered Intelligence', desc: 'Advanced AI algorithms automatically analyze video content to identify the most engaging moments, saving creators hours of manual editing.' },
+      fastProcessing: { title: 'Lightning Fast Processing', desc: 'Process long-form videos in minutes, not hours. Our optimized pipeline delivers highlights instantly.' },
+      multiPlatform: { title: 'Multi-Platform Support', desc: 'Import from YouTube, Bilibili, or upload local files. Export optimized clips for TikTok, YouTube Shorts, Instagram, and more.' },
+      privacyFirst: { title: 'Privacy First', desc: 'Your content stays yours. We never store your original videos and process everything securely.' },
     },
-    whyChoose: {
-      title: 'Why Choose Clipop AI',
-      features: [
-        { title: 'Time-Saving', desc: 'Process videos in minutes, not hours' },
-        { title: 'High-Quality Results', desc: 'AI ensures the best highlights are captured' },
-        { title: 'User-Friendly', desc: 'Intuitive interface for creators of all levels' },
-        { title: 'Cost-Effective', desc: 'Affordable plans for every budget' },
-      ],
+    values: {
+      title: 'Our Core Values',
+      subtitle: 'What drives us to deliver the best experience for our users',
+      userCentric: { title: 'User-Centric Innovation', desc: 'We build tools that solve real problems for content creators worldwide.' },
+      continuous: { title: 'Continuous Improvement', desc: 'Regular updates based on user feedback to enhance your experience.' },
+      community: { title: 'Global Community', desc: 'Supporting creators in 32 languages across every continent.' },
     },
-    timeline: {
-      title: 'Our Journey',
-      events: [
-        { year: '2025', title: 'The Beginning', desc: 'Started as a vision to make video editing accessible' },
-        { year: '2025', title: 'First Launch', desc: 'Launched the beta version for early adopters' },
-        { year: '2026', title: 'Full Release', desc: 'Officially launched with AI-powered features' },
-        { year: '2026', title: 'Global Expansion', desc: 'Supporting 32 languages and counting' },
-      ],
-    },
-    team: {
-      title: 'Our Team',
-      intro: 'We are a passionate group of engineers, designers, and product thinkers building the future of content creation.',
+    geo: {
+      title: 'Global Reach, Local Impact',
+      subtitle: 'Serving creators across the globe with localized experiences',
+      seo: {
+        title: 'SEO Optimization',
+        desc: 'Our platform is optimized for search engines, helping your content get discovered. AI-generated metadata and tags improve discoverability across platforms.',
+      },
+      multiLang: {
+        title: 'Multi-Language Support',
+        desc: 'Available in 32 languages worldwide. Localized interfaces and support ensure creators everywhere can use Clipop AI in their native language.',
+      },
+      regional: {
+        title: 'Regional Optimization',
+        desc: 'Optimized for regional content platforms including YouTube, Bilibili, TikTok, and more. Tailored export settings for each market.',
+      },
     },
     cta: {
       title: 'Ready to Transform Your Videos?',
-      subtitle: 'Join thousands of creators already using Clipop AI',
+      subtitle: 'Join 50,000+ creators who are using Clipop AI to maximize their content potential',
       button: 'Get Started for Free',
     },
-    seoKeywords: 'AI video editor, video highlight tool, automatic video clipping, YouTube Shorts generator, TikTok video maker, AI video processing, video content creation, short-form video, AI content creation, video editing tool, AI video clipping, content repurposing, VidShorter AI, Clipop AI',
   },
 };
