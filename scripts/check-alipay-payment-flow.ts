@@ -28,6 +28,14 @@ async function json(response: Response) {
   return response.json() as Promise<Record<string, unknown>>;
 }
 
+function paymentRequest(body: Record<string, unknown>) {
+  return new NextRequest('https://www.clipopai.com/api/payment/alipay', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
 async function main() {
   setEnv('ALIPAY_APP_ID', undefined);
   setEnv('ALIPAY_PRIVATE_KEY', undefined);
@@ -38,23 +46,15 @@ async function main() {
   setEnv('ALIPAY_APP_AUTH_TOKEN', undefined);
   setEnv('NEXT_PUBLIC_APP_URL', 'https://www.clipopai.com');
 
-  const missingPlan = await POST(new NextRequest('https://www.clipopai.com/api/payment/alipay', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({}),
-  }));
+  const missingPlan = await POST(paymentRequest({}));
   assert.equal(missingPlan.status, 400);
   assert.equal((await json(missingPlan)).error, 'planId and amount are required');
 
-  const missingConfigPayment = await POST(new NextRequest('https://www.clipopai.com/api/payment/alipay', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      planId: 'starter',
-      amount: 49,
-      subject: 'Clipop AI Starter',
-      userId: 'user_123',
-    }),
+  const missingConfigPayment = await POST(paymentRequest({
+    planId: 'starter',
+    amount: 49,
+    subject: 'Clipop AI Starter',
+    userId: 'user_123',
   }));
   assert.equal(missingConfigPayment.status, 503);
   const missingConfigJson = await json(missingConfigPayment);
@@ -64,6 +64,43 @@ async function main() {
 
   const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const privateKeyPem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+  setEnv('ALIPAY_APP_ID', '2021000000000000');
+  setEnv('ALIPAY_PRIVATE_KEY', privateKeyPem);
+
+  let gatewayCallCount = 0;
+  globalThis.fetch = async () => {
+    gatewayCallCount++;
+    return Response.json({});
+  };
+
+  const defaultPagePayment = await POST(paymentRequest({
+    planId: 'pro',
+    amount: 99,
+    subject: 'Clipop AI Pro',
+    userId: 'user_456',
+  }));
+  assert.equal(defaultPagePayment.status, 200);
+  const defaultPageJson = await json(defaultPagePayment);
+  assert.equal(defaultPageJson.checkoutMode, 'page');
+  assert.equal(defaultPageJson.demo, false);
+  assert.equal('qrCode' in defaultPageJson, false);
+  assert.equal(gatewayCallCount, 0, 'page mode must not call the gateway from the server');
+  const defaultPayUrl = new URL(String(defaultPageJson.payUrl));
+  assert.equal(defaultPayUrl.origin + defaultPayUrl.pathname, 'https://openapi.alipay.com/gateway.do');
+  assert.equal(defaultPayUrl.searchParams.get('method'), 'alipay.trade.page.pay');
+  assert.equal(defaultPayUrl.searchParams.get('notify_url'), 'https://www.clipopai.com/api/payment/alipay');
+  assert.equal(defaultPayUrl.searchParams.get('return_url'), 'https://www.clipopai.com/dashboard?payment=alipay&plan=pro');
+  assert.match(String(defaultPayUrl.searchParams.get('timestamp')), /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+  const defaultPageBiz = JSON.parse(defaultPayUrl.searchParams.get('biz_content') || '{}');
+  assert.equal(defaultPageBiz.product_code, 'FAST_INSTANT_TRADE_PAY');
+  assert.equal(defaultPageBiz.total_amount, '99.00');
+  assert.deepEqual(JSON.parse(decodeURIComponent(defaultPageBiz.passback_params)), {
+    user_id: 'user_456',
+    plan_id: 'pro',
+  });
+  assert.equal(typeof defaultPayUrl.searchParams.get('sign'), 'string');
+
+  setEnv('ALIPAY_PAYMENT_MODE', 'precreate');
   const alipayGatewayCalls: Array<{ url: string; body: URLSearchParams }> = [];
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     alipayGatewayCalls.push({
@@ -77,23 +114,17 @@ async function main() {
       },
     });
   };
-  setEnv('ALIPAY_APP_ID', '2021000000000000');
-  setEnv('ALIPAY_PRIVATE_KEY', privateKeyPem);
 
-  const signedPayment = await POST(new NextRequest('https://www.clipopai.com/api/payment/alipay', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      planId: 'pro',
-      amount: 99,
-      subject: 'Clipop AI Pro',
-      userId: 'user_456',
-    }),
+  const precreatePayment = await POST(paymentRequest({
+    planId: 'pro',
+    amount: 99,
+    subject: 'Clipop AI Pro',
+    userId: 'user_456',
   }));
-  assert.equal(signedPayment.status, 200);
-  assert.deepEqual(await json(signedPayment), {
+  assert.equal(precreatePayment.status, 200);
+  assert.deepEqual(await json(precreatePayment), {
     qrCode: 'https://qr.alipay.com/REAL_TEST_QR',
-    orderId: alipayGatewayCalls[0].body.get('biz_content') ? JSON.parse(alipayGatewayCalls[0].body.get('biz_content') || '{}').out_trade_no : '',
+    orderId: JSON.parse(alipayGatewayCalls[0].body.get('biz_content') || '{}').out_trade_no,
     demo: false,
     checkoutMode: 'precreate',
     productCode: 'FACE_TO_FACE_PAYMENT',
@@ -101,15 +132,8 @@ async function main() {
   assert.match(alipayGatewayCalls[0].url, /^https:\/\/openapi\.alipay\.com\/gateway\.do$/);
   assert.equal(alipayGatewayCalls[0].body.get('method'), 'alipay.trade.precreate');
   assert.equal(alipayGatewayCalls[0].body.get('notify_url'), 'https://www.clipopai.com/api/payment/alipay');
-  assert.match(String(alipayGatewayCalls[0].body.get('timestamp')), /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
-  const bizContent = JSON.parse(alipayGatewayCalls[0].body.get('biz_content') || '{}');
-  assert.equal(bizContent.product_code, 'FACE_TO_FACE_PAYMENT');
-  assert.equal(bizContent.total_amount, '99.00');
-  assert.deepEqual(JSON.parse(decodeURIComponent(bizContent.passback_params)), {
-    user_id: 'user_456',
-    plan_id: 'pro',
-  });
-  assert.equal(typeof alipayGatewayCalls[0].body.get('sign'), 'string');
+  const precreateBiz = JSON.parse(alipayGatewayCalls[0].body.get('biz_content') || '{}');
+  assert.equal(precreateBiz.product_code, 'FACE_TO_FACE_PAYMENT');
 
   setEnv('ALIPAY_APP_AUTH_TOKEN', 'merchant_auth_token_123');
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -124,15 +148,11 @@ async function main() {
       },
     });
   };
-  const authTokenPayment = await POST(new NextRequest('https://www.clipopai.com/api/payment/alipay', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      planId: 'starter',
-      amount: 49,
-      subject: 'Clipop AI Starter',
-      userId: 'user_auth_token',
-    }),
+  const authTokenPayment = await POST(paymentRequest({
+    planId: 'starter',
+    amount: 49,
+    subject: 'Clipop AI Starter',
+    userId: 'user_auth_token',
   }));
   assert.equal(authTokenPayment.status, 200);
   const authTokenCall = alipayGatewayCalls.at(-1)!.body;
@@ -148,15 +168,11 @@ async function main() {
       sub_msg: '接口调用权限不足',
     },
   }, { status: 200 });
-  const missingPermissionPayment = await POST(new NextRequest('https://www.clipopai.com/api/payment/alipay', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      planId: 'starter',
-      amount: 49,
-      subject: 'Clipop AI Starter',
-      userId: 'user_789',
-    }),
+  const missingPermissionPayment = await POST(paymentRequest({
+    planId: 'starter',
+    amount: 49,
+    subject: 'Clipop AI Starter',
+    userId: 'user_789',
   }));
   assert.equal(missingPermissionPayment.status, 403);
   const missingPermissionJson = await json(missingPermissionPayment);
@@ -191,76 +207,17 @@ async function main() {
       },
     });
   };
-  const fallbackPayment = await POST(new NextRequest('https://www.clipopai.com/api/payment/alipay', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      planId: 'starter',
-      amount: 49,
-      subject: 'Clipop AI Starter',
-      userId: 'user_789',
-    }),
+  const fallbackPayment = await POST(paymentRequest({
+    planId: 'starter',
+    amount: 49,
+    subject: 'Clipop AI Starter',
+    userId: 'user_789',
   }));
   assert.equal(fallbackPayment.status, 200);
   const fallbackJson = await json(fallbackPayment);
   assert.equal(fallbackJson.qrCode, 'https://qr.alipay.com/FALLBACK_OFFLINE_PAYMENT_QR');
   assert.equal(fallbackJson.productCode, 'OFFLINE_PAYMENT');
   assert.equal(fallbackCallCount, 2);
-
-  setEnv('ALIPAY_PAYMENT_MODE', 'page');
-  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    alipayGatewayCalls.push({
-      url: input.toString(),
-      body: new URLSearchParams(String(init?.body || '')),
-    });
-    return Response.json({
-      alipay_trade_precreate_response: {
-        code: '10000',
-        qr_code: 'https://qr.alipay.com/SAFE_QR_WHEN_PAGE_MODE_NOT_ENABLED',
-      },
-    });
-  };
-  const legacyPageModePayment = await POST(new NextRequest('https://www.clipopai.com/api/payment/alipay', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      planId: 'starter',
-      amount: 49,
-      subject: 'Clipop AI Starter',
-      userId: 'user_789',
-    }),
-  }));
-  assert.equal(legacyPageModePayment.status, 200);
-  const legacyPageModeJson = await json(legacyPageModePayment);
-  assert.equal(legacyPageModeJson.checkoutMode, 'precreate');
-  assert.equal(legacyPageModeJson.qrCode, 'https://qr.alipay.com/SAFE_QR_WHEN_PAGE_MODE_NOT_ENABLED');
-  assert.equal(legacyPageModeJson.productCode, 'FACE_TO_FACE_PAYMENT');
-  assert.equal('payUrl' in legacyPageModeJson, false);
-
-  setEnv('ALIPAY_PAGE_PAY_ENABLED', 'true');
-  const pagePayPayment = await POST(new NextRequest('https://www.clipopai.com/api/payment/alipay', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      planId: 'starter',
-      amount: 49,
-      subject: 'Clipop AI Starter',
-      userId: 'user_789',
-    }),
-  }));
-  assert.equal(pagePayPayment.status, 200);
-  const pagePayPaymentJson = await json(pagePayPayment);
-  assert.equal(pagePayPaymentJson.checkoutMode, 'page');
-  assert.equal('qrCode' in pagePayPaymentJson, false);
-  const payUrl = new URL(String(pagePayPaymentJson.payUrl));
-  assert.equal(payUrl.origin + payUrl.pathname, 'https://openapi.alipay.com/gateway.do');
-  assert.equal(payUrl.searchParams.get('method'), 'alipay.trade.page.pay');
-  assert.equal(payUrl.searchParams.get('return_url'), 'https://www.clipopai.com/dashboard?payment=alipay&plan=starter');
-  const pagePayBiz = JSON.parse(payUrl.searchParams.get('biz_content') || '{}');
-  assert.equal(pagePayBiz.product_code, 'FAST_INSTANT_TRADE_PAY');
-  assert.equal(pagePayBiz.total_amount, '49.00');
-  setEnv('ALIPAY_PAYMENT_MODE', undefined);
-  setEnv('ALIPAY_PAGE_PAY_ENABLED', undefined);
 
   globalThis.fetch = async () => Response.json({
     alipay_trade_precreate_response: {
@@ -270,15 +227,11 @@ async function main() {
       sub_msg: '验签出错',
     },
   }, { status: 200 });
-  const rejectedPayment = await POST(new NextRequest('https://www.clipopai.com/api/payment/alipay', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      planId: 'pro',
-      amount: 99,
-      subject: 'Clipop AI Pro',
-      userId: 'user_456',
-    }),
+  const rejectedPayment = await POST(paymentRequest({
+    planId: 'pro',
+    amount: 99,
+    subject: 'Clipop AI Pro',
+    userId: 'user_456',
   }));
   assert.equal(rejectedPayment.status, 502);
   const rejectedPaymentJson = await json(rejectedPayment);
@@ -313,7 +266,6 @@ async function main() {
   assert.match(routeSource, /FAST_INSTANT_TRADE_PAY/);
   assert.match(routeSource, /productPermissionMissing/);
   assert.match(routeSource, /ALIPAY_PAYMENT_MODE/);
-  assert.match(routeSource, /ALIPAY_PAGE_PAY_ENABLED/);
   assert.match(routeSource, /OFFLINE_PAYMENT/);
   assert.match(routeSource, /ALIPAY_PRODUCT_CODE/);
   assert.match(routeSource, /ALIPAY_APP_AUTH_TOKEN/);
@@ -329,7 +281,7 @@ async function main() {
   assert.match(modalSource, /qrCode/);
   assert.match(modalSource, /alipayCheckoutUrl/);
   assert.match(modalSource, /productPermissionMissing/);
-  assert.match(modalSource, /Face-to-Face Payment/);
+  assert.match(modalSource, /Web Payment mode/);
   assert.doesNotMatch(modalSource, /qr\.alipay\.com\/demo/);
 
   console.log('Alipay payment flow checks passed.');

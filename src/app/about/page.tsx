@@ -4,69 +4,59 @@ import { useLocale } from '@/lib/locale-context';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { Sparkles, Users, Zap, Shield, ArrowRight, Target, Award, Globe, TrendingUp, Video, Lightbulb } from 'lucide-react';
-import { commonTranslations } from '@/lib/i18n/common';
 
 export default function AboutPage() {
-  const { t, locale } = useLocale();
-  
-  // Get translations - use locale-specific or fallback to English
-  const translations = locale === 'en' || !locale ? commonTranslations.about : (commonTranslations.about as any);
+  const { t } = useLocale();
 
   const stats = [
-    { value: '50K+', label: translations.stats?.activeUsers || commonTranslations.about.stats?.activeUsers || 'Active Users', icon: Users },
-    { value: '1M+', label: translations.stats?.videosProcessed || commonTranslations.about.stats?.videosProcessed || 'Videos Processed', icon: Video },
-    { value: '98%', label: translations.stats?.userSatisfaction || commonTranslations.about.stats?.userSatisfaction || 'User Satisfaction', icon: Award },
-    { value: '32', label: translations.stats?.languages || commonTranslations.about.stats?.languages || 'Languages', icon: Globe },
+    { value: '50K+', label: t('about.stats.activeUsers'), icon: Users },
+    { value: '1M+', label: t('about.stats.videosProcessed'), icon: Video },
+    { value: '98%', label: t('about.stats.userSatisfaction'), icon: Award },
+    { value: '32', label: t('about.stats.languages'), icon: Globe },
   ];
 
   const features = [
     {
       icon: Lightbulb,
-      title: translations.features?.aiIntelligence?.title || commonTranslations.about.features?.aiIntelligence?.title || 'AI-Powered Intelligence',
-      desc: translations.features?.aiIntelligence?.desc || commonTranslations.about.features?.aiIntelligence?.desc || 'Advanced AI algorithms automatically analyze video content.',
+      title: t('about.features.aiIntelligence.title'),
+      desc: t('about.features.aiIntelligence.desc'),
     },
     {
       icon: Zap,
-      title: translations.features?.fastProcessing?.title || commonTranslations.about.features?.fastProcessing?.title || 'Lightning Fast Processing',
-      desc: translations.features?.fastProcessing?.desc || commonTranslations.about.features?.fastProcessing?.desc || 'Process long-form videos in minutes.',
+      title: t('about.features.fastProcessing.title'),
+      desc: t('about.features.fastProcessing.desc'),
     },
     {
       icon: TrendingUp,
-      title: translations.features?.multiPlatform?.title || commonTranslations.about.features?.multiPlatform?.title || 'Multi-Platform Support',
-      desc: translations.features?.multiPlatform?.desc || commonTranslations.about.features?.multiPlatform?.desc || 'Import from YouTube, Bilibili, or upload local files.',
+      title: t('about.features.multiPlatform.title'),
+      desc: t('about.features.multiPlatform.desc'),
     },
     {
       icon: Shield,
-      title: translations.features?.privacyFirst?.title || commonTranslations.about.features?.privacyFirst?.title || 'Privacy First',
-      desc: translations.features?.privacyFirst?.desc || commonTranslations.about.features?.privacyFirst?.desc || 'Your content stays yours.',
+      title: t('about.features.privacyFirst.title'),
+      desc: t('about.features.privacyFirst.desc'),
     },
   ];
 
   const values = [
     {
       icon: Target,
-      title: translations.values?.userCentric?.title || commonTranslations.about.values?.userCentric?.title || 'User-Centric Innovation',
-      desc: translations.values?.userCentric?.desc || commonTranslations.about.values?.userCentric?.desc || 'We build tools that solve real problems.',
+      title: t('about.values.userCentric.title'),
+      desc: t('about.values.userCentric.desc'),
     },
     {
       icon: Zap,
-      title: translations.values?.continuous?.title || commonTranslations.about.values?.continuous?.title || 'Continuous Improvement',
-      desc: translations.values?.continuous?.desc || commonTranslations.about.values?.continuous?.desc || 'Regular updates based on user feedback.',
+      title: t('about.values.continuous.title'),
+      desc: t('about.values.continuous.desc'),
     },
     {
       icon: Users,
-      title: translations.values?.community?.title || commonTranslations.about.values?.community?.title || 'Global Community',
-      desc: translations.values?.community?.desc || commonTranslations.about.values?.community?.desc || 'Supporting creators in 32 languages.',
+      title: t('about.values.community.title'),
+      desc: t('about.values.community.desc'),
     },
   ];
 
-  // Get benefits as array
-  const benefits = translations.productVision?.benefits || commonTranslations.about.productVision?.benefits || [
-    'Save 80% of your editing time',
-    'Increase content output by 3x',
-    'Boost engagement rates',
-    'Reach wider audiences',
-  ];
+  const benefits = [0, 1, 2, 3].map((index) => t(`about.productVision.benefits.${index}`));
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-primary/5 via-background to-chart-4/5">
@@ -82,21 +72,21 @@ export default function AboutPage() {
           <div className="max-w-5xl mx-auto text-center">
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 text-primary text-sm font-medium mb-8">
               <Sparkles className="w-4 h-4" />
-              {translations.hero?.badge || commonTranslations.about.hero?.badge || 'AI-Powered Video Innovation'}
+              {t('about.hero.badge')}
             </div>
 
             <h1 className="text-4xl md:text-5xl lg:text-7xl font-black tracking-tight mb-8 bg-gradient-to-r from-foreground via-primary/80 to-foreground bg-clip-text text-transparent">
-              {translations.hero?.title || commonTranslations.about.hero?.title || 'Transform Your Video Content'}
+              {t('about.hero.title')}
             </h1>
 
             <p className="text-lg md:text-xl text-muted-foreground mb-12 max-w-3xl mx-auto leading-relaxed">
-              {translations.hero?.subtitle || commonTranslations.about.hero?.subtitle || 'Clipop AI is the leading AI-powered video clipping platform.'}
+              {t('about.hero.subtitle')}
             </p>
 
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <Button size="lg" className="text-base px-8" asChild>
                 <Link href="/">
-                  {translations.hero?.getStarted || commonTranslations.about.hero?.getStarted || 'Get Started Free'}
+                  {t('about.hero.getStarted')}
                   <ArrowRight className="w-4 h-4 ml-2" />
                 </Link>
               </Button>
@@ -126,15 +116,15 @@ export default function AboutPage() {
         <div className="container mx-auto px-4">
           <div className="max-w-6xl mx-auto">
             <div className="text-center mb-16">
-              <h2 className="text-3xl md:text-4xl font-bold mb-4">{translations.productVision?.title || commonTranslations.about.productVision?.title || 'Our Product Vision'}</h2>
-              <p className="text-lg text-muted-foreground max-w-2xl mx-auto">{translations.productVision?.subtitle || commonTranslations.about.productVision?.subtitle || 'Clipop AI empowers content creators.'}</p>
+              <h2 className="text-3xl md:text-4xl font-bold mb-4">{t('about.productVision.title')}</h2>
+              <p className="text-lg text-muted-foreground max-w-2xl mx-auto">{t('about.productVision.subtitle')}</p>
             </div>
 
             <div className="grid md:grid-cols-2 gap-12 items-center">
               <div className="order-2 md:order-1">
-                <h3 className="text-2xl md:text-3xl font-bold mb-6">{translations.productVision?.futureTitle || commonTranslations.about.productVision?.futureTitle || 'The Future of Video Content Creation'}</h3>
-                <p className="text-muted-foreground mb-6 leading-relaxed">{translations.productVision?.futurePara1 || commonTranslations.about.productVision?.futurePara1 || "In today's fast-paced digital landscape..."}</p>
-                <p className="text-muted-foreground mb-8 leading-relaxed">{translations.productVision?.futurePara2 || commonTranslations.about.productVision?.futurePara2 || 'Clipop AI solves this problem...'}</p>
+                <h3 className="text-2xl md:text-3xl font-bold mb-6">{t('about.productVision.futureTitle')}</h3>
+                <p className="text-muted-foreground mb-6 leading-relaxed">{t('about.productVision.futurePara1')}</p>
+                <p className="text-muted-foreground mb-8 leading-relaxed">{t('about.productVision.futurePara2')}</p>
                 <ul className="space-y-4">
                   {benefits.map((benefit, index) => (
                     <li key={index} className="flex items-center gap-3">
@@ -146,12 +136,32 @@ export default function AboutPage() {
               </div>
               <div className="order-1 md:order-2">
                 <div className="relative">
-                  <div className="aspect-video rounded-2xl overflow-hidden shadow-2xl">
-                    <img 
-                      src="https://neeko-copilot.bytedance.net/api/text-to-image?prompt=modern%20AI%20video%20editing%20interface%20with%20neon%20blue%20accents%20showing%20video%20timeline%20with%20AI%20highlight%20markers%2C%20professional%20dark%20theme%2C%20futuristic%20design&imageSize=landscape-16-9" 
-                      alt="AI Video Editing" 
-                      className="w-full h-full object-cover"
-                    />
+                  <div className="aspect-video rounded-2xl overflow-hidden shadow-2xl bg-gradient-to-br from-card via-muted to-primary/10 border border-border">
+                    <div className="h-full p-6 flex flex-col justify-between">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-sm font-semibold">
+                          <Video className="h-4 w-4 text-primary" />
+                          Clipop AI
+                        </div>
+                        <Sparkles className="h-5 w-5 text-primary" />
+                      </div>
+                      <div className="space-y-4">
+                        <div className="h-24 rounded-xl bg-background/80 border border-border p-4">
+                          <div className="h-3 w-28 rounded-full bg-primary/30 mb-4" />
+                          <div className="grid grid-cols-5 gap-2">
+                            {[0, 1, 2, 3, 4].map((item) => (
+                              <div key={item} className="h-10 rounded-md bg-muted border border-border" />
+                            ))}
+                          </div>
+                        </div>
+                        <div className="h-14 rounded-xl bg-background/80 border border-border px-4 flex items-center gap-2">
+                          <div className="h-1.5 flex-1 rounded-full bg-muted">
+                            <div className="h-1.5 w-2/3 rounded-full bg-primary" />
+                          </div>
+                          <ScissorsIcon />
+                        </div>
+                      </div>
+                    </div>
                   </div>
                   <div className="absolute -bottom-6 -right-6 w-32 h-32 bg-gradient-to-br from-primary/20 to-chart-4/20 rounded-2xl blur-2xl"></div>
                 </div>
@@ -166,8 +176,8 @@ export default function AboutPage() {
         <div className="container mx-auto px-4">
           <div className="max-w-6xl mx-auto">
             <div className="text-center mb-16">
-              <h2 className="text-3xl md:text-4xl font-bold mb-4">{translations.features?.title || commonTranslations.about.features?.title || 'Core Features'}</h2>
-              <p className="text-lg text-muted-foreground max-w-2xl mx-auto">{translations.features?.subtitle || commonTranslations.about.features?.subtitle || 'Everything you need to transform your video content efficiently'}</p>
+              <h2 className="text-3xl md:text-4xl font-bold mb-4">{t('about.features.title')}</h2>
+              <p className="text-lg text-muted-foreground max-w-2xl mx-auto">{t('about.features.subtitle')}</p>
             </div>
 
             <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -196,8 +206,8 @@ export default function AboutPage() {
         <div className="container mx-auto px-4">
           <div className="max-w-6xl mx-auto">
             <div className="text-center mb-16">
-              <h2 className="text-3xl md:text-4xl font-bold mb-4">{translations.values?.title || commonTranslations.about.values?.title || 'Our Core Values'}</h2>
-              <p className="text-lg text-muted-foreground max-w-2xl mx-auto">{translations.values?.subtitle || commonTranslations.about.values?.subtitle || 'What drives us to deliver the best experience for our users'}</p>
+              <h2 className="text-3xl md:text-4xl font-bold mb-4">{t('about.values.title')}</h2>
+              <p className="text-lg text-muted-foreground max-w-2xl mx-auto">{t('about.values.subtitle')}</p>
             </div>
 
             <div className="grid md:grid-cols-3 gap-8">
@@ -223,22 +233,22 @@ export default function AboutPage() {
         <div className="container mx-auto px-4">
           <div className="max-w-4xl mx-auto">
             <div className="text-center mb-12">
-              <h2 className="text-3xl md:text-4xl font-bold mb-4">{translations.geo?.title || commonTranslations.about.geo?.title || 'Global Reach, Local Impact'}</h2>
-              <p className="text-lg text-muted-foreground">{translations.geo?.subtitle || commonTranslations.about.geo?.subtitle || 'Serving creators across the globe with localized experiences'}</p>
+              <h2 className="text-3xl md:text-4xl font-bold mb-4">{t('about.geo.title')}</h2>
+              <p className="text-lg text-muted-foreground">{t('about.geo.subtitle')}</p>
             </div>
 
             <div className="grid md:grid-cols-3 gap-8">
               <div className="p-6 rounded-2xl bg-primary/5 border border-primary/10">
-                <h3 className="text-lg font-semibold mb-3">{translations.geo?.seo?.title || commonTranslations.about.geo?.seo?.title || 'SEO Optimization'}</h3>
-                <p className="text-muted-foreground text-sm leading-relaxed">{translations.geo?.seo?.desc || commonTranslations.about.geo?.seo?.desc || 'Our platform is optimized for search engines.'}</p>
+                <h3 className="text-lg font-semibold mb-3">{t('about.geo.seo.title')}</h3>
+                <p className="text-muted-foreground text-sm leading-relaxed">{t('about.geo.seo.desc')}</p>
               </div>
               <div className="p-6 rounded-2xl bg-chart-4/5 border border-chart-4/10">
-                <h3 className="text-lg font-semibold mb-3">{translations.geo?.multiLang?.title || commonTranslations.about.geo?.multiLang?.title || 'Multi-Language Support'}</h3>
-                <p className="text-muted-foreground text-sm leading-relaxed">{translations.geo?.multiLang?.desc || commonTranslations.about.geo?.multiLang?.desc || 'Available in 32 languages worldwide.'}</p>
+                <h3 className="text-lg font-semibold mb-3">{t('about.geo.multiLang.title')}</h3>
+                <p className="text-muted-foreground text-sm leading-relaxed">{t('about.geo.multiLang.desc')}</p>
               </div>
               <div className="p-6 rounded-2xl bg-chart-3/5 border border-chart-3/10">
-                <h3 className="text-lg font-semibold mb-3">{translations.geo?.regional?.title || commonTranslations.about.geo?.regional?.title || 'Regional Optimization'}</h3>
-                <p className="text-muted-foreground text-sm leading-relaxed">{translations.geo?.regional?.desc || commonTranslations.about.geo?.regional?.desc || 'Optimized for regional content platforms.'}</p>
+                <h3 className="text-lg font-semibold mb-3">{t('about.geo.regional.title')}</h3>
+                <p className="text-muted-foreground text-sm leading-relaxed">{t('about.geo.regional.desc')}</p>
               </div>
             </div>
           </div>
@@ -255,11 +265,11 @@ export default function AboutPage() {
                 <div className="absolute -bottom-32 -left-32 w-64 h-64 bg-white/5 rounded-full blur-3xl"></div>
               </div>
               <div className="relative z-10 text-center text-white">
-                <h2 className="text-3xl md:text-4xl font-bold mb-4">{translations.cta?.title || commonTranslations.about.cta?.title || 'Ready to Transform Your Videos?'}</h2>
-                <p className="text-white/80 text-lg mb-8 max-w-2xl mx-auto">{translations.cta?.subtitle || commonTranslations.about.cta?.subtitle || 'Join 50,000+ creators who are using Clipop AI'}</p>
+                <h2 className="text-3xl md:text-4xl font-bold mb-4">{t('about.cta.title')}</h2>
+                <p className="text-white/80 text-lg mb-8 max-w-2xl mx-auto">{t('about.cta.subtitle')}</p>
                 <Button size="lg" className="bg-white text-primary hover:bg-white/90 text-base px-8" asChild>
                   <Link href="/">
-                    {translations.cta?.button || commonTranslations.about.cta?.button || 'Get Started for Free'}
+                    {t('about.cta.button')}
                     <ArrowRight className="w-4 h-4 ml-2" />
                   </Link>
                 </Button>
@@ -268,6 +278,14 @@ export default function AboutPage() {
           </div>
         </div>
       </section>
+    </div>
+  );
+}
+
+function ScissorsIcon() {
+  return (
+    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10">
+      <Sparkles className="h-4 w-4 text-primary" />
     </div>
   );
 }

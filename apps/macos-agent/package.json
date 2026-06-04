@@ -1,10 +1,11 @@
 {
   "name": "clipop-macos-agent",
   "private": true,
-  "version": "0.9.29",
+  "version": "0.9.30",
   "main": "main.js",
   "scripts": {
     "prepare:runner": "node scripts/prepare-runner.js",
+    "finalize:mac": "node scripts/finalize-mac-app.js",
     "prebuild:dmg": "node scripts/cleanup-dmg-mounts.js",
     "dist:dmg:fallback": "node scripts/build-dmg-hybrid.js",
     "dev": "pnpm prepare:runner && electron .",
@@ -23,6 +24,7 @@
     "directories": {
       "output": "dist"
     },
+    "afterPack": "scripts/after-pack.js",
     "asar": true,
     "asarUnpack": [
       "bin/**",

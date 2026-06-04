@@ -29,11 +29,40 @@ async function rmDirSafe(p) {
   try { await fsp.rm(p, { recursive: true, force: true }); } catch {}
 }
 
+async function cleanupEsbuildCopyArtifacts(root) {
+  const pnpmDir = path.join(root, 'node_modules', '.pnpm');
+  if (!fs.existsSync(pnpmDir)) return;
+
+  const entries = await fsp.readdir(pnpmDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith('@esbuild+')) continue;
+    const platformPackage = entry.name
+      .slice('@esbuild+'.length)
+      .replace(/@\d.*$/, '');
+    const binDir = path.join(
+      pnpmDir,
+      entry.name,
+      'node_modules',
+      '@esbuild',
+      platformPackage,
+      'bin',
+    );
+    if (!fs.existsSync(binDir)) continue;
+    const binEntries = await fsp.readdir(binDir);
+    for (const name of binEntries) {
+      if (/^esbuild \d+$/.test(name)) {
+        await fsp.rm(path.join(binDir, name), { force: true });
+      }
+    }
+  }
+}
+
 async function main() {
   const root = path.resolve(__dirname, '..', '..', '..');
   const embeddedInRepo = path.join(root, 'apps', 'macos-agent', 'embedded-web');
   await rmDirSafe(embeddedInRepo);
   await rmDirSafe(path.join(root, '.next', 'standalone'));
+  await cleanupEsbuildCopyArtifacts(root);
 
   run('node', [path.join(__dirname, 'prepare-ytdlp.js')], path.join(root, 'apps', 'macos-agent'));
 

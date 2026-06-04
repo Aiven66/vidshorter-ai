@@ -2,7 +2,7 @@
 
 import { Button } from '@/components/ui/button';
 import { useLocale } from '@/lib/locale-context';
-import { locales, localeNames } from '@/lib/i18n';
+import { locales, localeNames } from '@/lib/i18n/index';
 
 export function MobileLanguageGrid() {
   const { locale, setLocale } = useLocale();

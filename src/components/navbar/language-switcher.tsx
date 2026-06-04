@@ -9,7 +9,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Globe, Check } from 'lucide-react';
-import { locales, localeNames, type Locale } from '@/lib/i18n';
+import { locales, localeNames } from '@/lib/i18n/index';
 
 export function LanguageSwitcher() {
   const { locale, setLocale } = useLocale();

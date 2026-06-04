@@ -4,6 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { finalizeMacApp } = require('./mac-package-utils');
 
 const root = path.resolve(__dirname, '..');
 const pkg = require(path.join(root, 'package.json'));
@@ -29,7 +30,10 @@ function main() {
 
   try {
     fs.mkdirSync(stageDir);
-    run('ditto', [appPath, path.join(stageDir, 'Clipop Agent.app')]);
+    finalizeMacApp(appPath, { root });
+    const stagedAppPath = path.join(stageDir, 'Clipop Agent.app');
+    run('ditto', ['--norsrc', appPath, stagedAppPath]);
+    run('/usr/bin/codesign', ['--verify', '--deep', '--strict', '--verbose=2', stagedAppPath]);
     fs.symlinkSync('/Applications', path.join(stageDir, 'Applications'));
 
     if (fs.existsSync(dmgPath)) {

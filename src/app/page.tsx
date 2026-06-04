@@ -1,4 +1,4 @@
-import { flattenTranslations, commonTranslations } from '@/lib/i18n';
+import { flattenTranslations, commonTranslations } from '@/lib/i18n/index';
 import { HomeHero, HomeFeatures, HomeHowItWorks } from '@/components/home/home-sections';
 import ClientVideoProcessor from '@/components/home/client-video-processor';
 

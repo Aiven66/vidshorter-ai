@@ -1,4 +1,4 @@
-import { Locale, locales } from '@/lib/i18n';
+import { Locale, locales } from '@/lib/i18n/index';
 
 export interface BlogPost {
   id: string;

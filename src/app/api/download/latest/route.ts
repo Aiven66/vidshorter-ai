@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 
 const GITHUB_REPO = 'Aiven66/vidshorter-ai';
-const DESKTOP_RELEASE_TAG = 'v0.9.29';
+const DESKTOP_RELEASE_TAG = 'v0.9.30';
 const CACHE_DURATION = 60;
 
 let cachedData: { timestamp: number; data: unknown } | null = null;

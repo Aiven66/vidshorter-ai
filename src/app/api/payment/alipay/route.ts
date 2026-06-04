@@ -11,14 +11,14 @@ function getAlipayGateway(sandbox: boolean) {
     : 'https://openapi.alipay.com/gateway.do';
 }
 
-function getAlipayPaymentMode() {
-  if (
-    process.env.ALIPAY_PAYMENT_MODE === 'page' &&
-    process.env.ALIPAY_PAGE_PAY_ENABLED === 'true'
-  ) {
-    return 'page';
+type AlipayPaymentMode = 'page' | 'precreate';
+
+function getAlipayPaymentMode(): AlipayPaymentMode {
+  const configured = process.env.ALIPAY_PAYMENT_MODE?.trim().toLowerCase();
+  if (configured === 'precreate' || configured === 'qr') {
+    return 'precreate';
   }
-  return 'precreate';
+  return 'page';
 }
 
 function signAlipay(params: Record<string, string>, privateKeyPem: string): string {
@@ -132,12 +132,12 @@ function alipayPermissionError(resp: Record<string, string> | undefined, options
   alternativeMode?: string;
 }) {
   return Response.json({
-    error: 'Alipay product permission is not active yet. Please complete the corresponding Alipay Open Platform product signing and wait until it takes effect.',
+    error: 'Alipay product permission is not active yet. Use the default Web Payment mode, or complete the corresponding Alipay Open Platform product signing and wait until it takes effect.',
     productPermissionMissing: true,
     requiredProduct: options?.requiredProduct || '当面付',
     requiredApi: options?.requiredApi || 'alipay.trade.precreate',
     alternativeProduct: options?.alternativeProduct || '电脑网站支付',
-    alternativeMode: options?.alternativeMode || 'Only set ALIPAY_PAYMENT_MODE=page together with ALIPAY_PAGE_PAY_ENABLED=true after Web Payment is approved',
+    alternativeMode: options?.alternativeMode || 'Remove ALIPAY_PAYMENT_MODE or set ALIPAY_PAYMENT_MODE=page to use alipay.trade.page.pay',
     appAuthTokenConfigured: Boolean(getAppAuthToken()),
     appAuthTokenHint: 'If this is an ISV/third-party app, configure ALIPAY_APP_AUTH_TOKEN from merchant authorization.',
     alipayCode: resp?.code,
@@ -299,7 +299,7 @@ export async function POST(request: NextRequest) {
     requiredProduct: '当面付',
     requiredApi: 'alipay.trade.precreate',
     alternativeProduct: '电脑网站支付',
-    alternativeMode: 'Set ALIPAY_PRODUCT_CODE=OFFLINE_PAYMENT if your contract is Face-to-Face Payment Lite. Only enable page mode after Web Payment is approved.',
+    alternativeMode: 'Remove ALIPAY_PAYMENT_MODE or set ALIPAY_PAYMENT_MODE=page to use alipay.trade.page.pay. Only set ALIPAY_PAYMENT_MODE=precreate after Face-to-Face Payment is approved.',
   });
 }
 
