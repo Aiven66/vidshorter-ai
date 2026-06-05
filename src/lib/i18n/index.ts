@@ -77,22 +77,58 @@ export const localeNames: Record<Locale, { native: string; english: string }> = 
   sv: { native: 'Svenska', english: 'Swedish' },
 };
 
-export function flattenTranslations(obj: any, prefix: string = ''): Record<string, string> {
+type TranslationTree = {
+  [key: string]: string | string[] | TranslationTree | TranslationTree[];
+};
+
+function isTranslationTree(value: unknown): value is TranslationTree {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function flattenTranslations(obj: TranslationTree, prefix: string = ''): Record<string, string> {
   const result: Record<string, string> = {};
   for (const [key, value] of Object.entries(obj)) {
     const newKey = prefix ? `${prefix}.${key}` : key;
-    if (typeof value === 'object' && value !== null) {
+    if (isTranslationTree(value)) {
       Object.assign(result, flattenTranslations(value, newKey));
+    } else if (Array.isArray(value)) {
+      value.forEach((item, index) => {
+        const arrayKey = `${newKey}.${index}`;
+        if (isTranslationTree(item)) {
+          Object.assign(result, flattenTranslations(item, arrayKey));
+        } else {
+          result[arrayKey] = String(item);
+        }
+      });
     } else {
-      result[newKey] = value as string;
+      result[newKey] = value;
     }
   }
   return result;
 }
 
+function mergeTranslations(base: TranslationTree, override: TranslationTree): TranslationTree {
+  if (Array.isArray(base) || Array.isArray(override)) {
+    return (override ?? base) as TranslationTree;
+  }
+
+  if (!isTranslationTree(base) || !isTranslationTree(override)) {
+    return override ?? base;
+  }
+
+  const merged: TranslationTree = { ...base };
+  for (const [key, value] of Object.entries(override)) {
+    const baseValue = base[key];
+    merged[key] = isTranslationTree(baseValue) && isTranslationTree(value)
+      ? mergeTranslations(baseValue, value)
+      : value;
+  }
+  return merged;
+}
+
 const enTranslations = flattenTranslations(commonTranslations);
 
-const localeLoaders: Record<Locale, () => Promise<{ default: any }>> = {
+const localeLoaders: Record<Locale, () => Promise<{ default: TranslationTree }>> = {
   en: () => import('./locales/en').then(m => ({ default: m.default })),
   zh: () => import('./locales/zh').then(m => ({ default: m.default })),
   'zh-Hant': () => import('./locales/zh-Hant').then(m => ({ default: m.default })),
@@ -147,8 +183,8 @@ export async function loadLocaleTranslations(locale: Locale): Promise<Record<str
     return enTranslations;
   }
 
-  const module = await loader();
-  const flattened = flattenTranslations(module.default);
+  const localeModule = await loader();
+  const flattened = flattenTranslations(mergeTranslations(commonTranslations, localeModule.default));
   translationsCache[locale] = flattened;
   return flattened;
 }

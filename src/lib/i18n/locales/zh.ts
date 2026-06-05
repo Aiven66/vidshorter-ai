@@ -21,6 +21,15 @@ const translations = {
   cta: '免费开始剪辑',
   secondary: '观看演示',
   },
+  visual: {
+  longVideo: '长视频',
+  source: '源视频',
+  scanning: 'AI 正在扫描高光时刻',
+  clipsReady: '个片段就绪',
+  engine: 'AI 高光识别引擎',
+  signals: '开场钩子、情绪、动作、字幕',
+  exports: '自动字幕 + 社交平台导出',
+  },
   features: {
   title: '强大的AI视频剪辑',
   auto: { title: '自动亮点检测', desc: 'AI分析视频并自动识别最吸引人的时刻' },

@@ -47,6 +47,15 @@ export const commonTranslations = {
       cta: 'Start Clipping for Free',
       secondary: 'Watch Demo',
     },
+    visual: {
+      longVideo: 'Long video',
+      source: 'Source',
+      scanning: 'AI is scanning for highlights',
+      clipsReady: 'clips ready',
+      engine: 'AI highlight engine',
+      signals: 'Hook, emotion, motion, captions',
+      exports: 'Auto captions + social-ready exports',
+    },
     features: {
       title: 'Powerful AI Video Clipping',
       auto: { title: 'Auto Highlight Detection', desc: 'AI analyzes your video and identifies the most engaging moments automatically' },

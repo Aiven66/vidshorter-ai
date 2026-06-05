@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useLocale } from '@/lib/locale-context';
-import { Download, Monitor, HardDrive, Apple, ChevronRight, ArrowDownToLine, Shield, Zap, Server } from 'lucide-react';
+import { Monitor, HardDrive, Apple, ChevronRight, ArrowDownToLine, Shield, Zap, Server } from 'lucide-react';
 
 interface ReleaseInfo {
   available: boolean;
