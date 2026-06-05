@@ -18,6 +18,9 @@ const originalEnv = {
   ALIPAY_PUBLIC_KEY: process.env.ALIPAY_PUBLIC_KEY,
   ALIPAY_NOTIFY_URL: process.env.ALIPAY_NOTIFY_URL,
   ALIPAY_PAYMENT_MODE: process.env.ALIPAY_PAYMENT_MODE,
+  ALIPAY_ENABLE_PRECREATE: process.env.ALIPAY_ENABLE_PRECREATE,
+  ALIPAY_ISV_MODE: process.env.ALIPAY_ISV_MODE,
+  ALIPAY_PAGE_PRODUCT_CODE: process.env.ALIPAY_PAGE_PRODUCT_CODE,
   ALIPAY_PAGE_PAY_ENABLED: process.env.ALIPAY_PAGE_PAY_ENABLED,
   ALIPAY_APP_AUTH_TOKEN: process.env.ALIPAY_APP_AUTH_TOKEN,
   NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
@@ -42,6 +45,9 @@ async function main() {
   setEnv('ALIPAY_PUBLIC_KEY', undefined);
   setEnv('ALIPAY_NOTIFY_URL', undefined);
   setEnv('ALIPAY_PAYMENT_MODE', undefined);
+  setEnv('ALIPAY_ENABLE_PRECREATE', undefined);
+  setEnv('ALIPAY_ISV_MODE', undefined);
+  setEnv('ALIPAY_PAGE_PRODUCT_CODE', undefined);
   setEnv('ALIPAY_PAGE_PAY_ENABLED', undefined);
   setEnv('ALIPAY_APP_AUTH_TOKEN', undefined);
   setEnv('NEXT_PUBLIC_APP_URL', 'https://www.clipopai.com');
@@ -83,6 +89,8 @@ async function main() {
   const defaultPageJson = await json(defaultPagePayment);
   assert.equal(defaultPageJson.checkoutMode, 'page');
   assert.equal(defaultPageJson.demo, false);
+  assert.equal(defaultPageJson.productCode, 'FAST_INSTANT_TRADE_PAY');
+  assert.equal(defaultPageJson.directMerchantMode, true);
   assert.equal('qrCode' in defaultPageJson, false);
   assert.equal(gatewayCallCount, 0, 'page mode must not call the gateway from the server');
   const defaultPayUrl = new URL(String(defaultPageJson.payUrl));
@@ -101,6 +109,31 @@ async function main() {
   assert.equal(typeof defaultPayUrl.searchParams.get('sign'), 'string');
 
   setEnv('ALIPAY_PAYMENT_MODE', 'precreate');
+  setEnv('ALIPAY_APP_AUTH_TOKEN', 'merchant_auth_token_should_not_be_sent');
+  gatewayCallCount = 0;
+  globalThis.fetch = async () => {
+    gatewayCallCount++;
+    return Response.json({});
+  };
+  const guardedPagePayment = await POST(paymentRequest({
+    planId: 'starter',
+    amount: 49,
+    subject: 'Clipop AI Starter',
+    userId: 'user_guarded',
+  }));
+  assert.equal(guardedPagePayment.status, 200);
+  const guardedPageJson = await json(guardedPagePayment);
+  assert.equal(guardedPageJson.checkoutMode, 'page');
+  assert.equal(guardedPageJson.ignoredPrecreateMode, true);
+  assert.equal(guardedPageJson.directMerchantMode, true);
+  assert.equal(gatewayCallCount, 0, 'guarded page mode must not call precreate');
+  const guardedPayUrl = new URL(String(guardedPageJson.payUrl));
+  assert.equal(guardedPayUrl.searchParams.get('method'), 'alipay.trade.page.pay');
+  assert.equal(guardedPayUrl.searchParams.has('app_auth_token'), false);
+
+  setEnv('ALIPAY_PAYMENT_MODE', 'precreate');
+  setEnv('ALIPAY_ENABLE_PRECREATE', 'true');
+  setEnv('ALIPAY_APP_AUTH_TOKEN', undefined);
   const alipayGatewayCalls: Array<{ url: string; body: URLSearchParams }> = [];
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     alipayGatewayCalls.push({
@@ -136,6 +169,7 @@ async function main() {
   assert.equal(precreateBiz.product_code, 'FACE_TO_FACE_PAYMENT');
 
   setEnv('ALIPAY_APP_AUTH_TOKEN', 'merchant_auth_token_123');
+  setEnv('ALIPAY_ISV_MODE', 'true');
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     alipayGatewayCalls.push({
       url: input.toString(),
@@ -159,6 +193,7 @@ async function main() {
   assert.equal(authTokenCall.get('app_auth_token'), 'merchant_auth_token_123');
   assert.equal((await json(authTokenPayment)).qrCode, 'https://qr.alipay.com/AUTH_TOKEN_QR');
   setEnv('ALIPAY_APP_AUTH_TOKEN', undefined);
+  setEnv('ALIPAY_ISV_MODE', undefined);
 
   globalThis.fetch = async () => Response.json({
     alipay_trade_precreate_response: {
@@ -266,6 +301,8 @@ async function main() {
   assert.match(routeSource, /FAST_INSTANT_TRADE_PAY/);
   assert.match(routeSource, /productPermissionMissing/);
   assert.match(routeSource, /ALIPAY_PAYMENT_MODE/);
+  assert.match(routeSource, /ALIPAY_ENABLE_PRECREATE/);
+  assert.match(routeSource, /ALIPAY_ISV_MODE/);
   assert.match(routeSource, /OFFLINE_PAYMENT/);
   assert.match(routeSource, /ALIPAY_PRODUCT_CODE/);
   assert.match(routeSource, /ALIPAY_APP_AUTH_TOKEN/);
@@ -293,6 +330,9 @@ main().finally(() => {
   setEnv('ALIPAY_PUBLIC_KEY', originalEnv.ALIPAY_PUBLIC_KEY);
   setEnv('ALIPAY_NOTIFY_URL', originalEnv.ALIPAY_NOTIFY_URL);
   setEnv('ALIPAY_PAYMENT_MODE', originalEnv.ALIPAY_PAYMENT_MODE);
+  setEnv('ALIPAY_ENABLE_PRECREATE', originalEnv.ALIPAY_ENABLE_PRECREATE);
+  setEnv('ALIPAY_ISV_MODE', originalEnv.ALIPAY_ISV_MODE);
+  setEnv('ALIPAY_PAGE_PRODUCT_CODE', originalEnv.ALIPAY_PAGE_PRODUCT_CODE);
   setEnv('ALIPAY_PAGE_PAY_ENABLED', originalEnv.ALIPAY_PAGE_PAY_ENABLED);
   setEnv('ALIPAY_APP_AUTH_TOKEN', originalEnv.ALIPAY_APP_AUTH_TOKEN);
   setEnv('NEXT_PUBLIC_APP_URL', originalEnv.NEXT_PUBLIC_APP_URL);

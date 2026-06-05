@@ -13,9 +13,14 @@ function getAlipayGateway(sandbox: boolean) {
 
 type AlipayPaymentMode = 'page' | 'precreate';
 
+function isEnabled(value: string | undefined) {
+  return ['1', 'true', 'yes', 'on'].includes(value?.trim().toLowerCase() || '');
+}
+
 function getAlipayPaymentMode(): AlipayPaymentMode {
   const configured = process.env.ALIPAY_PAYMENT_MODE?.trim().toLowerCase();
-  if (configured === 'precreate' || configured === 'qr') {
+  const precreateEnabled = isEnabled(process.env.ALIPAY_ENABLE_PRECREATE);
+  if (precreateEnabled && (configured === 'precreate' || configured === 'qr')) {
     return 'precreate';
   }
   return 'page';
@@ -71,7 +76,14 @@ function getPrecreateProductCodes() {
 }
 
 function getAppAuthToken() {
+  if (!isEnabled(process.env.ALIPAY_ISV_MODE)) {
+    return undefined;
+  }
   return process.env.ALIPAY_APP_AUTH_TOKEN?.trim();
+}
+
+function getPageProductCode() {
+  return process.env.ALIPAY_PAGE_PRODUCT_CODE?.trim() || 'FAST_INSTANT_TRADE_PAY';
 }
 
 function paramsToBody(params: Record<string, string>) {
@@ -138,8 +150,9 @@ function alipayPermissionError(resp: Record<string, string> | undefined, options
     requiredApi: options?.requiredApi || 'alipay.trade.precreate',
     alternativeProduct: options?.alternativeProduct || '电脑网站支付',
     alternativeMode: options?.alternativeMode || 'Remove ALIPAY_PAYMENT_MODE or set ALIPAY_PAYMENT_MODE=page to use alipay.trade.page.pay',
-    appAuthTokenConfigured: Boolean(getAppAuthToken()),
-    appAuthTokenHint: 'If this is an ISV/third-party app, configure ALIPAY_APP_AUTH_TOKEN from merchant authorization.',
+    isvModeEnabled: isEnabled(process.env.ALIPAY_ISV_MODE),
+    appAuthTokenConfigured: Boolean(process.env.ALIPAY_APP_AUTH_TOKEN?.trim()),
+    appAuthTokenHint: 'For a direct merchant app, keep ALIPAY_ISV_MODE unset/false. Only enable ALIPAY_ISV_MODE for a third-party ISV app with a valid merchant authorization token.',
     alipayCode: resp?.code,
     alipaySubCode: resp?.sub_code,
     alipaySubMessage: resp?.sub_msg,
@@ -227,7 +240,7 @@ export async function POST(request: NextRequest) {
       out_trade_no: outTradeNo,
       total_amount: amount.toFixed(2),
       subject: subject || 'VidShorter AI 订阅',
-      product_code: 'FAST_INSTANT_TRADE_PAY',
+      product_code: getPageProductCode(),
       passback_params: buildPassbackParams(userId, planId),
     }),
   }, privateKeyPem);
@@ -238,6 +251,10 @@ export async function POST(request: NextRequest) {
       orderId: outTradeNo,
       demo: false,
       checkoutMode: 'page',
+      productCode: getPageProductCode(),
+      directMerchantMode: !isEnabled(process.env.ALIPAY_ISV_MODE),
+      ignoredPrecreateMode: ['precreate', 'qr'].includes(process.env.ALIPAY_PAYMENT_MODE?.trim().toLowerCase() || '')
+        && !isEnabled(process.env.ALIPAY_ENABLE_PRECREATE),
     });
   }
 
