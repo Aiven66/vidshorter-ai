@@ -7,6 +7,14 @@ const requiredKeys = [
   'home.hero.subtitle',
   'home.hero.startFree',
   'home.hero.freeCredits',
+  'home.highlights.bilibili.title',
+  'home.highlights.bilibili.desc',
+  'home.highlights.local.title',
+  'home.highlights.local.desc',
+  'home.highlights.ai.title',
+  'home.highlights.ai.desc',
+  'home.highlights.shorts.title',
+  'home.highlights.shorts.desc',
   'home.visual.title',
   'home.visual.subtitle',
   'home.visual.longVideo',
@@ -50,6 +58,8 @@ async function main() {
   const zh = await loadLocaleTranslations('zh');
   assert.equal(zh['home.hero.title'], '将长视频转换为爆款短视频');
   assert.equal(zh['home.hero.freeCredits'], '注册即可获得100积分');
+  assert.match(zh['home.hero.subtitle'], /B站视频链接/);
+  assert.equal(zh['home.highlights.bilibili.title'], '支持 B站和 YouTube 链接');
   assert.equal(zh['home.visual.scanning'], 'AI 正在扫描高光时刻');
   assert.equal(zh['home.faq.title'], '常见问题');
   assert.equal(zh['video.analyze'], '分析');

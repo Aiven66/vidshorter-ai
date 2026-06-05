@@ -19,7 +19,9 @@ const originalEnv = {
   ALIPAY_NOTIFY_URL: process.env.ALIPAY_NOTIFY_URL,
   ALIPAY_PAYMENT_MODE: process.env.ALIPAY_PAYMENT_MODE,
   ALIPAY_ENABLE_PRECREATE: process.env.ALIPAY_ENABLE_PRECREATE,
+  ALIPAY_FORCE_PRECREATE: process.env.ALIPAY_FORCE_PRECREATE,
   ALIPAY_ISV_MODE: process.env.ALIPAY_ISV_MODE,
+  ALIPAY_FORCE_ISV_MODE: process.env.ALIPAY_FORCE_ISV_MODE,
   ALIPAY_PAGE_PRODUCT_CODE: process.env.ALIPAY_PAGE_PRODUCT_CODE,
   ALIPAY_PAGE_PAY_ENABLED: process.env.ALIPAY_PAGE_PAY_ENABLED,
   ALIPAY_APP_AUTH_TOKEN: process.env.ALIPAY_APP_AUTH_TOKEN,
@@ -46,7 +48,9 @@ async function main() {
   setEnv('ALIPAY_NOTIFY_URL', undefined);
   setEnv('ALIPAY_PAYMENT_MODE', undefined);
   setEnv('ALIPAY_ENABLE_PRECREATE', undefined);
+  setEnv('ALIPAY_FORCE_PRECREATE', undefined);
   setEnv('ALIPAY_ISV_MODE', undefined);
+  setEnv('ALIPAY_FORCE_ISV_MODE', undefined);
   setEnv('ALIPAY_PAGE_PRODUCT_CODE', undefined);
   setEnv('ALIPAY_PAGE_PAY_ENABLED', undefined);
   setEnv('ALIPAY_APP_AUTH_TOKEN', undefined);
@@ -109,7 +113,9 @@ async function main() {
   assert.equal(typeof defaultPayUrl.searchParams.get('sign'), 'string');
 
   setEnv('ALIPAY_PAYMENT_MODE', 'precreate');
+  setEnv('ALIPAY_ENABLE_PRECREATE', 'true');
   setEnv('ALIPAY_APP_AUTH_TOKEN', 'merchant_auth_token_should_not_be_sent');
+  setEnv('ALIPAY_ISV_MODE', 'true');
   gatewayCallCount = 0;
   globalThis.fetch = async () => {
     gatewayCallCount++;
@@ -125,7 +131,9 @@ async function main() {
   const guardedPageJson = await json(guardedPagePayment);
   assert.equal(guardedPageJson.checkoutMode, 'page');
   assert.equal(guardedPageJson.ignoredPrecreateMode, true);
+  assert.equal(guardedPageJson.requiredApi, 'alipay.trade.page.pay');
   assert.equal(guardedPageJson.directMerchantMode, true);
+  assert.equal(guardedPageJson.ignoredIsvMode, true);
   assert.equal(gatewayCallCount, 0, 'guarded page mode must not call precreate');
   const guardedPayUrl = new URL(String(guardedPageJson.payUrl));
   assert.equal(guardedPayUrl.searchParams.get('method'), 'alipay.trade.page.pay');
@@ -133,7 +141,9 @@ async function main() {
 
   setEnv('ALIPAY_PAYMENT_MODE', 'precreate');
   setEnv('ALIPAY_ENABLE_PRECREATE', 'true');
+  setEnv('ALIPAY_FORCE_PRECREATE', 'true');
   setEnv('ALIPAY_APP_AUTH_TOKEN', undefined);
+  setEnv('ALIPAY_ISV_MODE', undefined);
   const alipayGatewayCalls: Array<{ url: string; body: URLSearchParams }> = [];
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     alipayGatewayCalls.push({
@@ -170,6 +180,7 @@ async function main() {
 
   setEnv('ALIPAY_APP_AUTH_TOKEN', 'merchant_auth_token_123');
   setEnv('ALIPAY_ISV_MODE', 'true');
+  setEnv('ALIPAY_FORCE_ISV_MODE', 'true');
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     alipayGatewayCalls.push({
       url: input.toString(),
@@ -194,6 +205,7 @@ async function main() {
   assert.equal((await json(authTokenPayment)).qrCode, 'https://qr.alipay.com/AUTH_TOKEN_QR');
   setEnv('ALIPAY_APP_AUTH_TOKEN', undefined);
   setEnv('ALIPAY_ISV_MODE', undefined);
+  setEnv('ALIPAY_FORCE_ISV_MODE', undefined);
 
   globalThis.fetch = async () => Response.json({
     alipay_trade_precreate_response: {
@@ -302,7 +314,9 @@ async function main() {
   assert.match(routeSource, /productPermissionMissing/);
   assert.match(routeSource, /ALIPAY_PAYMENT_MODE/);
   assert.match(routeSource, /ALIPAY_ENABLE_PRECREATE/);
+  assert.match(routeSource, /ALIPAY_FORCE_PRECREATE/);
   assert.match(routeSource, /ALIPAY_ISV_MODE/);
+  assert.match(routeSource, /ALIPAY_FORCE_ISV_MODE/);
   assert.match(routeSource, /OFFLINE_PAYMENT/);
   assert.match(routeSource, /ALIPAY_PRODUCT_CODE/);
   assert.match(routeSource, /ALIPAY_APP_AUTH_TOKEN/);
@@ -313,13 +327,14 @@ async function main() {
   assert.match(routeSource, /export async function PUT/);
 
   const modalSource = readFileSync('src/components/payment-modal.tsx', 'utf8');
-  assert.match(modalSource, /Pay with Alipay/);
+  assert.match(modalSource, /Open Alipay Checkout/);
   assert.match(modalSource, /\/api\/payment\/alipay/);
   assert.match(modalSource, /qrCode/);
   assert.match(modalSource, /alipayCheckoutUrl/);
   assert.match(modalSource, /productPermissionMissing/);
-  assert.match(modalSource, /Web Payment mode/);
+  assert.match(modalSource, /Open Alipay Checkout/);
   assert.doesNotMatch(modalSource, /qr\.alipay\.com\/demo/);
+  assert.doesNotMatch(modalSource, /I have completed the payment/);
 
   console.log('Alipay payment flow checks passed.');
 }
@@ -331,7 +346,9 @@ main().finally(() => {
   setEnv('ALIPAY_NOTIFY_URL', originalEnv.ALIPAY_NOTIFY_URL);
   setEnv('ALIPAY_PAYMENT_MODE', originalEnv.ALIPAY_PAYMENT_MODE);
   setEnv('ALIPAY_ENABLE_PRECREATE', originalEnv.ALIPAY_ENABLE_PRECREATE);
+  setEnv('ALIPAY_FORCE_PRECREATE', originalEnv.ALIPAY_FORCE_PRECREATE);
   setEnv('ALIPAY_ISV_MODE', originalEnv.ALIPAY_ISV_MODE);
+  setEnv('ALIPAY_FORCE_ISV_MODE', originalEnv.ALIPAY_FORCE_ISV_MODE);
   setEnv('ALIPAY_PAGE_PRODUCT_CODE', originalEnv.ALIPAY_PAGE_PRODUCT_CODE);
   setEnv('ALIPAY_PAGE_PAY_ENABLED', originalEnv.ALIPAY_PAGE_PAY_ENABLED);
   setEnv('ALIPAY_APP_AUTH_TOKEN', originalEnv.ALIPAY_APP_AUTH_TOKEN);

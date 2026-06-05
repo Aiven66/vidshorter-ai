@@ -17,11 +17,17 @@ const translations = {
   hero: {
   badge: 'AI驱动的视频处理',
   title: '将长视频转换为爆款短视频',
-  subtitle: 'AI驱动的视频剪辑，自动提取长视频中最精彩的时刻',
+  subtitle: '粘贴 YouTube 或 B站视频链接，或上传本地长视频，让 AI 自动生成高光时刻短视频',
   cta: '免费开始剪辑',
   secondary: '观看演示',
   startFree: '免费开始',
   freeCredits: '注册即可获得100积分',
+  },
+  highlights: {
+  bilibili: { title: '支持 B站和 YouTube 链接', desc: '粘贴支持的长视频链接，即可开始 AI 高光短视频生成，不需要手动找时间轴。' },
+  local: { title: '支持本地长视频上传', desc: '当平台链接私密、受限或尚未发布时，可以直接上传 MP4、MOV、AVI 等文件。' },
+  ai: { title: 'AI 自动识别高能片段', desc: '识别开场钩子、话题转折、清晰演示和关键表达，让短视频更容易传播。' },
+  shorts: { title: '短视频可直接发布', desc: '预览高光片段并导出适合 Shorts、Reels、TikTok、抖音、小红书和 B站的短视频。' },
   },
   visual: {
   title: '从长视频到高光短视频',
@@ -175,7 +181,7 @@ dashboard: { title: '控制台', credits: '可用积分', creditsReset: '每天0
   statusPending: '待处理', statusProcessing: '处理中', statusCompleted: '✓ 完成', statusFailed: '失败',
   },
   admin: { title: '管理后台', blog: '博客管理', blogCreate: '创建帖子', blogTitle: '标题', blogCategory: '分类', blogContent: '内容', blogPublish: '发布', blogSave: '保存草稿', blogPublished: '已发布', blogDraft: '草稿' },
-  blog: { title: '博客', readMore: '阅读更多', noPosts: '暂无帖子', subtitle: 'Clipop AI 最新动态、技巧与更新', views: '次浏览' },
+  blog: { title: '博客', readMore: '阅读更多', noPosts: '暂无帖子', subtitle: 'Clipop AI 最新动态、技巧与更新', views: '次浏览', relatedPosts: '相关文章' },
   terms: {
   title: '使用声明', lastUpdated: '最后更新：2026年5月29日',
   section1Title: '1. 接受条款', section1Content: '访问和使用 Clipop AI（"本平台"）即表示您同意受本使用声明的约束。如果您不同意这些条款，请勿使用本平台。',

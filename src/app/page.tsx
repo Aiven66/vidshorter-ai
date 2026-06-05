@@ -1,7 +1,7 @@
 'use client';
 
 import { useLocale } from '@/lib/locale-context';
-import { HomeHero, HomeFeatures, HomeHowItWorks, HomeEditingShowcase, HomeFAQ } from '@/components/home/home-sections';
+import { HomeHero, HomeValueHighlights, HomeFeatures, HomeHowItWorks, HomeEditingShowcase, HomeFAQ } from '@/components/home/home-sections';
 import ClientVideoProcessor from '@/components/home/client-video-processor';
 
 export default function HomePage() {
@@ -13,6 +13,7 @@ export default function HomePage() {
         <div className="container mx-auto px-4 py-10 md:py-14">
           <div className="mx-auto max-w-6xl">
             <HomeHero t={t} />
+            <HomeValueHighlights t={t} />
             <div className="mx-auto max-w-5xl">
               <ClientVideoProcessor />
             </div>

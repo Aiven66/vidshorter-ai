@@ -7,7 +7,7 @@ async function main() {
     const activeLocale = normalizeLocale(locale);
     const posts = getBuiltInBlogPosts(activeLocale);
 
-    assert.ok(posts.length >= 10, `${locale} should expose built-in blog posts`);
+    assert.ok(posts.length >= 16, `${locale} should expose built-in blog posts`);
 
     for (const post of posts) {
       const detail = getBuiltInBlogPost(post.id, activeLocale);
@@ -26,6 +26,16 @@ async function main() {
   const traditionalPost = getBuiltInBlogPosts('zh-Hant')[0];
   const normalizedRow = normalizeBlogRow({ id: traditionalPost.id, title: traditionalPost.title });
   assert.equal(normalizedRow.locale, 'zh-Hant', 'zh-Hant suffix should be inferred before zh');
+
+  const englishPosts = getBuiltInBlogPosts('en');
+  const categoryCounts = new Map<string, number>();
+  for (const post of englishPosts) {
+    categoryCounts.set(post.category, (categoryCounts.get(post.category) || 0) + 1);
+  }
+  assert.ok(
+    [...categoryCounts.values()].some(count => count >= 2),
+    'related-post recommendations should have same-category candidates'
+  );
 
   console.log(`Blog routing checks passed for ${locales.length} locales.`);
 }

@@ -14,6 +14,7 @@ import {
   isPostForLocale,
   normalizeBlogRow,
   normalizeLocale,
+  stripHtml,
 } from '@/lib/blog-content';
 import { Calendar, ArrowLeft, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
@@ -47,9 +48,17 @@ export default function BlogDetailPage() {
       const currentPost = allPosts.find(p => p.id === postId) || fallbackPost;
       const category = currentPost?.category || '';
 
-      const related = allPosts
-        .filter(p => p.id !== currentPost?.id && p.category === category)
-        .slice(0, 3);
+      const relatedCandidates = allPosts.filter(p => p.id !== currentPost?.id);
+      const seenRelated = new Set<string>();
+      const related = [
+        ...relatedCandidates.filter(p => p.category === category),
+        ...relatedCandidates,
+      ].filter((candidate) => {
+        const groupKey = candidate.translation_group || candidate.id;
+        if (seenRelated.has(groupKey)) return false;
+        seenRelated.add(groupKey);
+        return true;
+      }).slice(0, 4);
       setRelatedPosts(related);
 
       if (!isSupabaseConfigured()) {
@@ -184,18 +193,18 @@ export default function BlogDetailPage() {
               <h2 className="text-2xl font-bold mb-6 text-center">
                 {t('blog.relatedPosts') || 'Related Posts'}
               </h2>
-              <div className="grid gap-4">
+              <div className="grid gap-4 sm:grid-cols-2">
                 {relatedPosts.map((relatedPost) => (
                   <Card key={relatedPost.id} className="overflow-hidden hover:shadow-md transition-shadow">
                     <CardContent className="p-4">
                       <div className="flex items-start gap-4">
                         {relatedPost.cover_image && (
-                          <div className="relative h-20 w-20 flex-shrink-0 overflow-hidden rounded-lg">
+                          <div className="relative h-24 w-24 flex-shrink-0 overflow-hidden rounded-lg">
                             <Image
                               src={relatedPost.cover_image}
                               alt={relatedPost.title}
                               fill
-                              sizes="80px"
+                              sizes="96px"
                               className="object-cover"
                             />
                           </div>
@@ -209,6 +218,9 @@ export default function BlogDetailPage() {
                               {relatedPost.title}
                             </Link>
                           </h3>
+                          <p className="mb-2 line-clamp-2 text-sm text-muted-foreground">
+                            {stripHtml(relatedPost.content)}
+                          </p>
                           <p className="text-sm text-muted-foreground flex items-center gap-1">
                             <Calendar className="h-3 w-3" />
                             {formatDate(relatedPost.created_at)}

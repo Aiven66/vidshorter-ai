@@ -3,12 +3,19 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import Link from 'next/link';
-import { Sparkles, Film, Zap, Video, Scissors, Download, Play, UploadCloud, WandSparkles, Captions, ArrowRight, Gift, HelpCircle } from 'lucide-react';
+import { Sparkles, Film, Zap, Video, Scissors, Download, Play, UploadCloud, WandSparkles, Captions, ArrowRight, Gift, HelpCircle, Link2, Clapperboard } from 'lucide-react';
 
 const features = [
   { Icon: Sparkles, titleKey: 'home.features.auto.title', descKey: 'home.features.auto.desc' },
   { Icon: Film, titleKey: 'home.features.multi.title', descKey: 'home.features.multi.desc' },
   { Icon: Zap, titleKey: 'home.features.quick.title', descKey: 'home.features.quick.desc' },
+];
+
+const valueHighlights = [
+  { Icon: Link2, titleKey: 'home.highlights.bilibili.title', descKey: 'home.highlights.bilibili.desc' },
+  { Icon: UploadCloud, titleKey: 'home.highlights.local.title', descKey: 'home.highlights.local.desc' },
+  { Icon: WandSparkles, titleKey: 'home.highlights.ai.title', descKey: 'home.highlights.ai.desc' },
+  { Icon: Clapperboard, titleKey: 'home.highlights.shorts.title', descKey: 'home.highlights.shorts.desc' },
 ];
 
 const steps = [
@@ -52,6 +59,27 @@ export function HomeHero({ t }: { t: (key: string) => string }) {
           </div>
         </div>
       </div>
+  );
+}
+
+export function HomeValueHighlights({ t }: { t: (key: string) => string }) {
+  return (
+    <section className="mb-10">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {valueHighlights.map(({ Icon, titleKey, descKey }) => (
+          <div
+            key={titleKey}
+            className="rounded-lg border bg-background/85 p-4 shadow-sm transition-colors hover:bg-muted/30"
+          >
+            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+              <Icon className="h-5 w-5 text-primary" />
+            </div>
+            <h3 className="mb-1 text-sm font-semibold">{t(titleKey)}</h3>
+            <p className="text-sm leading-6 text-muted-foreground">{t(descKey)}</p>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 

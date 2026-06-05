@@ -6,7 +6,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { CheckCircle, Loader2, QrCode, CreditCard, Smartphone, ExternalLink, ArrowLeft, XCircle, Lock, Shield, ChevronRight } from 'lucide-react';
+import { CheckCircle, Loader2, CreditCard, Smartphone, ExternalLink, ArrowLeft, XCircle, Lock, Shield, ChevronRight } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import { posthog } from '@/lib/posthog';
 
@@ -165,7 +165,7 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
             data.configMissing
               ? 'Alipay is not configured yet. Please complete the Alipay Open Platform keys before using Alipay payment.'
               : data.productPermissionMissing
-                ? 'Alipay product permission is not active yet. Please use Web Payment mode or enable and approve the selected Alipay product in Alipay Open Platform.'
+                ? 'Alipay product permission is not active yet. Production now uses Alipay web checkout by default; please remove forced QR/precreate settings or approve the selected Alipay product.'
               : data.error || 'Failed to create Alipay payment'
           );
           setPayState('selecting');
@@ -341,11 +341,14 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
                 <div className="relative">
                   <div className="w-64 h-64 rounded-2xl border-2 border-muted bg-white p-4 shadow-lg">
                     {qrCodeUrl ? (
-                      <img
-                        src={qrCodeUrl}
-                        alt="Alipay QR Code"
-                        className="w-full h-full object-contain rounded-xl"
-                      />
+                      <>
+                        {/* eslint-disable-next-line @next/next/no-img-element -- Dynamic payment QR images should not be optimized. */}
+                        <img
+                          src={qrCodeUrl}
+                          alt="Alipay QR Code"
+                          className="w-full h-full object-contain rounded-xl"
+                        />
+                      </>
                     ) : (
                       <div className="w-full h-full flex items-center justify-center">
                         <Loader2 className="h-10 w-10 animate-spin text-primary" />
@@ -375,9 +378,9 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
                   Waiting for payment...
                 </Badge>
 
-                <Button variant="outline" className="w-full" onClick={() => setPayState('success')}>
-                  I have completed the payment
-                </Button>
+                <p className="text-center text-xs text-muted-foreground">
+                  This QR mode is only for approved Face-to-Face Payment accounts. Payment status is confirmed by Alipay notification.
+                </p>
               </div>
             )}
           </div>
@@ -517,7 +520,7 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
                         </Badge>
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        Scan QR code to pay, supports balance, bank cards, Huabei
+                        Open Alipay checkout, then scan or log in on Alipay
                       </p>
                     </div>
                   </div>
@@ -532,8 +535,8 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
             <Button className="w-full h-12 text-base font-medium gap-2" onClick={handlePay}>
               {method === 'alipay' ? (
                 <>
-                  <QrCode className="h-5 w-5" />
-                  Pay with Alipay
+                  <ExternalLink className="h-5 w-5" />
+                  Open Alipay Checkout
                 </>
               ) : (
                 <>

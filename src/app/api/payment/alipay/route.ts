@@ -20,10 +20,16 @@ function isEnabled(value: string | undefined) {
 function getAlipayPaymentMode(): AlipayPaymentMode {
   const configured = process.env.ALIPAY_PAYMENT_MODE?.trim().toLowerCase();
   const precreateEnabled = isEnabled(process.env.ALIPAY_ENABLE_PRECREATE);
-  if (precreateEnabled && (configured === 'precreate' || configured === 'qr')) {
+  const forcedPrecreate = isEnabled(process.env.ALIPAY_FORCE_PRECREATE);
+  if (forcedPrecreate && precreateEnabled && (configured === 'precreate' || configured === 'qr')) {
     return 'precreate';
   }
   return 'page';
+}
+
+function isPrecreateRequested() {
+  return ['precreate', 'qr'].includes(process.env.ALIPAY_PAYMENT_MODE?.trim().toLowerCase() || '')
+    || isEnabled(process.env.ALIPAY_ENABLE_PRECREATE);
 }
 
 function signAlipay(params: Record<string, string>, privateKeyPem: string): string {
@@ -76,7 +82,7 @@ function getPrecreateProductCodes() {
 }
 
 function getAppAuthToken() {
-  if (!isEnabled(process.env.ALIPAY_ISV_MODE)) {
+  if (!isEnabled(process.env.ALIPAY_ISV_MODE) || !isEnabled(process.env.ALIPAY_FORCE_ISV_MODE)) {
     return undefined;
   }
   return process.env.ALIPAY_APP_AUTH_TOKEN?.trim();
@@ -149,10 +155,11 @@ function alipayPermissionError(resp: Record<string, string> | undefined, options
     requiredProduct: options?.requiredProduct || '当面付',
     requiredApi: options?.requiredApi || 'alipay.trade.precreate',
     alternativeProduct: options?.alternativeProduct || '电脑网站支付',
-    alternativeMode: options?.alternativeMode || 'Remove ALIPAY_PAYMENT_MODE or set ALIPAY_PAYMENT_MODE=page to use alipay.trade.page.pay',
+    alternativeMode: options?.alternativeMode || 'Use the default page-pay mode. Precreate QR mode is disabled unless ALIPAY_FORCE_PRECREATE=true, because it requires approved Face-to-Face Payment.',
     isvModeEnabled: isEnabled(process.env.ALIPAY_ISV_MODE),
+    isvModeForced: isEnabled(process.env.ALIPAY_FORCE_ISV_MODE),
     appAuthTokenConfigured: Boolean(process.env.ALIPAY_APP_AUTH_TOKEN?.trim()),
-    appAuthTokenHint: 'For a direct merchant app, keep ALIPAY_ISV_MODE unset/false. Only enable ALIPAY_ISV_MODE for a third-party ISV app with a valid merchant authorization token.',
+    appAuthTokenHint: 'For a direct merchant app, keep ALIPAY_ISV_MODE unset/false. Only enable ALIPAY_ISV_MODE and ALIPAY_FORCE_ISV_MODE for a third-party ISV app with a valid merchant authorization token.',
     alipayCode: resp?.code,
     alipaySubCode: resp?.sub_code,
     alipaySubMessage: resp?.sub_msg,
@@ -252,9 +259,12 @@ export async function POST(request: NextRequest) {
       demo: false,
       checkoutMode: 'page',
       productCode: getPageProductCode(),
-      directMerchantMode: !isEnabled(process.env.ALIPAY_ISV_MODE),
-      ignoredPrecreateMode: ['precreate', 'qr'].includes(process.env.ALIPAY_PAYMENT_MODE?.trim().toLowerCase() || '')
-        && !isEnabled(process.env.ALIPAY_ENABLE_PRECREATE),
+      requiredProduct: '电脑网站支付',
+      requiredApi: 'alipay.trade.page.pay',
+      directMerchantMode: !appAuthToken,
+      ignoredIsvMode: isEnabled(process.env.ALIPAY_ISV_MODE) && !isEnabled(process.env.ALIPAY_FORCE_ISV_MODE),
+      ignoredPrecreateMode: isPrecreateRequested() && !isEnabled(process.env.ALIPAY_FORCE_PRECREATE),
+      checkoutInstruction: 'Open Alipay web checkout. Users can log in or scan the QR code shown by Alipay on the official checkout page.',
     });
   }
 
@@ -316,7 +326,7 @@ export async function POST(request: NextRequest) {
     requiredProduct: '当面付',
     requiredApi: 'alipay.trade.precreate',
     alternativeProduct: '电脑网站支付',
-    alternativeMode: 'Remove ALIPAY_PAYMENT_MODE or set ALIPAY_PAYMENT_MODE=page to use alipay.trade.page.pay. Only set ALIPAY_PAYMENT_MODE=precreate after Face-to-Face Payment is approved.',
+    alternativeMode: 'Use default page-pay mode for production. Only set ALIPAY_FORCE_PRECREATE=true after Face-to-Face Payment is approved and active.',
   });
 }
 

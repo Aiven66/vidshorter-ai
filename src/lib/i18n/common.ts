@@ -43,11 +43,29 @@ export const commonTranslations = {
     hero: {
       badge: 'AI-Powered Video Processing',
       title: 'Transform Long Videos into Viral Shorts',
-      subtitle: 'AI-powered video clipping that extracts the best moments from your long-form content automatically',
+      subtitle: 'Paste a YouTube or Bilibili link, or upload a local long video, and let AI generate highlight shorts automatically',
       cta: 'Start Clipping for Free',
       secondary: 'Watch Demo',
       startFree: 'Start For Free',
       freeCredits: 'Sign up now and get 100 free credits',
+    },
+    highlights: {
+      bilibili: {
+        title: 'Bilibili and YouTube links',
+        desc: 'Paste supported long-video links and start AI highlight generation without manual timeline hunting.',
+      },
+      local: {
+        title: 'Local long-video upload',
+        desc: 'Upload MP4, MOV, or AVI files when a platform link is private, blocked, or not yet published.',
+      },
+      ai: {
+        title: 'AI finds high-energy moments',
+        desc: 'Detect hooks, topic shifts, clear demonstrations, and strong statements for better clips.',
+      },
+      shorts: {
+        title: 'Short clips ready to publish',
+        desc: 'Review highlight shorts and export social-ready clips for Shorts, Reels, TikTok, and Bilibili.',
+      },
     },
     visual: {
       title: 'From long video to polished short clips',
@@ -317,6 +335,7 @@ export const commonTranslations = {
     noPosts: 'No posts yet',
     subtitle: 'Latest news, tips, and updates from Clipop AI',
     views: 'views',
+    relatedPosts: 'Related Articles',
   },
   terms: {
     title: 'Terms of Service',
