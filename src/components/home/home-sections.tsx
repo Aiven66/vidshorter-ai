@@ -1,6 +1,9 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Sparkles, Film, Zap, Video, Scissors, Download, Play, UploadCloud, WandSparkles, Captions, ArrowRight } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
+import Link from 'next/link';
+import { Sparkles, Film, Zap, Video, Scissors, Download, Play, UploadCloud, WandSparkles, Captions, ArrowRight, Gift, HelpCircle } from 'lucide-react';
 
 const features = [
   { Icon: Sparkles, titleKey: 'home.features.auto.title', descKey: 'home.features.auto.desc' },
@@ -15,115 +18,145 @@ const steps = [
   { step: '4', titleKey: 'home.howItWorks.step4.title', descKey: 'home.howItWorks.step4.desc', Icon: Download },
 ];
 
+const faqItems = [
+  { questionKey: 'home.faq.q1', answerKey: 'home.faq.a1' },
+  { questionKey: 'home.faq.q2', answerKey: 'home.faq.a2' },
+  { questionKey: 'home.faq.q3', answerKey: 'home.faq.a3' },
+  { questionKey: 'home.faq.q4', answerKey: 'home.faq.a4' },
+  { questionKey: 'home.faq.q5', answerKey: 'home.faq.a5' },
+];
+
 export function HomeHero({ t }: { t: (key: string) => string }) {
   return (
-    <div className="mb-12">
-      <div className="mx-auto mb-8 max-w-5xl overflow-hidden rounded-2xl border bg-background/85 shadow-xl backdrop-blur">
-        <div className="grid gap-0 lg:grid-cols-[1.08fr_0.92fr]">
-          <div className="relative min-h-[260px] bg-muted/35 p-5 sm:p-6">
-            <div className="mb-4 flex items-center justify-between">
-              <div className="flex items-center gap-2 text-sm font-semibold">
-                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-foreground text-background">
-                  <Play className="h-4 w-4 fill-current" />
-                </span>
-                58:24 {t('home.visual.longVideo')}
-              </div>
-              <Badge variant="secondary" className="rounded-full">
-                <UploadCloud className="mr-1.5 h-3.5 w-3.5" />
-                URL / MP4
-              </Badge>
-            </div>
-
-            <div className="aspect-video overflow-hidden rounded-xl border bg-gradient-to-br from-slate-950 via-slate-800 to-slate-700 p-4 text-white shadow-inner">
-              <div className="flex h-full flex-col justify-between">
-                <div className="flex items-center justify-between text-xs text-white/70">
-                  <span>{t('home.visual.source')}</span>
-                  <span>00:14:28</span>
-                </div>
-                <div className="grid grid-cols-4 gap-2">
-                  {[0, 1, 2, 3].map((item) => (
-                    <div key={item} className="h-16 rounded-lg bg-white/10 ring-1 ring-white/10">
-                      <div className="h-full rounded-lg bg-gradient-to-br from-white/15 to-transparent" />
-                    </div>
-                  ))}
-                </div>
-                <div>
-                  <div className="mb-2 flex items-center gap-2 text-xs text-white/75">
-                    <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                    {t('home.visual.scanning')}
-                  </div>
-                  <div className="h-2 rounded-full bg-white/15">
-                    <div className="h-2 w-2/3 animate-pulse rounded-full bg-emerald-400" />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center gap-3">
-              <div className="h-2 rounded-full bg-muted-foreground/15">
-                <div className="h-2 w-4/5 rounded-full bg-foreground" />
-              </div>
-              <ArrowRight className="h-5 w-5 text-muted-foreground" />
-              <div className="flex gap-1.5">
-                <span className="h-8 flex-1 rounded-md bg-primary/25" />
-                <span className="h-8 flex-1 rounded-md bg-chart-4/30" />
-                <span className="h-8 flex-1 rounded-md bg-chart-3/25" />
-              </div>
-            </div>
-          </div>
-
-          <div className="relative flex min-h-[260px] flex-col justify-center gap-4 p-5 sm:p-6">
-            <div className="absolute right-6 top-6 rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
-              3 {t('home.visual.clipsReady')}
-            </div>
-            <div className="flex items-center gap-3">
-              <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-                <WandSparkles className="h-5 w-5" />
-              </span>
-              <div>
-                <p className="text-sm font-semibold">{t('home.visual.engine')}</p>
-                <p className="text-xs text-muted-foreground">{t('home.visual.signals')}</p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-3 gap-3">
-              {[1, 2, 3].map((item) => (
-                <div key={item} className="rounded-xl border bg-card p-2 shadow-sm">
-                  <div className="mb-2 aspect-[9/16] rounded-lg bg-gradient-to-b from-foreground to-muted-foreground/70" />
-                  <div className="h-1.5 rounded-full bg-muted">
-                    <div className="h-1.5 w-3/4 rounded-full bg-primary" />
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="flex items-center gap-2 rounded-xl border bg-muted/40 px-4 py-3 text-sm">
-              <Captions className="h-4 w-4 text-primary" />
-              <span className="font-medium">{t('home.visual.exports')}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="text-center">
+    <div className="mb-8 text-center">
         <Badge variant="outline" className="mb-4 px-4 py-1.5 text-sm">
           <Sparkles className="mr-2 h-4 w-4 text-primary" />
           {t('home.hero.badge')}
         </Badge>
-        <h1 className="mb-4 text-3xl font-bold tracking-tight md:text-5xl">
+        <h1 className="mx-auto mb-4 max-w-5xl text-4xl font-bold tracking-tight md:text-6xl">
           {t('home.hero.title')}
         </h1>
         <p className="mx-auto max-w-2xl text-lg text-muted-foreground">
           {t('home.hero.subtitle')}
         </p>
+        <div className="mt-7 flex flex-col items-center justify-center gap-3 sm:flex-row">
+          <Button size="lg" asChild className="h-12 px-7 text-base">
+            <Link href="/register">
+              {t('home.hero.startFree')}
+              <ArrowRight className="ml-2 h-4 w-4" />
+            </Link>
+          </Button>
+          <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+            <Gift className="h-4 w-4 text-primary" />
+            {t('home.hero.freeCredits')}
+          </div>
+        </div>
       </div>
-    </div>
+  );
+}
+
+export function HomeEditingShowcase({ t }: { t: (key: string) => string }) {
+  return (
+    <section className="py-14">
+      <div className="mx-auto max-w-6xl">
+        <div className="mb-8 text-center">
+          <h2 className="text-2xl font-bold md:text-3xl">{t('home.visual.title')}</h2>
+          <p className="mx-auto mt-3 max-w-2xl text-muted-foreground">{t('home.visual.subtitle')}</p>
+        </div>
+        <div className="overflow-hidden rounded-lg border bg-background/90 shadow-lg">
+          <div className="grid gap-0 lg:grid-cols-[1.08fr_0.92fr]">
+            <div className="relative min-h-[300px] bg-muted/35 p-5 sm:p-6">
+              <div className="mb-4 flex items-center justify-between">
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-full bg-foreground text-background">
+                    <Play className="h-4 w-4 fill-current" />
+                  </span>
+                  58:24 {t('home.visual.longVideo')}
+                </div>
+                <Badge variant="secondary" className="rounded-full">
+                  <UploadCloud className="mr-1.5 h-3.5 w-3.5" />
+                  URL / MP4
+                </Badge>
+              </div>
+
+              <div className="aspect-video overflow-hidden rounded-lg border bg-gradient-to-br from-slate-950 via-slate-800 to-slate-700 p-4 text-white shadow-inner">
+                <div className="flex h-full flex-col justify-between">
+                  <div className="flex items-center justify-between text-xs text-white/70">
+                    <span>{t('home.visual.source')}</span>
+                    <span>00:14:28</span>
+                  </div>
+                  <div className="grid grid-cols-4 gap-2">
+                    {[0, 1, 2, 3].map((item) => (
+                      <div key={item} className="h-16 rounded-lg bg-white/10 ring-1 ring-white/10">
+                        <div className="h-full rounded-lg bg-gradient-to-br from-white/15 to-transparent" />
+                      </div>
+                    ))}
+                  </div>
+                  <div>
+                    <div className="mb-2 flex items-center gap-2 text-xs text-white/75">
+                      <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                      {t('home.visual.scanning')}
+                    </div>
+                    <div className="h-2 rounded-full bg-white/15">
+                      <div className="h-2 w-2/3 animate-pulse rounded-full bg-emerald-400" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+                <div className="h-2 rounded-full bg-muted-foreground/15">
+                  <div className="h-2 w-4/5 rounded-full bg-foreground" />
+                </div>
+                <ArrowRight className="h-5 w-5 text-muted-foreground" />
+                <div className="flex gap-1.5">
+                  <span className="h-8 flex-1 rounded-md bg-primary/25" />
+                  <span className="h-8 flex-1 rounded-md bg-chart-4/30" />
+                  <span className="h-8 flex-1 rounded-md bg-chart-3/25" />
+                </div>
+              </div>
+            </div>
+
+            <div className="relative flex min-h-[300px] flex-col justify-center gap-4 p-5 sm:p-6">
+              <div className="absolute right-6 top-6 rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
+                3 {t('home.visual.clipsReady')}
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="flex h-11 w-11 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+                  <WandSparkles className="h-5 w-5" />
+                </span>
+                <div>
+                  <p className="text-sm font-semibold">{t('home.visual.engine')}</p>
+                  <p className="text-xs text-muted-foreground">{t('home.visual.signals')}</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                {[1, 2, 3].map((item) => (
+                  <div key={item} className="rounded-lg border bg-card p-2 shadow-sm">
+                    <div className="mb-2 aspect-[9/16] rounded-lg bg-gradient-to-b from-foreground to-muted-foreground/70" />
+                    <div className="h-1.5 rounded-full bg-muted">
+                      <div className="h-1.5 w-3/4 rounded-full bg-primary" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-2 rounded-lg border bg-muted/40 px-4 py-3 text-sm">
+                <Captions className="h-4 w-4 text-primary" />
+                <span className="font-medium">{t('home.visual.exports')}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
 export function HomeFeatures({ t }: { t: (key: string) => string }) {
   return (
-    <section className="py-16 bg-muted/30">
+    <section className="py-16">
       <div className="container mx-auto px-4">
         <h2 className="text-2xl font-bold text-center mb-10">{t('home.features.title')}</h2>
         <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto">
@@ -159,6 +192,46 @@ export function HomeHowItWorks({ t }: { t: (key: string) => string }) {
               <p className="text-sm text-muted-foreground">{t(descKey)}</p>
             </div>
           ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+export function HomeFAQ({ t }: { t: (key: string) => string }) {
+  return (
+    <section className="py-16">
+      <div className="container mx-auto px-4">
+        <div className="mx-auto max-w-3xl">
+          <div className="mb-8 text-center">
+            <Badge variant="outline" className="mb-4 px-4 py-1.5 text-sm">
+              <HelpCircle className="mr-2 h-4 w-4 text-primary" />
+              FAQ
+            </Badge>
+            <h2 className="text-2xl font-bold md:text-3xl">{t('home.faq.title')}</h2>
+            <p className="mt-3 text-muted-foreground">{t('home.faq.subtitle')}</p>
+          </div>
+          <Accordion type="single" collapsible className="rounded-lg border bg-background px-4">
+            {faqItems.map((item, index) => (
+              <AccordionItem key={item.questionKey} value={`item-${index}`}>
+                <AccordionTrigger className="text-left text-base font-semibold">
+                  {t(item.questionKey)}
+                </AccordionTrigger>
+                <AccordionContent className="text-muted-foreground">
+                  {t(item.answerKey)}
+                </AccordionContent>
+              </AccordionItem>
+            ))}
+          </Accordion>
+          <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+            <Button asChild size="lg">
+              <Link href="/register">
+                {t('home.hero.startFree')}
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Link>
+            </Button>
+            <span className="text-sm text-muted-foreground">{t('home.hero.freeCredits')}</span>
+          </div>
         </div>
       </div>
     </section>

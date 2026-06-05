@@ -240,8 +240,20 @@ export function getBuiltInBlogPosts(locale: Locale): BlogPost[] {
   });
 }
 
+function getBlogSlugFromId(id: string) {
+  const matchingLocale = [...locales]
+    .sort((a, b) => b.length - a.length)
+    .find(locale => id.endsWith(`-${locale}`));
+  return matchingLocale ? id.slice(0, -matchingLocale.length - 1) : id;
+}
+
 export function getBuiltInBlogPost(id: string, locale: Locale): BlogPost | null {
-  return getBuiltInBlogPosts(locale).find(post => post.id === id) || null;
+  const posts = getBuiltInBlogPosts(locale);
+  const exactPost = posts.find(post => post.id === id);
+  if (exactPost) return exactPost;
+
+  const requestedSlug = getBlogSlugFromId(id);
+  return posts.find(post => post.translation_group === requestedSlug || getBlogSlugFromId(post.id) === requestedSlug) || null;
 }
 
 export function isPostForLocale(post: Pick<BlogPost, 'id' | 'locale'>, locale: Locale) {
@@ -251,7 +263,7 @@ export function isPostForLocale(post: Pick<BlogPost, 'id' | 'locale'>, locale: L
 
 export function normalizeBlogRow(row: BlogRow): BlogPost {
   const id = String(row.id || '');
-  const inferredLocale = locales.find(locale => id.endsWith(`-${locale}`));
+  const inferredLocale = [...locales].sort((a, b) => b.length - a.length).find(locale => id.endsWith(`-${locale}`));
   return {
     id,
     title: String(row.title || ''),

@@ -17,6 +17,7 @@ import {
 } from '@/lib/blog-content';
 import { Calendar, ArrowLeft, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { isSupabaseConfigured } from '@/storage/database/supabase-client';
 
 export default function BlogDetailPage() {
@@ -43,11 +44,11 @@ export default function BlogDetailPage() {
       }
 
       const allPosts = [...storedPosts, ...builtInPosts];
-      const currentPost = allPosts.find(p => p.id === postId);
+      const currentPost = allPosts.find(p => p.id === postId) || fallbackPost;
       const category = currentPost?.category || '';
 
       const related = allPosts
-        .filter(p => p.id !== postId && p.category === category)
+        .filter(p => p.id !== currentPost?.id && p.category === category)
         .slice(0, 3);
       setRelatedPosts(related);
 
@@ -162,9 +163,11 @@ export default function BlogDetailPage() {
 
           {post.cover_image && (
             <div className="mb-8 rounded-lg overflow-hidden">
-              <img
+              <Image
                 src={post.cover_image}
                 alt={post.title}
+                width={1200}
+                height={630}
                 className="w-full h-auto"
               />
             </div>
@@ -187,11 +190,13 @@ export default function BlogDetailPage() {
                     <CardContent className="p-4">
                       <div className="flex items-start gap-4">
                         {relatedPost.cover_image && (
-                          <div className="flex-shrink-0">
-                            <img
+                          <div className="relative h-20 w-20 flex-shrink-0 overflow-hidden rounded-lg">
+                            <Image
                               src={relatedPost.cover_image}
                               alt={relatedPost.title}
-                              className="h-20 w-20 object-cover rounded-lg"
+                              fill
+                              sizes="80px"
+                              className="object-cover"
                             />
                           </div>
                         )}

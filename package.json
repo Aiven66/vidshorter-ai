@@ -13,6 +13,7 @@
     "test:about-i18n": "node --import tsx scripts/check-about-i18n.ts",
     "test:alipay-payment": "node --import tsx scripts/check-alipay-payment-flow.ts",
     "test:blog-feedback": "node --import tsx scripts/check-blog-feedback-flow.ts",
+    "test:blog-routing": "node --import tsx scripts/check-blog-routing.ts",
     "test:creem-payment": "node --import tsx scripts/check-creem-payment-flow.ts",
     "test:desktop-auth": "node --import tsx scripts/check-desktop-auth-flow.ts",
     "test:download-latest": "node --import tsx scripts/check-download-latest-route.ts",

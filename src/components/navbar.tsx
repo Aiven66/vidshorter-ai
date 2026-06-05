@@ -13,6 +13,12 @@ import { DESKTOP_WEB_APP_URL } from '@/lib/desktop-auth';
 
 const USER_FEEDBACK_URL = 'https://tally.so/r/5BMYVb';
 
+declare global {
+  interface Window {
+    vidshorterDesktop?: unknown;
+  }
+}
+
 const NavbarUserSection = dynamic(
   () => import('@/components/navbar/navbar-user-section').then(m => ({ default: m.NavbarUserSection })),
   {
@@ -50,15 +56,12 @@ export function Navbar() {
   const [isDesktop, setIsDesktop] = useState(false);
 
   useEffect(() => {
-    setMounted(true);
-    const checkDesktop = () => {
-      const desktop = !!(
-        (typeof window !== 'undefined' && (window as any).vidshorterDesktop) ||
-        process.env.NEXT_PUBLIC_DESKTOP === '1'
-      );
-      setIsDesktop(desktop);
-    };
-    checkDesktop();
+    const timer = window.setTimeout(() => {
+      setMounted(true);
+      setIsDesktop(!!(window.vidshorterDesktop || process.env.NEXT_PUBLIC_DESKTOP === '1'));
+    }, 0);
+
+    return () => window.clearTimeout(timer);
   }, []);
 
   const toggleTheme = () => setTheme(theme === 'dark' ? 'light' : 'dark');
@@ -68,17 +71,18 @@ export function Navbar() {
   const navItems = isDesktop
     ? [
         { href: '/', label: t('nav.home') },
-        { href: `${process.env.NEXT_PUBLIC_APP_URL || DESKTOP_WEB_APP_URL}/about`, label: t('nav.about'), external: true },
         { href: `${process.env.NEXT_PUBLIC_APP_URL || DESKTOP_WEB_APP_URL}/pricing`, label: t('nav.pricing'), external: true },
+        { href: `${process.env.NEXT_PUBLIC_APP_URL || DESKTOP_WEB_APP_URL}/blog`, label: t('nav.blog'), external: true },
+        { href: `${process.env.NEXT_PUBLIC_APP_URL || DESKTOP_WEB_APP_URL}/about`, label: t('nav.about'), external: true },
       ]
     : [
         { href: '/', label: t('nav.home') },
-        { href: '/blog', label: t('nav.blog') },
         { href: '/pricing', label: t('nav.pricing') },
+        { href: '/blog', label: t('nav.blog') },
         { href: '/about', label: t('nav.about') },
       ];
 
-  const isActive = (path: string) => pathname === path;
+  const isActive = (path: string) => path === '/' ? pathname === '/' : pathname?.startsWith(path);
 
   return (
     <nav className="sticky top-0 z-50 w-full border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">

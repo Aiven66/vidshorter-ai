@@ -5,6 +5,10 @@ const requiredKeys = [
   'home.hero.badge',
   'home.hero.title',
   'home.hero.subtitle',
+  'home.hero.startFree',
+  'home.hero.freeCredits',
+  'home.visual.title',
+  'home.visual.subtitle',
   'home.visual.longVideo',
   'home.visual.source',
   'home.visual.scanning',
@@ -12,6 +16,18 @@ const requiredKeys = [
   'home.visual.engine',
   'home.visual.signals',
   'home.visual.exports',
+  'home.faq.title',
+  'home.faq.subtitle',
+  'home.faq.q1',
+  'home.faq.a1',
+  'home.faq.q2',
+  'home.faq.a2',
+  'home.faq.q3',
+  'home.faq.a3',
+  'home.faq.q4',
+  'home.faq.a4',
+  'home.faq.q5',
+  'home.faq.a5',
   'video.input.title',
   'video.creditsAvailable',
   'video.pasteUrlPlaceholder',
@@ -33,7 +49,9 @@ async function main() {
 
   const zh = await loadLocaleTranslations('zh');
   assert.equal(zh['home.hero.title'], '将长视频转换为爆款短视频');
+  assert.equal(zh['home.hero.freeCredits'], '注册即可获得100积分');
   assert.equal(zh['home.visual.scanning'], 'AI 正在扫描高光时刻');
+  assert.equal(zh['home.faq.title'], '常见问题');
   assert.equal(zh['video.analyze'], '分析');
 
   console.log(`Home page i18n checks passed for ${locales.length} locales.`);
