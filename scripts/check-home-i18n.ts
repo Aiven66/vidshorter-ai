@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { loadLocaleTranslations, locales } from '../src/lib/i18n/index';
 
 const requiredKeys = [
@@ -63,6 +64,16 @@ async function main() {
   assert.equal(zh['home.visual.scanning'], 'AI 正在扫描高光时刻');
   assert.equal(zh['home.faq.title'], '常见问题');
   assert.equal(zh['video.analyze'], '分析');
+
+  const pageSource = readFileSync('src/app/page.tsx', 'utf8');
+  const homeSectionsSource = readFileSync('src/components/home/home-sections.tsx', 'utf8');
+  const homeStartButtonSource = readFileSync('src/components/home/home-start-button.tsx', 'utf8');
+  assert.match(pageSource, /id="core-video-processor"/);
+  assert.match(homeSectionsSource, /HomeStartButton/);
+  assert.doesNotMatch(homeSectionsSource, /'use client'/);
+  assert.match(homeStartButtonSource, /useAuth/);
+  assert.match(homeStartButtonSource, /scrollIntoView/);
+  assert.match(homeStartButtonSource, /router\.push\('\/register'\)/);
 
   console.log(`Home page i18n checks passed for ${locales.length} locales.`);
 }

@@ -114,8 +114,10 @@ async function main() {
 
   setEnv('ALIPAY_PAYMENT_MODE', 'precreate');
   setEnv('ALIPAY_ENABLE_PRECREATE', 'true');
+  setEnv('ALIPAY_FORCE_PRECREATE', 'true');
   setEnv('ALIPAY_APP_AUTH_TOKEN', 'merchant_auth_token_should_not_be_sent');
   setEnv('ALIPAY_ISV_MODE', 'true');
+  setEnv('ALIPAY_FORCE_ISV_MODE', 'true');
   gatewayCallCount = 0;
   globalThis.fetch = async () => {
     gatewayCallCount++;
@@ -130,160 +132,16 @@ async function main() {
   assert.equal(guardedPagePayment.status, 200);
   const guardedPageJson = await json(guardedPagePayment);
   assert.equal(guardedPageJson.checkoutMode, 'page');
-  assert.equal(guardedPageJson.ignoredPrecreateMode, true);
   assert.equal(guardedPageJson.requiredApi, 'alipay.trade.page.pay');
   assert.equal(guardedPageJson.directMerchantMode, true);
-  assert.equal(guardedPageJson.ignoredIsvMode, true);
+  assert.deepEqual(guardedPageJson.ignoredLegacyMode, { precreate: true, isv: true });
   assert.equal(gatewayCallCount, 0, 'guarded page mode must not call precreate');
   const guardedPayUrl = new URL(String(guardedPageJson.payUrl));
   assert.equal(guardedPayUrl.searchParams.get('method'), 'alipay.trade.page.pay');
   assert.equal(guardedPayUrl.searchParams.has('app_auth_token'), false);
-
-  setEnv('ALIPAY_PAYMENT_MODE', 'precreate');
-  setEnv('ALIPAY_ENABLE_PRECREATE', 'true');
-  setEnv('ALIPAY_FORCE_PRECREATE', 'true');
-  setEnv('ALIPAY_APP_AUTH_TOKEN', undefined);
-  setEnv('ALIPAY_ISV_MODE', undefined);
-  const alipayGatewayCalls: Array<{ url: string; body: URLSearchParams }> = [];
-  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    alipayGatewayCalls.push({
-      url: input.toString(),
-      body: new URLSearchParams(String(init?.body || '')),
-    });
-    return Response.json({
-      alipay_trade_precreate_response: {
-        code: '10000',
-        qr_code: 'https://qr.alipay.com/REAL_TEST_QR',
-      },
-    });
-  };
-
-  const precreatePayment = await POST(paymentRequest({
-    planId: 'pro',
-    amount: 99,
-    subject: 'Clipop AI Pro',
-    userId: 'user_456',
-  }));
-  assert.equal(precreatePayment.status, 200);
-  assert.deepEqual(await json(precreatePayment), {
-    qrCode: 'https://qr.alipay.com/REAL_TEST_QR',
-    orderId: JSON.parse(alipayGatewayCalls[0].body.get('biz_content') || '{}').out_trade_no,
-    demo: false,
-    checkoutMode: 'precreate',
-    productCode: 'FACE_TO_FACE_PAYMENT',
-  });
-  assert.match(alipayGatewayCalls[0].url, /^https:\/\/openapi\.alipay\.com\/gateway\.do$/);
-  assert.equal(alipayGatewayCalls[0].body.get('method'), 'alipay.trade.precreate');
-  assert.equal(alipayGatewayCalls[0].body.get('notify_url'), 'https://www.clipopai.com/api/payment/alipay');
-  const precreateBiz = JSON.parse(alipayGatewayCalls[0].body.get('biz_content') || '{}');
-  assert.equal(precreateBiz.product_code, 'FACE_TO_FACE_PAYMENT');
-
-  setEnv('ALIPAY_APP_AUTH_TOKEN', 'merchant_auth_token_123');
-  setEnv('ALIPAY_ISV_MODE', 'true');
-  setEnv('ALIPAY_FORCE_ISV_MODE', 'true');
-  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    alipayGatewayCalls.push({
-      url: input.toString(),
-      body: new URLSearchParams(String(init?.body || '')),
-    });
-    return Response.json({
-      alipay_trade_precreate_response: {
-        code: '10000',
-        qr_code: 'https://qr.alipay.com/AUTH_TOKEN_QR',
-      },
-    });
-  };
-  const authTokenPayment = await POST(paymentRequest({
-    planId: 'starter',
-    amount: 49,
-    subject: 'Clipop AI Starter',
-    userId: 'user_auth_token',
-  }));
-  assert.equal(authTokenPayment.status, 200);
-  const authTokenCall = alipayGatewayCalls.at(-1)!.body;
-  assert.equal(authTokenCall.get('app_auth_token'), 'merchant_auth_token_123');
-  assert.equal((await json(authTokenPayment)).qrCode, 'https://qr.alipay.com/AUTH_TOKEN_QR');
-  setEnv('ALIPAY_APP_AUTH_TOKEN', undefined);
-  setEnv('ALIPAY_ISV_MODE', undefined);
-  setEnv('ALIPAY_FORCE_ISV_MODE', undefined);
-
-  globalThis.fetch = async () => Response.json({
-    alipay_trade_precreate_response: {
-      code: '40004',
-      msg: 'Business Failed',
-      sub_code: 'isv.insufficient-permission',
-      sub_msg: '接口调用权限不足',
-    },
-  }, { status: 200 });
-  const missingPermissionPayment = await POST(paymentRequest({
-    planId: 'starter',
-    amount: 49,
-    subject: 'Clipop AI Starter',
-    userId: 'user_789',
-  }));
-  assert.equal(missingPermissionPayment.status, 403);
-  const missingPermissionJson = await json(missingPermissionPayment);
-  assert.equal(missingPermissionJson.productPermissionMissing, true);
-  assert.equal(missingPermissionJson.requiredApi, 'alipay.trade.precreate');
-  assert.equal(missingPermissionJson.appAuthTokenConfigured, false);
-  assert.equal('qrCode' in missingPermissionJson, false);
-  assert.equal('payUrl' in missingPermissionJson, false);
-
-  let fallbackCallCount = 0;
-  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    fallbackCallCount++;
-    alipayGatewayCalls.push({
-      url: input.toString(),
-      body: new URLSearchParams(String(init?.body || '')),
-    });
-    const biz = JSON.parse(new URLSearchParams(String(init?.body || '')).get('biz_content') || '{}');
-    if (biz.product_code === 'FACE_TO_FACE_PAYMENT') {
-      return Response.json({
-        alipay_trade_precreate_response: {
-          code: '40006',
-          msg: 'Insufficient Permissions',
-          sub_code: 'isv.insufficient-isv-permissions',
-          sub_msg: '接口调用权限不足',
-        },
-      });
-    }
-    return Response.json({
-      alipay_trade_precreate_response: {
-        code: '10000',
-        qr_code: 'https://qr.alipay.com/FALLBACK_OFFLINE_PAYMENT_QR',
-      },
-    });
-  };
-  const fallbackPayment = await POST(paymentRequest({
-    planId: 'starter',
-    amount: 49,
-    subject: 'Clipop AI Starter',
-    userId: 'user_789',
-  }));
-  assert.equal(fallbackPayment.status, 200);
-  const fallbackJson = await json(fallbackPayment);
-  assert.equal(fallbackJson.qrCode, 'https://qr.alipay.com/FALLBACK_OFFLINE_PAYMENT_QR');
-  assert.equal(fallbackJson.productCode, 'OFFLINE_PAYMENT');
-  assert.equal(fallbackCallCount, 2);
-
-  globalThis.fetch = async () => Response.json({
-    alipay_trade_precreate_response: {
-      code: '40004',
-      msg: 'Business Failed',
-      sub_code: 'isv.invalid-signature',
-      sub_msg: '验签出错',
-    },
-  }, { status: 200 });
-  const rejectedPayment = await POST(paymentRequest({
-    planId: 'pro',
-    amount: 99,
-    subject: 'Clipop AI Pro',
-    userId: 'user_456',
-  }));
-  assert.equal(rejectedPayment.status, 502);
-  const rejectedPaymentJson = await json(rejectedPayment);
-  assert.equal(rejectedPaymentJson.error, '验签出错');
-  assert.equal('qrCode' in rejectedPaymentJson, false);
+  const guardedBiz = JSON.parse(guardedPayUrl.searchParams.get('biz_content') || '{}');
+  assert.equal(guardedBiz.product_code, 'FAST_INSTANT_TRADE_PAY');
+  assert.equal('qrCode' in guardedPageJson, false);
 
   const formBody = new URLSearchParams({
     trade_status: 'TRADE_SUCCESS',
@@ -311,16 +169,16 @@ async function main() {
   assert.match(routeSource, /passback_params: buildPassbackParams\(userId, planId\)/);
   assert.match(routeSource, /alipay\.trade\.page\.pay/);
   assert.match(routeSource, /FAST_INSTANT_TRADE_PAY/);
-  assert.match(routeSource, /productPermissionMissing/);
   assert.match(routeSource, /ALIPAY_PAYMENT_MODE/);
   assert.match(routeSource, /ALIPAY_ENABLE_PRECREATE/);
   assert.match(routeSource, /ALIPAY_FORCE_PRECREATE/);
   assert.match(routeSource, /ALIPAY_ISV_MODE/);
   assert.match(routeSource, /ALIPAY_FORCE_ISV_MODE/);
-  assert.match(routeSource, /OFFLINE_PAYMENT/);
-  assert.match(routeSource, /ALIPAY_PRODUCT_CODE/);
   assert.match(routeSource, /ALIPAY_APP_AUTH_TOKEN/);
-  assert.match(routeSource, /app_auth_token/);
+  assert.doesNotMatch(routeSource, /app_auth_token/);
+  assert.doesNotMatch(routeSource, /alipay\.trade\.precreate/);
+  assert.doesNotMatch(routeSource, /FACE_TO_FACE_PAYMENT/);
+  assert.doesNotMatch(routeSource, /OFFLINE_PAYMENT/);
   assert.match(routeSource, /configMissing/);
   assert.doesNotMatch(routeSource, /DEMO_/);
   assert.doesNotMatch(routeSource, /demoQr/);

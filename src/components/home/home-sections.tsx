@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import Link from 'next/link';
 import { Sparkles, Film, Zap, Video, Scissors, Download, Play, UploadCloud, WandSparkles, Captions, ArrowRight, Gift, HelpCircle, Link2, Clapperboard } from 'lucide-react';
+import { HomeStartButton } from '@/components/home/home-start-button';
 
 const features = [
   { Icon: Sparkles, titleKey: 'home.features.auto.title', descKey: 'home.features.auto.desc' },
@@ -35,24 +36,19 @@ const faqItems = [
 
 export function HomeHero({ t }: { t: (key: string) => string }) {
   return (
-    <div className="mb-8 text-center">
+    <div className="mb-6 text-center">
         <Badge variant="outline" className="mb-4 px-4 py-1.5 text-sm">
           <Sparkles className="mr-2 h-4 w-4 text-primary" />
           {t('home.hero.badge')}
         </Badge>
-        <h1 className="mx-auto mb-4 max-w-5xl text-4xl font-bold tracking-tight md:text-6xl">
+        <h1 className="mx-auto mb-4 max-w-5xl text-4xl font-bold tracking-tight md:text-5xl lg:text-6xl">
           {t('home.hero.title')}
         </h1>
         <p className="mx-auto max-w-2xl text-lg text-muted-foreground">
           {t('home.hero.subtitle')}
         </p>
         <div className="mt-7 flex flex-col items-center justify-center gap-3 sm:flex-row">
-          <Button size="lg" asChild className="h-12 px-7 text-base">
-            <Link href="/register">
-              {t('home.hero.startFree')}
-              <ArrowRight className="ml-2 h-4 w-4" />
-            </Link>
-          </Button>
+          <HomeStartButton label={t('home.hero.startFree')} />
           <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
             <Gift className="h-4 w-4 text-primary" />
             {t('home.hero.freeCredits')}

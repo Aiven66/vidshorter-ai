@@ -11,27 +11,6 @@ function getAlipayGateway(sandbox: boolean) {
     : 'https://openapi.alipay.com/gateway.do';
 }
 
-type AlipayPaymentMode = 'page' | 'precreate';
-
-function isEnabled(value: string | undefined) {
-  return ['1', 'true', 'yes', 'on'].includes(value?.trim().toLowerCase() || '');
-}
-
-function getAlipayPaymentMode(): AlipayPaymentMode {
-  const configured = process.env.ALIPAY_PAYMENT_MODE?.trim().toLowerCase();
-  const precreateEnabled = isEnabled(process.env.ALIPAY_ENABLE_PRECREATE);
-  const forcedPrecreate = isEnabled(process.env.ALIPAY_FORCE_PRECREATE);
-  if (forcedPrecreate && precreateEnabled && (configured === 'precreate' || configured === 'qr')) {
-    return 'precreate';
-  }
-  return 'page';
-}
-
-function isPrecreateRequested() {
-  return ['precreate', 'qr'].includes(process.env.ALIPAY_PAYMENT_MODE?.trim().toLowerCase() || '')
-    || isEnabled(process.env.ALIPAY_ENABLE_PRECREATE);
-}
-
 function signAlipay(params: Record<string, string>, privateKeyPem: string): string {
   const keys = Object.keys(params).sort();
   const str = keys.map(k => `${k}=${params[k]}`).join('&');
@@ -72,22 +51,6 @@ function buildSignedParams(params: Record<string, string>, privateKeyPem: string
   return signed;
 }
 
-function getPrecreateProductCodes() {
-  const configured = process.env.ALIPAY_PRODUCT_CODE?.trim();
-  const productCodes = [
-    configured || 'FACE_TO_FACE_PAYMENT',
-    'OFFLINE_PAYMENT',
-  ];
-  return Array.from(new Set(productCodes.filter(Boolean)));
-}
-
-function getAppAuthToken() {
-  if (!isEnabled(process.env.ALIPAY_ISV_MODE) || !isEnabled(process.env.ALIPAY_FORCE_ISV_MODE)) {
-    return undefined;
-  }
-  return process.env.ALIPAY_APP_AUTH_TOKEN?.trim();
-}
-
 function getPageProductCode() {
   return process.env.ALIPAY_PAGE_PRODUCT_CODE?.trim() || 'FAST_INSTANT_TRADE_PAY';
 }
@@ -98,72 +61,6 @@ function paramsToBody(params: Record<string, string>) {
     formBody.set(k, v);
   }
   return formBody;
-}
-
-function getAlipayResponse(data: Record<string, unknown>, responseKey: string) {
-  return data[responseKey] as Record<string, string> | undefined;
-}
-
-function isInsufficientPermission(resp: Record<string, string> | undefined) {
-  const message = `${resp?.sub_code || ''} ${resp?.sub_msg || ''} ${resp?.msg || ''}`;
-  return /权限不足|接口调用权限不足|insufficient|permission/i.test(message);
-}
-
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) return error.message;
-  return typeof error === 'string' ? error : 'Unknown request error';
-}
-
-async function requestAlipayGateway(gateway: string, params: Record<string, string>) {
-  const body = paramsToBody(params).toString();
-  let lastError: unknown;
-
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      const res = await fetch(gateway, {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
-          'User-Agent': 'ClipopAI-Alipay/1.0',
-        },
-        body,
-        cache: 'no-store',
-        signal: AbortSignal.timeout(15000),
-      });
-      return await res.text();
-    } catch (error) {
-      lastError = error;
-      if (attempt < 2) {
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
-    }
-  }
-
-  throw lastError;
-}
-
-function alipayPermissionError(resp: Record<string, string> | undefined, options?: {
-  requiredProduct?: string;
-  requiredApi?: string;
-  alternativeProduct?: string;
-  alternativeMode?: string;
-}) {
-  return Response.json({
-    error: 'Alipay product permission is not active yet. Use the default Web Payment mode, or complete the corresponding Alipay Open Platform product signing and wait until it takes effect.',
-    productPermissionMissing: true,
-    requiredProduct: options?.requiredProduct || '当面付',
-    requiredApi: options?.requiredApi || 'alipay.trade.precreate',
-    alternativeProduct: options?.alternativeProduct || '电脑网站支付',
-    alternativeMode: options?.alternativeMode || 'Use the default page-pay mode. Precreate QR mode is disabled unless ALIPAY_FORCE_PRECREATE=true, because it requires approved Face-to-Face Payment.',
-    isvModeEnabled: isEnabled(process.env.ALIPAY_ISV_MODE),
-    isvModeForced: isEnabled(process.env.ALIPAY_FORCE_ISV_MODE),
-    appAuthTokenConfigured: Boolean(process.env.ALIPAY_APP_AUTH_TOKEN?.trim()),
-    appAuthTokenHint: 'For a direct merchant app, keep ALIPAY_ISV_MODE unset/false. Only enable ALIPAY_ISV_MODE and ALIPAY_FORCE_ISV_MODE for a third-party ISV app with a valid merchant authorization token.',
-    alipayCode: resp?.code,
-    alipaySubCode: resp?.sub_code,
-    alipaySubMessage: resp?.sub_msg,
-  }, { status: 403 });
 }
 
 function alipayConfigError(missing: string[]) {
@@ -212,7 +109,6 @@ export async function POST(request: NextRequest) {
   const privateKeyPem = toPem(privateKeyB64, 'PRIVATE KEY');
   const outTradeNo = `vids_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const gateway = getAlipayGateway(sandbox);
-  const paymentMode = getAlipayPaymentMode();
 
   const baseParams: Record<string, string> = {
     app_id: appId,
@@ -222,22 +118,6 @@ export async function POST(request: NextRequest) {
     version: '1.0',
     notify_url: notifyUrl,
   };
-  const appAuthToken = getAppAuthToken();
-  if (appAuthToken) {
-    baseParams.app_auth_token = appAuthToken;
-  }
-
-  const buildPrecreateParams = (productCode: string) => buildSignedParams({
-    ...baseParams,
-    method: 'alipay.trade.precreate',
-    biz_content: JSON.stringify({
-      out_trade_no: outTradeNo,
-      total_amount: amount.toFixed(2),
-      subject: subject || 'VidShorter AI 订阅',
-      product_code: productCode,
-      passback_params: buildPassbackParams(userId, planId),
-    }),
-  }, privateKeyPem);
 
   const pagePayParams = buildSignedParams({
     ...baseParams,
@@ -252,81 +132,20 @@ export async function POST(request: NextRequest) {
     }),
   }, privateKeyPem);
 
-  if (paymentMode === 'page') {
-    return Response.json({
-      payUrl: `${gateway}?${paramsToBody(pagePayParams).toString()}`,
-      orderId: outTradeNo,
-      demo: false,
-      checkoutMode: 'page',
-      productCode: getPageProductCode(),
-      requiredProduct: '电脑网站支付',
-      requiredApi: 'alipay.trade.page.pay',
-      directMerchantMode: !appAuthToken,
-      ignoredIsvMode: isEnabled(process.env.ALIPAY_ISV_MODE) && !isEnabled(process.env.ALIPAY_FORCE_ISV_MODE),
-      ignoredPrecreateMode: isPrecreateRequested() && !isEnabled(process.env.ALIPAY_FORCE_PRECREATE),
-      checkoutInstruction: 'Open Alipay web checkout. Users can log in or scan the QR code shown by Alipay on the official checkout page.',
-    });
-  }
-
-  let lastPermissionResponse: Record<string, string> | undefined;
-
-  for (const productCode of getPrecreateProductCodes()) {
-    try {
-      const precreateParams = buildPrecreateParams(productCode);
-      const text = await requestAlipayGateway(gateway, precreateParams);
-    let data: Record<string, unknown>;
-    try {
-      data = JSON.parse(text);
-    } catch {
-      console.error('[Alipay] Non-JSON response:', text.slice(0, 200));
-      return Response.json({
-        error: 'Alipay returned an invalid response',
-        orderId: outTradeNo,
-      }, { status: 502 });
-    }
-
-    const responseKey = 'alipay_trade_precreate_response';
-    const resp = getAlipayResponse(data, responseKey);
-
-    if (resp && resp.code === '10000' && resp.qr_code) {
-      return Response.json({
-        qrCode: resp.qr_code,
-        orderId: outTradeNo,
-        demo: false,
-        checkoutMode: 'precreate',
-        productCode,
-      });
-    }
-
-    if (isInsufficientPermission(resp)) {
-      console.warn('[Alipay] precreate permission denied:', { productCode, resp });
-      lastPermissionResponse = resp;
-      continue;
-    }
-
-    console.warn('[Alipay] precreate failed:', resp || data);
-    return Response.json({
-      error: resp?.sub_msg || resp?.msg || 'Alipay rejected the payment request',
-      alipayCode: resp?.code,
-      alipaySubCode: resp?.sub_code,
-      orderId: outTradeNo,
-    }, { status: 502 });
-  } catch (err) {
-    console.error('[Alipay] Request failed:', err);
-    return Response.json({
-      error: 'Alipay gateway request failed. Please retry, and confirm the Vercel server can reach openapi.alipay.com.',
-      upstreamRequestFailed: true,
-      upstreamError: getErrorMessage(err),
-      orderId: outTradeNo,
-    }, { status: 502 });
-  }
-  }
-
-  return alipayPermissionError(lastPermissionResponse, {
-    requiredProduct: '当面付',
-    requiredApi: 'alipay.trade.precreate',
-    alternativeProduct: '电脑网站支付',
-    alternativeMode: 'Use default page-pay mode for production. Only set ALIPAY_FORCE_PRECREATE=true after Face-to-Face Payment is approved and active.',
+  return Response.json({
+    payUrl: `${gateway}?${paramsToBody(pagePayParams).toString()}`,
+    orderId: outTradeNo,
+    demo: false,
+    checkoutMode: 'page',
+    productCode: getPageProductCode(),
+    requiredProduct: '电脑网站支付',
+    requiredApi: 'alipay.trade.page.pay',
+    directMerchantMode: true,
+    ignoredLegacyMode: {
+      precreate: Boolean(process.env.ALIPAY_PAYMENT_MODE || process.env.ALIPAY_ENABLE_PRECREATE || process.env.ALIPAY_FORCE_PRECREATE),
+      isv: Boolean(process.env.ALIPAY_ISV_MODE || process.env.ALIPAY_FORCE_ISV_MODE || process.env.ALIPAY_APP_AUTH_TOKEN),
+    },
+    checkoutInstruction: 'Open Alipay web checkout. Users can log in or scan the QR code shown by Alipay on the official checkout page.',
   });
 }
 
