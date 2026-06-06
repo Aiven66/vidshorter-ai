@@ -162,14 +162,14 @@ export function PayPalCheckout({ planId, userId, onSuccess, onError }: PayPalChe
           <AlertCircle className="mt-0.5 h-5 w-5 text-muted-foreground" />
           <div className="space-y-2">
             <div className="flex flex-wrap items-center gap-2">
-              <p className="font-medium">PayPal is under review</p>
-              <Badge variant="secondary">Coming soon</Badge>
+              <p className="font-medium">PayPal needs configuration</p>
+              <Badge variant="secondary">Pending</Badge>
             </div>
             <p className="text-sm text-muted-foreground">
-              PayPal checkout is already prepared. It will become available after the PayPal application is approved and configured.
+              PayPal checkout is already prepared. Add the live Client ID and Secret in Vercel, then redeploy to enable it.
             </p>
             <Button variant="outline" size="sm" disabled>
-              Waiting for PayPal approval
+              Waiting for PayPal configuration
             </Button>
           </div>
         </div>

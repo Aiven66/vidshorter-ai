@@ -364,10 +364,10 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
                       <div className="flex items-center gap-2">
                         <span className="font-semibold">PayPal</span>
                         <Badge variant="secondary" className="bg-blue-100 text-xs text-blue-700">
-                          Under review
+                          Secure
                         </Badge>
                       </div>
-                      <p className="text-xs text-muted-foreground">PayPal Buttons are ready and will activate after approval</p>
+                      <p className="text-xs text-muted-foreground">PayPal balance, cards, and PayPal wallet</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">

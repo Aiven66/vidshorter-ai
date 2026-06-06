@@ -106,7 +106,7 @@ const translations = {
   },
   pricing: {
   title: '简单透明的定价', subtitle: '选择适合您需求的方案',
-  paymentNote: 'Creem 已可用 · PayPal 支付已预接入，审核通过后启用',
+  paymentNote: 'Creem 与 PayPal 安全支付已可用',
   secureNote: '所有支付均采用 TLS 256位加密保护',
   faqTitle: '常见问题',
   faq: {
@@ -119,7 +119,7 @@ const translations = {
   q4: '支持哪些视频来源？',
   a4: '支持 YouTube、B站 和本地视频文件上传（MP4、MOV、AVI）。',
   q5: '支持哪些支付方式？',
-  a5: '目前支持 Creem（Visa、Mastercard、Apple Pay、Google Pay），PayPal 支付已预接入，审核通过并配置后即可启用。',
+  a5: '目前支持 Creem（Visa、Mastercard、Apple Pay、Google Pay）与 PayPal。PayPal 可使用钱包余额和银行卡支付，生产密钥配置完成后即可启用。',
   },
   mostPopular: '最受欢迎',
   free: { title: '免费版', price: '$0', period: '/月', desc: '适合试用', feature1: '每天100积分', feature2: '基础视频剪辑', feature3: '720p导出质量', feature4: '含水印', cta: '开始使用' },

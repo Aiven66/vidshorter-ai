@@ -45,7 +45,7 @@ const translations = {
   },
   pricing: {
   title: '簡單透明的定價', subtitle: '選擇適合您需求的方案',
-  paymentNote: 'Creem 已可用 · PayPal 支付已預接入，審核通過後啟用', secureNote: '所有支付均採用 TLS 256位加密保護', faqTitle: '常見問題', faq: { q1: '什麼是積分？', a1: '每個積分代表處理能力。處理一個影片片段消耗30積分。', q2: '每日積分如何重置？', a2: '積分每天 UTC 00:00 重置為方案對應的每日額度。未使用的積分不結轉。', q3: '可以升級或降級方案嗎？', a3: '可以，您可以隨時更改方案，更改立即生效。', q4: '支援哪些影片來源？', a4: '支援 YouTube、B站 和本機影片檔案上傳（MP4、MOV、AVI）。', q5: '支援哪些支付方式？', a5: '目前支援 Creem（Visa、Mastercard、Apple Pay、Google Pay），PayPal 支付已預接入，審核通過並配置後即可啟用。' },
+  paymentNote: 'Creem 與 PayPal 安全支付已可用', secureNote: '所有支付均採用 TLS 256位加密保護', faqTitle: '常見問題', faq: { q1: '什麼是積分？', a1: '每個積分代表處理能力。處理一個影片片段消耗30積分。', q2: '每日積分如何重置？', a2: '積分每天 UTC 00:00 重置為方案對應的每日額度。未使用的積分不結轉。', q3: '可以升級或降級方案嗎？', a3: '可以，您可以隨時更改方案，更改立即生效。', q4: '支援哪些影片來源？', a4: '支援 YouTube、B站 和本機影片檔案上傳（MP4、MOV、AVI）。', q5: '支援哪些支付方式？', a5: '目前支援 Creem（Visa、Mastercard、Apple Pay、Google Pay）與 PayPal。PayPal 可使用錢包餘額和銀行卡支付，生產金鑰配置完成後即可啟用。' },
   mostPopular: '最受歡迎',
   free: { title: '免費版', price: '$0', period: '/月', desc: '適合試用', feature1: '每天100積分', feature2: '基礎影片剪輯', feature3: '720p匯出品質', feature4: '含浮水印', cta: '開始使用' },
   starter: { title: '入門版', price: '$9.9', period: '/月', desc: '適合內容創作者', feature1: '每天500積分', feature2: '優先處理', feature3: '1080p匯出品質', feature4: '無浮水印', feature5: '郵件支援', cta: '立即訂閱' },
