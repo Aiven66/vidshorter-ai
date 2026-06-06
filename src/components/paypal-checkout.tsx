@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
+import { AlertCircle, CheckCircle, Loader2, RefreshCw } from 'lucide-react';
 
 declare global {
   interface Window {
@@ -14,9 +14,9 @@ declare global {
         onApprove: (data: { orderID?: string }) => Promise<void>;
         onError: (error: unknown) => void;
       }) => {
-        render: (selector: HTMLElement) => Promise<void>;
-        close?: () => void;
-      };
+          render: (selector: HTMLElement) => Promise<void>;
+          close?: () => void;
+        };
     };
   }
 }
@@ -32,6 +32,7 @@ type PayPalConfig = {
   enabled: boolean;
   clientId: string | null;
   currency: string;
+  environment: string;
   status: 'ready' | 'pending_configuration';
 };
 
@@ -66,7 +67,24 @@ export function PayPalCheckout({ planId, userId, onSuccess, onError }: PayPalChe
   const buttonsRef = useRef<{ close?: () => void } | null>(null);
   const [config, setConfig] = useState<PayPalConfig | null>(null);
   const [loading, setLoading] = useState(true);
+  const [sdkError, setSdkError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
 
+  // Stable callbacks to avoid re-rendering PayPal buttons
+  const onSuccessRef = useRef(onSuccess);
+  const onErrorRef = useRef(onError);
+  onSuccessRef.current = onSuccess;
+  onErrorRef.current = onError;
+
+  const handleSuccess = useCallback(() => {
+    onSuccessRef.current();
+  }, []);
+
+  const handleError = useCallback((message: string) => {
+    onErrorRef.current(message);
+  }, []);
+
+  // Fetch PayPal config
   useEffect(() => {
     let active = true;
     fetch('/api/payment/paypal')
@@ -76,65 +94,87 @@ export function PayPalCheckout({ planId, userId, onSuccess, onError }: PayPalChe
       })
       .catch(() => {
         if (active) {
-          setConfig({ enabled: false, clientId: null, currency: 'USD', status: 'pending_configuration' });
+          setConfig({ enabled: false, clientId: null, currency: 'USD', environment: 'sandbox', status: 'pending_configuration' });
         }
       })
       .finally(() => {
         if (active) setLoading(false);
       });
     return () => { active = false; };
-  }, []);
+  }, [retryCount]);
 
+  // Load and render PayPal buttons
   useEffect(() => {
     if (!config?.enabled || !config.clientId || !containerRef.current) return;
 
     let active = true;
+    setSdkError(null);
+
     loadPaypalScript(config.clientId, config.currency)
       .then(async () => {
         if (!active || !containerRef.current || !window.paypal) return;
+
+        // Clear previous buttons
         containerRef.current.innerHTML = '';
-        buttonsRef.current = window.paypal.Buttons({
+
+        const buttons = window.paypal.Buttons({
           style: {
             layout: 'vertical',
             color: 'gold',
             shape: 'rect',
             label: 'paypal',
+            height: '45',
           },
           createOrder: async () => {
-            const response = await fetch('/api/payment/paypal', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ action: 'create', planId, userId }),
-            });
-            const data = await response.json();
-            if (!response.ok || !data.orderId) {
-              throw new Error(data.error || 'Failed to create PayPal order');
+            try {
+              const response = await fetch('/api/payment/paypal', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'create', planId, userId }),
+              });
+              const data = await response.json();
+              if (!response.ok || !data.orderId) {
+                const errMsg = data.error || 'Failed to create PayPal order';
+                handleError(errMsg);
+                throw new Error(errMsg);
+              }
+              return data.orderId;
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : 'Failed to create order';
+              handleError(msg);
+              throw err;
             }
-            return data.orderId;
           },
           onApprove: async (data) => {
-            const response = await fetch('/api/payment/paypal', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ action: 'capture', planId, userId, orderId: data.orderID }),
-            });
-            const result = await response.json();
-            if (!response.ok || !result.paid) {
-              onError(result.error || 'Failed to confirm PayPal payment');
-              return;
+            try {
+              const response = await fetch('/api/payment/paypal', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'capture', planId, userId, orderId: data.orderID }),
+              });
+              const result = await response.json();
+              if (!response.ok || !result.paid) {
+                handleError(result.error || 'Failed to confirm PayPal payment');
+                return;
+              }
+              handleSuccess();
+            } catch {
+              handleError('Failed to confirm payment. Please contact support.');
             }
-            onSuccess();
           },
           onError: (error) => {
             console.error('[PayPal] Buttons error:', error);
-            onError('PayPal payment failed. Please try again.');
+            handleError('PayPal payment failed. Please try again.');
           },
         });
-        await buttonsRef.current.render(containerRef.current);
+
+        buttonsRef.current = buttons;
+        await buttons.render(containerRef.current);
       })
       .catch((error) => {
         console.error('[PayPal] SDK load/render failed:', error);
-        onError('PayPal is not available right now. Please try Creem or check PayPal configuration.');
+        setSdkError('PayPal SDK failed to load. Please refresh and try again.');
+        handleError('PayPal is not available right now. Please try Creem or refresh the page.');
       });
 
     return () => {
@@ -142,14 +182,27 @@ export function PayPalCheckout({ planId, userId, onSuccess, onError }: PayPalChe
       buttonsRef.current?.close?.();
       buttonsRef.current = null;
     };
-  }, [config, onError, onSuccess, planId, userId]);
+  }, [config, handleSuccess, handleError, planId, userId]);
+
+  const handleRetry = () => {
+    setSdkError(null);
+    setRetryCount(prev => prev + 1);
+    // Reset the script promise to allow re-loading
+    paypalScriptPromise = null;
+    const existing = document.querySelector('script[data-clipop-paypal-sdk="true"]');
+    if (existing) existing.remove();
+    // Clear paypal global
+    if (typeof window !== 'undefined') {
+      delete (window as Record<string, unknown>).paypal;
+    }
+  };
 
   if (loading) {
     return (
-      <div className="rounded-xl border bg-muted/30 p-4">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+      <div className="rounded-xl border bg-muted/30 p-6">
+        <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
-          Checking PayPal availability...
+          Loading PayPal checkout...
         </div>
       </div>
     );
@@ -166,10 +219,24 @@ export function PayPalCheckout({ planId, userId, onSuccess, onError }: PayPalChe
               <Badge variant="secondary">Pending</Badge>
             </div>
             <p className="text-sm text-muted-foreground">
-              PayPal checkout is already prepared. Add the live Client ID and Secret in Vercel, then redeploy to enable it.
+              PayPal checkout is prepared but not yet enabled. Please configure the PayPal Client ID and Secret in Vercel environment variables.
             </p>
-            <Button variant="outline" size="sm" disabled>
-              Waiting for PayPal configuration
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (sdkError) {
+    return (
+      <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4">
+        <div className="flex items-start gap-3">
+          <AlertCircle className="mt-0.5 h-5 w-5 text-destructive" />
+          <div className="space-y-3">
+            <p className="text-sm font-medium text-destructive">{sdkError}</p>
+            <Button variant="outline" size="sm" onClick={handleRetry}>
+              <RefreshCw className="mr-2 h-3 w-3" />
+              Retry
             </Button>
           </div>
         </div>
@@ -182,8 +249,11 @@ export function PayPalCheckout({ planId, userId, onSuccess, onError }: PayPalChe
       <div className="flex items-center gap-2 text-sm font-medium">
         <CheckCircle className="h-4 w-4 text-green-600" />
         PayPal secure checkout
+        {config.environment === 'sandbox' && (
+          <Badge variant="outline" className="text-xs text-orange-600 border-orange-300">Sandbox</Badge>
+        )}
       </div>
-      <div ref={containerRef} />
+      <div ref={containerRef} className="min-h-[45px]" />
     </div>
   );
 }
