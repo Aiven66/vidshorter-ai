@@ -151,7 +151,7 @@ export const commonTranslations = {
   pricing: {
     title: 'Simple, Transparent Pricing',
     subtitle: 'Choose the plan that fits your needs',
-    paymentNote: 'Alipay for China · Creem for International (Visa / Mastercard / Apple Pay / Google Pay)',
+    paymentNote: 'Creem is available now · PayPal checkout is prepared and pending approval',
     secureNote: 'All payments secured with TLS 256-bit encryption',
     faqTitle: 'Frequently Asked Questions',
     faq: {
@@ -164,7 +164,7 @@ export const commonTranslations = {
       q4: 'What video sources are supported?',
       a4: 'We support YouTube, Bilibili, and direct video file uploads (MP4, MOV, AVI).',
       q5: 'What payment methods are supported?',
-      a5: 'Alipay for China users, Creem (Visa, Mastercard, Apple Pay, Google Pay) for international users.',
+      a5: 'Creem is available now for cards, Apple Pay, and Google Pay. PayPal checkout is prepared and will be enabled after approval.',
     },
     mostPopular: 'Most Popular',
     free: { title: 'Free', price: '$0', period: '/month', desc: 'Perfect for trying out', feature1: '100 credits daily', feature2: 'Basic video clipping', feature3: '720p export quality', feature4: 'Watermark included', cta: 'Get Started' },

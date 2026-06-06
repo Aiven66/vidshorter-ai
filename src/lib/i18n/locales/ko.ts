@@ -36,7 +36,7 @@ const translations = {
   },
   pricing: {
   title: '단순하고 투명한 가격', subtitle: '필요에 맞는 플랜 선택',
-  paymentNote: '중국용 Alipay · 해외용 Creem (Visa / Mastercard / Apple Pay / Google Pay)', secureNote: '모든 결제는 TLS 256비트 암호화로 보호됩니다', faqTitle: '자주 묻는 질문', faq: { q1: '크레딧이란 무엇인가요?', a1: '각 크레딧은 처리 능력을 나타냅니다. 비디오 클립 처리에는 30크레딧이 필요합니다.', q2: '일일 크레딧 리셋은 어떻게 작동하나요?', a2: '크레딧은 매일 00:00 UTC에 플랜의 일일 한도로 리셋됩니다. 미사용 크레딧은 이월되지 않습니다.', q3: '플랜을 업그레이드하거나 다운그레이드할 수 있나요?', a3: '네, 언제든지 플랜을 변경할 수 있습니다. 변경 사항은 즉시 적용됩니다.', q4: '어떤 비디오 소스가 지원되나요?', a4: 'YouTube, Bilibili 및 직접 비디오 파일 업로드(MP4, MOV, AVI)를 지원합니다.', q5: '어떤 결제 방법이 지원되나요?', a5: '중국 사용자용 Alipay, 해외 사용자용 Creem(Visa, Mastercard, Apple Pay, Google Pay)을 지원합니다.' },
+  paymentNote: 'Creem is available now · PayPal checkout is prepared and pending approval', secureNote: '모든 결제는 TLS 256비트 암호화로 보호됩니다', faqTitle: '자주 묻는 질문', faq: { q1: '크레딧이란 무엇인가요?', a1: '각 크레딧은 처리 능력을 나타냅니다. 비디오 클립 처리에는 30크레딧이 필요합니다.', q2: '일일 크레딧 리셋은 어떻게 작동하나요?', a2: '크레딧은 매일 00:00 UTC에 플랜의 일일 한도로 리셋됩니다. 미사용 크레딧은 이월되지 않습니다.', q3: '플랜을 업그레이드하거나 다운그레이드할 수 있나요?', a3: '네, 언제든지 플랜을 변경할 수 있습니다. 변경 사항은 즉시 적용됩니다.', q4: '어떤 비디오 소스가 지원되나요?', a4: 'YouTube, Bilibili 및 직접 비디오 파일 업로드(MP4, MOV, AVI)를 지원합니다.', q5: '어떤 결제 방법이 지원되나요?', a5: 'Creem is available now for cards, Apple Pay, and Google Pay. PayPal checkout is prepared and will be enabled after approval.' },
   mostPopular: '가장 인기',
   free: { title: '무료', price: '$0', period: '/월', desc: '시도하기에 완벽', feature1: '매일 100 크레딧', feature2: '기본 비디오 클리핑', feature3: '720p 내보내기 품질', feature4: '워터마크 포함', cta: '시작하기' },
   starter: { title: '스타터', price: '$9.9', period: '/월', desc: '콘텐츠 크리에이터용', feature1: '매일 500 크레딧', feature2: '우선 처리', feature3: '1080p 내보내기 품질', feature4: '워터마크 없음', feature5: '이메일 지원', cta: '지금 구독' },

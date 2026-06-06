@@ -18,6 +18,7 @@
     "test:desktop-auth": "node --import tsx scripts/check-desktop-auth-flow.ts",
     "test:download-latest": "node --import tsx scripts/check-download-latest-route.ts",
     "test:home-i18n": "node --import tsx scripts/check-home-i18n.ts",
+    "test:paypal-payment": "node --import tsx scripts/check-paypal-payment-flow.ts",
     "test:web-auth": "node --import tsx scripts/check-web-auth-regressions.ts",
     "start": "bash ./scripts/start.sh",
     "ts-check": "tsc -p tsconfig.json"

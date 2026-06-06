@@ -1,14 +1,26 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { CheckCircle, Loader2, CreditCard, Smartphone, ExternalLink, ArrowLeft, XCircle, Lock, Shield, ChevronRight } from 'lucide-react';
+import {
+  ArrowLeft,
+  CheckCircle,
+  ChevronRight,
+  CreditCard,
+  ExternalLink,
+  Loader2,
+  Lock,
+  Shield,
+  WalletCards,
+  XCircle,
+} from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import { posthog } from '@/lib/posthog';
+import { PayPalCheckout } from '@/components/paypal-checkout';
 
 interface PlanInfo {
   id: string;
@@ -23,67 +35,46 @@ interface PaymentModalProps {
   plan: PlanInfo | null;
 }
 
-type PayMethod = 'alipay' | 'creem';
+type PayMethod = 'creem' | 'paypal';
 type PayState = 'selecting' | 'pending' | 'success' | 'failed';
-
-function qrUrl(data: string) {
-  return `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(data)}`;
-}
 
 export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
   const { user } = useAuth();
   const [method, setMethod] = useState<PayMethod>('creem');
   const [payState, setPayState] = useState<PayState>('selecting');
-  const [countdown, setCountdown] = useState(0);
-  const [qrCodeUrl, setQrCodeUrl] = useState('');
-  const [alipayCheckoutUrl, setAlipayCheckoutUrl] = useState('');
   const [paymentError, setPaymentError] = useState('');
   const [creemSessionId, setCreemSessionId] = useState('');
   const [pollingPayment, setPollingPayment] = useState(false);
   const [manualCheck, setManualCheck] = useState(false);
 
   useEffect(() => {
-    if (open) {
-      setPayState('selecting');
-      setCountdown(0);
-      setQrCodeUrl('');
-      setAlipayCheckoutUrl('');
-      setPaymentError('');
-      setCreemSessionId('');
-      setPollingPayment(false);
-      setManualCheck(false);
-      setMethod('creem');
-    }
+    if (!open) return;
+    setMethod('creem');
+    setPayState('selecting');
+    setPaymentError('');
+    setCreemSessionId('');
+    setPollingPayment(false);
+    setManualCheck(false);
   }, [open]);
 
-  useEffect(() => {
-    if (payState === 'pending' && method === 'alipay') {
-      setCountdown(120);
-      const id = setInterval(() => {
-        setCountdown(prev => {
-          if (prev <= 1) { clearInterval(id); return 0; }
-          return prev - 1;
-        });
-      }, 1000);
-      return () => clearInterval(id);
-    }
-  }, [payState, method]);
+  const trackPaymentCompleted = useCallback((paymentMethod: PayMethod) => {
+    if (!posthog || !plan) return;
+    posthog.capture('payment_completed', {
+      amount: plan.price.intl,
+      currency: 'USD',
+      plan: plan.id,
+      payment_method: paymentMethod,
+    });
+  }, [plan]);
 
-  const verifyCreemPayment = useCallback(async (sessionId: string, setAsSuccess: boolean = true) => {
+  const verifyCreemPayment = useCallback(async (sessionId: string, setAsSuccess = true) => {
     if (!sessionId) return false;
     try {
       const res = await fetch(`/api/payment/creem?session_id=${sessionId}`);
       const data = await res.json();
       if (data.paid) {
         if (setAsSuccess) {
-          if (posthog && plan) {
-            posthog.capture('payment_completed', {
-              amount: plan.price.intl,
-              currency: 'USD',
-              plan: plan.id,
-              payment_method: method,
-            });
-          }
+          trackPaymentCompleted('creem');
           setPollingPayment(false);
           setPayState('success');
         }
@@ -93,10 +84,10 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
     } catch {
       return false;
     }
-  }, [plan, method]);
+  }, [trackPaymentCompleted]);
 
-  const pollCreemPayment = useCallback(async (sessionId: string) => {
-    if (!sessionId) return;
+  const pollCreemPayment = useCallback((sessionId: string) => {
+    if (!sessionId) return undefined;
     setPollingPayment(true);
     let attempts = 0;
     const maxAttempts = 60;
@@ -110,34 +101,30 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
       }
 
       const paid = await verifyCreemPayment(sessionId, true);
-      if (paid) {
-        clearInterval(interval);
-      }
+      if (paid) clearInterval(interval);
     }, 5000);
 
     return () => clearInterval(interval);
   }, [verifyCreemPayment]);
 
   useEffect(() => {
-    if (payState === 'pending' && method === 'creem' && creemSessionId) {
-      const cleanup = pollCreemPayment(creemSessionId);
-      return () => { if (cleanup) cleanup(); };
-    }
+    if (payState !== 'pending' || method !== 'creem' || !creemSessionId) return undefined;
+    return pollCreemPayment(creemSessionId);
   }, [payState, method, creemSessionId, pollCreemPayment]);
 
   const handleManualPaymentCheck = useCallback(async () => {
     if (!creemSessionId) return;
     setManualCheck(true);
+    setPaymentError('');
     const paid = await verifyCreemPayment(creemSessionId, false);
     if (paid) {
+      trackPaymentCompleted('creem');
       setPayState('success');
     } else {
       setPaymentError('Payment not confirmed. Please complete payment in the Creem window.');
     }
     setManualCheck(false);
-  }, [creemSessionId, verifyCreemPayment]);
-
-  if (!plan) return null;
+  }, [creemSessionId, trackPaymentCompleted, verifyCreemPayment]);
 
   const handlePay = async () => {
     setPaymentError('');
@@ -145,101 +132,69 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
       window.location.href = '/login';
       return;
     }
+    if (!plan || method !== 'creem') return;
 
-    if (method === 'alipay') {
-      setPayState('pending');
-      try {
-        const res = await fetch('/api/payment/alipay', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            planId: plan.id,
-            amount: plan.price.cn,
-            subject: `Clipop AI ${plan.name}`,
-            userId: user.id,
-          }),
-        });
-        const data = await res.json();
-        if (!res.ok || data.error) {
-          setPaymentError(
-            data.configMissing
-              ? 'Alipay is not configured yet. Please complete the Alipay Open Platform keys before using Alipay payment.'
-              : data.productPermissionMissing
-                ? 'Alipay product permission is not active yet. Production now uses Alipay web checkout by default; please remove forced QR/precreate settings or approve the selected Alipay product.'
-              : data.error || 'Failed to create Alipay payment'
-          );
-          setPayState('selecting');
-          return;
-        }
-        if (data.qrCode) {
-          setQrCodeUrl(qrUrl(data.qrCode));
-        } else if (data.payUrl) {
-          setAlipayCheckoutUrl(data.payUrl);
-          window.open(data.payUrl, '_blank', 'noopener,noreferrer');
-        } else {
-          setPaymentError('Alipay did not return a payment QR code or checkout link. Please try again.');
-          setPayState('selecting');
-        }
-      } catch {
-        setPaymentError('Network error, please try again');
+    setPayState('pending');
+    try {
+      const res = await fetch('/api/payment/creem', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          planId: plan.id,
+          userId: user.id,
+          userEmail: user.email,
+        }),
+      });
+      const data = await res.json();
+
+      if (data.error) {
+        setPaymentError(data.error);
         setPayState('selecting');
+        return;
       }
-      return;
-    }
 
-    if (method === 'creem') {
-      setPayState('pending');
-      try {
-        const res = await fetch('/api/payment/creem', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            planId: plan.id,
-            userId: user.id,
-            userEmail: user.email,
-          }),
-        });
-        const data = await res.json();
-
-        if (data.error) {
-          setPaymentError(data.error);
-          setPayState('selecting');
-          return;
-        }
-
-        if (data.checkoutUrl) {
-          if (data.demo) {
-            window.location.href = data.checkoutUrl;
-            return;
-          }
-          setCreemSessionId(data.sessionId || '');
-          window.open(data.checkoutUrl, '_blank', 'noopener,noreferrer');
-        } else {
-          setPaymentError('Failed to create checkout session');
-          setPayState('selecting');
-        }
-      } catch {
-        setPaymentError('Network error, please try again');
+      if (!data.checkoutUrl) {
+        setPaymentError('Failed to create checkout session');
         setPayState('selecting');
+        return;
       }
-      return;
+
+      if (data.demo) {
+        window.location.href = data.checkoutUrl;
+        return;
+      }
+
+      setCreemSessionId(data.sessionId || '');
+      window.open(data.checkoutUrl, '_blank', 'noopener,noreferrer');
+    } catch {
+      setPaymentError('Network error, please try again');
+      setPayState('selecting');
     }
   };
 
   const handleBack = () => {
     setPayState('selecting');
     setPaymentError('');
-    setQrCodeUrl('');
-    setAlipayCheckoutUrl('');
   };
+
+  const handlePayPalSuccess = useCallback(() => {
+    trackPaymentCompleted('paypal');
+    setPayState('success');
+  }, [trackPaymentCompleted]);
+
+  const handlePayPalError = useCallback((message: string) => {
+    setPaymentError(message);
+  }, []);
+
+  if (!plan) return null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-3 text-lg font-semibold">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-primary/70 flex items-center justify-center">
-              <CreditCard className="h-5 w-5 text-white" />
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-primary/70">
+              <CreditCard className="h-5 w-5 text-primary-foreground" />
             </div>
             Subscribe to {plan.name}
           </DialogTitle>
@@ -253,166 +208,62 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
         </DialogHeader>
 
         {payState === 'success' ? (
-          <div className="flex flex-col items-center py-8 gap-5">
-            <div className="relative">
-              <div className="h-20 w-20 rounded-full bg-gradient-to-br from-green-400 to-emerald-600 flex items-center justify-center shadow-lg shadow-green-500/30">
-                <CheckCircle className="h-12 w-12 text-white" />
-              </div>
-              <div className="absolute -bottom-1 -right-1 h-6 w-6 rounded-full bg-white border-2 border-green-500 flex items-center justify-center">
-                <CheckCircle className="h-4 w-4 text-green-500" />
-              </div>
+          <div className="flex flex-col items-center gap-5 py-8">
+            <div className="flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-green-400 to-emerald-600 shadow-lg shadow-green-500/30">
+              <CheckCircle className="h-12 w-12 text-white" />
             </div>
-            <div className="text-center space-y-2">
+            <div className="space-y-2 text-center">
               <h3 className="text-xl font-bold text-foreground">Payment Successful!</h3>
               <p className="text-sm text-muted-foreground">
                 Your {plan.name} subscription is now active.<br />Credits have been added to your account.
               </p>
             </div>
-            <Button className="w-full mt-2 h-12 text-base font-medium" onClick={() => onOpenChange(false)}>
+            <Button className="mt-2 h-12 w-full text-base font-medium" onClick={() => onOpenChange(false)}>
               Continue Using Clipop AI
             </Button>
           </div>
         ) : payState === 'failed' ? (
-          <div className="flex flex-col items-center py-8 gap-5">
-            <div className="h-20 w-20 rounded-full bg-gradient-to-br from-red-400 to-red-600 flex items-center justify-center shadow-lg shadow-red-500/30">
+          <div className="flex flex-col items-center gap-5 py-8">
+            <div className="flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-red-400 to-red-600 shadow-lg shadow-red-500/30">
               <XCircle className="h-12 w-12 text-white" />
             </div>
-            <div className="text-center space-y-2">
+            <div className="space-y-2 text-center">
               <h3 className="text-xl font-bold text-foreground">Payment Failed</h3>
-              <p className="text-sm text-muted-foreground">
-                Payment was not completed successfully. Please try again.
-              </p>
+              <p className="text-sm text-muted-foreground">Payment was not completed successfully. Please try again.</p>
             </div>
-            <Button className="w-full mt-2 h-12 text-base font-medium" onClick={handleBack}>
+            <Button className="mt-2 h-12 w-full text-base font-medium" onClick={handleBack}>
               Try Again
             </Button>
-          </div>
-        ) : payState === 'pending' && method === 'alipay' ? (
-          <div className="space-y-6 py-4">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-8 p-0 text-muted-foreground hover:text-foreground self-start"
-              onClick={handleBack}
-            >
-              <ArrowLeft className="h-4 w-4 mr-1" />
-              Back to payment methods
-            </Button>
-
-            {paymentError && (
-              <div className="text-sm text-destructive bg-destructive/10 p-4 rounded-xl">
-                <div className="flex items-start gap-2">
-                  <XCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                  <span>{paymentError}</span>
-                </div>
-              </div>
-            )}
-
-            {alipayCheckoutUrl ? (
-              <div className="flex flex-col items-center gap-6 py-8">
-                <div className="w-20 h-20 rounded-full bg-[#1677FF] flex items-center justify-center shadow-lg shadow-blue-500/30">
-                  <ExternalLink className="h-10 w-10 text-white" />
-                </div>
-
-                <div className="text-center space-y-3">
-                  <h4 className="font-semibold text-lg">Alipay Checkout Opened</h4>
-                  <p className="text-sm text-muted-foreground leading-relaxed">
-                    Complete your payment in the Alipay checkout window.<br />
-                    If it did not open, click the button below.
-                  </p>
-                </div>
-
-                <div className="flex gap-3 w-full">
-                  <Button variant="outline" className="flex-1" onClick={handleBack}>
-                    <ArrowLeft className="h-4 w-4 mr-2" />
-                    Back
-                  </Button>
-                  <Button
-                    className="flex-1"
-                    onClick={() => window.open(alipayCheckoutUrl, '_blank', 'noopener,noreferrer')}
-                  >
-                    <ExternalLink className="h-4 w-4 mr-2" />
-                    Open Checkout
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center gap-6">
-                <div className="relative">
-                  <div className="w-64 h-64 rounded-2xl border-2 border-muted bg-white p-4 shadow-lg">
-                    {qrCodeUrl ? (
-                      <>
-                        {/* eslint-disable-next-line @next/next/no-img-element -- Dynamic payment QR images should not be optimized. */}
-                        <img
-                          src={qrCodeUrl}
-                          alt="Alipay QR Code"
-                          className="w-full h-full object-contain rounded-xl"
-                        />
-                      </>
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center">
-                        <Loader2 className="h-10 w-10 animate-spin text-primary" />
-                      </div>
-                    )}
-                  </div>
-                  <div className="absolute -top-2 -right-2">
-                    <div className="w-8 h-5 bg-[#1677FF] rounded-lg flex items-center justify-center shadow-md">
-                      <span className="text-white text-[10px] font-bold">ALI</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="text-center space-y-2">
-                  <h4 className="font-semibold text-foreground">Scan with Alipay</h4>
-                  <p className="text-sm text-muted-foreground">
-                    Use Alipay app to scan the QR code and complete payment
-                  </p>
-                  <div className="flex items-center justify-center gap-2">
-                    <span className="text-xs text-muted-foreground">QR code expires in</span>
-                    <span className="text-lg font-bold text-primary tabular-nums">{countdown}s</span>
-                  </div>
-                </div>
-
-                <Badge className="gap-2 bg-primary/10 text-primary hover:bg-primary/20">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Waiting for payment...
-                </Badge>
-
-                <p className="text-center text-xs text-muted-foreground">
-                  This QR mode is only for approved Face-to-Face Payment accounts. Payment status is confirmed by Alipay notification.
-                </p>
-              </div>
-            )}
           </div>
         ) : payState === 'pending' && method === 'creem' ? (
           <div className="space-y-6 py-4">
             <Button
               variant="ghost"
               size="sm"
-              className="h-8 p-0 text-muted-foreground hover:text-foreground self-start"
+              className="h-8 self-start p-0 text-muted-foreground hover:text-foreground"
               onClick={handleBack}
             >
-              <ArrowLeft className="h-4 w-4 mr-1" />
+              <ArrowLeft className="mr-1 h-4 w-4" />
               Back to payment methods
             </Button>
 
             {paymentError && (
-              <div className="text-sm text-destructive bg-destructive/10 p-4 rounded-xl">
+              <div className="rounded-xl bg-destructive/10 p-4 text-sm text-destructive">
                 <div className="flex items-start gap-2">
-                  <XCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                  <XCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
                   <span>{paymentError}</span>
                 </div>
               </div>
             )}
 
             <div className="flex flex-col items-center gap-6 py-8">
-              <div className="w-20 h-20 rounded-full bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-violet-500/30">
+              <div className="flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-violet-500 to-indigo-600 shadow-lg shadow-violet-500/30">
                 <ExternalLink className="h-10 w-10 text-white" />
               </div>
 
-              <div className="text-center space-y-3">
-                <h4 className="font-semibold text-lg">Checkout Page Opened</h4>
-                <p className="text-sm text-muted-foreground leading-relaxed">
+              <div className="space-y-3 text-center">
+                <h4 className="text-lg font-semibold">Checkout Page Opened</h4>
+                <p className="text-sm leading-relaxed text-muted-foreground">
                   Complete your payment in the Creem checkout window.<br />
                   This dialog will automatically detect when payment is complete.
                 </p>
@@ -425,20 +276,20 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
                 </Badge>
               )}
 
-              <div className="flex gap-3 w-full">
+              <div className="flex w-full gap-3">
                 <Button variant="outline" className="flex-1" onClick={handleBack}>
-                  <ArrowLeft className="h-4 w-4 mr-2" />
+                  <ArrowLeft className="mr-2 h-4 w-4" />
                   Cancel
                 </Button>
                 <Button className="flex-1" onClick={handleManualPaymentCheck} disabled={manualCheck}>
                   {manualCheck ? (
                     <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                       Verifying...
                     </>
                   ) : (
                     <>
-                      <CheckCircle className="h-4 w-4 mr-2" />
+                      <CheckCircle className="mr-2 h-4 w-4" />
                       Verify Payment
                     </>
                   )}
@@ -454,9 +305,9 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
             </div>
 
             {paymentError && (
-              <div className="text-sm text-destructive bg-destructive/10 p-4 rounded-xl">
+              <div className="rounded-xl bg-destructive/10 p-4 text-sm text-destructive">
                 <div className="flex items-start gap-2">
-                  <XCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                  <XCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
                   <span>{paymentError}</span>
                 </div>
               </div>
@@ -464,99 +315,102 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
 
             <div className="space-y-3">
               <p className="text-sm font-medium text-muted-foreground">Choose payment method</p>
-              
+
               <button
                 onClick={() => setMethod('creem')}
-                className={`w-full p-4 rounded-xl border-2 transition-all duration-200 text-left group ${
-                  method === 'creem' 
-                    ? 'border-primary bg-primary/5 shadow-sm' 
+                className={`w-full rounded-xl border-2 p-4 text-left transition-all duration-200 ${
+                  method === 'creem'
+                    ? 'border-primary bg-primary/5 shadow-sm'
                     : 'border-muted hover:border-muted-foreground/30 hover:bg-muted/50'
                 }`}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-md">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 shadow-md">
                       <CreditCard className="h-6 w-6 text-white" />
                     </div>
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
                         <span className="font-semibold">Creem</span>
-                        <Badge variant="secondary" className="text-xs bg-green-100 text-green-700">
-                          <CheckCircle className="h-3 w-3 mr-1" />
+                        <Badge variant="secondary" className="bg-green-100 text-xs text-green-700">
+                          <CheckCircle className="mr-1 h-3 w-3" />
                           Secure
                         </Badge>
                       </div>
-                      <p className="text-xs text-muted-foreground">
-                        Visa, Mastercard, Apple Pay, Google Pay
-                      </p>
+                      <p className="text-xs text-muted-foreground">Visa, Mastercard, Apple Pay, Google Pay</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="font-semibold text-primary">${plan.price.intl}/{plan.period}</span>
-                    <ChevronRight className={`h-5 w-5 transition-transform ${method === 'creem' ? 'text-primary' : 'text-muted-foreground group-hover:translate-x-1'}`} />
+                    <ChevronRight className={`h-5 w-5 ${method === 'creem' ? 'text-primary' : 'text-muted-foreground'}`} />
                   </div>
                 </div>
               </button>
 
               <button
-                onClick={() => setMethod('alipay')}
-                className={`w-full p-4 rounded-xl border-2 transition-all duration-200 text-left group ${
-                  method === 'alipay' 
-                    ? 'border-primary bg-primary/5 shadow-sm' 
+                onClick={() => setMethod('paypal')}
+                className={`w-full rounded-xl border-2 p-4 text-left transition-all duration-200 ${
+                  method === 'paypal'
+                    ? 'border-primary bg-primary/5 shadow-sm'
                     : 'border-muted hover:border-muted-foreground/30 hover:bg-muted/50'
                 }`}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-xl bg-[#1677FF] flex items-center justify-center shadow-md">
-                      <Smartphone className="h-6 w-6 text-white" />
+                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#003087] shadow-md">
+                      <WalletCards className="h-6 w-6 text-white" />
                     </div>
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
-                        <span className="font-semibold">Alipay</span>
-                        <Badge variant="secondary" className="text-xs bg-blue-100 text-blue-700">
-                          <CheckCircle className="h-3 w-3 mr-1" />
-                          CN Users
+                        <span className="font-semibold">PayPal</span>
+                        <Badge variant="secondary" className="bg-blue-100 text-xs text-blue-700">
+                          Under review
                         </Badge>
                       </div>
-                      <p className="text-xs text-muted-foreground">
-                        Open Alipay checkout, then scan or log in on Alipay
-                      </p>
+                      <p className="text-xs text-muted-foreground">PayPal Buttons are ready and will activate after approval</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
-                    <span className="font-semibold text-primary">¥{plan.price.cn}/{plan.period}</span>
-                    <ChevronRight className={`h-5 w-5 transition-transform ${method === 'alipay' ? 'text-primary' : 'text-muted-foreground group-hover:translate-x-1'}`} />
+                    <span className="font-semibold text-primary">${plan.price.intl}/{plan.period}</span>
+                    <ChevronRight className={`h-5 w-5 ${method === 'paypal' ? 'text-primary' : 'text-muted-foreground'}`} />
                   </div>
                 </div>
               </button>
             </div>
 
-            <Button className="w-full h-12 text-base font-medium gap-2" onClick={handlePay}>
-              {method === 'alipay' ? (
-                <>
-                  <ExternalLink className="h-5 w-5" />
-                  Open Alipay Checkout
-                </>
-              ) : (
-                <>
-                  <CreditCard className="h-5 w-5" />
-                  Pay with Creem
-                </>
-              )}
-              <ChevronRight className="h-4 w-4 ml-auto" />
-            </Button>
+            {method === 'paypal' && user && (
+              <PayPalCheckout
+                planId={plan.id}
+                userId={user.id}
+                onSuccess={handlePayPalSuccess}
+                onError={handlePayPalError}
+              />
+            )}
 
-            <div className="flex items-center justify-center gap-4 pt-4 border-t border-muted">
+            {method === 'paypal' && !user && (
+              <div className="rounded-xl border bg-muted/30 p-4 text-sm text-muted-foreground">
+                Please sign in before using PayPal checkout.
+              </div>
+            )}
+
+            {method === 'creem' && (
+              <Button className="h-12 w-full gap-2 text-base font-medium" onClick={handlePay}>
+                <CreditCard className="h-5 w-5" />
+                Pay with Creem
+                <ChevronRight className="ml-auto h-4 w-4" />
+              </Button>
+            )}
+
+            <div className="flex items-center justify-center gap-4 border-t border-muted pt-4">
               <div className="flex items-center gap-2">
-                <div className="w-8 h-5 bg-[#1677FF] rounded flex items-center justify-center">
-                  <span className="text-white text-[8px] font-bold">ALI</span>
+                <div className="flex h-5 w-8 items-center justify-center rounded bg-[#003087]">
+                  <span className="text-[8px] font-bold text-white">PP</span>
                 </div>
-                <span className="text-xs text-muted-foreground">Alipay</span>
+                <span className="text-xs text-muted-foreground">PayPal</span>
               </div>
               <div className="flex items-center gap-2">
-                <div className="w-8 h-5 bg-gradient-to-r from-violet-600 to-indigo-600 rounded flex items-center justify-center">
-                  <span className="text-white text-[8px] font-bold">CR</span>
+                <div className="flex h-5 w-8 items-center justify-center rounded bg-gradient-to-r from-violet-600 to-indigo-600">
+                  <span className="text-[8px] font-bold text-white">CR</span>
                 </div>
                 <span className="text-xs text-muted-foreground">Creem</span>
               </div>
@@ -566,7 +420,7 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
               </div>
             </div>
 
-            <p className="text-xs text-center text-muted-foreground leading-relaxed">
+            <p className="text-center text-xs leading-relaxed text-muted-foreground">
               By subscribing, you agree to our Terms of Service.
               Payments are securely processed by the respective payment platform.
             </p>

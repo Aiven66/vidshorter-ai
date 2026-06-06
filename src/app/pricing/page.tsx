@@ -9,6 +9,7 @@ import { useAuth } from '@/lib/auth-context';
 import { Check } from 'lucide-react';
 import Link from 'next/link';
 import { PaymentModal } from '@/components/payment-modal';
+import { useRouter } from 'next/navigation';
 
 interface PlanConfig {
   id: string;
@@ -89,12 +90,13 @@ const faqKeys = ['q1', 'q2', 'q3', 'q4', 'q5'];
 export default function PricingPage() {
   const { t } = useLocale();
   const { user } = useAuth();
+  const router = useRouter();
   const [payingPlan, setPayingPlan] = useState<PlanConfig | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
 
   const handleSubscribe = (plan: PlanConfig) => {
     if (!user) {
-      window.location.href = '/register';
+      router.push('/register');
       return;
     }
     setPayingPlan(plan);
@@ -177,10 +179,10 @@ export default function PricingPage() {
 
         <div className="flex flex-wrap items-center justify-center gap-6 mt-12 text-sm text-muted-foreground">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-5 bg-[#1677FF] rounded flex items-center justify-center">
-              <span className="text-white text-[8px] font-bold">ALI</span>
+            <div className="w-8 h-5 bg-[#003087] rounded flex items-center justify-center">
+              <span className="text-white text-[8px] font-bold">PP</span>
             </div>
-            <span>支付宝</span>
+            <span>PayPal</span>
           </div>
           <div className="flex items-center gap-2">
             <div className="w-8 h-5 bg-gradient-to-r from-violet-600 to-indigo-600 rounded flex items-center justify-center">

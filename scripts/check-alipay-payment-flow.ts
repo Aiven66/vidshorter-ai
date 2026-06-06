@@ -185,12 +185,12 @@ async function main() {
   assert.match(routeSource, /export async function PUT/);
 
   const modalSource = readFileSync('src/components/payment-modal.tsx', 'utf8');
-  assert.match(modalSource, /Open Alipay Checkout/);
-  assert.match(modalSource, /\/api\/payment\/alipay/);
-  assert.match(modalSource, /qrCode/);
-  assert.match(modalSource, /alipayCheckoutUrl/);
-  assert.match(modalSource, /productPermissionMissing/);
-  assert.match(modalSource, /Open Alipay Checkout/);
+  assert.doesNotMatch(modalSource, /Open Alipay Checkout/);
+  assert.doesNotMatch(modalSource, /\/api\/payment\/alipay/);
+  assert.doesNotMatch(modalSource, /setMethod\('alipay'\)/);
+  assert.doesNotMatch(modalSource, /PayMethod = 'alipay'/);
+  assert.doesNotMatch(modalSource, /qrCode/);
+  assert.doesNotMatch(modalSource, /alipayCheckoutUrl/);
   assert.doesNotMatch(modalSource, /qr\.alipay\.com\/demo/);
   assert.doesNotMatch(modalSource, /I have completed the payment/);
 
