@@ -1,5 +1,15 @@
 import Link from 'next/link';
-import { Video, Youtube, Twitter, Music } from 'lucide-react';
+import { Youtube, Twitter, Music } from 'lucide-react';
+
+function FooterLogo() {
+  return (
+    <img
+      src="/clipop-logo3.svg"
+      alt="Clipop AI"
+      className="h-6 w-6 object-contain"
+    />
+  );
+}
 
 export function Footer() {
   const currentYear = new Date().getFullYear();
@@ -15,9 +25,9 @@ export function Footer() {
       <div className="container mx-auto px-4 py-12">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
           <div className="col-span-1 md:col-span-2">
-            <Link href="/" className="flex items-center gap-2 font-bold text-xl mb-4">
-              <Video className="h-6 w-6 text-primary" />
-              <span>Clipop AI</span>
+            <Link href="/" className="flex items-center gap-1 font-bold text-xl mb-4">
+              <FooterLogo />
+              <span className="leading-tight">Clipop AI</span>
             </Link>
             <p className="text-muted-foreground max-w-md mb-6">
               AI-powered video clipping tool that automatically extracts the best moments from your long-form content.
