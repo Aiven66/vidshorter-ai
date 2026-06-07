@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Youtube, Twitter, Music } from 'lucide-react';
+import { Youtube, Twitter, Instagram } from 'lucide-react';
 
 function FooterLogo() {
   return (
@@ -15,9 +15,9 @@ export function Footer() {
   const currentYear = new Date().getFullYear();
 
   const socialLinks = [
-    { name: 'X', href: 'https://twitter.com/clipopai', icon: Twitter },
-    { name: 'YouTube', href: 'https://youtube.com/@clipopai', icon: Youtube },
-    { name: 'TikTok', href: 'https://tiktok.com/@clipopai', icon: Music },
+    { name: 'X', href: 'https://x.com/Aiven66', icon: Twitter },
+    { name: 'YouTube', href: 'https://www.youtube.com/channel/UCtw5ImAi8jpawfXcMJmXr1A', icon: Youtube },
+    { name: 'Instagram', href: 'https://www.instagram.com/clipopai/', icon: Instagram },
   ];
 
   return (
