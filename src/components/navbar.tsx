@@ -7,9 +7,32 @@ import { usePathname } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from '@/components/ui/sheet';
 import { useLocale } from '@/lib/locale-context';
-import { Menu, Globe, Video, Sun, Moon, MessageSquare } from 'lucide-react';
+import { Menu, Globe, Sun, Moon, MessageSquare } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { DESKTOP_WEB_APP_URL } from '@/lib/desktop-auth';
+
+function Logo() {
+  const { theme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!mounted) {
+    return (
+      <div className="h-6 w-6 bg-muted rounded-lg" />
+    );
+  }
+
+  return (
+    <img
+      src={theme === 'dark' ? '/logo-dark.svg' : '/logo.svg'}
+      alt="Clipop AI"
+      className="h-6 w-6"
+    />
+  );
+}
 
 const USER_FEEDBACK_URL = 'https://tally.so/r/5BMYVb';
 
@@ -89,7 +112,7 @@ export function Navbar() {
       <div className="container mx-auto px-4">
         <div className="flex h-16 items-center justify-between">
           <Link href="/" className="flex items-center gap-2 font-bold text-xl">
-            <Video className="h-6 w-6 text-primary" />
+            <Logo />
             <span>Clipop AI</span>
           </Link>
 
