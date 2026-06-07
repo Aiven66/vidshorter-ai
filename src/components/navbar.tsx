@@ -27,7 +27,7 @@ function Logo() {
 
   return (
     <img
-      src={theme === 'dark' ? '/logo-dark.svg' : '/logo.svg'}
+      src="/clipop-logo3.svg"
       alt="Clipop AI"
       className="h-7 w-7 object-contain"
     />
