@@ -1,10 +1,13 @@
+'use client';
+
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
-import Link from 'next/link';
 import { Sparkles, Film, Zap, Video, Scissors, Download, Play, UploadCloud, WandSparkles, Captions, ArrowRight, Gift, HelpCircle, Link2, Clapperboard } from 'lucide-react';
 import { HomeStartButton } from '@/components/home/home-start-button';
+import { useAuth } from '@/lib/auth-context';
+import { useRouter } from 'next/navigation';
 
 const features = [
   { Icon: Sparkles, titleKey: 'home.features.auto.title', descKey: 'home.features.auto.desc' },
@@ -248,12 +251,7 @@ export function HomeFAQ({ t }: { t: (key: string) => string }) {
             ))}
           </Accordion>
           <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
-            <Button asChild size="lg">
-              <Link href="/register">
-                {t('home.hero.startFree')}
-                <ArrowRight className="ml-2 h-4 w-4" />
-              </Link>
-            </Button>
+            <HomeStartButton label={t('home.hero.startFree')} />
             <span className="text-sm text-muted-foreground">{t('home.hero.freeCredits')}</span>
           </div>
         </div>
