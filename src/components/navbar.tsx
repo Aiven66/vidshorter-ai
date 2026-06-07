@@ -21,7 +21,7 @@ function Logo() {
 
   if (!mounted) {
     return (
-      <div className="h-6 w-6 bg-muted rounded-lg" />
+      <div className="h-7 w-7 bg-muted rounded-lg" />
     );
   }
 
@@ -29,7 +29,7 @@ function Logo() {
     <img
       src={theme === 'dark' ? '/logo-dark.svg' : '/logo.svg'}
       alt="Clipop AI"
-      className="h-6 w-6"
+      className="h-7 w-7 object-contain"
     />
   );
 }

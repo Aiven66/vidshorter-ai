@@ -1,24 +1,21 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="cGrad" x1="20%" y1="20%" x2="80%" y2="80%">
+    <linearGradient id="cg" x1="25%" y1="25%" x2="75%" y2="75%">
       <stop offset="0%" stop-color="#a855f7"/>
-      <stop offset="50%" stop-color="#8b5cf6"/>
       <stop offset="100%" stop-color="#6d28d9"/>
     </linearGradient>
-    <linearGradient id="playGrad" x1="20%" y1="20%" x2="80%" y2="80%">
+    <linearGradient id="pg" x1="25%" y1="25%" x2="75%" y2="75%">
       <stop offset="0%" stop-color="#c084fc"/>
       <stop offset="100%" stop-color="#a855f7"/>
     </linearGradient>
-    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+    <filter id="sf" x="-15%" y="-15%" width="130%" height="130%">
       <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="rgba(139, 92, 246, 0.3)"/>
     </filter>
   </defs>
   
-  <g filter="url(#shadow)">
-    <path d="M22 22 Q16 18 10 20 Q6 22 8 28 Q10 34 18 33 Q24 32 26 26 Q28 20 22 22Z" fill="url(#cGrad)"/>
-    
-    <path d="M78 22 Q86 26 84 34 Q82 42 74 44 L62 46 Q50 48 46 56 Q42 64 42 74 Q42 84 54 88 L74 92 Q90 96 92 84 Q94 72 86 64 L76 60 Q66 58 64 48 Q62 38 70 34 L76 32 Q86 30 84 22 Q82 14 74 16 Q62 18 50 16 Q34 12 24 20 Q14 28 16 46 Q18 64 34 72 Q50 80 76 76 Q92 72 94 54 Q96 36 86 28 Q78 22 78 22Z" fill="url(#cGrad)"/>
-    
-    <polygon points="48,34 60,40 48,46" fill="url(#playGrad)"/>
+  <g filter="url(#sf)">
+    <path d="M22 22 Q17 18 11 20 Q6 22 8 28 Q10 34 18 33 Q24 32 26 26 Q28 20 22 22Z" fill="url(#cg)"/>
+    <path d="M78 22 Q85 26 83 34 Q81 42 73 44 L62 46 Q51 48 47 56 Q43 64 43 74 Q43 84 54 88 L73 92 Q88 96 90 84 Q92 72 85 64 L76 60 Q66 58 64 48 Q62 38 70 34 L76 32 Q85 30 83 22 Q81 14 73 16 Q62 18 50 18 Q34 14 24 22 Q14 30 16 48 Q18 66 34 74 Q50 82 76 78 Q90 74 92 56 Q94 38 85 30 Q78 22 78 22Z" fill="url(#cg)"/>
+    <polygon points="47,34 58,39 47,44" fill="url(#pg)"/>
   </g>
 </svg>
