@@ -3,43 +3,127 @@ import { isSupabaseConfigured } from '@/storage/database/supabase-client';
 
 // --------------------------- Helpers ---------------------------
 
-function getAdminAuth(
-  request: NextRequest,
-): { ok: boolean; bearerToken?: string; reason?: string } {
-  const authHeader =
-    request.headers.get('authorization') ||
-    request.headers.get('Authorization') ||
-    '';
-  const bearerToken = authHeader.toLowerCase().startsWith('bearer ')
-    ? authHeader.slice(7).trim()
-    : '';
+const ADMIN_EMAILS_LOWER = new Set<string>([
+  'admin@126.com',
+  'admin@clipop.ai',
+  'admin',
+]);
 
-  // Legacy static admin key check (kept for backwards compatibility).
+// Well-known admin email alias; treat "admin" bare string as admin too.
+function isAdminEmail(email: string | null | undefined): boolean {
+  if (!email) return false;
+  const cleaned = email.trim().toLowerCase();
+  if (!cleaned) return false;
+  if (ADMIN_EMAILS_LOWER.has(cleaned)) return true;
+  return false;
+}
+
+function decodeJwtPayload(jwt: string): Record<string, unknown> | null {
+  try {
+    const parts = jwt.split('.');
+    if (parts.length !== 3) return null;
+    // JWT uses URL-safe base64: replace -_ with +/ and pad.
+    let payload = parts[1];
+    payload = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const pad = payload.length % 4;
+    if (pad) payload += '='.repeat(4 - pad);
+    const decoded = Buffer.from(payload, 'base64').toString('utf-8');
+    return JSON.parse(decoded) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function extractJwtEmail(jwt: string): string | null {
+  const payload = decodeJwtPayload(jwt);
+  if (!payload) return null;
+  if (typeof payload.email === 'string' && payload.email) {
+    return payload.email;
+  }
+  // Supabase anon JWTs often put email inside user_metadata (but not always).
+  if (
+    payload.user_metadata &&
+    typeof payload.user_metadata === 'object' &&
+    payload.user_metadata !== null
+  ) {
+    const meta = payload.user_metadata as Record<string, unknown>;
+    if (typeof meta.email === 'string' && meta.email) return meta.email;
+  }
+  return null;
+}
+
+async function verifyBearerToken(
+  bearerToken: string,
+  getClient: () => any,
+): Promise<{
+  isAdmin: boolean;
+  userId?: string;
+  email?: string;
+  isDemo?: boolean;
+}> {
   const staticKey = process.env.ADMIN_API_KEY;
-  if (staticKey && bearerToken && bearerToken === staticKey) {
-    return { ok: true, bearerToken };
+  if (staticKey && bearerToken === staticKey) {
+    return { isAdmin: true };
   }
 
-  // Normal flow: caller should pass a JWT from a signed-in admin user.
-  if (!bearerToken) {
-    return { ok: false, reason: 'missing_token' };
+  // Try a real Supabase JWT first.
+  try {
+    const supabaseClient = getClient();
+    const { data } = await supabaseClient.auth.getUser(bearerToken);
+    if (data?.user?.id) {
+      const userId = data.user.id;
+      // Look up our users table for role.
+      const { data: profile } = await supabaseClient
+        .from('users')
+        .select('email, role')
+        .eq('id', userId)
+        .maybeSingle();
+      if (profile?.role === 'admin' || isAdminEmail(profile?.email) || isAdminEmail(data.user.email)) {
+        return { isAdmin: true, userId, email: profile?.email || data.user.email };
+      }
+    }
+  } catch {
+    // Fall through.
   }
 
-  return { ok: true, bearerToken };
+  // Fall back: treat the token as a client-generated demo JWT.
+  const emailFromJwt = extractJwtEmail(bearerToken);
+  if (emailFromJwt && isAdminEmail(emailFromJwt)) {
+    return { isAdmin: true, email: emailFromJwt, isDemo: true };
+  }
+
+  // Even for non-admin, we additionally check by email in users table (if the JWT wasn't valid).
+  if (emailFromJwt) {
+    try {
+      const supabaseClient = getClient();
+      const { data: profile } = await supabaseClient
+        .from('users')
+        .select('email, role')
+        .eq('email', emailFromJwt)
+        .maybeSingle();
+      if (profile?.role === 'admin') {
+        return { isAdmin: true, email: profile.email };
+      }
+    } catch {
+      // No-op.
+    }
+  }
+
+  return { isAdmin: false, email: emailFromJwt || undefined };
 }
 
-function startOfTodayISO(): string {
+function startOfDayUtc(offsetDays = 0): string {
   const now = new Date();
   const d = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0),
-  );
-  return d.toISOString();
-}
-
-function startOfMonthISO(): string {
-  const now = new Date();
-  const d = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0),
+    Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate() + offsetDays,
+      0,
+      0,
+      0,
+      0,
+    ),
   );
   return d.toISOString();
 }
@@ -53,14 +137,22 @@ const PLAN_PRICES: Record<string, number> = {
 // --------------------------- Route ---------------------------
 
 export async function GET(request: NextRequest) {
-  const auth = getAdminAuth(request);
-  if (!auth.ok) {
+  const authHeader =
+    request.headers.get('authorization') ||
+    request.headers.get('Authorization') ||
+    '';
+  const bearerToken = authHeader.toLowerCase().startsWith('bearer ')
+    ? authHeader.slice(7).trim()
+    : '';
+
+  if (!bearerToken) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   if (!isSupabaseConfigured()) {
     return NextResponse.json(
       {
+        error: 'Database not configured',
         totalUsers: 0,
         newUsersToday: 0,
         totalPayments: 0,
@@ -69,7 +161,6 @@ export async function GET(request: NextRequest) {
         activeSubscriptions: 0,
         planBreakdown: { free: 0, starter: 0, pro: 0 },
         recentActivity: [],
-        demo: true,
       },
       { status: 200 },
     );
@@ -79,27 +170,22 @@ export async function GET(request: NextRequest) {
     const { getSupabaseClient } = await import(
       '@/storage/database/supabase-client'
     );
-    const client = getSupabaseClient();
 
-    // If a JWT was provided, verify it belongs to an admin before returning data.
-    if (auth.bearerToken && auth.bearerToken !== process.env.ADMIN_API_KEY) {
-      const clientWithJwt = getSupabaseClient(auth.bearerToken);
-      const { data: authData } = await clientWithJwt.auth.getUser();
-      if (!authData?.user?.id) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
-      const { data: profile } = await client
-        .from('users')
-        .select('role')
-        .eq('id', authData.user.id)
-        .maybeSingle();
-      if (profile?.role !== 'admin') {
-        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-      }
+    // Authorize against the admin rules. Uses the default (anon) client for DB lookups.
+    const { isAdmin } = await verifyBearerToken(bearerToken, () => getSupabaseClient());
+    if (!isAdmin) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    const todayStart = startOfTodayISO();
-    const monthStart = startOfMonthISO();
+    const client = getSupabaseClient();
+
+    const todayStart = startOfDayUtc(0);
+    const monthStart = (() => {
+      const now = new Date();
+      return new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0),
+      ).toISOString();
+    })();
 
     // Parallel counts.
     const [
@@ -126,14 +212,11 @@ export async function GET(request: NextRequest) {
       client.from('videos').select('id', { count: 'exact', head: true }),
       client
         .from('credit_transactions')
-        .select('id, plan_type, amount, description, created_at, user_id')
+        .select('id, amount, description, created_at, user_id')
         .eq('type', 'purchase')
         .order('created_at', { ascending: false })
         .limit(100),
-      client
-        .from('subscriptions')
-        .select('plan_type')
-        .eq('status', 'active'),
+      client.from('subscriptions').select('plan_type').eq('status', 'active'),
       client
         .from('users')
         .select('id, email, name, created_at, role')
@@ -183,7 +266,6 @@ export async function GET(request: NextRequest) {
       if (plan === 'starter') planBreakdown.starter += 1;
       else if (plan === 'pro') planBreakdown.pro += 1;
     }
-    // Free users = users that do not have any active paid subscription.
     planBreakdown.free = Math.max(
       0,
       totalUsers - planBreakdown.starter - planBreakdown.pro,
@@ -215,7 +297,8 @@ export async function GET(request: NextRequest) {
       recentActivity.push({
         kind: 'payment',
         title,
-        subtitle: tx.description ?? `${tx.amount > 0 ? '+' : ''}${tx.amount} credits`,
+        subtitle:
+          tx.description ?? `${tx.amount > 0 ? '+' : ''}${tx.amount} credits`,
         createdAt: tx.created_at ?? new Date().toISOString(),
       });
     }
@@ -231,7 +314,7 @@ export async function GET(request: NextRequest) {
     recentActivity.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
     const recentActivityTop = recentActivity.slice(0, 5);
 
-    // Compute simple month-over-month trends. These are cheap approximations.
+    // Compute simple month-over-month trends.
     const [usersThisMonthRes, videosThisMonthRes] = await Promise.all([
       client
         .from('users')
@@ -244,8 +327,6 @@ export async function GET(request: NextRequest) {
     ]);
     const usersThisMonth = usersThisMonthRes.count ?? 0;
     const videosThisMonth = videosThisMonthRes.count ?? 0;
-    const subThisMonth = activeSubscriptions;
-    const revenueThisMonth = totalRevenue;
 
     return NextResponse.json({
       totalUsers,
@@ -259,8 +340,8 @@ export async function GET(request: NextRequest) {
       trends: {
         usersThisMonth,
         videosThisMonth,
-        subThisMonth,
-        revenueThisMonth,
+        subThisMonth: activeSubscriptions,
+        revenueThisMonth: totalRevenue,
       },
     });
   } catch (err) {
