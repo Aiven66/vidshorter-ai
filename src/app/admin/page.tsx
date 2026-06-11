@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -63,7 +63,7 @@ function humanAgo(iso: string): string {
 }
 
 export function AdminDashboard() {
-  const { user, accessToken } = useAuth();
+  const { user, accessToken, loading: authLoading } = useAuth();
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -74,13 +74,13 @@ export function AdminDashboard() {
   const [publishing, setPublishing] = useState(false);
   const [publishStatus, setPublishStatus] = useState<string | null>(null);
 
-  const fetchStats = async () => {
+  const fetchStats = useCallback(async (token: string | null) => {
     setLoading(true);
     setError(null);
     try {
       const headers: Record<string, string> = {};
-      if (accessToken) {
-        headers['Authorization'] = `Bearer ${accessToken}`;
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
       }
       const res = await fetch('/api/admin/stats', {
         headers,
@@ -98,12 +98,18 @@ export function AdminDashboard() {
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    fetchStats();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Wait for auth to finish loading, then fetch stats with the token
+  useEffect(() => {
+    if (authLoading) return; // Still loading auth – don't fetch yet
+    if (!accessToken) {
+      setLoading(false);
+      setError('Please sign in as admin to view dashboard data.');
+      return;
+    }
+    fetchStats(accessToken);
+  }, [authLoading, accessToken, fetchStats]);
 
   const statCards = useMemo(() => {
     if (!stats) return [];
@@ -251,7 +257,7 @@ export function AdminDashboard() {
             Real-time platform statistics from the production database.
           </p>
         </div>
-        <Button onClick={fetchStats} disabled={loading}>
+        <Button onClick={() => fetchStats(accessToken)} disabled={loading}>
           {loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
           Refresh Data
         </Button>
