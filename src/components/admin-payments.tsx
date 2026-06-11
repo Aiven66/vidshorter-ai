@@ -13,7 +13,6 @@ interface Payment {
   user_id: string;
   user_email: string;
   user_name: string;
-  user_location: string | null;
   amount: number;
   plan_type: string;
   description: string;
@@ -134,7 +133,6 @@ export function PaymentsPage({ locale }: PaymentsPageProps) {
                     {locale === 'zh' ? '用户邮箱' : 'User Email'}
                   </TableHead>
                   <TableHead>{locale === 'zh' ? '用户名' : 'Name'}</TableHead>
-                  <TableHead>{locale === 'zh' ? '地点' : 'Location'}</TableHead>
                   <TableHead>{locale === 'zh' ? '金额' : 'Amount'}</TableHead>
                   <TableHead>{locale === 'zh' ? '套餐' : 'Plan'}</TableHead>
                   <TableHead>{locale === 'zh' ? '付费时间' : 'Date'}</TableHead>
@@ -144,13 +142,13 @@ export function PaymentsPage({ locale }: PaymentsPageProps) {
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center py-8">
+                    <TableCell colSpan={6} className="text-center py-8">
                       <Loader2 className="w-5 h-5 animate-spin mx-auto" />
                     </TableCell>
                   </TableRow>
                 ) : payments.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center py-8">
+                    <TableCell colSpan={6} className="text-center py-8">
                       {locale === 'zh' ? '暂无付费记录' : 'No payments found'}
                     </TableCell>
                   </TableRow>
@@ -162,16 +160,6 @@ export function PaymentsPage({ locale }: PaymentsPageProps) {
                         {payment.user_email}
                       </TableCell>
                       <TableCell>{payment.user_name || '-'}</TableCell>
-                      <TableCell className="flex items-center gap-2">
-                        {payment.user_location ? (
-                          <>
-                            <MapPin className="w-4 h-4" />
-                            {payment.user_location}
-                          </>
-                        ) : (
-                          '-'
-                        )}
-                      </TableCell>
                       <TableCell className="font-semibold">
                         <CreditCard className="w-4 h-4 inline mr-2" />
                         ${payment.amount.toLocaleString()}

@@ -15,8 +15,8 @@ interface User {
   name: string | null;
   role: string;
   avatar_url: string | null;
-  location: string | null;
   google_id: string | null;
+  is_active: boolean;
   created_at: string;
 }
 
@@ -140,17 +140,6 @@ export function UsersPage({ locale }: UsersPageProps) {
                   {formatDate(selectedUser.created_at)}
                 </div>
               </div>
-              {selectedUser.location && (
-                <div className="p-4 bg-muted/50 rounded-lg">
-                  <div className="text-sm text-muted-foreground mb-1">
-                    {locale === 'zh' ? '地点' : 'Location'}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <MapPin className="w-4 h-4" />
-                    {selectedUser.location}
-                  </div>
-                </div>
-              )}
               <div className="p-4 bg-muted/50 rounded-lg">
                 <div className="text-sm text-muted-foreground mb-1">
                   {locale === 'zh' ? '积分余额' : 'Credits'}
@@ -216,7 +205,6 @@ export function UsersPage({ locale }: UsersPageProps) {
                     {locale === 'zh' ? '邮箱' : 'Email'}
                   </TableHead>
                   <TableHead>{locale === 'zh' ? '用户名' : 'Name'}</TableHead>
-                  <TableHead>{locale === 'zh' ? '地点' : 'Location'}</TableHead>
                   <TableHead>{locale === 'zh' ? '角色' : 'Role'}</TableHead>
                   <TableHead>{locale === 'zh' ? '注册时间' : 'Joined'}</TableHead>
                   <TableHead className="text-right">
@@ -227,13 +215,13 @@ export function UsersPage({ locale }: UsersPageProps) {
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-8">
+                    <TableCell colSpan={5} className="text-center py-8">
                       <Loader2 className="w-5 h-5 animate-spin mx-auto" />
                     </TableCell>
                   </TableRow>
                 ) : users.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-8">
+                    <TableCell colSpan={5} className="text-center py-8">
                       {locale === 'zh' ? '暂无用户' : 'No users found'}
                     </TableCell>
                   </TableRow>
@@ -245,16 +233,6 @@ export function UsersPage({ locale }: UsersPageProps) {
                         {user.email}
                       </TableCell>
                       <TableCell>{user.name || '-'}</TableCell>
-                      <TableCell className="flex items-center gap-2">
-                        {user.location ? (
-                          <>
-                            <MapPin className="w-4 h-4" />
-                            {user.location}
-                          </>
-                        ) : (
-                          '-'
-                        )}
-                      </TableCell>
                       <TableCell>
                         <Badge variant={user.role === 'admin' ? 'destructive' : 'secondary'}>
                           {user.role === 'admin' ? (locale === 'zh' ? '管理员' : 'Admin') : (locale === 'zh' ? '用户' : 'User')}
