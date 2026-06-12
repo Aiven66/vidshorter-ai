@@ -122,7 +122,32 @@ export function UsersPage({ locale }: UsersPageProps) {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
+            {/* User ID */}
+            <div className="p-4 bg-muted/50 rounded-lg">
+              <div className="text-sm text-muted-foreground mb-1">
+                {locale === 'zh' ? '用户ID' : 'User ID'}
+              </div>
+              <code className="text-sm break-all">{selectedUser.id}</code>
+            </div>
+
             <div className="grid grid-cols-2 gap-4">
+              <div className="p-4 bg-muted/50 rounded-lg">
+                <div className="text-sm text-muted-foreground mb-1">
+                  {locale === 'zh' ? '注册邮箱' : 'Email'}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Mail className="w-4 h-4" />
+                  {selectedUser.email}
+                </div>
+              </div>
+              <div className="p-4 bg-muted/50 rounded-lg">
+                <div className="text-sm text-muted-foreground mb-1">
+                  {locale === 'zh' ? '用户名' : 'Name'}
+                </div>
+                <div className="font-medium">
+                  {selectedUser.name || (locale === 'zh' ? '未设置' : 'Not set')}
+                </div>
+              </div>
               <div className="p-4 bg-muted/50 rounded-lg">
                 <div className="text-sm text-muted-foreground mb-1">
                   {locale === 'zh' ? '角色' : 'Role'}
@@ -133,11 +158,27 @@ export function UsersPage({ locale }: UsersPageProps) {
               </div>
               <div className="p-4 bg-muted/50 rounded-lg">
                 <div className="text-sm text-muted-foreground mb-1">
+                  {locale === 'zh' ? '用户状态' : 'Status'}
+                </div>
+                <Badge variant={selectedUser.is_active ? 'default' : 'destructive'}>
+                  {selectedUser.is_active ? (locale === 'zh' ? '活跃' : 'Active') : (locale === 'zh' ? '禁用' : 'Disabled')}
+                </Badge>
+              </div>
+              <div className="p-4 bg-muted/50 rounded-lg">
+                <div className="text-sm text-muted-foreground mb-1">
                   {locale === 'zh' ? '注册时间' : 'Joined'}
                 </div>
                 <div className="flex items-center gap-2">
                   <Calendar className="w-4 h-4" />
                   {formatDate(selectedUser.created_at)}
+                </div>
+              </div>
+              <div className="p-4 bg-muted/50 rounded-lg">
+                <div className="text-sm text-muted-foreground mb-1">
+                  {locale === 'zh' ? '注册渠道' : 'Signup Method'}
+                </div>
+                <div className="font-medium">
+                  {selectedUser.google_id ? (locale === 'zh' ? 'Google 登录' : 'Google') : (locale === 'zh' ? '邮箱注册' : 'Email')}
                 </div>
               </div>
               <div className="p-4 bg-muted/50 rounded-lg">
@@ -167,6 +208,14 @@ export function UsersPage({ locale }: UsersPageProps) {
                 </div>
                 <div className="text-xl font-semibold">
                   {selectedUser.videos_processed?.toLocaleString() || 0}
+                </div>
+              </div>
+              <div className="p-4 bg-muted/50 rounded-lg">
+                <div className="text-sm text-muted-foreground mb-1">
+                  {locale === 'zh' ? '头像' : 'Avatar'}
+                </div>
+                <div className="font-medium">
+                  {selectedUser.avatar_url ? (locale === 'zh' ? '已设置' : 'Set') : (locale === 'zh' ? '未设置' : 'Not set')}
                 </div>
               </div>
             </div>
@@ -243,7 +292,7 @@ export function UsersPage({ locale }: UsersPageProps) {
                         {formatDate(user.created_at)}
                       </TableCell>
                       <TableCell className="text-right">
-                        <Button variant="ghost" size="sm">
+                        <Button variant="ghost" size="sm" onClick={() => fetchUserDetail(user.id)}>
                           {locale === 'zh' ? '查看详情' : 'View'}
                         </Button>
                       </TableCell>
