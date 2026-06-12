@@ -49,14 +49,14 @@ function getSupabaseClient() {
   });
 }
 
-// ======================== Route - GET /api/admin/users ========================
+// ======================== Route - GET /api/admin/users/:userId ========================
 
-export async function GET(request: NextRequest) {
-  const authHeader = request.headers.get('authorization') || '';
-  const token = authHeader.toLowerCase().startsWith('bearer ')
-    ? authHeader.slice(7).trim()
-    : '';
+interface Params {
+  params: { userId: string };
+}
 
+export async function GET(request: NextRequest, context: Params) {
+  const token = request.headers.get('authorization')?.replace('Bearer ', '').trim();
   if (!token || !isAdminFromToken(token)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -66,46 +66,47 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Database not configured' }, { status: 500 });
   }
 
-  const url = new URL(request.url);
-  const page = parseInt(url.searchParams.get('page') || '1');
-  const limit = parseInt(url.searchParams.get('limit') || '10');
-  const offset = (page - 1) * limit;
+  const userId = context.params.userId;
+  console.log('[admin/users/:userId] fetching:', userId);
 
   try {
-    const [usersRes, totalRes] = await Promise.all([
-      client.from('users')
-        .select('id, email, name, role, avatar_url, google_id, created_at, is_active')
-        .order('created_at', { ascending: false })
-        .range(offset, offset + limit - 1),
-      client.from('users').select('id', { count: 'exact', head: true }),
+    const [userRes, creditsRes, subsRes, videosRes] = await Promise.all([
+      client.from('users').select('*').eq('id', userId).maybeSingle(),
+      client.from('credits').select('balance').eq('user_id', userId).maybeSingle(),
+      client.from('subscriptions').select('plan_type, status').eq('user_id', userId).maybeSingle(),
+      client.from('videos').select('id', { count: 'exact', head: true }).eq('user_id', userId),
     ]);
 
-    console.log('[admin/users] query:', {
-      page, limit, dataLength: usersRes.data?.length, total: totalRes.count,
-      usersError: usersRes.error?.message, totalError: totalRes.error?.message,
-    });
-
-    if (usersRes.error) {
-      return NextResponse.json({ error: usersRes.error.message }, { status: 500 });
+    if (userRes.error) {
+      console.error('[admin/users/:userId] Supabase error:', userRes.error);
+      return NextResponse.json({ error: userRes.error.message }, { status: 500 });
     }
 
-    const users = (usersRes.data || []).map(u => ({
-      id: u.id,
-      email: u.email,
-      name: u.name,
-      role: u.role,
-      avatar_url: u.avatar_url,
-      google_id: u.google_id,
-      created_at: u.created_at,
-      is_active: u.is_active ?? true,
-    }));
+    if (!userRes.data) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    }
 
-    const total = totalRes.count || 0;
-    const totalPages = Math.ceil(total / limit);
+    const user = userRes.data;
+    const response = {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      avatar_url: user.avatar_url,
+      google_id: user.google_id,
+      is_active: user.is_active ?? true,
+      created_at: user.created_at,
+      updated_at: user.updated_at,
+      credits_balance: creditsRes.data?.balance || 0,
+      subscription_plan: subsRes.data?.plan_type,
+      subscription_status: subsRes.data?.status,
+      videos_processed: videosRes.count || 0,
+    };
 
-    return NextResponse.json({ users, total, totalPages, page });
+    console.log('[admin/users/:userId] returning:', response.email);
+    return NextResponse.json(response);
   } catch (err) {
-    console.error('[admin/users] list failed:', err);
+    console.error('[admin/users/:userId] failed:', err);
     return NextResponse.json({ error: 'Internal error', details: String(err) }, { status: 500 });
   }
 }

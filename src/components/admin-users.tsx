@@ -37,6 +37,8 @@ export function UsersPage({ locale }: UsersPageProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedUser, setSelectedUser] = useState<UserDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
 
@@ -67,17 +69,30 @@ export function UsersPage({ locale }: UsersPageProps) {
 
   const fetchUserDetail = useCallback(async (userId: string) => {
     if (!accessToken) return;
+    setDetailLoading(true);
+    setDetailError(null);
+    setSelectedUser(null);
+    console.log('[UsersPage] fetching detail for:', userId);
     try {
       const res = await fetch(`/api/admin/users/${userId}`, {
         headers: { Authorization: `Bearer ${accessToken}` },
         cache: 'no-store',
       });
+      console.log('[UsersPage] detail status:', res.status);
       if (res.ok) {
         const data = await res.json();
+        console.log('[UsersPage] detail data:', data.email);
         setSelectedUser(data);
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        console.error('[UsersPage] detail fetch failed:', res.status, errData);
+        setDetailError(errData.error || `Failed to load (${res.status})`);
       }
     } catch (err) {
-      console.error('Failed to fetch user detail:', err);
+      console.error('[UsersPage] detail fetch exception:', err);
+      setDetailError(err instanceof Error ? err.message : 'Network error');
+    } finally {
+      setDetailLoading(false);
     }
   }, [accessToken]);
 
@@ -95,17 +110,34 @@ export function UsersPage({ locale }: UsersPageProps) {
     });
   };
 
-  if (selectedUser) {
+  if (selectedUser || detailLoading || detailError) {
     return (
       <div className="p-6 max-w-4xl mx-auto">
         <Button
-          onClick={() => setSelectedUser(null)}
+          onClick={() => { setSelectedUser(null); setDetailError(null); setDetailLoading(false); }}
           className="mb-6 flex items-center gap-2"
         >
           <ArrowLeft className="w-4 h-4" />
           {locale === 'zh' ? '返回用户列表' : 'Back to Users'}
         </Button>
 
+        {detailLoading && (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 className="w-8 h-8 animate-spin text-primary" />
+            <span className="ml-3 text-muted-foreground">
+              {locale === 'zh' ? '加载用户信息中...' : 'Loading user info...'}
+            </span>
+          </div>
+        )}
+
+        {detailError && (
+          <div className="p-4 bg-red-50 text-red-700 rounded-lg mb-4">
+            <div className="font-semibold">{locale === 'zh' ? '加载失败' : 'Failed to load'}</div>
+            <div className="text-sm mt-1">{detailError}</div>
+          </div>
+        )}
+
+        {selectedUser && !detailLoading && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-3">
@@ -221,6 +253,7 @@ export function UsersPage({ locale }: UsersPageProps) {
             </div>
           </CardContent>
         </Card>
+        )}
       </div>
     );
   }
