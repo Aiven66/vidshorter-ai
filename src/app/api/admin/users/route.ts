@@ -89,8 +89,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: usersRes.error.message }, { status: 500 });
     }
 
-    console.log('[admin/users] raw data:', JSON.stringify(usersRes.data?.[0]));
-
     const users = (usersRes.data || []).map(u => ({
       id: u.id,
       email: u.email,
