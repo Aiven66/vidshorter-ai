@@ -5,7 +5,6 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import {
   Loader2,
@@ -26,6 +25,7 @@ import {
   getStoredBlogPosts,
   normalizeLocale,
 } from '@/lib/blog-content';
+import { RichTextEditor } from '@/components/rich-text-editor';
 import { type Locale } from './admin-layout';
 
 interface BlogPost {
@@ -493,15 +493,14 @@ export function BlogPage({ locale }: BlogPageProps) {
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="blog-content">
-                {locale === 'zh' ? '英文内容（支持HTML）' : 'English Content (HTML supported)'}
+              <Label>
+                {locale === 'zh' ? '文章内容（富文本编辑器）' : 'Article Content (Rich Text Editor)'}
               </Label>
-              <Textarea
-                id="blog-content"
-                value={blogContent}
-                onChange={(e) => setBlogContent(e.target.value)}
-                placeholder="<p>Clipop AI helps creators convert long videos into short highlight clips with AI...</p>"
-                className="min-h-72 font-mono text-sm"
+              <RichTextEditor
+                content={blogContent}
+                onChange={setBlogContent}
+                placeholder={locale === 'zh' ? '开始编写文章内容...' : 'Start writing your article...'}
+                locale={locale}
               />
             </div>
 
