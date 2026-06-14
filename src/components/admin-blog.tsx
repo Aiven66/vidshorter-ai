@@ -17,6 +17,7 @@ import {
   Tag,
   Image as ImageIcon,
   RefreshCw,
+  Pencil,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import {
@@ -32,6 +33,7 @@ interface BlogPost {
   title: string;
   category: string;
   cover_image?: string;
+  content?: string;
   is_published: boolean;
   view_count?: number;
   created_at: string;
@@ -44,22 +46,22 @@ interface BlogPageProps {
 
 export function BlogPage({ locale }: BlogPageProps) {
   const { user, accessToken } = useAuth();
-  const [view, setView] = useState<'list' | 'new'>('list');
+  const [view, setView] = useState<'list' | 'new' | 'edit'>('list');
   const [posts, setPosts] = useState<BlogPost[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
 
-  // New post form state
+  // Form state (shared for new/edit)
+  const [editingPost, setEditingPost] = useState<BlogPost | null>(null);
   const [blogTitle, setBlogTitle] = useState('');
   const [blogCategory, setBlogCategory] = useState('AI Video Clipping');
   const [blogCoverImage, setBlogCoverImage] = useState('');
   const [blogContent, setBlogContent] = useState('');
-  const [publishing, setPublishing] = useState(false);
-  const [publishStatus, setPublishStatus] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<string | null>(null);
 
   const isAdmin = user?.role === 'admin' || user?.email === 'admin@126.com';
-
-  const [syncing, setSyncing] = useState(false);
 
   const fetchPosts = useCallback(async () => {
     if (!accessToken) return;
@@ -82,10 +84,11 @@ export function BlogPage({ locale }: BlogPageProps) {
           title: p.title,
           category: p.category,
           cover_image: p.cover_image,
+          content: p.content,
           is_published: p.is_published,
           view_count: p.view_count,
-          created_at: p.created_at,
-          updated_at: p.updated_at,
+          created_at: new Date(p.created_at).toISOString(),
+          updated_at: p.updated_at ? new Date(p.updated_at).toISOString() : undefined,
         }));
       }
 
@@ -95,6 +98,7 @@ export function BlogPage({ locale }: BlogPageProps) {
         title: p.title,
         category: p.category,
         cover_image: p.cover_image,
+        content: p.content,
         is_published: p.is_published,
         view_count: p.view_count,
         created_at: p.created_at,
@@ -106,6 +110,7 @@ export function BlogPage({ locale }: BlogPageProps) {
         title: p.title,
         category: p.category,
         cover_image: p.cover_image,
+        content: p.content,
         is_published: p.is_published,
         view_count: p.view_count,
         created_at: p.created_at,
@@ -149,7 +154,7 @@ export function BlogPage({ locale }: BlogPageProps) {
           title: post.title,
           category: post.category,
           coverImage: post.cover_image || '',
-          content: post.content,
+          content: post.content || '',
           publish: true,
         };
         await fetch('/api/blog/posts', {
@@ -169,36 +174,58 @@ export function BlogPage({ locale }: BlogPageProps) {
     }
   }
 
-  async function publishBlog() {
-    setPublishStatus(null);
+  function openNewForm() {
+    setEditingPost(null);
+    setBlogTitle('');
+    setBlogCategory('AI Video Clipping');
+    setBlogCoverImage('');
+    setBlogContent('');
+    setSaveStatus(null);
+    setView('new');
+  }
+
+  function openEditForm(post: BlogPost) {
+    setEditingPost(post);
+    setBlogTitle(post.title);
+    setBlogCategory(post.category);
+    setBlogCoverImage(post.cover_image || '');
+    setBlogContent(post.content || '');
+    setSaveStatus(null);
+    setView('edit');
+  }
+
+  async function savePost() {
+    setSaveStatus(null);
 
     if (!isAdmin) {
-      setPublishStatus(locale === 'zh' ? '需要管理员权限' : 'Admin access required');
+      setSaveStatus(locale === 'zh' ? '需要管理员权限' : 'Admin access required');
       return;
     }
 
     if (!blogTitle.trim() || !blogContent.trim()) {
-      setPublishStatus(locale === 'zh' ? '请输入标题和内容' : 'Please enter title and content');
+      setSaveStatus(locale === 'zh' ? '请输入标题和内容' : 'Please enter title and content');
       return;
     }
 
-    setPublishing(true);
+    setSaving(true);
 
     try {
       if (accessToken) {
+        const payload = {
+          title: blogTitle.trim(),
+          category: blogCategory.trim() || 'AI Video Clipping',
+          coverImage: blogCoverImage.trim(),
+          content: blogContent.trim(),
+          publish: true,
+        };
+
         const res = await fetch('/api/blog/posts', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${accessToken}`,
           },
-          body: JSON.stringify({
-            title: blogTitle.trim(),
-            category: blogCategory.trim() || 'AI Video Clipping',
-            coverImage: blogCoverImage.trim(),
-            content: blogContent.trim(),
-            publish: true,
-          }),
+          body: JSON.stringify(payload),
         });
 
         if (res.ok) {
@@ -206,34 +233,30 @@ export function BlogPage({ locale }: BlogPageProps) {
           if (Array.isArray(data.posts)) {
             saveAdminBlogPosts(data.posts);
           }
-          setPublishStatus(
-            locale === 'zh'
-              ? `已发布 ${data.posts?.length || 1} 篇文章`
-              : `Published ${data.posts?.length || 1} article(s)`
+          setSaveStatus(
+            editingPost
+              ? (locale === 'zh' ? '文章已更新' : 'Article updated')
+              : (locale === 'zh' ? `已发布 ${data.posts?.length || 1} 篇文章` : `Published ${data.posts?.length || 1} article(s)`)
           );
-          // Reset and go back to list after a short delay
-          setBlogTitle('');
-          setBlogCoverImage('');
-          setBlogContent('');
           setTimeout(() => {
             setView('list');
-            setPublishStatus(null);
+            setSaveStatus(null);
           }, 1500);
         } else {
           const data = await res.json().catch(() => ({}));
-          setPublishStatus(
+          setSaveStatus(
             locale === 'zh'
-              ? `发布失败：${data.error || res.statusText}`
-              : `Publishing failed: ${data.error || res.statusText}`
+              ? `保存失败：${data.error || res.statusText}`
+              : `Save failed: ${data.error || res.statusText}`
           );
         }
       }
     } catch (err) {
-      setPublishStatus(
-        err instanceof Error ? err.message : (locale === 'zh' ? '发布失败' : 'Publishing failed')
+      setSaveStatus(
+        err instanceof Error ? err.message : (locale === 'zh' ? '保存失败' : 'Save failed')
       );
     } finally {
-      setPublishing(false);
+      setSaving(false);
     }
   }
 
@@ -261,7 +284,7 @@ export function BlogPage({ locale }: BlogPageProps) {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Button onClick={() => setView('new')} className="flex items-center gap-2">
+            <Button onClick={openNewForm} className="flex items-center gap-2">
               <PlusCircle className="h-4 w-4" />
               {locale === 'zh' ? '新增博客' : 'New Article'}
             </Button>
@@ -297,7 +320,7 @@ export function BlogPage({ locale }: BlogPageProps) {
               <p className="text-muted-foreground mb-4">
                 {locale === 'zh' ? '暂无文章' : 'No articles yet'}
               </p>
-              <Button onClick={() => setView('new')} className="flex items-center gap-2 mx-auto">
+              <Button onClick={openNewForm} className="flex items-center gap-2 mx-auto">
                 <PlusCircle className="h-4 w-4" />
                 {locale === 'zh' ? '发布第一篇博客' : 'Publish your first article'}
               </Button>
@@ -310,7 +333,7 @@ export function BlogPage({ locale }: BlogPageProps) {
                 {posts.map((post) => (
                   <div
                     key={post.id}
-                    className="p-5 flex items-start gap-4 hover:bg-muted/30 transition-colors"
+                    className="p-5 flex items-start gap-4 hover:bg-muted/30 transition-colors group"
                   >
                     {post.cover_image ? (
                       <div className="flex-shrink-0 w-24 h-24 rounded-md overflow-hidden bg-muted flex items-center justify-center">
@@ -343,6 +366,18 @@ export function BlogPage({ locale }: BlogPageProps) {
                         </Badge>
                       </div>
                     </div>
+
+                    <div className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openEditForm(post)}
+                        className="flex items-center gap-1"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                        {locale === 'zh' ? '编辑' : 'Edit'}
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -353,7 +388,9 @@ export function BlogPage({ locale }: BlogPageProps) {
     );
   }
 
-  // ============ NEW POST VIEW ============
+  // ============ NEW / EDIT POST VIEW ============
+  const isEditing = view === 'edit';
+
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <div className="mb-6">
@@ -361,7 +398,7 @@ export function BlogPage({ locale }: BlogPageProps) {
           variant="ghost"
           onClick={() => {
             setView('list');
-            setPublishStatus(null);
+            setSaveStatus(null);
           }}
           className="flex items-center gap-2 mb-4 -ml-3"
         >
@@ -372,17 +409,21 @@ export function BlogPage({ locale }: BlogPageProps) {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold">
-              {locale === 'zh' ? '发布新博客' : 'Publish New Article'}
+              {isEditing
+                ? (locale === 'zh' ? '编辑博客文章' : 'Edit Article')
+                : (locale === 'zh' ? '发布新博客' : 'Publish New Article')}
             </h1>
             <p className="text-sm text-muted-foreground mt-1">
-              {locale === 'zh'
-                ? '填写文章信息并发布到平台'
-                : 'Fill in article details and publish to the platform'}
+              {isEditing
+                ? (locale === 'zh' ? '修改文章信息并保存' : 'Update article details')
+                : (locale === 'zh' ? '填写文章信息并发布到平台' : 'Fill in article details and publish')}
             </p>
           </div>
-          <Badge variant="secondary">
-            {locale === 'zh' ? '英文源，自动翻译多语言' : 'English source, auto localized'}
-          </Badge>
+          {isEditing && (
+            <Badge variant="outline">
+              {locale === 'zh' ? '编辑模式' : 'Edit Mode'}
+            </Badge>
+          )}
         </div>
       </div>
 
@@ -403,8 +444,8 @@ export function BlogPage({ locale }: BlogPageProps) {
             {!isAdmin && (
               <div className="rounded-md border border-border bg-muted/50 p-3 text-sm text-muted-foreground">
                 {locale === 'zh'
-                  ? '请以管理员账号登录以发布文章'
-                  : 'Please sign in as admin to publish articles'}
+                  ? '请以管理员账号登录以保存文章'
+                  : 'Please sign in as admin to save articles'}
               </div>
             )}
 
@@ -465,18 +506,20 @@ export function BlogPage({ locale }: BlogPageProps) {
             </div>
 
             <div className="flex flex-wrap items-center gap-3 pt-2">
-              <Button onClick={publishBlog} disabled={publishing || !isAdmin}>
-                {publishing ? (
+              <Button onClick={savePost} disabled={saving || !isAdmin}>
+                {saving ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    {locale === 'zh' ? '发布中...' : 'Publishing...'}
+                    {locale === 'zh' ? '保存中...' : 'Saving...'}
                   </>
+                ) : isEditing ? (
+                  locale === 'zh' ? '保存修改' : 'Save Changes'
                 ) : (
                   locale === 'zh' ? '发布文章' : 'Publish Article'
                 )}
               </Button>
-              {publishStatus && (
-                <span className="text-sm text-muted-foreground">{publishStatus}</span>
+              {saveStatus && (
+                <span className="text-sm text-muted-foreground">{saveStatus}</span>
               )}
             </div>
           </div>
