@@ -26,6 +26,7 @@ import {
   normalizeLocale,
 } from '@/lib/blog-content';
 import { RichTextEditor } from '@/components/rich-text-editor';
+import { CoverImageUploader } from '@/components/cover-image-uploader';
 import { type Locale } from './admin-layout';
 
 interface BlogPost {
@@ -267,6 +268,10 @@ export function BlogPage({ locale }: BlogPageProps) {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
     });
   };
 
@@ -337,7 +342,11 @@ export function BlogPage({ locale }: BlogPageProps) {
                   >
                     {post.cover_image ? (
                       <div className="flex-shrink-0 w-24 h-24 rounded-md overflow-hidden bg-muted flex items-center justify-center">
-                        <ImageIcon className="w-6 h-6 text-muted-foreground opacity-50" />
+                        <img
+                          src={post.cover_image}
+                          alt={post.title}
+                          className="w-full h-full object-cover"
+                        />
                       </div>
                     ) : (
                       <div className="flex-shrink-0 w-24 h-24 rounded-md bg-muted flex items-center justify-center">
@@ -465,8 +474,8 @@ export function BlogPage({ locale }: BlogPageProps) {
               />
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="grid gap-2">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="md:col-span-1 grid gap-2">
                 <Label htmlFor="blog-category">
                   <Tag className="h-3.5 w-3.5 inline mr-1" />
                   {locale === 'zh' ? '分类' : 'Category'}
@@ -478,16 +487,13 @@ export function BlogPage({ locale }: BlogPageProps) {
                   placeholder={locale === 'zh' ? 'AI Video Clipping' : 'AI Video Clipping'}
                 />
               </div>
-              <div className="grid gap-2">
-                <Label htmlFor="blog-cover">
-                  <ImageIcon className="h-3.5 w-3.5 inline mr-1" />
-                  {locale === 'zh' ? '封面图片URL（可选）' : 'Cover Image URL (optional)'}
-                </Label>
-                <Input
-                  id="blog-cover"
+              <div className="md:col-span-2">
+                <CoverImageUploader
                   value={blogCoverImage}
-                  onChange={(e) => setBlogCoverImage(e.target.value)}
-                  placeholder="https://..."
+                  onChange={setBlogCoverImage}
+                  accessToken={accessToken}
+                  locale={locale}
+                  label={locale === 'zh' ? '封面图片（支持本地上传）' : 'Cover Image (Local Upload)'}
                 />
               </div>
             </div>
