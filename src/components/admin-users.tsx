@@ -70,12 +70,17 @@ export function UsersPage({ locale }: UsersPageProps) {
 
   const fetchUserDetail = useCallback(async (userId: string) => {
     if (!accessToken) return;
+    if (!userId || userId === 'undefined') {
+      console.error('[UsersPage] Invalid userId passed to fetchUserDetail:', userId);
+      setDetailError('Invalid user ID');
+      return;
+    }
     setDetailLoading(true);
     setDetailError(null);
     setSelectedUser(null);
     console.log('[UsersPage] fetching detail for:', userId);
     try {
-      const res = await fetch(`/api/admin/users/${userId}`, {
+      const res = await fetch(`/api/admin/users/${encodeURIComponent(userId)}`, {
         headers: { Authorization: `Bearer ${accessToken}` },
         cache: 'no-store',
       });

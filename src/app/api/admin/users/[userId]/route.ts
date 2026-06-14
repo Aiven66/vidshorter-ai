@@ -51,11 +51,7 @@ function getSupabaseClient() {
 
 // ======================== Route - GET /api/admin/users/:userId ========================
 
-interface Params {
-  params: { userId: string };
-}
-
-export async function GET(request: NextRequest, context: Params) {
+export async function GET(request: NextRequest, ctx: { params: Promise<{ userId: string }> }) {
   const token = request.headers.get('authorization')?.replace('Bearer ', '').trim();
   if (!token || !isAdminFromToken(token)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -66,10 +62,10 @@ export async function GET(request: NextRequest, context: Params) {
     return NextResponse.json({ error: 'Database not configured' }, { status: 500 });
   }
 
-  const userId = context.params.userId;
-  console.log('[admin/users/:userId] fetching:', JSON.stringify(userId), 'typeof:', typeof userId);
+  const { userId } = await ctx.params;
+  console.log('[admin/users/:userId] resolved userId:', JSON.stringify(userId), 'typeof:', typeof userId);
 
-  if (!userId || userId === 'undefined') {
+  if (!userId || userId === 'undefined' || userId.trim() === '') {
     console.error('[admin/users/:userId] Invalid userId:', userId);
     return NextResponse.json({ error: 'Invalid user ID' }, { status: 400 });
   }
