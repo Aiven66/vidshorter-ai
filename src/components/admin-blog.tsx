@@ -14,12 +14,17 @@ import {
   ArrowLeft,
   Calendar,
   Eye,
-  Trash2,
   Tag,
   Image as ImageIcon,
+  RefreshCw,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
-import { saveAdminBlogPosts } from '@/lib/blog-content';
+import {
+  saveAdminBlogPosts,
+  getBuiltInBlogPosts,
+  getStoredBlogPosts,
+  normalizeLocale,
+} from '@/lib/blog-content';
 import { type Locale } from './admin-layout';
 
 interface BlogPost {
@@ -54,6 +59,8 @@ export function BlogPage({ locale }: BlogPageProps) {
 
   const isAdmin = user?.role === 'admin' || user?.email === 'admin@126.com';
 
+  const [syncing, setSyncing] = useState(false);
+
   const fetchPosts = useCallback(async () => {
     if (!accessToken) return;
     setLoading(true);
@@ -66,25 +73,101 @@ export function BlogPage({ locale }: BlogPageProps) {
         },
         cache: 'no-store',
       });
+
+      let dbPosts: BlogPost[] = [];
       if (res.ok) {
         const data = await res.json();
-        setPosts(data.posts || []);
-      } else {
-        const data = await res.json().catch(() => ({}));
-        setError(data.error || `Failed to load (${res.status})`);
+        dbPosts = (data.posts || []).map((p: any) => ({
+          id: p.id,
+          title: p.title,
+          category: p.category,
+          cover_image: p.cover_image,
+          is_published: p.is_published,
+          view_count: p.view_count,
+          created_at: p.created_at,
+          updated_at: p.updated_at,
+        }));
       }
+
+      const activeLocale = normalizeLocale(locale);
+      const storedPosts = getStoredBlogPosts(activeLocale).map(p => ({
+        id: p.id,
+        title: p.title,
+        category: p.category,
+        cover_image: p.cover_image,
+        is_published: p.is_published,
+        view_count: p.view_count,
+        created_at: p.created_at,
+        updated_at: undefined,
+      }));
+
+      const builtInPosts = getBuiltInBlogPosts(activeLocale).map(p => ({
+        id: p.id,
+        title: p.title,
+        category: p.category,
+        cover_image: p.cover_image,
+        is_published: p.is_published,
+        view_count: p.view_count,
+        created_at: p.created_at,
+        updated_at: undefined,
+      }));
+
+      const allPosts = [...dbPosts, ...storedPosts, ...builtInPosts];
+      const seen = new Set<string>();
+      const uniquePosts = allPosts.filter(post => {
+        if (seen.has(post.id)) return false;
+        seen.add(post.id);
+        return true;
+      });
+
+      uniquePosts.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      setPosts(uniquePosts);
     } catch (err) {
+      const activeLocale = normalizeLocale(locale);
+      const fallbackPosts = [...getStoredBlogPosts(activeLocale), ...getBuiltInBlogPosts(activeLocale)];
+      fallbackPosts.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      setPosts(fallbackPosts);
       setError(err instanceof Error ? err.message : 'Failed to load');
     } finally {
       setLoading(false);
     }
-  }, [accessToken]);
+  }, [accessToken, locale]);
 
   useEffect(() => {
     if (view === 'list') {
       fetchPosts();
     }
   }, [view, fetchPosts]);
+
+  async function syncBuiltInPosts() {
+    if (!accessToken || !isAdmin) return;
+    setSyncing(true);
+    try {
+      const builtInPosts = getBuiltInBlogPosts('en');
+      for (const post of builtInPosts) {
+        const payload = {
+          title: post.title,
+          category: post.category,
+          coverImage: post.cover_image || '',
+          content: post.content,
+          publish: true,
+        };
+        await fetch('/api/blog/posts', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify(payload),
+        });
+      }
+      await fetchPosts();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Sync failed');
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   async function publishBlog() {
     setPublishStatus(null);
@@ -177,10 +260,21 @@ export function BlogPage({ locale }: BlogPageProps) {
               {locale === 'zh' ? '管理平台所有已发布文章' : 'Manage all published articles'}
             </p>
           </div>
-          <Button onClick={() => setView('new')} className="flex items-center gap-2">
-            <PlusCircle className="h-4 w-4" />
-            {locale === 'zh' ? '新增博客' : 'New Article'}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button onClick={() => setView('new')} className="flex items-center gap-2">
+              <PlusCircle className="h-4 w-4" />
+              {locale === 'zh' ? '新增博客' : 'New Article'}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={syncBuiltInPosts}
+              disabled={syncing}
+              className="flex items-center gap-2"
+            >
+              <RefreshCw className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
+              {locale === 'zh' ? '同步内置文章' : 'Sync Built-in'}
+            </Button>
+          </div>
         </div>
 
         {error && (
