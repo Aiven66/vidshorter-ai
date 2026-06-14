@@ -1,16 +1,37 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, FileText } from 'lucide-react';
+import {
+  Loader2,
+  FileText,
+  PlusCircle,
+  ArrowLeft,
+  Calendar,
+  Eye,
+  Trash2,
+  Tag,
+  Image as ImageIcon,
+} from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
-import { createLocalizedAdminPosts, saveAdminBlogPosts } from '@/lib/blog-content';
+import { saveAdminBlogPosts } from '@/lib/blog-content';
 import { type Locale } from './admin-layout';
+
+interface BlogPost {
+  id: string;
+  title: string;
+  category: string;
+  cover_image?: string;
+  is_published: boolean;
+  view_count?: number;
+  created_at: string;
+  updated_at?: string;
+}
 
 interface BlogPageProps {
   locale: Locale;
@@ -18,6 +39,12 @@ interface BlogPageProps {
 
 export function BlogPage({ locale }: BlogPageProps) {
   const { user, accessToken } = useAuth();
+  const [view, setView] = useState<'list' | 'new'>('list');
+  const [posts, setPosts] = useState<BlogPost[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // New post form state
   const [blogTitle, setBlogTitle] = useState('');
   const [blogCategory, setBlogCategory] = useState('AI Video Clipping');
   const [blogCoverImage, setBlogCoverImage] = useState('');
@@ -26,6 +53,38 @@ export function BlogPage({ locale }: BlogPageProps) {
   const [publishStatus, setPublishStatus] = useState<string | null>(null);
 
   const isAdmin = user?.role === 'admin' || user?.email === 'admin@126.com';
+
+  const fetchPosts = useCallback(async () => {
+    if (!accessToken) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/blog/posts', {
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        cache: 'no-store',
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPosts(data.posts || []);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error || `Failed to load (${res.status})`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [accessToken]);
+
+  useEffect(() => {
+    if (view === 'list') {
+      fetchPosts();
+    }
+  }, [view, fetchPosts]);
 
   async function publishBlog() {
     setPublishStatus(null);
@@ -43,16 +102,6 @@ export function BlogPage({ locale }: BlogPageProps) {
     setPublishing(true);
 
     try {
-      const payload = {
-        title: blogTitle.trim(),
-        category: blogCategory.trim() || 'AI Video Clipping',
-        coverImage: blogCoverImage.trim(),
-        content: blogContent.trim(),
-        publish: true,
-      };
-
-      let generatedCount = 0;
-      let remoteSaved = false;
       if (accessToken) {
         const res = await fetch('/api/blog/posts', {
           method: 'POST',
@@ -60,67 +109,186 @@ export function BlogPage({ locale }: BlogPageProps) {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${accessToken}`,
           },
-          body: JSON.stringify(payload),
+          body: JSON.stringify({
+            title: blogTitle.trim(),
+            category: blogCategory.trim() || 'AI Video Clipping',
+            coverImage: blogCoverImage.trim(),
+            content: blogContent.trim(),
+            publish: true,
+          }),
         });
 
         if (res.ok) {
           const data = await res.json().catch(() => ({}));
           if (Array.isArray(data.posts)) {
             saveAdminBlogPosts(data.posts);
-            generatedCount = data.posts.length;
           }
-          remoteSaved = true;
-        } else {
-          const data = await res.json().catch(() => ({}));
-          const localPosts = createLocalizedAdminPosts(payload);
-          saveAdminBlogPosts(localPosts);
-          generatedCount = localPosts.length;
           setPublishStatus(
             locale === 'zh'
-              ? `本地保存成功。在线保存失败：${data.error || res.statusText}`
-              : `Saved local preview. Online save failed: ${data.error || res.statusText}`
+              ? `已发布 ${data.posts?.length || 1} 篇文章`
+              : `Published ${data.posts?.length || 1} article(s)`
+          );
+          // Reset and go back to list after a short delay
+          setBlogTitle('');
+          setBlogCoverImage('');
+          setBlogContent('');
+          setTimeout(() => {
+            setView('list');
+            setPublishStatus(null);
+          }, 1500);
+        } else {
+          const data = await res.json().catch(() => ({}));
+          setPublishStatus(
+            locale === 'zh'
+              ? `发布失败：${data.error || res.statusText}`
+              : `Publishing failed: ${data.error || res.statusText}`
           );
         }
       }
-
-      if (remoteSaved || !accessToken) {
-        if (!accessToken) {
-          const localPosts = createLocalizedAdminPosts(payload);
-          saveAdminBlogPosts(localPosts);
-          generatedCount = localPosts.length;
-        }
-        setPublishStatus(
-          remoteSaved
-            ? locale === 'zh'
-              ? `已发布 ${generatedCount} 篇多语言博客文章`
-              : `Published ${generatedCount} localized blog articles online`
-            : locale === 'zh'
-              ? `已创建 ${generatedCount} 篇预览文章`
-              : `Created ${generatedCount} localized blog articles for preview`
-        );
-      }
-
-      setBlogTitle('');
-      setBlogCoverImage('');
-      setBlogContent('');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : (locale === 'zh' ? '发布失败' : 'Publishing failed');
-      setPublishStatus(message);
+    } catch (err) {
+      setPublishStatus(
+        err instanceof Error ? err.message : (locale === 'zh' ? '发布失败' : 'Publishing failed')
+      );
     } finally {
       setPublishing(false);
     }
   }
 
+  const formatDate = (dateString: string) => {
+    const dateLocale = locale === 'zh' ? 'zh-CN' : 'en-US';
+    const date = new Date(dateString);
+    return date.toLocaleString(dateLocale, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    });
+  };
+
+  // ============ LIST VIEW ============
+  if (view === 'list') {
+    return (
+      <div className="p-6 max-w-5xl mx-auto">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-bold">
+              {locale === 'zh' ? '博客管理' : 'Blog Management'}
+            </h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              {locale === 'zh' ? '管理平台所有已发布文章' : 'Manage all published articles'}
+            </p>
+          </div>
+          <Button onClick={() => setView('new')} className="flex items-center gap-2">
+            <PlusCircle className="h-4 w-4" />
+            {locale === 'zh' ? '新增博客' : 'New Article'}
+          </Button>
+        </div>
+
+        {error && (
+          <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-lg text-sm">
+            {error}
+          </div>
+        )}
+
+        {loading ? (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 className="w-6 h-6 animate-spin text-primary" />
+            <span className="ml-2 text-muted-foreground">
+              {locale === 'zh' ? '加载中...' : 'Loading...'}
+            </span>
+          </div>
+        ) : posts.length === 0 ? (
+          <Card>
+            <CardContent className="text-center py-16">
+              <FileText className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+              <p className="text-muted-foreground mb-4">
+                {locale === 'zh' ? '暂无文章' : 'No articles yet'}
+              </p>
+              <Button onClick={() => setView('new')} className="flex items-center gap-2 mx-auto">
+                <PlusCircle className="h-4 w-4" />
+                {locale === 'zh' ? '发布第一篇博客' : 'Publish your first article'}
+              </Button>
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <CardContent className="p-0">
+              <div className="divide-y divide-border">
+                {posts.map((post) => (
+                  <div
+                    key={post.id}
+                    className="p-5 flex items-start gap-4 hover:bg-muted/30 transition-colors"
+                  >
+                    {post.cover_image ? (
+                      <div className="flex-shrink-0 w-24 h-24 rounded-md overflow-hidden bg-muted flex items-center justify-center">
+                        <ImageIcon className="w-6 h-6 text-muted-foreground opacity-50" />
+                      </div>
+                    ) : (
+                      <div className="flex-shrink-0 w-24 h-24 rounded-md bg-muted flex items-center justify-center">
+                        <FileText className="w-8 h-8 text-muted-foreground" />
+                      </div>
+                    )}
+
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-semibold text-lg mb-1 line-clamp-1">
+                        {post.title}
+                      </h3>
+                      <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground mb-2">
+                        <Badge variant="secondary">{post.category}</Badge>
+                        <span className="flex items-center gap-1">
+                          <Calendar className="h-3.5 w-3.5" />
+                          {formatDate(post.created_at)}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Eye className="h-3.5 w-3.5" />
+                          {post.view_count || 0}
+                        </span>
+                        <Badge variant={post.is_published ? 'default' : 'secondary'}>
+                          {post.is_published
+                            ? (locale === 'zh' ? '已发布' : 'Published')
+                            : (locale === 'zh' ? '草稿' : 'Draft')}
+                        </Badge>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+    );
+  }
+
+  // ============ NEW POST VIEW ============
   return (
     <div className="p-6 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold">
-            {locale === 'zh' ? '博客管理' : 'Blog Management'}
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            {locale === 'zh' ? '发布多语言博客文章' : 'Publish multilingual blog articles'}
-          </p>
+      <div className="mb-6">
+        <Button
+          variant="ghost"
+          onClick={() => {
+            setView('list');
+            setPublishStatus(null);
+          }}
+          className="flex items-center gap-2 mb-4 -ml-3"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          {locale === 'zh' ? '返回文章列表' : 'Back to articles'}
+        </Button>
+
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold">
+              {locale === 'zh' ? '发布新博客' : 'Publish New Article'}
+            </h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              {locale === 'zh'
+                ? '填写文章信息并发布到平台'
+                : 'Fill in article details and publish to the platform'}
+            </p>
+          </div>
+          <Badge variant="secondary">
+            {locale === 'zh' ? '英文源，自动翻译多语言' : 'English source, auto localized'}
+          </Badge>
         </div>
       </div>
 
@@ -128,20 +296,21 @@ export function BlogPage({ locale }: BlogPageProps) {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <FileText className="h-5 w-5" />
-            {locale === 'zh' ? '发布博客文章' : 'Publish Blog Article'}
+            {locale === 'zh' ? '文章信息' : 'Article Details'}
           </CardTitle>
           <CardDescription>
-            {locale === 'zh' ? '输入英文内容，系统自动翻译为多种语言' : 'Enter English content, auto translated to multiple languages'}
+            {locale === 'zh'
+              ? '输入英文标题与内容，系统自动翻译为多种语言版本'
+              : 'Enter English title & content; auto-translated to multiple languages'}
           </CardDescription>
-          <Badge variant="secondary">
-            {locale === 'zh' ? '英文源，自动翻译' : 'English source, auto localized'}
-          </Badge>
         </CardHeader>
         <CardContent>
           <div className="grid gap-4">
             {!isAdmin && (
               <div className="rounded-md border border-border bg-muted/50 p-3 text-sm text-muted-foreground">
-                {locale === 'zh' ? '请以 admin@126.com 登录以发布文章' : 'Sign in as admin@126.com to publish'}
+                {locale === 'zh'
+                  ? '请以管理员账号登录以发布文章'
+                  : 'Please sign in as admin to publish articles'}
               </div>
             )}
 
@@ -152,31 +321,37 @@ export function BlogPage({ locale }: BlogPageProps) {
               <Input
                 id="blog-title"
                 value={blogTitle}
-                onChange={(event) => setBlogTitle(event.target.value)}
-                placeholder={locale === 'zh' ? '如何将长视频转换为AI亮点短视频' : 'How to Turn Long Videos into AI Highlight Shorts'}
+                onChange={(e) => setBlogTitle(e.target.value)}
+                placeholder={
+                  locale === 'zh'
+                    ? 'How to Turn Long Videos into AI Highlight Shorts'
+                    : 'How to Turn Long Videos into AI Highlight Shorts'
+                }
               />
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="grid gap-2">
                 <Label htmlFor="blog-category">
+                  <Tag className="h-3.5 w-3.5 inline mr-1" />
                   {locale === 'zh' ? '分类' : 'Category'}
                 </Label>
                 <Input
                   id="blog-category"
                   value={blogCategory}
-                  onChange={(event) => setBlogCategory(event.target.value)}
-                  placeholder={locale === 'zh' ? 'AI视频剪辑' : 'AI Video Clipping'}
+                  onChange={(e) => setBlogCategory(e.target.value)}
+                  placeholder={locale === 'zh' ? 'AI Video Clipping' : 'AI Video Clipping'}
                 />
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="blog-cover">
-                  {locale === 'zh' ? '封面图片URL' : 'Cover Image URL'}
+                  <ImageIcon className="h-3.5 w-3.5 inline mr-1" />
+                  {locale === 'zh' ? '封面图片URL（可选）' : 'Cover Image URL (optional)'}
                 </Label>
                 <Input
                   id="blog-cover"
                   value={blogCoverImage}
-                  onChange={(event) => setBlogCoverImage(event.target.value)}
+                  onChange={(e) => setBlogCoverImage(e.target.value)}
                   placeholder="https://..."
                 />
               </div>
@@ -184,18 +359,18 @@ export function BlogPage({ locale }: BlogPageProps) {
 
             <div className="grid gap-2">
               <Label htmlFor="blog-content">
-                {locale === 'zh' ? '英文内容' : 'English Content'}
+                {locale === 'zh' ? '英文内容（支持HTML）' : 'English Content (HTML supported)'}
               </Label>
               <Textarea
                 id="blog-content"
                 value={blogContent}
-                onChange={(event) => setBlogContent(event.target.value)}
-                placeholder="<p>clipopai helps creators convert long videos into short highlight clips with AI...</p>"
-                className="min-h-56"
+                onChange={(e) => setBlogContent(e.target.value)}
+                placeholder="<p>Clipop AI helps creators convert long videos into short highlight clips with AI...</p>"
+                className="min-h-72 font-mono text-sm"
               />
             </div>
 
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3 pt-2">
               <Button onClick={publishBlog} disabled={publishing || !isAdmin}>
                 {publishing ? (
                   <>
@@ -203,7 +378,7 @@ export function BlogPage({ locale }: BlogPageProps) {
                     {locale === 'zh' ? '发布中...' : 'Publishing...'}
                   </>
                 ) : (
-                  locale === 'zh' ? '发布多语言文章' : 'Publish multilingual article'
+                  locale === 'zh' ? '发布文章' : 'Publish Article'
                 )}
               </Button>
               {publishStatus && (

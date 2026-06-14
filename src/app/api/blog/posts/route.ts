@@ -83,6 +83,51 @@ async function ensureAuthor(client: ReturnType<typeof createClient>, user: { id:
   return (data?.id as string) || user.id;
 }
 
+// ==================== GET: List all published blog posts (admin) ====================
+export async function GET(req: NextRequest) {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.COZE_SUPABASE_URL || '';
+  const serviceRoleKey = getServiceRoleKey();
+
+  if (!url || !serviceRoleKey) {
+    return NextResponse.json({ error: 'Database not configured.' }, { status: 503 });
+  }
+
+  const token = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '').trim();
+
+  const client = createClient(url, serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+
+  // Admin check is optional - list is public, but we still allow filtering if admin
+  let isAdmin = false;
+  if (token) {
+    const admin = await getAdminUser(client, token).catch(() => null);
+    if (admin) isAdmin = true;
+  }
+
+  try {
+    let query = client
+      .from('blogs')
+      .select('id,title,category,cover_image,author_id,is_published,view_count,created_at,updated_at');
+
+    // Non-admin: only published posts
+    if (!isAdmin) {
+      query = query.eq('is_published', true);
+    }
+
+    const { data, error } = await query
+      .order('created_at', { ascending: false })
+      .limit(200);
+
+    if (error) throw error;
+    return NextResponse.json({ posts: data || [], isAdmin });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Failed to list posts.';
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
+
+// ==================== POST: Create/publish new blog article ====================
 export async function POST(req: NextRequest) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.COZE_SUPABASE_URL || '';
   const serviceRoleKey = getServiceRoleKey();
