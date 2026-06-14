@@ -67,7 +67,12 @@ export async function GET(request: NextRequest, context: Params) {
   }
 
   const userId = context.params.userId;
-  console.log('[admin/users/:userId] fetching:', userId);
+  console.log('[admin/users/:userId] fetching:', JSON.stringify(userId), 'typeof:', typeof userId);
+
+  if (!userId || userId === 'undefined') {
+    console.error('[admin/users/:userId] Invalid userId:', userId);
+    return NextResponse.json({ error: 'Invalid user ID' }, { status: 400 });
+  }
 
   try {
     const [userRes, creditsRes, subsRes, videosRes] = await Promise.all([

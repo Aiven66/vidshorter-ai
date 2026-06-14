@@ -53,6 +53,7 @@ export function UsersPage({ locale }: UsersPageProps) {
       });
       if (res.ok) {
         const data = await res.json();
+        console.log('[UsersPage] users data:', JSON.stringify(data.users?.[0]));
         setUsers(data.users || []);
         setTotalPages(data.totalPages || 1);
         setPage(pageNum);
