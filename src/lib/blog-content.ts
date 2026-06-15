@@ -53,202 +53,29 @@ type BlogArticleSeed = {
 export const BLOG_STORAGE_KEY = 'clipop_blog_posts_v3';
 
 // ===================== COVER IMAGE GENERATION =====================
-// 使用内联 SVG data URI 作为封面图，完全不依赖外部图片服务，100% 可靠显示
+// 使用 picsum.photos 服务提供高质量的主题图片
 
-interface CoverTheme {
-  gradientStart: string;
-  gradientEnd: string;
-  accent: string;
-  icon: string; // SVG path or simple shape
-}
-
-const coverThemes: Record<string, CoverTheme> = {
-  'ai-video-clipping': {
-    gradientStart: '#7c3aed',
-    gradientEnd: '#2563eb',
-    accent: '#fbbf24',
-    icon: 'play',
-  },
-  'youtube-shorts': {
-    gradientStart: '#ef4444',
-    gradientEnd: '#f97316',
-    accent: '#fef3c7',
-    icon: 'smartphone',
-  },
-  'content-repurposing': {
-    gradientStart: '#10b981',
-    gradientEnd: '#0d9488',
-    accent: '#fef9c3',
-    icon: 'recycle',
-  },
-  'local-video-upload': {
-    gradientStart: '#0ea5e9',
-    gradientEnd: '#6366f1',
-    accent: '#e0f2fe',
-    icon: 'upload',
-  },
-  'ai-technology': {
-    gradientStart: '#8b5cf6',
-    gradientEnd: '#06b6d4',
-    accent: '#f5d0fe',
-    icon: 'sparkles',
-  },
-  'seo-strategy': {
-    gradientStart: '#059669',
-    gradientEnd: '#0891b2',
-    accent: '#d1fae5',
-    icon: 'chart',
-  },
-  'podcast-clips': {
-    gradientStart: '#dc2626',
-    gradientEnd: '#9333ea',
-    accent: '#fde68a',
-    icon: 'mic',
-  },
-  'marketing-teams': {
-    gradientStart: '#2563eb',
-    gradientEnd: '#0891b2',
-    accent: '#e0f2fe',
-    icon: 'users',
-  },
-  'comparison': {
-    gradientStart: '#7c3aed',
-    gradientEnd: '#ec4899',
-    accent: '#fce7f3',
-    icon: 'scale',
-  },
-  'best-practices': {
-    gradientStart: '#0d9488',
-    gradientEnd: '#2563eb',
-    accent: '#ccfbf1',
-    icon: 'checklist',
-  },
-  'bilibili-workflow': {
-    gradientStart: '#0ea5e9',
-    gradientEnd: '#ec4899',
-    accent: '#e0f2fe',
-    icon: 'tv',
-  },
-};
-
-const defaultTheme: CoverTheme = {
-  gradientStart: '#6366f1',
-  gradientEnd: '#8b5cf6',
-  accent: '#e0e7ff',
-  icon: 'play',
+const categoryImages: Record<string, number> = {
+  'ai-video-clipping': 1,    // 抽象科技感图片
+  'youtube-shorts': 2,       // 创意设计图片
+  'content-repurposing': 3,  // 内容创作图片
+  'local-video-upload': 4,   // 技术上传图片
+  'ai-technology': 5,        // AI科技图片
+  'seo-strategy': 6,         // 数据分析图片
+  'podcast-clips': 7,        // 播客音频图片
+  'marketing-teams': 8,      // 团队协作图片
+  'comparison': 9,           // 对比分析图片
+  'best-practices': 10,      // 最佳实践图片
+  'bilibili-workflow': 11,   // 视频平台图片
 };
 
 function getCategoryKey(category: string): string {
   return category.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
 }
 
-function getThemeForCategory(category: string): CoverTheme {
+function getCategoryImageId(category: string): number {
   const key = getCategoryKey(category);
-  return coverThemes[key] || defaultTheme;
-}
-
-function escapeForDataUri(str: string): string {
-  return encodeURIComponent(str).replace(/'/g, '%27');
-}
-
-function generateSvgCover(title: string, category: string, width: number = 800, height: number = 450): string {
-  const theme = getThemeForCategory(category);
-  const cleanTitle = title.length > 50 ? title.substring(0, 47) + '...' : title;
-  const cleanCategory = category.length > 25 ? category.substring(0, 22) + '...' : category;
-
-  const centerX = width / 2;
-  const centerY = height / 2;
-
-  const svgContent = `
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid slice">
-  <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="${theme.gradientStart}"/>
-      <stop offset="100%" stop-color="${theme.gradientEnd}"/>
-    </linearGradient>
-  </defs>
-  <rect width="${width}" height="${height}" fill="url(#bg)"/>
-  <circle cx="${centerX + 200}" cy="${centerY - 80}" r="120" fill="white" fill-opacity="0.1"/>
-  <circle cx="${centerX - 200}" cy="${centerY + 80}" r="100" fill="white" fill-opacity="0.08"/>
-`;
-
-  let iconSvg = '';
-  switch (theme.icon) {
-    case 'play':
-      iconSvg = `<circle cx="${centerX}" cy="${centerY}" r="60" fill="white" fill-opacity="0.15"/>
-<polygon points="${centerX - 25},${centerY - 25} ${centerX - 25},${centerY + 25} ${centerX + 25},${centerY}" fill="white"/>`;
-      break;
-    case 'smartphone':
-      iconSvg = `<rect x="${centerX - 40}" y="${centerY - 60}" width="80" height="120" rx="12" fill="white" fill-opacity="0.15" stroke="white" stroke-width="2"/>
-<rect x="${centerX - 30}" y="${centerY - 45}" width="60" height="80" rx="4" fill="white" fill-opacity="0.2"/>
-<circle cx="${centerX}" cy="${centerY + 65}" r="5" fill="white"/>`;
-      break;
-    case 'recycle':
-      iconSvg = `<path d="M${centerX} ${centerY - 50} L${centerX + 30} ${centerY} L${centerX + 15} ${centerY} L${centerX + 15} ${centerY + 25} L${centerX - 15} ${centerY + 25} L${centerX - 15} ${centerY} L${centerX - 30} ${centerY} Z" fill="white" fill-opacity="0.9"/>`;
-      break;
-    case 'upload':
-      iconSvg = `<path d="M${centerX} ${centerY - 40} L${centerX} ${centerY + 10} M${centerX - 20} ${centerY - 20} L${centerX} ${centerY - 40} L${centerX + 20} ${centerY - 20}" stroke="white" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>`;
-      break;
-    case 'sparkles':
-      iconSvg = `<path d="M${centerX} ${centerY - 50} L${centerX + 8} ${centerY - 10} L${centerX + 45} ${centerY} L${centerX + 8} ${centerY + 10} L${centerX} ${centerY + 50} L${centerX - 8} ${centerY + 10} L${centerX - 45} ${centerY} L${centerX - 8} ${centerY - 10} Z" fill="white" fill-opacity="0.9"/>`;
-      break;
-    case 'chart':
-      iconSvg = `<rect x="${centerX - 50}" y="${centerY + 20}" width="15" height="40" rx="3" fill="white" fill-opacity="0.8"/>
-<rect x="${centerX - 30}" y="${centerY - 20}" width="15" height="80" rx="3" fill="white"/>
-<rect x="${centerX - 10}" y="${centerY}" width="15" height="60" rx="3" fill="white" fill-opacity="0.7"/>
-<rect x="${centerX + 10}" y="${centerY - 35}" width="15" height="95" rx="3" fill="white" fill-opacity="0.9"/>`;
-      break;
-    case 'mic':
-      iconSvg = `<rect x="${centerX - 15}" y="${centerY - 40}" width="30" height="60" rx="12" fill="white"/>
-<path d="M${centerX - 30} ${centerY} L${centerX - 30} ${centerY + 15} Q${centerX - 30} ${centerY + 45} ${centerX} ${centerY + 45} Q${centerX + 30} ${centerY + 45} ${centerX + 30} ${centerY + 15} L${centerX + 30} ${centerY}" stroke="white" stroke-width="6" fill="none" stroke-linecap="round"/>`;
-      break;
-    case 'users':
-      iconSvg = `<circle cx="${centerX}" cy="${centerY - 15}" r="28" fill="white" fill-opacity="0.9"/>
-<path d="M${centerX - 35} ${centerY + 30} Q${centerX - 35} ${centerY - 5} ${centerX} ${centerY - 5} Q${centerX + 35} ${centerY - 5} ${centerX + 35} ${centerY + 30}" fill="white" fill-opacity="0.9"/>`;
-      break;
-    case 'scale':
-      iconSvg = `<line x1="${centerX}" y1="${centerY - 55}" x2="${centerX}" y2="${centerY + 55}" stroke="white" stroke-width="4" stroke-linecap="round"/>
-<path d="M${centerX - 50} ${centerY - 40} L${centerX + 50} ${centerY - 40}" stroke="white" stroke-width="6" stroke-linecap="round"/>
-<path d="M${centerX - 50} ${centerY - 40} L${centerX - 65} ${centerY - 15} L${centerX - 35} ${centerY - 15} Z" fill="white" fill-opacity="0.8"/>
-<path d="M${centerX + 50} ${centerY - 40} L${centerX + 35} ${centerY - 15} L${centerX + 65} ${centerY - 15} Z" fill="white" fill-opacity="0.8"/>`;
-      break;
-    case 'checklist':
-      iconSvg = `<rect x="${centerX - 50}" y="${centerY - 45}" width="100" height="90" rx="10" fill="white" fill-opacity="0.15" stroke="white" stroke-width="2"/>
-<path d="M${centerX - 35} ${centerY - 20} L${centerX - 20} ${centerY - 5} L${centerX + 15} ${centerY - 30}" stroke="white" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`;
-      break;
-    case 'tv':
-      iconSvg = `<rect x="${centerX - 60}" y="${centerY - 35}" width="120" height="75" rx="8" fill="white" fill-opacity="0.15" stroke="white" stroke-width="2"/>
-<rect x="${centerX - 45}" y="${centerY - 22}" width="90" height="45" rx="3" fill="white" fill-opacity="0.2"/>
-<polygon points="${centerX - 10},${centerY - 5} ${centerX - 10},${centerY + 15} ${centerX + 10},${centerY + 5}" fill="white"/>`;
-      break;
-    default:
-      iconSvg = `<circle cx="${centerX}" cy="${centerY}" r="60" fill="white" fill-opacity="0.15"/>
-<polygon points="${centerX - 25},${centerY - 25} ${centerX - 25},${centerY + 25} ${centerX + 25},${centerY}" fill="white"/>`;
-  }
-
-  const textCategoryWidth = Math.min(cleanCategory.length * 10 + 20, 250);
-
-  const footerSvg = `
-  <text x="35" y="${height - 50}" font-family="system-ui, sans-serif" font-size="28" font-weight="700" fill="white" fill-opacity="0.95">${escapeHtml(cleanTitle)}</text>
-  <rect x="35" y="${height - 38}" width="${textCategoryWidth}" height="20" rx="10" fill="white" fill-opacity="0.18"/>
-  <text x="45" y="${height - 22}" font-family="system-ui, sans-serif" font-size="12" font-weight="600" fill="white" fill-opacity="0.95" text-transform="uppercase" letter-spacing="1">${escapeHtml(cleanCategory)}</text>
-</svg>`;
-
-  const fullSvg = svgContent + iconSvg + footerSvg;
-  const encoded = encodeURIComponent(fullSvg).replace(/%0A/g, '%20').replace(/%0D/g, '');
-  
-  return `data:image/svg+xml,${encoded}`;
-}
-
-function escapeHtml(text: string): string {
-  const htmlEntities: Record<string, string> = {
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;',
-  };
-  return text.replace(/[&<>"']/g, char => htmlEntities[char] || char);
+  return categoryImages[key] || Math.floor(Math.random() * 100) + 1;
 }
 
 export function generateCoverImageUrl(
@@ -256,20 +83,17 @@ export function generateCoverImageUrl(
   category: string,
   _variant: number = 1,
 ): string {
-  return generateSvgCover(title, category);
+  const imageId = getCategoryImageId(category);
+  return `https://picsum.photos/800/450?random=${imageId}`;
 }
 
 export function getDefaultCoverImage(category: string): string {
-  const displayTitle = category === 'AI Video Clipping'
-    ? 'AI Video Clipping'
-    : category === 'AI视频剪辑'
-    ? 'AI 视频剪辑'
-    : category;
-  return generateSvgCover(displayTitle, category);
+  const imageId = getCategoryImageId(category);
+  return `https://picsum.photos/800/450?random=${imageId}`;
 }
 
 function getCoverForSlug(_slug: string): string {
-  return generateSvgCover('Clipop AI Blog', 'AI Video Clipping');
+  return 'https://picsum.photos/800/450?random=1';
 }
 
 // ===================== 32-LANGUAGE TRANSLATION TEMPLATES =====================
