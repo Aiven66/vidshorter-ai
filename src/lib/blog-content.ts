@@ -620,7 +620,7 @@ export function getBuiltInBlogPosts(locale: Locale): BlogPost[] {
   return seoSeeds.map(seed => {
     const variant = getLocaleVariant(seed, locale);
     const categoryName = getCategory(seed, locale);
-    const coverUrl = generateSvgCover(variant.title, categoryName);
+    const coverUrl = generateCoverImageUrl(variant.title, categoryName);
     return {
       id: `${seed.slug}-${locale}`,
       title: variant.title,
