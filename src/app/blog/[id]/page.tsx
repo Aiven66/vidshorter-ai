@@ -11,6 +11,7 @@ import {
   getBuiltInBlogPosts,
   getBuiltInBlogPost,
   getStoredBlogPosts,
+  getDefaultCoverImage,
   isPostForLocale,
   normalizeBlogRow,
   normalizeLocale,
@@ -170,17 +171,17 @@ export default function BlogDetailPage() {
             <h1 className="text-4xl font-bold mb-4">{post.title}</h1>
           </header>
 
-          {post.cover_image && (
-            <div className="mb-8 rounded-lg overflow-hidden">
-              <Image
-                src={post.cover_image}
-                alt={post.title}
-                width={1200}
-                height={630}
-                className="w-full h-auto"
-              />
-            </div>
-          )}
+          <div className="mb-8 rounded-lg overflow-hidden">
+            <img
+              src={post.cover_image || getDefaultCoverImage(post.category)}
+              alt={post.title}
+              className="w-full h-auto max-h-[400px] object-cover"
+              onError={(e) => {
+                const target = e.currentTarget as HTMLImageElement;
+                target.src = getDefaultCoverImage(post.category);
+              }}
+            />
+          </div>
 
           <Card>
             <CardContent className="prose prose-neutral dark:prose-invert max-w-none p-8">
@@ -198,17 +199,17 @@ export default function BlogDetailPage() {
                   <Card key={relatedPost.id} className="overflow-hidden hover:shadow-md transition-shadow">
                     <CardContent className="p-4">
                       <div className="flex items-start gap-4">
-                        {relatedPost.cover_image && (
-                          <div className="relative h-24 w-24 flex-shrink-0 overflow-hidden rounded-lg">
-                            <Image
-                              src={relatedPost.cover_image}
-                              alt={relatedPost.title}
-                              fill
-                              sizes="96px"
-                              className="object-cover"
-                            />
-                          </div>
-                        )}
+                        <div className="relative h-24 w-24 flex-shrink-0 overflow-hidden rounded-lg">
+                          <img
+                            src={relatedPost.cover_image || getDefaultCoverImage(relatedPost.category)}
+                            alt={relatedPost.title}
+                            className="absolute inset-0 w-full h-full object-cover"
+                            onError={(e) => {
+                              const target = e.currentTarget as HTMLImageElement;
+                              target.src = getDefaultCoverImage(relatedPost.category);
+                            }}
+                          />
+                        </div>
                         <div className="flex-1">
                           <Badge variant="secondary" className="mb-2">
                             {relatedPost.category}

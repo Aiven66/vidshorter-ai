@@ -24,6 +24,7 @@ import {
   getBuiltInBlogPosts,
   getStoredBlogPosts,
   normalizeLocale,
+  getDefaultCoverImage,
 } from '@/lib/blog-content';
 import { RichTextEditor } from '@/components/rich-text-editor';
 import { CoverImageUploader } from '@/components/cover-image-uploader';
@@ -340,19 +341,17 @@ export function BlogPage({ locale }: BlogPageProps) {
                     key={post.id}
                     className="p-5 flex items-start gap-4 hover:bg-muted/30 transition-colors group"
                   >
-                    {post.cover_image ? (
-                      <div className="flex-shrink-0 w-24 h-24 rounded-md overflow-hidden bg-muted flex items-center justify-center">
-                        <img
-                          src={post.cover_image}
-                          alt={post.title}
-                          className="w-full h-full object-cover"
-                        />
-                      </div>
-                    ) : (
-                      <div className="flex-shrink-0 w-24 h-24 rounded-md bg-muted flex items-center justify-center">
-                        <FileText className="w-8 h-8 text-muted-foreground" />
-                      </div>
-                    )}
+                    <div className="flex-shrink-0 w-24 h-24 rounded-md overflow-hidden bg-muted">
+                      <img
+                        src={post.cover_image || getDefaultCoverImage(post.category)}
+                        alt={post.title}
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          const target = e.currentTarget as HTMLImageElement;
+                          target.src = getDefaultCoverImage(post.category);
+                        }}
+                      />
+                    </div>
 
                     <div className="flex-1 min-w-0">
                       <h3 className="font-semibold text-lg mb-1 line-clamp-1">

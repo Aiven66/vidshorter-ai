@@ -13,6 +13,7 @@ import {
   BlogPost,
   getBuiltInBlogPosts,
   getStoredBlogPosts,
+  getDefaultCoverImage,
   isPostForLocale,
   normalizeBlogRow,
   normalizeLocale,
@@ -110,18 +111,18 @@ export default function BlogPage() {
               {posts.map((post) => (
                 <Card key={post.id} className="overflow-hidden hover:shadow-lg transition-shadow">
                   <div className="md:flex">
-                    {post.cover_image && (
-                      <div className="relative h-48 md:min-h-[240px] md:w-1/3">
-                        <Image
-                          src={post.cover_image}
-                          alt={post.title}
-                          fill
-                          sizes="(min-width: 768px) 33vw, 100vw"
-                          className="object-cover"
-                        />
-                      </div>
-                    )}
-                    <div className={`p-6 ${post.cover_image ? 'md:w-2/3' : 'w-full'}`}>
+                    <div className="relative h-48 md:min-h-[240px] md:w-1/3">
+                      <img
+                        src={post.cover_image || getDefaultCoverImage(post.category)}
+                        alt={post.title}
+                        className="absolute inset-0 w-full h-full object-cover"
+                        onError={(e) => {
+                          const target = e.currentTarget as HTMLImageElement;
+                          target.src = getDefaultCoverImage(post.category);
+                        }}
+                      />
+                    </div>
+                    <div className="p-6 md:w-2/3">
                       <div className="flex items-center gap-4 mb-3">
                         <Badge variant="secondary">{post.category}</Badge>
                         <span className="text-sm text-muted-foreground flex items-center gap-1">
