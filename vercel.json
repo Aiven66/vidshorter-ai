@@ -12,5 +12,11 @@
     "env": {
       "VERCEL": "1"
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/blog/auto-publish",
+      "schedule": "0 0 * * *"
+    }
+  ]
 }
