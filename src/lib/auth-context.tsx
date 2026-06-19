@@ -160,6 +160,7 @@ function clearLocalAuthStorage() {
   localStorage.removeItem(DESKTOP_AUTH_STORAGE_KEY);
   sessionStorage.removeItem(DESKTOP_AUTH_SESSION_KEY);
   sessionStorage.removeItem(DESKTOP_CALLBACK_SESSION_KEY);
+  clearAuthCookies();
   (window as any).__clipopDesktopToken = '';
   (window as any).__clipopDesktopRefreshToken = '';
   (window as any).__clipopDesktopEmail = '';
@@ -275,6 +276,27 @@ function decodeJwtPayload(token: string): Record<string, unknown> | null {
   }
 }
 
+function setAuthCookies(accessToken: string, refreshToken?: string | null) {
+  if (typeof document === 'undefined') return;
+  const secure = typeof window !== 'undefined' && window.location.protocol === 'https:';
+  const secureFlag = secure ? '; Secure' : '';
+  const maxAge = '; Max-Age=604800';
+  const path = '; Path=/';
+  const sameSite = '; SameSite=Lax';
+
+  document.cookie = `clipop_access_token=${encodeURIComponent(accessToken)}${path}${maxAge}${sameSite}${secureFlag}`;
+  if (refreshToken) {
+    document.cookie = `clipop_refresh_token=${encodeURIComponent(refreshToken)}${path}${maxAge}${sameSite}${secureFlag}`;
+  }
+}
+
+function clearAuthCookies() {
+  if (typeof document === 'undefined') return;
+  const path = '; Path=/';
+  document.cookie = `clipop_access_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT${path}`;
+  document.cookie = `clipop_refresh_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT${path}`;
+}
+
 function createUserFromJwt(token: string): User | null {
   const payload = decodeJwtPayload(token);
   if (!payload) return null;
@@ -313,6 +335,7 @@ function applyDesktopToken(
   if (!token) return;
 
   localStorage.setItem('clipop_access_token', token);
+  setAuthCookies(token);
 
   if (isDemoToken(token)) {
     const jwtUser = createUserFromJwt(token);
@@ -458,6 +481,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setAccessToken(session.access_token || null);
         if (typeof window !== 'undefined') {
           localStorage.setItem('clipop_access_token', session.access_token || '');
+          setAuthCookies(session.access_token || '', session.refresh_token);
         }
         const { data: userData } = await client
           .from('users')
@@ -491,6 +515,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         if (storedToken) {
           setAccessToken(storedToken);
+          setAuthCookies(storedToken);
         }
       }
     } catch {
@@ -502,6 +527,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       if (storedToken) {
         setAccessToken(storedToken);
+        setAuthCookies(storedToken);
       }
     } finally {
       setLoading(false);
@@ -556,6 +582,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               if (data.session.refresh_token) {
                 localStorage.setItem('clipop_refresh_token', data.session.refresh_token);
               }
+              setAuthCookies(data.session.access_token, data.session.refresh_token);
 
               const user = data.session.user;
               if (user) {
@@ -675,6 +702,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!token) return;
 
       localStorage.setItem('clipop_access_token', token);
+      setAuthCookies(token, refreshToken);
       if (refreshToken) {
         localStorage.setItem('clipop_refresh_token', refreshToken);
         try {
@@ -733,6 +761,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setAccessToken(demoToken);
         if (typeof window !== 'undefined') {
           localStorage.setItem('clipop_access_token', demoToken);
+          setAuthCookies(demoToken);
         }
         return { error: null, token: demoToken, email: adminUser.email };
       }
@@ -798,6 +827,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (token && typeof window !== 'undefined') {
           localStorage.setItem('clipop_access_token', token);
           if (refreshToken) localStorage.setItem('clipop_refresh_token', refreshToken);
+          setAuthCookies(token, refreshToken);
         }
         const userData = await verifyTokenAndFetchUser(data.session.access_token!);
         if (userData) {
@@ -817,6 +847,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setAccessToken(demoToken);
         if (typeof window !== 'undefined') {
           localStorage.setItem('clipop_access_token', demoToken);
+          setAuthCookies(demoToken);
         }
         return { error: null, token: demoToken, email: adminUser.email };
       }
