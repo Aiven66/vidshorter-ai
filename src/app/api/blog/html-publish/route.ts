@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { createLocalizedAdminPosts } from '@/lib/blog-content';
 
-const TRUSTED_ADMIN_EMAILS = new Set(['admin@vidshorter.ai', 'admin@126.com', 'admin@clipop.ai']);
+const TRUSTED_ADMIN_EMAILS = new Set([
+  'admin@vidshorter.ai',
+  'admin@126.com',
+  'admin@clipop.ai',
+]);
 
 function getServiceRoleKey() {
   return (
@@ -19,14 +23,17 @@ function decodeJwtPayload(token: string): Record<string, unknown> | null {
     const parts = token.split('.');
     if (parts.length !== 3) return null;
     const payload = parts[1];
-    const padded = payload + '='.repeat((4 - payload.length % 4) % 4);
+    const padded = payload + '='.repeat((4 - (payload.length % 4)) % 4);
     return JSON.parse(Buffer.from(padded, 'base64').toString('utf8'));
   } catch {
     return null;
   }
 }
 
-async function getAdminUser(client: ReturnType<typeof createClient>, token: string) {
+async function getAdminUser(
+  client: ReturnType<typeof createClient>,
+  token: string
+) {
   const demoPayload = decodeJwtPayload(token);
   if (
     typeof demoPayload?.email === 'string' &&
@@ -47,7 +54,7 @@ async function getAdminUser(client: ReturnType<typeof createClient>, token: stri
 
     const { data: userRow } = await client
       .from('users')
-      .select('id,email,name,role')
+      .select('id, email, name, role')
       .eq('id', authData.user.id)
       .maybeSingle();
 
@@ -66,60 +73,20 @@ async function getAdminUser(client: ReturnType<typeof createClient>, token: stri
   }
 }
 
-async function ensureAuthor(client: ReturnType<typeof createClient>, user: { id: string; email: string; name: string; role: string }) {
-  const { data: existingByEmail } = await client
-    .from('users')
-    .select('id')
-    .eq('email', user.email)
-    .maybeSingle();
-
-  if (existingByEmail?.id) return existingByEmail.id as string;
-
-  const { data, error } = await client
-    .from('users')
-    .upsert({
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      role: user.role,
-      is_active: true,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'id' })
-    .select('id')
-    .maybeSingle();
-
-  if (error) throw error;
-  return (data?.id as string) || user.id;
-}
-
 function extractTitleFromHtml(html: string): string {
   const match = html.match(/<title>([^<]+)<\/title>/i);
   return match ? match[1].trim() : '';
 }
 
-function extractCategoryFromHtml(html: string): string {
-  const metaMatch = html.match(/<meta\s+name=["']category["']\s+content=["']([^"']+)["']/i);
-  if (metaMatch) return metaMatch[1].trim();
-  const tagMatch = html.match(/<meta\s+name=["']keywords["']\s+content=["']([^"']+)["']/i);
-  if (tagMatch) {
-    const keywords = tagMatch[1].split(',').map(k => k.trim()).filter(k => k);
-    if (keywords.length > 0) return keywords[0];
-  }
-  return 'AI Video Clipping';
-}
-
 function sanitizeHtmlContent(html: string): string {
   let content = html;
-  
   const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
   if (bodyMatch) {
     content = bodyMatch[1];
   }
-  
   content = content.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
   content = content.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
   content = content.replace(/<iframe[^>]*>[\s\S]*?<\/iframe>/gi, '');
-  
   return content.trim();
 }
 
@@ -128,7 +95,7 @@ export async function POST(req: NextRequest) {
   const serviceRoleKey = getServiceRoleKey();
 
   if (!url || !serviceRoleKey) {
-    return NextResponse.json({ error: 'Database not configured.' }, { status: 503 });
+    return NextResponse.json({ error: 'Database not configured' }, { status: 503 });
   }
 
   const token = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '').trim();
@@ -148,14 +115,14 @@ export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
     let title = (formData.get('title') as string || '').trim();
-    let category = (formData.get('category') as string || '').trim() || 'AI Video Clipping';
+    let category = (formData.get('category') as string || '').trim();
     const htmlFile = formData.get('htmlFile') as File | null;
     const coverFile = formData.get('coverFile') as File | null;
 
-    const additionalImages: { file: File; key: string }[] = [];
+    const additionalImages: File[] = [];
     for (const [key, value] of formData.entries()) {
       if (key.startsWith('img_') && value instanceof File && value.size > 0) {
-        additionalImages.push({ file: value, key });
+        additionalImages.push(value);
       }
     }
 
@@ -169,109 +136,102 @@ export async function POST(req: NextRequest) {
     }
 
     if (!title) {
-      title = extractTitleFromHtml(htmlContent);
+      title = extractTitleFromHtml(htmlContent) || 'Untitled Article';
     }
-    
-    if (!title) {
-      title = 'Untitled Article';
+    if (!category) {
+      category = 'AI Video Clipping';
     }
 
-    if (!category || category === 'AI Video Clipping') {
-      const extractedCategory = extractCategoryFromHtml(htmlContent);
-      if (extractedCategory && extractedCategory !== 'AI Video Clipping') {
-        category = extractedCategory;
+    // Ensure the author exists
+    let authorId: string;
+    try {
+      const { data: existingAuthor } = await client
+        .from('users')
+        .select('id')
+        .eq('email', adminUser.email)
+        .maybeSingle();
+      if (existingAuthor?.id) {
+        authorId = existingAuthor.id as string;
+      } else {
+        const { data: inserted } = await client
+          .from('users')
+          .insert({
+            id: adminUser.id,
+            email: adminUser.email,
+            name: adminUser.name,
+            role: adminUser.role,
+            is_active: true,
+            updated_at: new Date().toISOString(),
+          })
+          .select('id')
+          .maybeSingle();
+        authorId = (inserted?.id as string) || adminUser.id;
       }
+    } catch {
+      authorId = adminUser.id;
     }
 
-    const authorId = await ensureAuthor(client, adminUser);
-    const timestamp = Date.now();
-    const imageReplacements: Map<string, string> = new Map();
+    // Process content
+    const processedHtml = sanitizeHtmlContent(htmlContent);
 
+    // Upload cover image
     let coverImageUrl = '';
-    if (coverFile && coverFile.size > 0) {
-      try {
+    try {
+      if (coverFile && coverFile.size > 0) {
         const coverBytes = await coverFile.arrayBuffer();
-        const coverExt = coverFile.name.split('.').pop()?.toLowerCase() || 'jpg';
-        const safeExt = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].includes(coverExt) ? coverExt : 'jpg';
-        const coverPath = `blog/cover-${timestamp}-${Math.random().toString(36).slice(2, 8)}.${safeExt}`;
-
+        const ext = coverFile.name.split('.').pop()?.toLowerCase() || 'jpg';
+        const safeExt = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].includes(ext) ? ext : 'jpg';
+        const coverPath = `blog/${Date.now()}-cover.${safeExt}`;
         const { error: uploadError } = await client.storage
           .from('blog-images')
           .upload(coverPath, Buffer.from(coverBytes), {
             contentType: coverFile.type || `image/${safeExt}`,
             upsert: true,
           });
-
         if (!uploadError) {
           const { data: publicData } = client.storage.from('blog-images').getPublicUrl(coverPath);
           coverImageUrl = publicData?.publicUrl || '';
         }
-      } catch (err) {
-        console.error('Failed to upload cover image:', err);
       }
+    } catch {
+      coverImageUrl = '';
     }
 
+    // Upload additional images, replace local filenames
     const uploadedImageUrls: string[] = [];
-    for (const { file, key } of additionalImages) {
-      try {
-        const bytes = await file.arrayBuffer();
-        const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg';
-        const safeExt = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].includes(ext) ? ext : 'jpg';
-        const path = `blog/${timestamp}-${Math.random().toString(36).slice(2, 8)}-${file.name.replace(/[^a-z0-9._-]/gi, '_')}`;
-
-        const { error: uploadError } = await client.storage
-          .from('blog-images')
-          .upload(path, Buffer.from(bytes), {
-            contentType: file.type || `image/${safeExt}`,
-            upsert: true,
-          });
-
-        if (!uploadError) {
-          const { data: publicData } = client.storage.from('blog-images').getPublicUrl(path);
-          const publicUrl = publicData?.publicUrl || '';
-          if (publicUrl) {
-            uploadedImageUrls.push(publicUrl);
-            imageReplacements.set(file.name, publicUrl);
-            imageReplacements.set(encodeURIComponent(file.name), publicUrl);
+    let processedHtmlWithUrls = processedHtml;
+    try {
+      for (const file of additionalImages) {
+        try {
+          const bytes = await file.arrayBuffer();
+          const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg';
+          const safeExt = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].includes(ext) ? ext : 'jpg';
+          const path = `blog/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${safeExt}`;
+          const { error: uploadError } = await client.storage
+            .from('blog-images')
+            .upload(path, Buffer.from(bytes), {
+              contentType: file.type || `image/${safeExt}`,
+              upsert: true,
+            });
+          if (!uploadError) {
+            const { data: publicData } = client.storage.from('blog-images').getPublicUrl(path);
+            const publicUrl = publicData?.publicUrl || '';
+            if (publicUrl) {
+              uploadedImageUrls.push(publicUrl);
+              // Replace references to this filename in HTML
+              const escapedName = file.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              processedHtmlWithUrls = processedHtmlWithUrls.replace(
+                new RegExp(`src=(['"])[^'"]*${escapedName}[^'"]*\\1`, 'gi'),
+                `src="${publicUrl}"`
+              );
+            }
           }
+        } catch {
+          // skip this image
         }
-      } catch (err) {
-        console.error('Failed to upload image:', err);
       }
-    }
-
-    let processedHtml = sanitizeHtmlContent(htmlContent);
-    
-    imageReplacements.forEach((publicUrl, fileName) => {
-      const escaped = fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const patterns = [
-        new RegExp(`src=(['"])(?:(?:\\.\\/)?(?:images?\\/)?(?:assets?\\/)?(?:uploads?\\/)?)?${escaped}\\1`, 'gi'),
-        new RegExp(`src=(['"])[^'"]*${escaped}[^'"]*\\1`, 'gi'),
-      ];
-      for (const pattern of patterns) {
-        processedHtml = processedHtml.replace(pattern, `src="${publicUrl}"`);
-      }
-    });
-
-    if (uploadedImageUrls.length > 0) {
-      const fileNames = Array.from(imageReplacements.keys());
-      processedHtml = processedHtml.replace(
-        /<img\s+([^>]*?)src=(['"])([^'"]+)\2([^>]*)>/gi,
-        (match, pre: string, quote: string, srcVal: string, post: string) => {
-          const clean = srcVal.replace(/^(?:\.?\/)?(?:(?:images?|assets?|uploads?)\/)?/i, '');
-          const matchKey = fileNames.find(
-            (name) =>
-              name === clean ||
-              name.toLowerCase() === clean.toLowerCase() ||
-              clean.endsWith('/' + name) ||
-              clean.toLowerCase().endsWith('/' + name.toLowerCase())
-          );
-          if (matchKey && imageReplacements.get(matchKey)) {
-            return `<img ${pre}src=${quote}${imageReplacements.get(matchKey)}${quote}${post}>`;
-          }
-          return match;
-        }
-      );
+    } catch {
+      // ignore
     }
 
     const finalCover = coverImageUrl || uploadedImageUrls[0] || '';
@@ -279,11 +239,12 @@ export async function POST(req: NextRequest) {
     const localizedPosts = createLocalizedAdminPosts({
       title,
       category,
-      content: processedHtml,
+      content: processedHtmlWithUrls,
       coverImage: finalCover,
       publish: true,
     });
 
+    // Truncate content if too long
     const rows = localizedPosts.map(post => ({
       id: post.id,
       title: post.title,
@@ -293,17 +254,17 @@ export async function POST(req: NextRequest) {
       author_id: authorId,
       is_published: true,
       view_count: 0,
-      created_at: new Date().toISOString(),
+      created_at: post.created_at,
       updated_at: new Date().toISOString(),
     }));
 
-    const { error } = await client
+    const { error: dbError } = await client
       .from('blogs')
       .upsert(rows, { onConflict: 'id' });
 
-    if (error) {
-      console.error('Database error:', error);
-      throw error;
+    if (dbError) {
+      console.error('DB error:', dbError);
+      return NextResponse.json({ error: `DB error: ${dbError.message}` }, { status: 500 });
     }
 
     return NextResponse.json({
@@ -314,9 +275,9 @@ export async function POST(req: NextRequest) {
       category,
     });
 
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Failed to publish article';
-    console.error('Publish error:', message, error);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err) || 'Failed to publish article';
+    console.error('Publish error:', message, err);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
