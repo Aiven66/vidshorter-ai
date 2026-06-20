@@ -79,23 +79,50 @@ export default function BlogDetailPage() {
 
         if (error) throw error;
 
+        // 详情页不再做 locale 过滤（确保文章可见）
         const databasePost = data ? normalizeBlogRow(data) : null;
-        const localizedDatabasePost = databasePost && isPostForLocale(databasePost, activeLocale)
-          ? databasePost
-          : null;
 
         if (!cancelled) {
-          setPost(localizedDatabasePost || fallbackPost);
+          setPost(databasePost || fallbackPost);
         }
 
-        if (localizedDatabasePost) {
+        if (databasePost) {
           try {
             await client
               .from('blogs')
-              .update({ view_count: (localizedDatabasePost.view_count || 0) + 1 })
-              .eq('id', localizedDatabasePost.id);
+              .update({ view_count: (databasePost.view_count || 0) + 1 })
+              .eq('id', databasePost.id);
           } catch {}
         }
+
+        // 相关文章：从数据库读取同分类最新发布文章
+        try {
+          const { data: relatedData } = await client
+            .from('blogs')
+            .select('*')
+            .eq('is_published', true)
+            .neq('id', databasePost?.id || '')
+            .eq('category', databasePost?.category || '')
+            .order('created_at', { ascending: false })
+            .limit(6);
+
+          if (relatedData && relatedData.length > 0) {
+            // 去重：不同 translation_group 的只保留一个
+            const seenRelated = new Set<string>();
+            const rPosts: BlogPost[] = [];
+            for (const row of relatedData) {
+              const p = normalizeBlogRow(row);
+              const groupKey = row.translation_group || p.id;
+              if (!seenRelated.has(groupKey)) {
+                seenRelated.add(groupKey);
+                rPosts.push(p);
+              }
+            }
+            if (!cancelled) setRelatedPosts(rPosts.slice(0, 4));
+          } else if (!cancelled) {
+            // fallback: 用之前的 relatedCandidates
+          }
+        } catch {}
       } catch {
         if (!cancelled) {
           setPost(fallbackPost);

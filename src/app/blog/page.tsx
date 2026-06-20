@@ -52,9 +52,26 @@ export default function BlogPage() {
 
         if (error) throw error;
 
-        const databasePosts = (data || [])
-          .map(row => normalizeBlogRow(row))
-          .filter(post => isPostForLocale(post, activeLocale));
+        const seenIds = new Set<string>();
+        const databasePosts: BlogPost[] = [];
+        for (const row of (data || [])) {
+          const post = normalizeBlogRow(row);
+          if (post.locale === activeLocale) {
+            if (!seenIds.has(post.id)) {
+              seenIds.add(post.id);
+              databasePosts.push(post);
+            }
+          }
+        }
+        for (const row of (data || [])) {
+          const post = normalizeBlogRow(row);
+          if (!seenIds.has(post.id)) {
+            seenIds.add(post.id);
+            databasePosts.push(post);
+          }
+        }
+
+        // 最终合并列表：优先数据库文章（确保所有已发布文章可见）；无数据库文章
         const mergedPosts = databasePosts.length > 0 ? databasePosts : fallbackPosts;
 
         if (!cancelled) setPosts(mergedPosts);

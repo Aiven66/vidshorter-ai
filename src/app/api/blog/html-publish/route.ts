@@ -86,28 +86,20 @@ function detectLocaleFromHtml(html: string): 'en' | 'zh' | 'zh-Hant' {
     if (lang.startsWith('zh')) return 'zh';
     if (lang.startsWith('en')) return 'en';
   }
-  const metaCharset = html.match(/<meta[^>]*lang=(['"]?)([^'">\s]+)\1/i);
-  if (metaCharset) {
-    const lang = metaCharset[2].toLowerCase();
-    if (lang.startsWith('zh') && (lang.includes('tw') || lang.includes('hk') || lang.includes('hant'))) return 'zh-Hant';
-    if (lang.startsWith('zh')) return 'zh';
-    if (lang.startsWith('en')) return 'en';
-  }
   return 'en';
 }
 
 /**
- * 安全的HTML处理：
- * - 如果有 <body>，提取 body 内容
- * - 保留 <style>（在 <head> 中提取的样式也会被注入到内容顶部）
- * - 保留所有内联 style、class、data-* 属性
- * - 删除危险元素 <script>/<iframe>/<object>/<embed>
- * - 删除 onclick/onerror 等事件处理器属性
+ * 安全的 HTML 处理：
+ * - 提取 body 内容
+ * - 保留 <style>（head 中的样式也注入到内容开头）
+ * - 保留内联 style、class 属性
+ * - 删除危险元素：<script>/<iframe>/<object>/<embed>
+ * - 删除 onclick 等事件属性
+ * - 删除 href/src/action="javascript:..."
  */
 function sanitizeHtmlContent(html: string): string {
   let bodyContent = html;
-
-  // 先提取 body
   const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
   if (bodyMatch) {
     bodyContent = bodyMatch[1];
@@ -116,9 +108,9 @@ function sanitizeHtmlContent(html: string): string {
   // 提取 <style> 内容（包括 head 里的）
   const styleTags: string[] = [];
   const styleRegex = /<style[^>]*>([\s\S]*?)<\/style>/gi;
-  let styleMatch;
-  while ((styleMatch = styleRegex.exec(html)) !== null) {
-    styleTags.push(styleMatch[0]);
+  let m;
+  while ((m = styleRegex.exec(html)) !== null) {
+    styleTags.push(m[1]);
   }
 
   // 删除危险元素
@@ -126,41 +118,27 @@ function sanitizeHtmlContent(html: string): string {
   cleaned = cleaned.replace(/<iframe[^>]*>[\s\S]*?<\/iframe>/gi, '');
   cleaned = cleaned.replace(/<object[^>]*>[\s\S]*?<\/object>/gi, '');
   cleaned = cleaned.replace(/<embed[^>]*>[\s\S]*?<\/embed>/gi, '');
-  // 自闭合的 <script>
   cleaned = cleaned.replace(/<script\b[^>]*\/?\s*>/gi, '');
-  cleaned = cleaned.replace(/<iframe\b[^>]*\/?\s*>/gi, '');
   cleaned = cleaned.replace(/<noscript[^>]*>[\s\S]*?<\/noscript>/gi, '');
 
   // 删除危险属性：onclick/onerror/onload/onmouseover 等 on*
-  cleaned = cleaned.replace(
-    /\s+on[a-z]+=(["'])[^"']*\1/gi,
-    ''
-  );
-  cleaned = cleaned.replace(
-    /\s+on[a-z]+=[^\s>]+/gi,
-    ''
-  );
+  cleaned = cleaned.replace(/\s+on[a-z]+=(["'])[^"']*\1/gi, '');
+  cleaned = cleaned.replace(/\s+on[a-z]+=[^\s>]+/gi, '');
 
   // 删除 form action="javascript:"
-  cleaned = cleaned.replace(
-    /\s+(?:href|src|action)=(["'])\s*javascript:[^"']*\1/gi,
-    ''
-  );
+  cleaned = cleaned.replace(/\s+(?:href|src|action)=(["'])\s*javascript:[^"']*\1/gi, '');
 
-  // 将提取到的 <style> 注入到内容最前面，便于样式生效
+  // 将提取到的 <style> 注入到内容最前面
   if (styleTags.length > 0) {
-    cleaned = `<style>${styleTags.map(s => s.replace(/<\/?style[^>]*>/gi, '')).join('\n')}</style>\n${cleaned}`;
+    cleaned = `<style>${styleTags.join('\n')}</style>\n${cleaned}`;
   }
 
   return cleaned.trim();
 }
 
 /**
- * 更鲁棒的图片文件名匹配与URL替换：
- * - 支持 src="images/cover.jpg"（相对路径）
- * - 支持 src="./images/cover.jpg"（相对路径含 ./）
- * - 支持 src="cover.jpg"（仅文件名）
- * - 支持 srcset 中的多路径
+ * 更鲁棒的图片文件名匹配与 URL 替换
+ * 支持：相对路径、仅文件名、带查询参数、data: URL
  */
 function replaceImageUrlsInHtml(
   html: string,
@@ -170,19 +148,19 @@ function replaceImageUrlsInHtml(
 
   let result = html;
 
-  // 为每个文件执行替换：匹配所有可能的相对路径 + 文件名
+  // 为每个文件执行替换
   for (const [fileName, publicUrl] of fileNameToUrl.entries()) {
     const escapedName = fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-    // 1. 替换 <img src="...">、<source srcset="..."> 中的完整URL/相对URL
-    // pattern: src="(prefix)filename" 或 src="(prefix)filename?query"
+    // 1. 替换 src="prefix/filename" （支持相对路径、仅文件名、带查询参数）
+    //    示例：src="images/hero.png" 、src="./images/hero.png" 、src="hero.png"
     const srcAttrRe = new RegExp(
       `(src=(['"]))([^'"]*?)${escapedName}([^'"]*?)(\\2)`,
       'gi'
     );
     result = result.replace(srcAttrRe, `$1${publicUrl}$5`);
 
-    // 2. 替换 srcset 中的类似格式
+    // 2. 替换 srcset 中的图片引用
     const srcsetAttrRe = new RegExp(
       `(srcset=(['"]))([^'"]*?)${escapedName}([^'"]*?)(\\2)`,
       'gi'
@@ -194,7 +172,144 @@ function replaceImageUrlsInHtml(
     result = result.replace(urlCssRe, `url(${publicUrl})`);
   }
 
+  // 4. 替换 data: URL 图片为已上传的配图（按出现顺序匹配）
+  //    如果 HTML 中有 data:image/... 的内联图片，用上传的配图 URL 替换
+  const uploadedUrls = Array.from(fileNameToUrl.values());
+  let imgIdx = 0;
+  result = result.replace(
+    /src=(['"])data:image\/[^'"]+?\1/gi,
+    (match) => {
+      if (imgIdx < uploadedUrls.length) {
+        const url = uploadedUrls[imgIdx++];
+        return `src="${url}"`;
+      }
+      return match;
+    }
+  );
+
   return result;
+}
+
+/**
+ * 将 HTML 中的 data: URL 图片提取并上传到 Storage，返回替换后的 HTML
+ */
+async function uploadDataUrlImages(
+  client: ReturnType<typeof createClient>,
+  html: string
+): Promise<{ html: string; uploadedUrls: string[] }> {
+  const dataUrlRegex = /src=(['"])data:image\/([^;]+);base64,([^'"]+?)\1/gi;
+  const matches = [...html.matchAll(dataUrlRegex)];
+
+  if (matches.length === 0) return { html, uploadedUrls: [] };
+
+  const uploadedUrls: string[] = [];
+  let result = html;
+
+  for (const match of matches) {
+    const quote = match[1];
+    const mimeType = `image/${match[2]}`;
+    const base64Data = match[3];
+    const ext = match[2] === 'jpeg' ? 'jpg' : match[2];
+    const fileName = `inline-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.${ext}`;
+
+    try {
+      const buffer = Buffer.from(base64Data, 'base64');
+      await ensureBucket(client, 'blog-images');
+      const uniqueName = `images/${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${fileName}`;
+
+      const { error: uploadError } = await client.storage
+        .from('blog-images')
+        .upload(uniqueName, buffer, {
+          contentType: mimeType,
+          upsert: true,
+        });
+
+      if (!uploadError) {
+        const { data: publicData } = client.storage.from('blog-images').getPublicUrl(uniqueName);
+        if (publicData?.publicUrl) {
+          uploadedUrls.push(publicData.publicUrl);
+          // 替换整个 src="data:..." 为 src="publicUrl"
+          const fullMatch = match[0];
+          result = result.replace(fullMatch, `src=${quote}${publicData.publicUrl}${quote}`);
+          continue;
+        }
+      }
+      // 上传失败，保留原始 data: URL
+    } catch {
+      // 保留原始 data: URL
+    }
+  }
+
+  return { html: result, uploadedUrls };
+}
+
+/**
+ * 确保存储桶存在且为公开读，不存在则自动创建
+ */
+async function ensureBucket(
+  client: ReturnType<typeof createClient>,
+  bucket: string
+): Promise<boolean> {
+  try {
+    const { data: buckets, error: listError } = await client.storage.listBuckets();
+    if (listError) {
+      console.error('List buckets error:', listError);
+      return false;
+    }
+    const exists = (buckets || []).some((b) => b.name === bucket);
+    if (exists) return true;
+
+    const { error: createError } = await client.storage.createBucket(bucket, {
+      public: true,
+      fileSizeLimit: 10 * 1024 * 1024, // 10MB
+    });
+    if (createError) {
+      console.error('Create bucket error:', createError);
+      return false;
+    }
+    console.log(`Created storage bucket: ${bucket}`);
+    return true;
+  } catch (err) {
+    console.error('Ensure bucket exception:', err);
+    return false;
+  }
+}
+
+async function uploadImageToStorage(
+  client: ReturnType<typeof createClient>,
+  bucket: string,
+  file: File,
+  prefix: string = ''
+): Promise<string | null> {
+  try {
+    // 先确保 bucket 存在
+    await ensureBucket(client, bucket);
+
+    const bytes = await file.arrayBuffer();
+    const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg';
+    const safeExt = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'tif', 'tiff'].includes(ext) ? ext : 'jpg';
+    const uniqueName = `${prefix || ''}${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${file.name.replace(/[^a-z0-9._-]/gi, '_')}`;
+
+    const { error: uploadError } = await client.storage
+      .from(bucket)
+      .upload(uniqueName, Buffer.from(bytes), {
+        contentType: file.type || `image/${safeExt}`,
+        upsert: true,
+      });
+
+    if (uploadError) {
+      console.error('Image upload error:', uploadError);
+      // 如果上传失败，尝试 fallback 到 base64
+      const base64 = Buffer.from(bytes).toString('base64');
+      return `data:${file.type || `image/${safeExt}`};base64,${base64}`;
+    }
+
+    const { data: publicData } = client.storage.from(bucket).getPublicUrl(uniqueName);
+    return publicData?.publicUrl || null;
+  } catch (err) {
+    console.error('Image upload exception:', err);
+    return null;
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -251,7 +366,7 @@ export async function POST(req: NextRequest) {
 
     const locale = detectLocaleFromHtml(htmlContent);
 
-    // Resolve author_id (always lookup by email to get a real UUID)
+    // 确保 author 存在（通过 email 查，UUID 不会冲突
     let authorId: string;
     try {
       const { data: existingAuthor } = await client
@@ -263,7 +378,6 @@ export async function POST(req: NextRequest) {
       if (existingAuthor?.id) {
         authorId = existingAuthor.id as string;
       } else {
-        // Generate a proper UUID for the admin if they don't exist in users table
         const newUuid = crypto.randomUUID();
         const { data: inserted } = await client
           .from('users')
@@ -280,83 +394,47 @@ export async function POST(req: NextRequest) {
         authorId = (inserted?.id as string) || newUuid;
       }
     } catch {
-      // Last resort: use a fixed system UUID
       authorId = '00000000-0000-0000-0000-000000000001';
     }
 
-    // ====== 图片上传与替换 ======
-    // 1) 先处理内容（保留 <style>，删除危险元素）
+    // ====== 1. 处理内容：提取 body + 保留 style ======
     let processedHtml = sanitizeHtmlContent(htmlContent);
 
-    // 2) 上传封面图片到 Supabase Storage
+    // ====== 2. 上传封面图片 ======
     let coverImageUrl = '';
-    try {
-      if (coverFile && coverFile.size > 0) {
-        const coverBytes = await coverFile.arrayBuffer();
-        const ext = coverFile.name.split('.').pop()?.toLowerCase() || 'jpg';
-        const safeExt = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].includes(ext) ? ext : 'jpg';
-        const coverPath = `blog/${Date.now()}-${Math.random().toString(36).slice(2, 8)}-cover.${safeExt}`;
-
-        const { error: uploadError } = await client.storage
-          .from('blog-images')
-          .upload(coverPath, Buffer.from(coverBytes), {
-            contentType: coverFile.type || `image/${safeExt}`,
-            upsert: true,
-          });
-
-        if (!uploadError) {
-          const { data: publicData } = client.storage.from('blog-images').getPublicUrl(coverPath);
-          coverImageUrl = publicData?.publicUrl || '';
-        }
-      }
-    } catch {
-      coverImageUrl = '';
+    if (coverFile && coverFile.size > 0) {
+      const result = await uploadImageToStorage(client, 'blog-images', coverFile, 'covers/');
+      if (result) coverImageUrl = result;
     }
 
-    // 3) 上传其他配图，并保存 文件名 -> 公共URL 映射
+    // ====== 3. 上传配图 + 构建 filename -> URL 映射 ======
     const uploadedImageUrls: string[] = [];
     const fileNameToUrl: Map<string, string> = new Map();
 
-    try {
-      for (const file of additionalImages) {
-        try {
-          const bytes = await file.arrayBuffer();
-          const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg';
-          const safeExt = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].includes(ext) ? ext : 'jpg';
-          const path = `blog/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${safeExt}`;
-
-          const { error: uploadError } = await client.storage
-            .from('blog-images')
-            .upload(path, Buffer.from(bytes), {
-              contentType: file.type || `image/${safeExt}`,
-              upsert: true,
-            });
-
-          if (!uploadError) {
-            const { data: publicData } = client.storage.from('blog-images').getPublicUrl(path);
-            const publicUrl = publicData?.publicUrl || '';
-            if (publicUrl) {
-              uploadedImageUrls.push(publicUrl);
-              fileNameToUrl.set(file.name, publicUrl);
-            }
-          }
-        } catch {
-          // skip this image
-        }
+    for (const file of additionalImages) {
+      const result = await uploadImageToStorage(client, 'blog-images', file, 'images/');
+      if (result) {
+        uploadedImageUrls.push(result);
+        fileNameToUrl.set(file.name, result);
       }
-    } catch {
-      // ignore
     }
 
-    // 4) 在 HTML 中替换图片引用：文件名 -> Supabase 公共URL
+    // ====== 4. 在 HTML 中替换图片引用（文件名 -> Storage URL） ======
     if (fileNameToUrl.size > 0) {
       processedHtml = replaceImageUrlsInHtml(processedHtml, fileNameToUrl);
     }
 
-    // 5) 如没有上传独立封面，用第一张配图作为封面
+    // ====== 4.5 上传 HTML 中内联的 data: URL 图片到 Storage ======
+    const dataUrlResult = await uploadDataUrlImages(client, processedHtml);
+    processedHtml = dataUrlResult.html;
+    if (dataUrlResult.uploadedUrls.length > 0) {
+      uploadedImageUrls.push(...dataUrlResult.uploadedUrls);
+    }
+
+    // 如果没有上传单独的封面，但有配图，用第一张配图作为封面
     const finalCover = coverImageUrl || uploadedImageUrls[0] || '';
 
-    // ====== 生成1条博客记录（HTML上传模式：不自动生成3语言版本） ======
+    // ====== 5. 生成并插入博客记录 ======
     const post = createSingleAdminPost({
       title,
       category,
@@ -371,7 +449,7 @@ export async function POST(req: NextRequest) {
       title: post.title,
       category: post.category,
       content: post.content,
-      cover_image: post.cover_image,
+      cover_image: post.cover_image || finalCover,
       author_id: authorId,
       is_published: true,
       view_count: 0,

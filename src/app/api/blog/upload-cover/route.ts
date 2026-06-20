@@ -163,11 +163,21 @@ export async function POST(req: NextRequest) {
     }
 
     // ============ Upload to Supabase Storage ============
+    const BUCKET = 'blog-images';
     const safeFileName = `covers/${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${fileName}`;
+
+    // 确保 bucket 存在
+    try {
+      const { data: buckets } = await client.storage.listBuckets();
+      const exists = (buckets || []).some((b) => b.name === BUCKET);
+      if (!exists) {
+        await client.storage.createBucket(BUCKET, { public: true, fileSizeLimit: 10 * 1024 * 1024 });
+      }
+    } catch {}
 
     try {
       const { data: storageData, error: storageError } = await client.storage
-        .from('blog-covers')
+        .from(BUCKET)
         .upload(safeFileName, fileBuffer, {
           contentType: mimeType,
           upsert: true,
@@ -175,7 +185,7 @@ export async function POST(req: NextRequest) {
 
       if (!storageError && storageData?.path) {
         const { data: publicUrlData } = client.storage
-          .from('blog-covers')
+          .from(BUCKET)
           .getPublicUrl(storageData.path);
 
         if (publicUrlData?.publicUrl) {
@@ -187,16 +197,12 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // If 'blog-covers' bucket doesn't exist, try to create it or fallback
-      if (
-        storageError &&
-        (storageError as unknown as { message?: string })?.message?.includes('bucket')
-      ) {
-        // Try to create bucket - if it fails, fall through to base64
+      // 如果上传失败，尝试重新创建 bucket 再试一次
+      if (storageError) {
         try {
-          await client.storage.createBucket('blog-covers', { public: true });
+          await client.storage.createBucket(BUCKET, { public: true, fileSizeLimit: 10 * 1024 * 1024 });
           const { data: retryData, error: retryError } = await client.storage
-            .from('blog-covers')
+            .from(BUCKET)
             .upload(safeFileName, fileBuffer, {
               contentType: mimeType,
               upsert: true,
@@ -204,7 +210,7 @@ export async function POST(req: NextRequest) {
 
           if (!retryError && retryData?.path) {
             const { data: publicUrlData } = client.storage
-              .from('blog-covers')
+              .from(BUCKET)
               .getPublicUrl(retryData.path);
 
             if (publicUrlData?.publicUrl) {
@@ -229,7 +235,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       cover_image: base64DataUrl,
       storage: 'base64',
-      note: 'Stored as base64 data URL. To use Supabase Storage, create a "blog-covers" bucket.',
+      note: 'Stored as base64 data URL. To use Supabase Storage, create a "blog-images" bucket.',
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Upload failed.';

@@ -21,6 +21,7 @@ import {
   X,
   FileCode,
   Sparkles,
+  Trash2,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import {
@@ -225,6 +226,48 @@ export function BlogPage({ locale }: BlogPageProps) {
     setBlogContent(post.content || '');
     setSaveStatus(null);
     setView('edit');
+  }
+
+  async function handleDeletePost(postId: string, postTitle: string) {
+    if (!isAdmin) {
+      setError(locale === 'zh' ? '需要管理员权限' : 'Admin access required');
+      return;
+    }
+    const confirmMessage =
+      locale === 'zh'
+        ? `确认删除文章"${postTitle}"？此操作无法撤销。`
+        : `Confirm delete "${postTitle}"? This cannot be undone.`;
+    if (!window.confirm(confirmMessage)) return;
+
+    try {
+      const token = (typeof localStorage !== 'undefined' && localStorage.getItem('auth_token')) || null;
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`/api/blog/${encodeURIComponent(postId)}`, {
+        method: 'DELETE',
+        headers,
+      });
+
+      const body = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        throw new Error(
+          body?.error || (locale === 'zh' ? '删除失败' : 'Delete failed')
+        );
+      }
+
+      // 本地从 localStorage + 数据库列表中同步移除
+      const stored = getStoredBlogPosts().filter((p) => p.id !== postId);
+      saveAdminBlogPosts(stored);
+
+      // 重新从数据库加载，确保列表一致
+      await fetchPosts();
+      setError(null);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err) || (locale === 'zh' ? '删除失败' : 'Delete failed');
+      setError(message);
+    }
   }
 
   async function savePost() {
@@ -538,7 +581,7 @@ export function BlogPage({ locale }: BlogPageProps) {
                       </div>
                     </div>
 
-                    <div className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-2">
                       <Button
                         variant="outline"
                         size="sm"
@@ -547,6 +590,15 @@ export function BlogPage({ locale }: BlogPageProps) {
                       >
                         <Pencil className="h-3.5 w-3.5" />
                         {locale === 'zh' ? '编辑' : 'Edit'}
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => handleDeletePost(post.id, post.title)}
+                        className="flex items-center gap-1"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        {locale === 'zh' ? '删除' : 'Delete'}
                       </Button>
                     </div>
                   </div>
