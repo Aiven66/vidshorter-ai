@@ -1,5 +1,21 @@
 import type { Locale } from '@/lib/i18n/index';
 
+function genUuid(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    try {
+      return (crypto as unknown as { randomUUID: () => string }).randomUUID();
+    } catch {
+      // fall through to manual generation
+    }
+  }
+  const hex = (n: number) => {
+    let s = '';
+    for (let i = 0; i < n; i++) s += Math.floor(Math.random() * 16).toString(16);
+    return s;
+  };
+  return `${hex(8)}-${hex(4)}-4${hex(3)}-${['8', '9', 'a', 'b'][Math.floor(Math.random() * 4)]}${hex(3)}-${hex(12)}`;
+}
+
 export interface BlogPost {
   id: string;
   slug?: string;
@@ -1533,7 +1549,7 @@ function seedToPosts(seed: BlogArticleSeed): BlogPost[] {
     let summary = text.slice(0, 180).trim();
     if (text.length > 180) summary += '...';
     return {
-      id: `${seed.slug}-${v.locale}`,
+      id: genUuid(),
       slug: `${seed.slug}-${v.locale}`,
       title: v.title,
       content: v.content,
@@ -1596,9 +1612,10 @@ export function createLocalizedAdminPosts(input: {
   const publishedAt = new Date().toISOString();
   const author = 'Clipop Team';
   const localesOut: Locale[] = ['en', 'zh', 'zh-Hant'];
+  const now = Date.now();
   return localesOut.map((loc, i) => ({
-    id: `admin-${Date.now()}-${loc}-${i}`,
-    slug: `admin-${Date.now()}-${loc}`,
+    id: genUuid(),
+    slug: `admin-${now}-${loc}-${i}`,
     title,
     content,
     summary,
@@ -1612,7 +1629,7 @@ export function createLocalizedAdminPosts(input: {
     views: 0,
     is_published: publish,
     locale: loc,
-    translation_group: `admin-${Date.now()}`,
+    translation_group: `admin-${now}`,
     isBuiltIn: false,
   }));
 }
