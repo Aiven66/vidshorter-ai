@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -17,6 +17,10 @@ import {
   Image as ImageIcon,
   RefreshCw,
   Pencil,
+  Upload,
+  X,
+  FileCode,
+  Sparkles,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import {
@@ -54,7 +58,7 @@ export function BlogPage({ locale }: BlogPageProps) {
   const [error, setError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
 
-  // Form state (shared for new/edit)
+  // ========= Traditional editor mode state =========
   const [editingPost, setEditingPost] = useState<BlogPost | null>(null);
   const [blogTitle, setBlogTitle] = useState('');
   const [blogCategory, setBlogCategory] = useState('AI Video Clipping');
@@ -63,7 +67,24 @@ export function BlogPage({ locale }: BlogPageProps) {
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
 
-  const isAdmin = user?.role === 'admin' || user?.email === 'admin@126.com';
+  // ========= HTML upload mode state =========
+  const [createMode, setCreateMode] = useState<'traditional' | 'html'>('traditional');
+  const [htmlTitle, setHtmlTitle] = useState('');
+  const [htmlCategory, setHtmlCategory] = useState('AI Video Clipping');
+  const [htmlFile, setHtmlFile] = useState<File | null>(null);
+  const [htmlPreview, setHtmlPreview] = useState<string>('');
+  const [coverImageFile, setCoverImageFile] = useState<File | null>(null);
+  const [coverImagePreview, setCoverImagePreview] = useState<string>('');
+  const [additionalImages, setAdditionalImages] = useState<File[]>([]);
+  const [additionalPreviews, setAdditionalPreviews] = useState<string[]>([]);
+  const [htmlSaving, setHtmlSaving] = useState(false);
+  const [htmlStatus, setHtmlStatus] = useState<string | null>(null);
+  const [showPreviewModal, setShowPreviewModal] = useState(false);
+  const additionalInputRef = useRef<HTMLInputElement>(null);
+  const coverInputRef = useRef<HTMLInputElement>(null);
+  const htmlInputRef = useRef<HTMLInputElement>(null);
+
+  const isAdmin = user?.role === 'admin' || user?.email === 'admin@126.com' || user?.email === 'admin@clipop.ai' || user?.email === 'admin@vidshorter.ai';
 
   const fetchPosts = useCallback(async () => {
     if (!accessToken) return;
@@ -183,6 +204,16 @@ export function BlogPage({ locale }: BlogPageProps) {
     setBlogCoverImage('');
     setBlogContent('');
     setSaveStatus(null);
+    // Reset HTML mode state
+    setHtmlTitle('');
+    setHtmlCategory('AI Video Clipping');
+    setHtmlFile(null);
+    setHtmlPreview('');
+    setCoverImageFile(null);
+    setCoverImagePreview('');
+    setAdditionalImages([]);
+    setAdditionalPreviews([]);
+    setHtmlStatus(null);
     setView('new');
   }
 
@@ -259,6 +290,114 @@ export function BlogPage({ locale }: BlogPageProps) {
       );
     } finally {
       setSaving(false);
+    }
+  }
+
+  // ======================================================
+  // ========= HTML upload mode handlers ========================
+  // ======================================================
+
+  function readFileAsDataUrl(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(reader.error || new Error('read failed'));
+    });
+  }
+
+  function handleHtmlFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setHtmlFile(file);
+    file.text().then((text) => setHtmlPreview(text));
+  }
+
+  function handleCoverChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setCoverImageFile(file);
+    readFileAsDataUrl(file).then((url) => setCoverImagePreview(url));
+  }
+
+  function handleAdditionalImagesChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    setAdditionalImages((prev) => [...prev, ...files]);
+    Promise.all(files.map((f) => readFileAsDataUrl(f))).then((urls) => {
+      setAdditionalPreviews((prev) => [...prev, ...urls]);
+    });
+  }
+
+  function removeAdditionalImage(index: number) {
+    setAdditionalImages((prev) => prev.filter((_f, i) => i !== index));
+    setAdditionalPreviews((prev) => prev.filter((_u, i) => i !== index));
+  }
+
+  function resetHtmlMode() {
+    setHtmlFile(null);
+    setHtmlPreview('');
+    setCoverImageFile(null);
+    setCoverImagePreview('');
+    setAdditionalImages([]);
+    setAdditionalPreviews([]);
+  }
+
+  async function handlePublishHtml() {
+    if (!isAdmin || !accessToken) {
+      setHtmlStatus(locale === 'zh' ? '需要管理员权限' : 'Admin access required');
+      return;
+    }
+    if (!htmlTitle.trim()) {
+      setHtmlStatus(locale === 'zh' ? '请输入标题' : 'Title required');
+      return;
+    }
+    if (!htmlFile || !htmlPreview.trim()) {
+      setHtmlStatus(locale === 'zh' ? '请上传 HTML 内容文件' : 'HTML file required');
+      return;
+    }
+
+    setHtmlSaving(true);
+    setHtmlStatus(null);
+    try {
+      const formData = new FormData();
+      formData.append('title', htmlTitle.trim());
+      formData.append('category', htmlCategory.trim() || 'AI Video Clipping');
+      formData.append('htmlFile', htmlFile, htmlFile.name || 'article.html');
+      if (coverImageFile) formData.append('coverFile', coverImageFile, coverImageFile.name || 'cover.jpg');
+      additionalImages.forEach((file, idx) => {
+        formData.append(`img_${idx}`, file, file.name || `img-${idx}.jpg`);
+      });
+
+      const res = await fetch('/api/blog/html-publish', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}` },
+        body: formData,
+      });
+
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        if (Array.isArray(data.posts)) saveAdminBlogPosts(data.posts);
+        setHtmlStatus(
+          locale === 'zh'
+            ? `已发布 ${data.posts?.length || 1} 篇文章（上传 ${data.imageUploaded || 0} 张图）`
+            : `Published ${data.posts?.length || 1} article(s) (${data.imageUploaded || 0} images uploaded)`
+        );
+        setTimeout(() => {
+          setView('list');
+          setHtmlStatus(null);
+        }, 1500);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setHtmlStatus(
+          locale === 'zh'
+            ? `发布失败：${data.error || res.statusText}`
+            : `Publish failed: ${data.error || res.statusText}`
+        );
+      }
+    } catch (err) {
+      setHtmlStatus(err instanceof Error ? err.message : (locale === 'zh' ? '发布失败' : 'Publish failed'));
+    } finally {
+      setHtmlSaving(false);
     }
   }
 
@@ -399,6 +538,280 @@ export function BlogPage({ locale }: BlogPageProps) {
   // ============ NEW / EDIT POST VIEW ============
   const isEditing = view === 'edit';
 
+  function renderTraditionalForm() {
+    return (
+      <>
+        <div className="grid gap-2">
+          <Label htmlFor="blog-title">
+            {locale === 'zh' ? '英文标题' : 'English Title'}
+          </Label>
+          <Input
+            id="blog-title"
+            value={blogTitle}
+            onChange={(e) => setBlogTitle(e.target.value)}
+            placeholder={
+              locale === 'zh'
+                ? 'How to Turn Long Videos into AI Highlight Shorts'
+                : 'How to Turn Long Videos into AI Highlight Shorts'
+            }
+          />
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="md:col-span-1 grid gap-2">
+            <Label htmlFor="blog-category">
+              <Tag className="h-3.5 w-3.5 inline mr-1" />
+              {locale === 'zh' ? '分类' : 'Category'}
+            </Label>
+            <Input
+              id="blog-category"
+              value={blogCategory}
+              onChange={(e) => setBlogCategory(e.target.value)}
+              placeholder={locale === 'zh' ? 'AI Video Clipping' : 'AI Video Clipping'}
+            />
+          </div>
+          <div className="md:col-span-2">
+            <CoverImageUploader
+              value={blogCoverImage}
+              onChange={setBlogCoverImage}
+              accessToken={accessToken}
+              locale={locale}
+              label={locale === 'zh' ? '封面图片（支持本地上传）' : 'Cover Image (Local Upload)'}
+            />
+          </div>
+        </div>
+
+        <div className="grid gap-2">
+          <Label>
+            {locale === 'zh' ? '文章内容（富文本编辑器）' : 'Article Content (Rich Text Editor)'}
+          </Label>
+          <RichTextEditor
+            content={blogContent}
+            onChange={setBlogContent}
+            placeholder={locale === 'zh' ? '开始编写文章内容...' : 'Start writing your article...'}
+            locale={locale}
+          />
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3 pt-2">
+          <Button onClick={savePost} disabled={saving || !isAdmin}>
+            {saving ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                {locale === 'zh' ? '保存中...' : 'Saving...'}
+              </>
+            ) : isEditing ? (
+              locale === 'zh' ? '保存修改' : 'Save Changes'
+            ) : (
+              locale === 'zh' ? '发布文章' : 'Publish Article'
+            )}
+          </Button>
+          {saveStatus && (
+            <span className="text-sm text-muted-foreground">{saveStatus}</span>
+          )}
+        </div>
+      </>
+    );
+  }
+
+  function renderHtmlUploadForm() {
+    return (
+      <>
+        <div className="grid gap-2">
+          <Label htmlFor="html-title">
+            {locale === 'zh' ? '文章标题' : 'Article Title'}
+          </Label>
+          <Input
+            id="html-title"
+            value={htmlTitle}
+            onChange={(e) => setHtmlTitle(e.target.value)}
+            placeholder={
+              locale === 'zh'
+                ? 'How to Turn Long Videos into AI Highlight Shorts'
+                : 'How to Turn Long Videos into AI Highlight Shorts'
+            }
+          />
+        </div>
+
+        <div className="grid gap-2">
+          <Label htmlFor="html-category">
+            <Tag className="h-3.5 w-3.5 inline mr-1" />
+            {locale === 'zh' ? '分类' : 'Category'}
+          </Label>
+          <Input
+            id="html-category"
+            value={htmlCategory}
+            onChange={(e) => setHtmlCategory(e.target.value)}
+            placeholder={locale === 'zh' ? 'AI Video Clipping' : 'AI Video Clipping'}
+          />
+        </div>
+
+        <div className="grid gap-2">
+          <Label>
+            {locale === 'zh' ? '上传 HTML 内容文件' : 'Upload HTML content file'}
+          </Label>
+          <input
+            ref={htmlInputRef}
+            type="file"
+            accept=".html,.htm,.txt"
+            onChange={handleHtmlFileChange}
+            className="hidden"
+          />
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => htmlInputRef.current?.click()}
+              className="flex items-center gap-2"
+            >
+              <Upload className="h-4 w-4" />
+              {htmlFile
+                ? (locale === 'zh' ? `已选择：${htmlFile.name}` : `Selected: ${htmlFile.name}`)
+                : (locale === 'zh' ? '选择 HTML 文件' : 'Choose HTML file')}
+            </Button>
+            {htmlFile && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={resetHtmlMode}
+                className="flex items-center gap-1 text-muted-foreground"
+              >
+                <X className="h-4 w-4" />
+                {locale === 'zh' ? '清除' : 'Clear'}
+              </Button>
+            )}
+          </div>
+          {htmlPreview && (
+            <div className="mt-2 p-3 border border-border rounded-md max-h-32 overflow-y-auto text-xs text-muted-foreground bg-muted/20 whitespace-pre-wrap break-words">
+              {htmlPreview.slice(0, 500)}{htmlPreview.length > 500 ? '...' : ''}
+            </div>
+          )}
+        </div>
+
+        <div className="grid gap-2">
+          <Label>
+            {locale === 'zh' ? '封面图片' : 'Cover image'}
+          </Label>
+          <input
+            ref={coverInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleCoverChange}
+            className="hidden"
+          />
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => coverInputRef.current?.click()}
+              className="flex items-center gap-2"
+            >
+              <ImageIcon className="h-4 w-4" />
+              {coverImageFile
+                ? (locale === 'zh' ? `已选择：${coverImageFile.name}` : `Selected: ${coverImageFile.name}`)
+                : (locale === 'zh' ? '选择封面图片' : 'Choose cover image')}
+            </Button>
+            {coverImagePreview && (
+              <div className="relative">
+                <img
+                  src={coverImagePreview}
+                  alt="cover preview"
+                  className="h-16 w-16 object-cover rounded-md border border-border"
+                />
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="grid gap-2">
+          <Label>
+            {locale === 'zh' ? '其他配图（可选，可多选）' : 'Additional images (optional, multi-select)'}
+          </Label>
+          <input
+            ref={additionalInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={handleAdditionalImagesChange}
+            className="hidden"
+          />
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => additionalInputRef.current?.click()}
+              className="flex items-center gap-2"
+            >
+              <ImageIcon className="h-4 w-4" />
+              {locale === 'zh' ? '选择配图（可多张）' : 'Add images (multi)'}
+            </Button>
+            {additionalImages.length > 0 && (
+              <span className="text-sm text-muted-foreground">
+                {locale === 'zh' ? `已选择 ${additionalImages.length} 张` : `${additionalImages.length} image(s) selected`}
+              </span>
+            )}
+          </div>
+          {additionalPreviews.length > 0 && (
+            <div className="flex flex-wrap items-center gap-3 pt-2">
+              {additionalPreviews.map((url, idx) => (
+                <div key={idx} className="relative group">
+                  <img
+                    src={url}
+                    alt={`image-${idx}`}
+                    className="h-16 w-16 object-cover rounded-md border border-border"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeAdditionalImage(idx)}
+                    className="absolute -top-2 -right-2 bg-background border border-border rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                    aria-label="remove"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3 pt-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setShowPreviewModal(true)}
+            disabled={!htmlFile && !htmlPreview}
+            className="flex items-center gap-2"
+          >
+            <Eye className="h-4 w-4" />
+            {locale === 'zh' ? '预览发布效果' : 'Preview'}
+          </Button>
+          <Button
+            type="button"
+            onClick={handlePublishHtml}
+            disabled={htmlSaving || !isAdmin}
+            className="flex items-center gap-2"
+          >
+            {htmlSaving ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                {locale === 'zh' ? '发布中...' : 'Publishing...'}
+              </>
+            ) : (
+              <>
+                <Sparkles className="h-4 w-4" />
+                {locale === 'zh' ? '发布文章' : 'Publish Article'}
+              </>
+            )}
+          </Button>
+          {htmlStatus && (
+            <span className="text-sm text-muted-foreground">{htmlStatus}</span>
+          )}
+        </div>
+      </>
+    );
+  }
+
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <div className="mb-6">
@@ -407,6 +820,8 @@ export function BlogPage({ locale }: BlogPageProps) {
           onClick={() => {
             setView('list');
             setSaveStatus(null);
+            setHtmlStatus(null);
+            setShowPreviewModal(false);
           }}
           className="flex items-center gap-2 mb-4 -ml-3"
         >
@@ -435,6 +850,40 @@ export function BlogPage({ locale }: BlogPageProps) {
         </div>
       </div>
 
+      {/* Tab switcher - only on new post */}
+      {!isEditing && (
+        <div className="mb-4 p-1 inline-flex items-center gap-1 bg-muted rounded-md">
+          <button
+            type="button"
+            onClick={() => setCreateMode('traditional')}
+            className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+              createMode === 'traditional'
+                ? 'bg-background text-foreground shadow'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <span className="flex items-center gap-2">
+              <FileText className="h-4 w-4" />
+              {locale === 'zh' ? '传统编辑器' : 'Traditional Editor'}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setCreateMode('html')}
+            className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+              createMode === 'html'
+                ? 'bg-background text-foreground shadow'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <span className="flex items-center gap-2">
+              <FileCode className="h-4 w-4" />
+              {locale === 'zh' ? 'HTML 上传模式' : 'HTML Upload Mode'}
+            </span>
+          </button>
+        </div>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -442,9 +891,13 @@ export function BlogPage({ locale }: BlogPageProps) {
             {locale === 'zh' ? '文章信息' : 'Article Details'}
           </CardTitle>
           <CardDescription>
-            {locale === 'zh'
-              ? '输入英文标题与内容，系统自动翻译为多种语言版本'
-              : 'Enter English title & content; auto-translated to multiple languages'}
+            {!isEditing && createMode === 'html'
+              ? (locale === 'zh'
+                  ? '上传 HTML 文件与配图，发布后自动支持多语言版本'
+                  : 'Upload HTML file and images; auto-translated to multiple languages')
+              : (locale === 'zh'
+                  ? '输入英文标题与内容，系统自动翻译为多种语言版本'
+                  : 'Enter English title & content; auto-translated to multiple languages')}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -457,78 +910,92 @@ export function BlogPage({ locale }: BlogPageProps) {
               </div>
             )}
 
-            <div className="grid gap-2">
-              <Label htmlFor="blog-title">
-                {locale === 'zh' ? '英文标题' : 'English Title'}
-              </Label>
-              <Input
-                id="blog-title"
-                value={blogTitle}
-                onChange={(e) => setBlogTitle(e.target.value)}
-                placeholder={
-                  locale === 'zh'
-                    ? 'How to Turn Long Videos into AI Highlight Shorts'
-                    : 'How to Turn Long Videos into AI Highlight Shorts'
-                }
-              />
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="md:col-span-1 grid gap-2">
-                <Label htmlFor="blog-category">
-                  <Tag className="h-3.5 w-3.5 inline mr-1" />
-                  {locale === 'zh' ? '分类' : 'Category'}
-                </Label>
-                <Input
-                  id="blog-category"
-                  value={blogCategory}
-                  onChange={(e) => setBlogCategory(e.target.value)}
-                  placeholder={locale === 'zh' ? 'AI Video Clipping' : 'AI Video Clipping'}
-                />
-              </div>
-              <div className="md:col-span-2">
-                <CoverImageUploader
-                  value={blogCoverImage}
-                  onChange={setBlogCoverImage}
-                  accessToken={accessToken}
-                  locale={locale}
-                  label={locale === 'zh' ? '封面图片（支持本地上传）' : 'Cover Image (Local Upload)'}
-                />
-              </div>
-            </div>
-
-            <div className="grid gap-2">
-              <Label>
-                {locale === 'zh' ? '文章内容（富文本编辑器）' : 'Article Content (Rich Text Editor)'}
-              </Label>
-              <RichTextEditor
-                content={blogContent}
-                onChange={setBlogContent}
-                placeholder={locale === 'zh' ? '开始编写文章内容...' : 'Start writing your article...'}
-                locale={locale}
-              />
-            </div>
-
-            <div className="flex flex-wrap items-center gap-3 pt-2">
-              <Button onClick={savePost} disabled={saving || !isAdmin}>
-                {saving ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    {locale === 'zh' ? '保存中...' : 'Saving...'}
-                  </>
-                ) : isEditing ? (
-                  locale === 'zh' ? '保存修改' : 'Save Changes'
-                ) : (
-                  locale === 'zh' ? '发布文章' : 'Publish Article'
-                )}
-              </Button>
-              {saveStatus && (
-                <span className="text-sm text-muted-foreground">{saveStatus}</span>
-              )}
-            </div>
+            {isEditing || createMode === 'traditional'
+              ? renderTraditionalForm()
+              : renderHtmlUploadForm()}
           </div>
         </CardContent>
       </Card>
+
+      {/* Preview Modal */}
+      {showPreviewModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setShowPreviewModal(false)}
+        >
+          <div
+            className="bg-background border border-border rounded-lg max-w-4xl w-full max-h-[85vh] flex flex-col shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-4 border-b border-border">
+              <div>
+                <h2 className="text-lg font-semibold">
+                  {locale === 'zh' ? '发布预览' : 'Publish Preview'}
+                </h2>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {htmlTitle || (locale === 'zh' ? '(未填写标题)' : '(title not set)')}
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowPreviewModal(false)}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6">
+              {(coverImagePreview || additionalPreviews[0]) && (
+                <img
+                  src={coverImagePreview || additionalPreviews[0]}
+                  alt="cover"
+                  className="w-full max-h-80 object-cover rounded-md mb-6 border border-border"
+                />
+              )}
+              {htmlTitle && (
+                <h1 className="text-3xl font-bold mb-4">{htmlTitle}</h1>
+              )}
+              {additionalPreviews.length > 0 && (
+                <div className="flex flex-wrap gap-3 mb-6">
+                  {additionalPreviews.map((url, idx) => (
+                    <img
+                      key={idx}
+                      src={url}
+                      alt={`img-${idx}`}
+                      className="h-24 w-24 object-cover rounded-md border border-border"
+                    />
+                  ))}
+                </div>
+              )}
+              {htmlPreview ? (
+                <div
+                  className="prose prose-sm max-w-none"
+                  dangerouslySetInnerHTML={{ __html: htmlPreview }}
+                />
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  {locale === 'zh' ? '请先上传 HTML 内容文件' : 'Please upload HTML content file first'}
+                </p>
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-2 p-4 border-t border-border">
+              <Button variant="outline" onClick={() => setShowPreviewModal(false)}>
+                {locale === 'zh' ? '关闭' : 'Close'}
+              </Button>
+              <Button
+                onClick={() => {
+                  setShowPreviewModal(false);
+                  handlePublishHtml();
+                }}
+                disabled={htmlSaving || !isAdmin}
+              >
+                {locale === 'zh' ? '立即发布' : 'Publish Now'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
