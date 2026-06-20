@@ -218,13 +218,36 @@ export function BlogPage({ locale }: BlogPageProps) {
     setView('new');
   }
 
-  function openEditForm(post: BlogPost) {
+  async function openEditForm(post: BlogPost) {
     setEditingPost(post);
     setBlogTitle(post.title);
     setBlogCategory(post.category);
     setBlogCoverImage(post.cover_image || '');
     setBlogContent(post.content || '');
     setSaveStatus(null);
+
+    // 如果 content 为空，从数据库加载完整内容
+    if (!post.content && accessToken) {
+      try {
+        const res = await fetch(`/api/blog/posts`, {
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          cache: 'no-store',
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const fullPost = (data.posts || []).find((p: any) => p.id === post.id);
+          if (fullPost?.content) {
+            setBlogContent(fullPost.content);
+          }
+        }
+      } catch {
+        // 静默失败，使用空内容
+      }
+    }
+
     setView('edit');
   }
 

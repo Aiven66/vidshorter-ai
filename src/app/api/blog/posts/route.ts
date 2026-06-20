@@ -113,7 +113,7 @@ export async function GET(req: NextRequest) {
   try {
     let query = client
       .from('blogs')
-      .select('id,title,category,cover_image,author_id,is_published,view_count,created_at,updated_at');
+      .select('id,title,category,content,cover_image,author_id,is_published,view_count,created_at,updated_at');
 
     // Non-admin: only published posts
     if (!isAdmin) {
