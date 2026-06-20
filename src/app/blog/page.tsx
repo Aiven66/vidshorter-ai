@@ -32,7 +32,7 @@ export default function BlogPage() {
     fetchPosts();
 
     async function fetchPosts() {
-      const fallbackPosts = [...getStoredBlogPosts(activeLocale), ...getBuiltInBlogPosts(activeLocale)];
+      const fallbackPosts = [...getStoredBlogPosts(), ...getBuiltInBlogPosts(activeLocale)];
 
       if (!isSupabaseConfigured()) {
         setPosts(fallbackPosts);
@@ -48,13 +48,15 @@ export default function BlogPage() {
           .select('*')
           .eq('is_published', true)
           .order('created_at', { ascending: false })
-          .limit(40);
+          .limit(50);
 
         if (error) throw error;
 
-        // 不按 locale 过滤，直接展示所有已发布文章
+        // 合并显示：数据库文章 + localStorage 文章 + 内置文章，用 id 去重
         const seenIds = new Set<string>();
         const databasePosts: BlogPost[] = [];
+
+        // 1) 数据库中的文章（按 created_at 倒序，优先级最高）
         for (const row of (data || [])) {
           const post = normalizeBlogRow(row);
           if (!seenIds.has(post.id)) {
@@ -63,10 +65,25 @@ export default function BlogPage() {
           }
         }
 
-        const mergedPosts = databasePosts.length > 0 ? databasePosts : fallbackPosts;
+        // 2) 追加 localStorage 中之前发布的文章
+        for (const post of getStoredBlogPosts()) {
+          if (!seenIds.has(post.id)) {
+            seenIds.add(post.id);
+            databasePosts.push(post);
+          }
+        }
 
-        if (!cancelled) setPosts(mergedPosts);
+        // 3) 追加内置文章作为补充（当无用户文章时不会空）
+        for (const post of getBuiltInBlogPosts(activeLocale)) {
+          if (!seenIds.has(post.id)) {
+            seenIds.add(post.id);
+            databasePosts.push(post);
+          }
+        }
+
+        if (!cancelled) setPosts(databasePosts);
       } catch {
+        // 数据库出错：至少显示 localStorage + 内置文章
         if (!cancelled) setPosts(fallbackPosts);
       } finally {
         if (!cancelled) setLoading(false);

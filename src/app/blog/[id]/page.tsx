@@ -35,34 +35,31 @@ export default function BlogDetailPage() {
     let cancelled = false;
 
     async function fetchPost() {
-      const storedPosts = getStoredBlogPosts(activeLocale);
-      const storedPost = storedPosts.find(item => item.id === postId) || null;
+      const storedPosts = getStoredBlogPosts();
       const builtInPosts = getBuiltInBlogPosts(activeLocale);
       const builtInPost = getBuiltInBlogPost(postId, activeLocale);
+      const storedPost = storedPosts.find(item => item.id === postId) || null;
       const fallbackPost = storedPost || builtInPost;
+
+      // 相关文章候选：localStorage + 内置
+      const allFallbackPosts = [...storedPosts, ...builtInPosts];
+      const relatedCandidates = allFallbackPosts.filter(p => p.id !== postId);
 
       if (!cancelled) {
         setPost(fallbackPost);
       }
 
-      const allPosts = [...storedPosts, ...builtInPosts];
-      const currentPost = allPosts.find(p => p.id === postId) || fallbackPost;
-      const category = currentPost?.category || '';
-
-      const relatedCandidates = allPosts.filter(p => p.id !== currentPost?.id);
-      const seenRelated = new Set<string>();
-      const related = [
-        ...relatedCandidates.filter(p => p.category === category),
-        ...relatedCandidates,
-      ].filter((candidate) => {
-        const groupKey = candidate.translation_group || candidate.id;
-        if (seenRelated.has(groupKey)) return false;
-        seenRelated.add(groupKey);
-        return true;
-      }).slice(0, 4);
-      setRelatedPosts(related);
-
       if (!isSupabaseConfigured()) {
+        const seenRelated = new Set<string>();
+        const relatedList: BlogPost[] = [];
+        for (const p of relatedCandidates) {
+          const key = (p as any).slug || p.id;
+          if (!seenRelated.has(key)) {
+            seenRelated.add(key);
+            relatedList.push(p);
+          }
+        }
+        if (!cancelled) setRelatedPosts(relatedList.slice(0, 4));
         setLoading(false);
         return;
       }
@@ -74,16 +71,16 @@ export default function BlogDetailPage() {
           .from('blogs')
           .select('*')
           .eq('id', postId)
-          .eq('is_published', true)
           .maybeSingle();
 
         if (error) throw error;
 
-        // 详情页不再做 locale 过滤（确保文章可见）
+        // 详情页不做 locale 过滤，确保所有文章可访问
         const databasePost = data ? normalizeBlogRow(data) : null;
+        const finalPost = databasePost || fallbackPost;
 
         if (!cancelled) {
-          setPost(databasePost || fallbackPost);
+          setPost(finalPost);
         }
 
         if (databasePost) {
@@ -95,34 +92,48 @@ export default function BlogDetailPage() {
           } catch {}
         }
 
-        // 相关文章：从数据库读取同分类最新发布文章
+        // 相关文章：从数据库读取同分类最新文章，再补入 localStorage/内置
+        const seenRelated = new Set<string>();
+        const rPosts: BlogPost[] = [];
+
         try {
           const { data: relatedData } = await client
             .from('blogs')
             .select('*')
             .eq('is_published', true)
-            .neq('id', databasePost?.id || '')
-            .eq('category', databasePost?.category || '')
+            .neq('id', finalPost?.id || '')
+            .eq('category', finalPost?.category || '')
             .order('created_at', { ascending: false })
             .limit(6);
 
-          if (relatedData && relatedData.length > 0) {
-            // 去重：不同 translation_group 的只保留一个
-            const seenRelated = new Set<string>();
-            const rPosts: BlogPost[] = [];
-            for (const row of relatedData) {
-              const p = normalizeBlogRow(row);
-              const groupKey = row.translation_group || p.id;
-              if (!seenRelated.has(groupKey)) {
-                seenRelated.add(groupKey);
-                rPosts.push(p);
-              }
+          for (const row of (relatedData || [])) {
+            const p = normalizeBlogRow(row);
+            const key = (row as any).slug || p.id;
+            if (!seenRelated.has(key)) {
+              seenRelated.add(key);
+              rPosts.push(p);
             }
-            if (!cancelled) setRelatedPosts(rPosts.slice(0, 4));
-          } else if (!cancelled) {
-            // fallback: 用之前的 relatedCandidates
           }
         } catch {}
+
+        // 补充 localStorage + 内置中的相关文章
+        for (const p of relatedCandidates) {
+          const key = (p as any).slug || p.id;
+          if (!seenRelated.has(key)) {
+            seenRelated.add(key);
+            rPosts.push(p);
+          }
+        }
+        // 补入其他文章（保证相关文章不会空）
+        for (const p of allFallbackPosts) {
+          const key = (p as any).slug || p.id;
+          if (!seenRelated.has(key) && p.id !== postId) {
+            seenRelated.add(key);
+            rPosts.push(p);
+          }
+        }
+
+        if (!cancelled) setRelatedPosts(rPosts.slice(0, 4));
       } catch {
         if (!cancelled) {
           setPost(fallbackPost);

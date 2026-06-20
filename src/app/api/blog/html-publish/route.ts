@@ -92,11 +92,12 @@ function detectLocaleFromHtml(html: string): 'en' | 'zh' | 'zh-Hant' {
 /**
  * 安全的 HTML 处理：
  * - 提取 body 内容
- * - 保留 <style>（head 中的样式也注入到内容开头）
- * - 保留内联 style、class 属性
+ * - **删除** <style> 标签（防止原文 CSS 泄漏到页头页尾），
+ *   仅保留单个元素的内联 style="..." 属性
  * - 删除危险元素：<script>/<iframe>/<object>/<embed>
  * - 删除 onclick 等事件属性
  * - 删除 href/src/action="javascript:..."
+ * - 删除 <link>、<meta>、<base> 等 head 元素
  */
 function sanitizeHtmlContent(html: string): string {
   let bodyContent = html;
@@ -105,16 +106,17 @@ function sanitizeHtmlContent(html: string): string {
     bodyContent = bodyMatch[1];
   }
 
-  // 提取 <style> 内容（包括 head 里的）
-  const styleTags: string[] = [];
-  const styleRegex = /<style[^>]*>([\s\S]*?)<\/style>/gi;
-  let m;
-  while ((m = styleRegex.exec(html)) !== null) {
-    styleTags.push(m[1]);
-  }
+  // 删除 <style> 标签（防止原文全局 CSS 泄漏污染页头页尾）
+  let cleaned = bodyContent.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
+
+  // 删除 <link>（外部 CSS 引用同样会泄漏）
+  cleaned = cleaned.replace(/<link\b[^>]*\/?\s*>/gi, '');
+  cleaned = cleaned.replace(/<meta\b[^>]*\/?\s*>/gi, '');
+  cleaned = cleaned.replace(/<base\b[^>]*\/?\s*>/gi, '');
+  cleaned = cleaned.replace(/<title[^>]*>[\s\S]*?<\/title>/gi, '');
 
   // 删除危险元素
-  let cleaned = bodyContent.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
+  cleaned = cleaned.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
   cleaned = cleaned.replace(/<iframe[^>]*>[\s\S]*?<\/iframe>/gi, '');
   cleaned = cleaned.replace(/<object[^>]*>[\s\S]*?<\/object>/gi, '');
   cleaned = cleaned.replace(/<embed[^>]*>[\s\S]*?<\/embed>/gi, '');
@@ -125,13 +127,8 @@ function sanitizeHtmlContent(html: string): string {
   cleaned = cleaned.replace(/\s+on[a-z]+=(["'])[^"']*\1/gi, '');
   cleaned = cleaned.replace(/\s+on[a-z]+=[^\s>]+/gi, '');
 
-  // 删除 form action="javascript:"
+  // 删除 href/src/action="javascript:"
   cleaned = cleaned.replace(/\s+(?:href|src|action)=(["'])\s*javascript:[^"']*\1/gi, '');
-
-  // 将提取到的 <style> 注入到内容最前面
-  if (styleTags.length > 0) {
-    cleaned = `<style>${styleTags.join('\n')}</style>\n${cleaned}`;
-  }
 
   return cleaned.trim();
 }
@@ -139,51 +136,89 @@ function sanitizeHtmlContent(html: string): string {
 /**
  * 更鲁棒的图片文件名匹配与 URL 替换
  * 支持：相对路径、仅文件名、带查询参数、data: URL
+ * 并且：后处理步骤对所有残留的非 http/非 data 图片做模糊匹配或安全处理
  */
 function replaceImageUrlsInHtml(
   html: string,
   fileNameToUrl: Map<string, string>
 ): string {
-  if (fileNameToUrl.size === 0) return html;
-
   let result = html;
 
-  // 为每个文件执行替换
-  for (const [fileName, publicUrl] of fileNameToUrl.entries()) {
-    const escapedName = fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // 1. 基于上传文件名的精确 + 前缀路径匹配（仅当有上传图片时执行）
+  //    例如：filename = "hero.png" 匹配 src="hero.png", "./images/hero.png",
+  //          "/assets/hero.png?v=2" 等
+  if (fileNameToUrl.size > 0) {
+    for (const [fileName, publicUrl] of fileNameToUrl.entries()) {
+      const escapedName = fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-    // 1. 替换 src="prefix/filename" （支持相对路径、仅文件名、带查询参数）
-    //    示例：src="images/hero.png" 、src="./images/hero.png" 、src="hero.png"
-    const srcAttrRe = new RegExp(
-      `(src=(['"]))([^'"]*?)${escapedName}([^'"]*?)(\\2)`,
-      'gi'
-    );
-    result = result.replace(srcAttrRe, `$1${publicUrl}$5`);
+      const srcAttrRe = new RegExp(
+        `(src=(['"]))([^'"]*?)${escapedName}([^'"]*?)(\\2)`,
+        'gi'
+      );
+      result = result.replace(srcAttrRe, `$1${publicUrl}$5`);
 
-    // 2. 替换 srcset 中的图片引用
-    const srcsetAttrRe = new RegExp(
-      `(srcset=(['"]))([^'"]*?)${escapedName}([^'"]*?)(\\2)`,
-      'gi'
-    );
-    result = result.replace(srcsetAttrRe, `$1${publicUrl}$5`);
+      const srcsetAttrRe = new RegExp(
+        `(srcset=(['"]))([^'"]*?)${escapedName}([^'"]*?)(\\2)`,
+        'gi'
+      );
+      result = result.replace(srcsetAttrRe, `$1${publicUrl}$5`);
 
-    // 3. 替换 background-image / url("...") 中的引用
-    const urlCssRe = new RegExp(`url\\((['"]?)([^'")]*?)${escapedName}([^'")]*?)\\1\\)`, 'gi');
-    result = result.replace(urlCssRe, `url(${publicUrl})`);
+      const urlCssRe = new RegExp(`url\\((['"]?)([^'")]*?)${escapedName}([^'")]*?)\\1\\)`, 'gi');
+      result = result.replace(urlCssRe, `url(${publicUrl})`);
+    }
   }
 
-  // 4. 替换 data: URL 图片为已上传的配图（按出现顺序匹配）
-  //    如果 HTML 中有 data:image/... 的内联图片，用上传的配图 URL 替换
-  const uploadedUrls = Array.from(fileNameToUrl.values());
-  let imgIdx = 0;
-  result = result.replace(
-    /src=(['"])data:image\/[^'"]+?\1/gi,
-    (match) => {
-      if (imgIdx < uploadedUrls.length) {
-        const url = uploadedUrls[imgIdx++];
-        return `src="${url}"`;
+  // 2. 替换 HTML 中的 data: URL 内联图片（如果有上传配图，优先用上传的 URL）
+  if (fileNameToUrl.size > 0) {
+    const uploadedUrls = Array.from(fileNameToUrl.values());
+    let imgIdx = 0;
+    result = result.replace(
+      /src=(['"])data:image\/[^'"]+?\1/gi,
+      (match) => {
+        if (imgIdx < uploadedUrls.length) {
+          const url = uploadedUrls[imgIdx++];
+          return `src="${url}"`;
+        }
+        return match;
       }
-      return match;
+    );
+  }
+
+  // 3. 后处理（始终运行）：将所有残留的 src="相对路径" 图片做模糊匹配
+  //    - 不匹配任何上传图片 → 用 alt 文本占位（避免红色裂图）
+  //    - 不匹配任何上传图片 → 删除该 src（保留 alt 文本作为占位）
+  const basenameToUrl = new Map<string, string>();
+  for (const [fileName, publicUrl] of fileNameToUrl.entries()) {
+    const base = fileName
+      .toLowerCase()
+      .replace(/^.*[\\/]/, '')
+      .replace(/[^a-z0-9]/gi, '');
+    if (base) basenameToUrl.set(base, publicUrl);
+  }
+
+  result = result.replace(
+    /<img\b([^>]*?)src=(['"])([^'"]+?)\2([^>]*)>/gi,
+    (match, before, _quote, src, after) => {
+      // 已经是 http/https/data: URL，保留不动
+      if (/^(https?:|data:)/i.test(src)) return match;
+
+      // 相对/本地路径，尝试模糊匹配
+      const srcBase = src
+        .toLowerCase()
+        .replace(/^.*[\\/]/, '')
+        .replace(/\?.*$/, '')
+        .replace(/[^a-z0-9]/gi, '');
+      if (srcBase && basenameToUrl.has(srcBase)) {
+        return `<img${before}src="${basenameToUrl.get(srcBase)}"${after}>`;
+      }
+
+      // 无法匹配的图片：删除 src，用 alt 文本代替，避免显示红色裂图
+      const altMatch = match.match(/\salt=(['"])([^'"]*?)\1/i);
+      const altText = altMatch ? altMatch[2] : '';
+      if (altText) {
+        return `<div class="text-center text-sm text-muted-foreground my-2 italic">[image: ${altText}]</div>`;
+      }
+      return ''; // 无 alt 文本直接移除
     }
   );
 
@@ -419,10 +454,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // ====== 4. 在 HTML 中替换图片引用（文件名 -> Storage URL） ======
-    if (fileNameToUrl.size > 0) {
-      processedHtml = replaceImageUrlsInHtml(processedHtml, fileNameToUrl);
-    }
+    // ====== 4. 在 HTML 中替换图片引用（文件名 -> Storage URL + 后处理清理残留相对路径） ======
+    processedHtml = replaceImageUrlsInHtml(processedHtml, fileNameToUrl);
 
     // ====== 4.5 上传 HTML 中内联的 data: URL 图片到 Storage ======
     const dataUrlResult = await uploadDataUrlImages(client, processedHtml);
