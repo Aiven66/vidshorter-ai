@@ -58,6 +58,7 @@ async function getAdminUser(client: ReturnType<typeof createClient>, token: stri
 }
 
 async function ensureAuthor(client: ReturnType<typeof createClient>, user: { id: string; email: string; name: string; role: string }) {
+  // Always look up by email first to get the real UUID from the database
   const { data: existingByEmail } = await client
     .from('users')
     .select('id')
@@ -66,21 +67,25 @@ async function ensureAuthor(client: ReturnType<typeof createClient>, user: { id:
 
   if (existingByEmail?.id) return existingByEmail.id as string;
 
+  // If user doesn't exist, create with a proper UUID (never use demo-admin-id)
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(user.id);
+  const safeId = isUuid ? user.id : crypto.randomUUID();
+
   const { data, error } = await client
     .from('users')
-    .upsert({
-      id: user.id,
+    .insert({
+      id: safeId,
       email: user.email,
       name: user.name,
       role: user.role,
       is_active: true,
       updated_at: new Date().toISOString(),
-    }, { onConflict: 'id' })
+    })
     .select('id')
     .maybeSingle();
 
   if (error) throw error;
-  return (data?.id as string) || user.id;
+  return (data?.id as string) || safeId;
 }
 
 // ==================== GET: List all published blog posts (admin) ====================

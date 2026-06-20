@@ -142,7 +142,7 @@ export async function POST(req: NextRequest) {
       category = 'AI Video Clipping';
     }
 
-    // Ensure the author exists
+    // Resolve author_id from database (never use demo-admin-id which is not a valid UUID)
     let authorId: string;
     try {
       const { data: existingAuthor } = await client
@@ -150,13 +150,17 @@ export async function POST(req: NextRequest) {
         .select('id')
         .eq('email', adminUser.email)
         .maybeSingle();
+
       if (existingAuthor?.id) {
         authorId = existingAuthor.id as string;
       } else {
+        // Generate a proper UUID for the admin if they don't exist in users table
+        const { data: uuidRow } = await client.rpc('gen_random_uuid').maybeSingle();
+        const newUuid = (uuidRow as string) || crypto.randomUUID();
         const { data: inserted } = await client
           .from('users')
           .insert({
-            id: adminUser.id,
+            id: newUuid,
             email: adminUser.email,
             name: adminUser.name,
             role: adminUser.role,
@@ -165,10 +169,20 @@ export async function POST(req: NextRequest) {
           })
           .select('id')
           .maybeSingle();
-        authorId = (inserted?.id as string) || adminUser.id;
+        authorId = (inserted?.id as string) || newUuid;
       }
     } catch {
-      authorId = adminUser.id;
+      // Last resort: look up by email again or use a fixed system UUID
+      try {
+        const { data: fallback } = await client
+          .from('users')
+          .select('id')
+          .eq('email', adminUser.email)
+          .maybeSingle();
+        authorId = (fallback?.id as string) || '00000000-0000-0000-0000-000000000001';
+      } catch {
+        authorId = '00000000-0000-0000-0000-000000000001';
+      }
     }
 
     // Process content
