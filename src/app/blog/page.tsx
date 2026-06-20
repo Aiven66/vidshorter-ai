@@ -79,8 +79,10 @@ export default function BlogPage() {
   }, [activeLocale]);
 
   const formatDate = (dateString: string) => {
+    if (!dateString) return '';
     const dateLocale = activeLocale === 'zh' ? 'zh-CN' : activeLocale === 'zh-Hant' ? 'zh-TW' : activeLocale === 'en' ? 'en-US' : activeLocale;
     const date = new Date(dateString);
+    if (Number.isNaN(date.getTime())) return '';
     return date.toLocaleString(dateLocale, {
       year: 'numeric',
       month: 'short',

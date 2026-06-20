@@ -1490,11 +1490,23 @@ export function normalizeBlogRow(row: BlogRow): BlogPost {
   const category = String(row.category ?? 'AI Video Clipping');
   const coverImage = String(row.cover_image ?? row.coverImage ?? getDefaultCoverImage(category));
   const author = String(row.author ?? 'Clipop Team');
-  const publishedAt = String(row.published_at ?? row.publishedAt ?? new Date(Date.now() - 86400000).toISOString());
-  const views = typeof row.views === 'number' ? row.views : 0;
+  // 数据库字段是 created_at（timestamp），优先读取
+  const dateValue = String(
+    row.created_at ?? row.published_at ?? row.publishedAt ?? new Date(Date.now() - 86400000).toISOString()
+  );
+  const viewCount = typeof row.view_count === 'number'
+    ? row.view_count
+    : typeof row.views === 'number'
+      ? row.views
+      : 0;
   const locale = normalizeLocale(row.locale);
   return {
-    id, slug, title, content: rawContent, summary, category, coverImage, author, publishedAt, views, locale, isBuiltIn: false,
+    id, slug, title, content: rawContent, summary, category,
+    coverImage, cover_image: coverImage,
+    author,
+    publishedAt: dateValue, created_at: dateValue,
+    view_count: viewCount, views: viewCount,
+    is_published: true, locale, isBuiltIn: false,
   };
 }
 
@@ -1669,7 +1681,7 @@ export function createLocalizedAdminPosts(input: {
   }));
 }
 
-export function getStoredBlogPosts(locale: Locale): BlogPost[] {
+export function getStoredBlogPosts(locale?: Locale): BlogPost[] {
   if (typeof window === 'undefined') return [];
   try {
     const raw = window.localStorage.getItem(BLOG_STORAGE_KEY);
@@ -1677,13 +1689,26 @@ export function getStoredBlogPosts(locale: Locale): BlogPost[] {
     const parsed = JSON.parse(raw) as unknown[];
     if (!Array.isArray(parsed)) return [];
     const rows: BlogPost[] = [];
+    const seenIds = new Set<string>();
     for (const item of parsed) {
       if (item && typeof item === 'object') {
         const anyItem = item as Record<string, unknown>;
-        rows.push(normalizeBlogRow(anyItem as unknown as BlogRow));
+        const post = normalizeBlogRow(anyItem as unknown as BlogRow);
+        if (!seenIds.has(post.id)) {
+          seenIds.add(post.id);
+          rows.push(post);
+        }
       }
     }
-    return rows.filter((r) => r.locale === locale);
+    // 优先当前语言文章（排前），但不排除其他语言版本
+    const sorted = locale
+      ? [...rows].sort((a, b) => {
+          const aMatch = a.locale === locale ? 0 : 1;
+          const bMatch = b.locale === locale ? 0 : 1;
+          return aMatch - bMatch;
+        })
+      : rows;
+    return sorted;
   } catch {
     return [];
   }
