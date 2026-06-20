@@ -1597,6 +1597,41 @@ export function getBuiltInBlogPost(id: string, locale: Locale): BlogPost | null 
   return fallbackPost || null;
 }
 
+export function createSingleAdminPost(input: {
+  title: string;
+  category: string;
+  content: string;
+  coverImage?: string;
+  publish?: boolean;
+  locale?: Locale;
+}): BlogPost {
+  const { title, category, content, coverImage, publish = true, locale = 'en' } = input;
+  const fallbackCover = coverImage && coverImage.trim().length > 0 ? coverImage : getDefaultCoverImage(category);
+  const text = stripHtml(content);
+  let summary = text.slice(0, 180).trim();
+  if (text.length > 180) summary += '...';
+  const publishedAt = new Date().toISOString();
+  return {
+    id: genUuid(),
+    slug: `admin-${Date.now()}-${locale}`,
+    title,
+    content,
+    summary,
+    category,
+    coverImage: fallbackCover,
+    cover_image: fallbackCover,
+    author: 'Clipop Team',
+    publishedAt,
+    created_at: publishedAt,
+    view_count: 0,
+    views: 0,
+    is_published: publish,
+    locale,
+    translation_group: `admin-${Date.now()}`,
+    isBuiltIn: false,
+  };
+}
+
 export function createLocalizedAdminPosts(input: {
   title: string;
   category: string;

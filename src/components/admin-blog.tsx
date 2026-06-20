@@ -318,7 +318,7 @@ export function BlogPage({ locale }: BlogPageProps) {
       const keywords = tagMatch[1].split(',').map(k => k.trim()).filter(k => k);
       if (keywords.length > 0) return keywords[0];
     }
-    return 'AI Video Clipping';
+    return '';
   }
 
   function handleHtmlFileChange(e: React.ChangeEvent<HTMLInputElement>) {
