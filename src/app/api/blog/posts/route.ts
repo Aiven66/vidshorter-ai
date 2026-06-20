@@ -99,11 +99,14 @@ export async function GET(req: NextRequest) {
 
   const token = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '').trim();
 
+  // 解析分页参数
+  const page = parseInt(req.nextUrl.searchParams.get('page') || '1');
+  const pageSize = parseInt(req.nextUrl.searchParams.get('pageSize') || '10');
+
   const client = createClient(url, serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
-  // Admin check is optional - list is public, but we still allow filtering if admin
   let isAdmin = false;
   if (token) {
     const admin = await getAdminUser(client, token).catch(() => null);
@@ -115,17 +118,24 @@ export async function GET(req: NextRequest) {
       .from('blogs')
       .select('id,title,category,content,cover_image,author_id,is_published,view_count,created_at,updated_at');
 
-    // Non-admin: only published posts
     if (!isAdmin) {
       query = query.eq('is_published', true);
     }
 
-    const { data, error } = await query
+    // 获取总数（无分页限制）
+    const { data: allData, error: countError } = await query
       .order('created_at', { ascending: false })
-      .limit(200);
+      .limit(1000); // 限制最大数量防止性能问题
 
-    if (error) throw error;
-    return NextResponse.json({ posts: data || [], isAdmin });
+    if (countError) throw countError;
+
+    const total = (allData || []).length;
+
+    // 分页查询
+    const startIdx = (page - 1) * pageSize;
+    const paginatedData = (allData || []).slice(startIdx, startIdx + pageSize);
+
+    return NextResponse.json({ posts: paginatedData || [], total, isAdmin });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Failed to list posts.';
     return NextResponse.json({ error: msg }, { status: 500 });

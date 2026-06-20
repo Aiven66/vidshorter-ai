@@ -59,6 +59,11 @@ export function BlogPage({ locale }: BlogPageProps) {
   const [error, setError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
 
+  // 分页状态
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const [pageSize] = useState(10); // 每页10条
+
   // ========= Traditional editor mode state =========
   const [editingPost, setEditingPost] = useState<BlogPost | null>(null);
   const [blogTitle, setBlogTitle] = useState('');
@@ -87,12 +92,12 @@ export function BlogPage({ locale }: BlogPageProps) {
 
   const isAdmin = user?.role === 'admin' || user?.email === 'admin@126.com' || user?.email === 'admin@clipop.ai' || user?.email === 'admin@vidshorter.ai';
 
-  const fetchPosts = useCallback(async () => {
+  const fetchPosts = useCallback(async (page: number = 1) => {
     if (!accessToken) return;
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/blog/posts', {
+      const res = await fetch(`/api/blog/posts?page=${page}&pageSize=${pageSize}`, {
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${accessToken}`,
@@ -101,6 +106,7 @@ export function BlogPage({ locale }: BlogPageProps) {
       });
 
       let dbPosts: BlogPost[] = [];
+      let total = 0;
       if (res.ok) {
         const data = await res.json();
         dbPosts = (data.posts || []).map((p: any) => ({
@@ -114,6 +120,7 @@ export function BlogPage({ locale }: BlogPageProps) {
           created_at: new Date(p.created_at).toISOString(),
           updated_at: p.updated_at ? new Date(p.updated_at).toISOString() : undefined,
         }));
+        total = data.total || dbPosts.length;
       }
 
       const activeLocale = normalizeLocale(locale);
@@ -150,23 +157,46 @@ export function BlogPage({ locale }: BlogPageProps) {
       });
 
       uniquePosts.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-      setPosts(uniquePosts);
+
+      // 计算分页
+      const startIdx = (page - 1) * pageSize;
+      const endIdx = startIdx + pageSize;
+      const paginatedPosts = uniquePosts.slice(startIdx, endIdx);
+
+      setPosts(paginatedPosts);
+      setTotalCount(uniquePosts.length);
+      setCurrentPage(page);
     } catch (err) {
       const activeLocale = normalizeLocale(locale);
       const fallbackPosts = [...getStoredBlogPosts(activeLocale), ...getBuiltInBlogPosts(activeLocale)];
       fallbackPosts.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-      setPosts(fallbackPosts);
+
+      const startIdx = (page - 1) * pageSize;
+      const endIdx = startIdx + pageSize;
+      const paginatedPosts = fallbackPosts.slice(startIdx, endIdx);
+
+      setPosts(paginatedPosts);
+      setTotalCount(fallbackPosts.length);
+      setCurrentPage(page);
       setError(err instanceof Error ? err.message : 'Failed to load');
     } finally {
       setLoading(false);
     }
-  }, [accessToken, locale]);
+  }, [accessToken, locale, pageSize]);
 
   useEffect(() => {
     if (view === 'list') {
-      fetchPosts();
+      setCurrentPage(1);
+      fetchPosts(1);
     }
   }, [view, fetchPosts]);
+
+  const handlePageChange = (page: number) => {
+    setCurrentPage(page);
+    fetchPosts(page);
+  };
+
+  const totalPages = Math.ceil(totalCount / pageSize);
 
   async function syncBuiltInPosts() {
     if (!accessToken || !isAdmin) return;
@@ -263,13 +293,17 @@ export function BlogPage({ locale }: BlogPageProps) {
     if (!window.confirm(confirmMessage)) return;
 
     try {
-      const token = (typeof localStorage !== 'undefined' && localStorage.getItem('auth_token')) || null;
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
+      // 使用 accessToken（来自 useAuth hook）而非 localStorage，确保 token 一致
+      if (!accessToken) {
+        throw new Error(locale === 'zh' ? '未登录或 token 失效' : 'Not logged in or token expired');
+      }
 
       const res = await fetch(`/api/blog/${encodeURIComponent(postId)}`, {
         method: 'DELETE',
-        headers,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
       });
 
       const body = await res.json().catch(() => null);
@@ -280,11 +314,9 @@ export function BlogPage({ locale }: BlogPageProps) {
         );
       }
 
-      // 本地从 localStorage + 数据库列表中同步移除
       const stored = getStoredBlogPosts().filter((p) => p.id !== postId);
       saveAdminBlogPosts(stored);
 
-      // 重新从数据库加载，确保列表一致
       await fetchPosts();
       setError(null);
     } catch (err) {
@@ -629,6 +661,53 @@ export function BlogPage({ locale }: BlogPageProps) {
               </div>
             </CardContent>
           </Card>
+        )}
+
+        {/* 分页组件 */}
+        {totalPages > 1 && (
+          <div className="mt-6 flex items-center justify-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handlePageChange(currentPage - 1)}
+              disabled={currentPage === 1}
+              className="flex items-center gap-1"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              {locale === 'zh' ? '上一页' : 'Prev'}
+            </Button>
+
+            {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+              const startPage = Math.max(1, currentPage - 2);
+              const pageNum = startPage + i;
+              if (pageNum > totalPages) return null;
+              return (
+                <Button
+                  key={pageNum}
+                  variant={currentPage === pageNum ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => handlePageChange(pageNum)}
+                >
+                  {pageNum}
+                </Button>
+              );
+            })}
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handlePageChange(currentPage + 1)}
+              disabled={currentPage === totalPages}
+              className="flex items-center gap-1"
+            >
+              {locale === 'zh' ? '下一页' : 'Next'}
+              <ArrowLeft className="h-3.5 w-3.5 rotate-180" />
+            </Button>
+
+            <span className="text-sm text-muted-foreground ml-2">
+              {locale === 'zh' ? `第 ${currentPage}/${totalPages} 页` : `Page ${currentPage}/${totalPages}`}
+            </span>
+          </div>
         )}
       </div>
     );
