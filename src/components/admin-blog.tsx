@@ -305,11 +305,33 @@ export function BlogPage({ locale }: BlogPageProps) {
     });
   }
 
+  function extractTitleFromHtml(html: string): string {
+    const match = html.match(/<title>([^<]+)<\/title>/i);
+    return match ? match[1].trim() : '';
+  }
+
+  function extractCategoryFromHtml(html: string): string {
+    const metaMatch = html.match(/<meta\s+name=["']category["']\s+content=["']([^"']+)["']/i);
+    if (metaMatch) return metaMatch[1].trim();
+    const tagMatch = html.match(/<meta\s+name=["']keywords["']\s+content=["']([^"']+)["']/i);
+    if (tagMatch) {
+      const keywords = tagMatch[1].split(',').map(k => k.trim()).filter(k => k);
+      if (keywords.length > 0) return keywords[0];
+    }
+    return 'AI Video Clipping';
+  }
+
   function handleHtmlFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     setHtmlFile(file);
-    file.text().then((text) => setHtmlPreview(text));
+    file.text().then((text) => {
+      setHtmlPreview(text);
+      const title = extractTitleFromHtml(text);
+      const category = extractCategoryFromHtml(text);
+      if (title) setHtmlTitle(title);
+      if (category) setHtmlCategory(category);
+    });
   }
 
   function handleCoverChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -347,10 +369,6 @@ export function BlogPage({ locale }: BlogPageProps) {
       setHtmlStatus(locale === 'zh' ? '需要管理员权限' : 'Admin access required');
       return;
     }
-    if (!htmlTitle.trim()) {
-      setHtmlStatus(locale === 'zh' ? '请输入标题' : 'Title required');
-      return;
-    }
     if (!htmlFile || !htmlPreview.trim()) {
       setHtmlStatus(locale === 'zh' ? '请上传 HTML 内容文件' : 'HTML file required');
       return;
@@ -360,8 +378,14 @@ export function BlogPage({ locale }: BlogPageProps) {
     setHtmlStatus(null);
     try {
       const formData = new FormData();
-      formData.append('title', htmlTitle.trim());
-      formData.append('category', htmlCategory.trim() || 'AI Video Clipping');
+      // 标题可选，如果用户没有输入则由后端从HTML提取
+      if (htmlTitle.trim()) {
+        formData.append('title', htmlTitle.trim());
+      }
+      // 分类可选，如果用户没有输入则由后端从HTML提取
+      if (htmlCategory.trim()) {
+        formData.append('category', htmlCategory.trim());
+      }
       formData.append('htmlFile', htmlFile, htmlFile.name || 'article.html');
       if (coverImageFile) formData.append('coverFile', coverImageFile, coverImageFile.name || 'cover.jpg');
       additionalImages.forEach((file, idx) => {
@@ -620,6 +644,9 @@ export function BlogPage({ locale }: BlogPageProps) {
         <div className="grid gap-2">
           <Label htmlFor="html-title">
             {locale === 'zh' ? '文章标题' : 'Article Title'}
+            <span className="ml-2 text-xs text-muted-foreground">
+              ({locale === 'zh' ? '自动从HTML读取，可编辑' : 'Auto-detected from HTML, editable'})
+            </span>
           </Label>
           <Input
             id="html-title"
@@ -627,8 +654,8 @@ export function BlogPage({ locale }: BlogPageProps) {
             onChange={(e) => setHtmlTitle(e.target.value)}
             placeholder={
               locale === 'zh'
-                ? 'How to Turn Long Videos into AI Highlight Shorts'
-                : 'How to Turn Long Videos into AI Highlight Shorts'
+                ? '上传HTML文件后自动填充标题'
+                : 'Title will be auto-filled after uploading HTML'
             }
           />
         </div>
@@ -637,6 +664,9 @@ export function BlogPage({ locale }: BlogPageProps) {
           <Label htmlFor="html-category">
             <Tag className="h-3.5 w-3.5 inline mr-1" />
             {locale === 'zh' ? '分类' : 'Category'}
+            <span className="ml-2 text-xs text-muted-foreground">
+              ({locale === 'zh' ? '自动从HTML读取，可编辑' : 'Auto-detected from HTML, editable'})
+            </span>
           </Label>
           <Input
             id="html-category"

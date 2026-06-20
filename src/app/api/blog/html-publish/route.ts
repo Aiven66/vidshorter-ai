@@ -92,7 +92,37 @@ async function ensureAuthor(client: ReturnType<typeof createClient>, user: { id:
   return (data?.id as string) || user.id;
 }
 
-// =========== POST: Upload HTML + Images and publish article ===========
+function extractTitleFromHtml(html: string): string {
+  const match = html.match(/<title>([^<]+)<\/title>/i);
+  return match ? match[1].trim() : '';
+}
+
+function extractCategoryFromHtml(html: string): string {
+  const metaMatch = html.match(/<meta\s+name=["']category["']\s+content=["']([^"']+)["']/i);
+  if (metaMatch) return metaMatch[1].trim();
+  const tagMatch = html.match(/<meta\s+name=["']keywords["']\s+content=["']([^"']+)["']/i);
+  if (tagMatch) {
+    const keywords = tagMatch[1].split(',').map(k => k.trim()).filter(k => k);
+    if (keywords.length > 0) return keywords[0];
+  }
+  return 'AI Video Clipping';
+}
+
+function sanitizeHtmlContent(html: string): string {
+  let content = html;
+  
+  const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+  if (bodyMatch) {
+    content = bodyMatch[1];
+  }
+  
+  content = content.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
+  content = content.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
+  content = content.replace(/<iframe[^>]*>[\s\S]*?<\/iframe>/gi, '');
+  
+  return content.trim();
+}
+
 export async function POST(req: NextRequest) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.COZE_SUPABASE_URL || '';
   const serviceRoleKey = getServiceRoleKey();
@@ -117,12 +147,11 @@ export async function POST(req: NextRequest) {
 
   try {
     const formData = await req.formData();
-    const title = (formData.get('title') as string || '').trim();
-    const category = (formData.get('category') as string || 'AI Video Clipping').trim() || 'AI Video Clipping';
+    let title = (formData.get('title') as string || '').trim();
+    let category = (formData.get('category') as string || '').trim() || 'AI Video Clipping';
     const htmlFile = formData.get('htmlFile') as File | null;
     const coverFile = formData.get('coverFile') as File | null;
 
-    // Collect additional image files
     const additionalImages: { file: File; key: string }[] = [];
     for (const [key, value] of formData.entries()) {
       if (key.startsWith('img_') && value instanceof File && value.size > 0) {
@@ -130,9 +159,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    if (!title) {
-      return NextResponse.json({ error: 'Title is required' }, { status: 400 });
-    }
     if (!htmlFile) {
       return NextResponse.json({ error: 'HTML file is required' }, { status: 400 });
     }
@@ -142,11 +168,25 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'HTML content is empty' }, { status: 400 });
     }
 
+    if (!title) {
+      title = extractTitleFromHtml(htmlContent);
+    }
+    
+    if (!title) {
+      title = 'Untitled Article';
+    }
+
+    if (!category || category === 'AI Video Clipping') {
+      const extractedCategory = extractCategoryFromHtml(htmlContent);
+      if (extractedCategory && extractedCategory !== 'AI Video Clipping') {
+        category = extractedCategory;
+      }
+    }
+
     const authorId = await ensureAuthor(client, adminUser);
     const timestamp = Date.now();
     const imageReplacements: Map<string, string> = new Map();
 
-    // Upload cover image if provided
     let coverImageUrl = '';
     if (coverFile && coverFile.size > 0) {
       try {
@@ -166,12 +206,11 @@ export async function POST(req: NextRequest) {
           const { data: publicData } = client.storage.from('blog-images').getPublicUrl(coverPath);
           coverImageUrl = publicData?.publicUrl || '';
         }
-      } catch {
-        // fall through - use default cover
+      } catch (err) {
+        console.error('Failed to upload cover image:', err);
       }
     }
 
-    // Upload additional images, replace local filenames in HTML with public URLs
     const uploadedImageUrls: string[] = [];
     for (const { file, key } of additionalImages) {
       try {
@@ -193,19 +232,17 @@ export async function POST(req: NextRequest) {
           if (publicUrl) {
             uploadedImageUrls.push(publicUrl);
             imageReplacements.set(file.name, publicUrl);
-            // Also register original filename with spaces variant
             imageReplacements.set(encodeURIComponent(file.name), publicUrl);
           }
         }
-      } catch {
-        // skip broken uploads
+      } catch (err) {
+        console.error('Failed to upload image:', err);
       }
     }
 
-    // Replace local image references in HTML with uploaded URLs
-    let processedHtml = htmlContent;
+    let processedHtml = sanitizeHtmlContent(htmlContent);
+    
     imageReplacements.forEach((publicUrl, fileName) => {
-      // Replace patterns like src="filename" or src="./filename" or src="images/filename"
       const escaped = fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const patterns = [
         new RegExp(`src=(['"])(?:(?:\\.\\/)?(?:images?\\/)?(?:assets?\\/)?(?:uploads?\\/)?)?${escaped}\\1`, 'gi'),
@@ -216,16 +253,12 @@ export async function POST(req: NextRequest) {
       }
     });
 
-    // Also handle HTML img references as <img src="localName"... by replacing any local relative paths
-    // with uploaded images by matching against available uploaded filenames
     if (uploadedImageUrls.length > 0) {
       const fileNames = Array.from(imageReplacements.keys());
       processedHtml = processedHtml.replace(
         /<img\s+([^>]*?)src=(['"])([^'"]+)\2([^>]*)>/gi,
         (match, pre: string, quote: string, srcVal: string, post: string) => {
-          // Strip any leading ./, /, images/, assets/ etc
           const clean = srcVal.replace(/^(?:\.?\/)?(?:(?:images?|assets?|uploads?)\/)?/i, '');
-          // Find exact or basename match
           const matchKey = fileNames.find(
             (name) =>
               name === clean ||
@@ -268,16 +301,22 @@ export async function POST(req: NextRequest) {
       .from('blogs')
       .upsert(rows, { onConflict: 'id' });
 
-    if (error) throw error;
+    if (error) {
+      console.error('Database error:', error);
+      throw error;
+    }
 
     return NextResponse.json({
       posts: localizedPosts,
       imageUploaded: uploadedImageUrls.length + (coverImageUrl ? 1 : 0),
       coverImage: finalCover,
+      title,
+      category,
     });
 
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to publish article';
+    console.error('Publish error:', message, error);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
