@@ -97,6 +97,10 @@ export function BlogPage({ locale }: BlogPageProps) {
   const [htmlDragOver, setHtmlDragOver] = useState(false);
   const [coverDragOver, setCoverDragOver] = useState(false);
   const [additionalDragOver, setAdditionalDragOver] = useState(false);
+  // 拖拽计数器（解决子元素触发 dragLeave 的问题）
+  const htmlDragCountRef = useRef(0);
+  const coverDragCountRef = useRef(0);
+  const additionalDragCountRef = useRef(0);
 
   const isAdmin = user?.role === 'admin' || user?.email === 'admin@126.com' || user?.email === 'admin@clipop.ai' || user?.email === 'admin@vidshorter.ai';
 
@@ -476,23 +480,44 @@ export function BlogPage({ locale }: BlogPageProps) {
     });
   }
 
-  // 拖拽处理通用函数
-  function handleDragOver(e: React.DragEvent, setDragOver: (v: boolean) => void) {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragOver(true);
+  // 拖拽处理函数（使用计数器解决子元素触发 dragLeave 的问题）
+  function createDragHandlers(
+    setDragOver: (v: boolean) => void,
+    dragCountRef: React.MutableRefObject<number>,
+    onDrop: (e: React.DragEvent) => void
+  ) {
+    return {
+      onDragEnter: (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dragCountRef.current++;
+        setDragOver(true);
+      },
+      onDragOver: (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        // 必须持续 preventDefault 才能让 drop 事件触发
+      },
+      onDragLeave: (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dragCountRef.current--;
+        if (dragCountRef.current <= 0) {
+          dragCountRef.current = 0;
+          setDragOver(false);
+        }
+      },
+      onDrop: (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dragCountRef.current = 0;
+        setDragOver(false);
+        onDrop(e);
+      },
+    };
   }
 
-  function handleDragLeave(e: React.DragEvent, setDragOver: (v: boolean) => void) {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragOver(false);
-  }
-
-  function handleHtmlDrop(e: React.DragEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    setHtmlDragOver(false);
+  const htmlDragHandlers = createDragHandlers(setHtmlDragOver, htmlDragCountRef, (e: React.DragEvent) => {
     const file = e.dataTransfer.files?.[0];
     if (file && (file.name.endsWith('.html') || file.name.endsWith('.htm') || file.name.endsWith('.txt'))) {
       setHtmlFile(file);
@@ -504,30 +529,24 @@ export function BlogPage({ locale }: BlogPageProps) {
         if (category) setHtmlCategory(category);
       });
     }
-  }
+  });
 
-  function handleCoverDrop(e: React.DragEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    setCoverDragOver(false);
+  const coverDragHandlers = createDragHandlers(setCoverDragOver, coverDragCountRef, (e: React.DragEvent) => {
     const file = e.dataTransfer.files?.[0];
     if (file && file.type.startsWith('image/')) {
       setCoverImageFile(file);
       readFileAsDataUrl(file).then((url) => setCoverImagePreview(url));
     }
-  }
+  });
 
-  function handleAdditionalDrop(e: React.DragEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    setAdditionalDragOver(false);
+  const additionalDragHandlers = createDragHandlers(setAdditionalDragOver, additionalDragCountRef, (e: React.DragEvent) => {
     const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
     if (files.length === 0) return;
     setAdditionalImages((prev) => [...prev, ...files]);
     Promise.all(files.map((f) => readFileAsDataUrl(f))).then((urls) => {
       setAdditionalPreviews((prev) => [...prev, ...urls]);
     });
-  }
+  });
 
   function resetHtmlMode() {
     setHtmlFile(null);
@@ -917,9 +936,7 @@ export function BlogPage({ locale }: BlogPageProps) {
             className="hidden"
           />
           <div
-            onDragOver={(e) => handleDragOver(e, setHtmlDragOver)}
-            onDragLeave={(e) => handleDragLeave(e, setHtmlDragOver)}
-            onDrop={handleHtmlDrop}
+            {...htmlDragHandlers}
             onClick={() => htmlInputRef.current?.click()}
             className={`relative border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
               htmlDragOver
@@ -930,7 +947,7 @@ export function BlogPage({ locale }: BlogPageProps) {
             }`}
           >
             {htmlFile ? (
-              <div className="flex items-center justify-center gap-3">
+              <div className="flex items-center justify-center gap-3 pointer-events-none">
                 <FileCode className="h-8 w-8 text-green-600" />
                 <div className="text-left">
                   <p className="font-medium text-sm">{htmlFile.name}</p>
@@ -938,18 +955,9 @@ export function BlogPage({ locale }: BlogPageProps) {
                     {(htmlFile.size / 1024).toFixed(1)} KB
                   </p>
                 </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={(e) => { e.stopPropagation(); resetHtmlMode(); }}
-                  className="ml-2 text-muted-foreground hover:text-destructive"
-                >
-                  <X className="h-4 w-4" />
-                </Button>
               </div>
             ) : (
-              <div>
+              <div className="pointer-events-none">
                 <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
                 <p className="text-sm font-medium">
                   {locale === 'zh' ? '拖拽 HTML 文件到此处' : 'Drag & drop HTML file here'}
@@ -960,6 +968,24 @@ export function BlogPage({ locale }: BlogPageProps) {
               </div>
             )}
           </div>
+          {htmlFile && (
+            <div className="flex items-center gap-2 mt-1">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setHtmlFile(null);
+                  setHtmlPreview('');
+                  if (htmlInputRef.current) htmlInputRef.current.value = '';
+                }}
+                className="flex items-center gap-1 text-destructive hover:text-destructive"
+              >
+                <X className="h-3.5 w-3.5" />
+                {locale === 'zh' ? '清除文件' : 'Clear file'}
+              </Button>
+            </div>
+          )}
           {htmlPreview && !htmlFile && (
             <div className="mt-2 p-3 border border-border rounded-md max-h-32 overflow-y-auto text-xs text-muted-foreground bg-muted/20 whitespace-pre-wrap break-words">
               {htmlPreview.slice(0, 500)}{htmlPreview.length > 500 ? '...' : ''}
@@ -978,9 +1004,7 @@ export function BlogPage({ locale }: BlogPageProps) {
             className="hidden"
           />
           <div
-            onDragOver={(e) => handleDragOver(e, setCoverDragOver)}
-            onDragLeave={(e) => handleDragLeave(e, setCoverDragOver)}
-            onDrop={handleCoverDrop}
+            {...coverDragHandlers}
             onClick={() => coverInputRef.current?.click()}
             className={`relative border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${
               coverDragOver
@@ -991,7 +1015,7 @@ export function BlogPage({ locale }: BlogPageProps) {
             }`}
           >
             {coverImagePreview ? (
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-4 pointer-events-none">
                 <img
                   src={coverImagePreview}
                   alt="cover preview"
@@ -1005,22 +1029,9 @@ export function BlogPage({ locale }: BlogPageProps) {
                     </p>
                   )}
                 </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setCoverImageFile(null);
-                    setCoverImagePreview('');
-                  }}
-                  className="text-muted-foreground hover:text-destructive"
-                >
-                  <X className="h-4 w-4" />
-                </Button>
               </div>
             ) : (
-              <div>
+              <div className="pointer-events-none">
                 <ImageIcon className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
                 <p className="text-sm font-medium">
                   {locale === 'zh' ? '拖拽封面图片到此处' : 'Drag & drop cover image here'}
@@ -1031,6 +1042,24 @@ export function BlogPage({ locale }: BlogPageProps) {
               </div>
             )}
           </div>
+          {coverImageFile && (
+            <div className="flex items-center gap-2 mt-1">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setCoverImageFile(null);
+                  setCoverImagePreview('');
+                  if (coverInputRef.current) coverInputRef.current.value = '';
+                }}
+                className="flex items-center gap-1 text-destructive hover:text-destructive"
+              >
+                <X className="h-3.5 w-3.5" />
+                {locale === 'zh' ? '清除封面' : 'Clear cover'}
+              </Button>
+            </div>
+          )}
         </div>
 
         {/* 配图拖拽上传区（支持多文件） */}
@@ -1047,9 +1076,7 @@ export function BlogPage({ locale }: BlogPageProps) {
             className="hidden"
           />
           <div
-            onDragOver={(e) => handleDragOver(e, setAdditionalDragOver)}
-            onDragLeave={(e) => handleDragLeave(e, setAdditionalDragOver)}
-            onDrop={handleAdditionalDrop}
+            {...additionalDragHandlers}
             onClick={() => additionalInputRef.current?.click()}
             className={`relative border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${
               additionalDragOver
@@ -1060,7 +1087,7 @@ export function BlogPage({ locale }: BlogPageProps) {
             }`}
           >
             {additionalPreviews.length > 0 ? (
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 pointer-events-none">
                 <div className="flex -space-x-2">
                   {additionalPreviews.slice(0, 4).map((url, idx) => (
                     <img
@@ -1083,7 +1110,7 @@ export function BlogPage({ locale }: BlogPageProps) {
                 </div>
               </div>
             ) : (
-              <div>
+              <div className="pointer-events-none">
                 <ImageIcon className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
                 <p className="text-sm font-medium">
                   {locale === 'zh' ? '拖拽配图到此处（可多张）' : 'Drag & drop images here (multi)'}
@@ -1354,7 +1381,7 @@ export function BlogPage({ locale }: BlogPageProps) {
                 )}
                 <span className="flex items-center gap-1">
                   <Calendar className="h-3.5 w-3.5" />
-                  {new Date().toLocaleDateString(activeLocale === 'zh' ? 'zh-CN' : 'en-US', {
+                  {new Date().toLocaleDateString(locale === 'zh' ? 'zh-CN' : 'en-US', {
                     year: 'numeric', month: 'short', day: 'numeric',
                   })}
                 </span>
