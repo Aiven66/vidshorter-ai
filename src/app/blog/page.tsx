@@ -34,7 +34,7 @@ export default function BlogPage() {
     fetchPosts();
 
     async function fetchPosts() {
-      const fallbackPosts = [...getStoredBlogPosts(), ...getBuiltInBlogPosts(activeLocale)];
+      const fallbackPosts = [...getStoredBlogPosts(), ...getBuiltInBlogPosts('en')];
 
       if (!isSupabaseConfigured()) {
         setPosts(fallbackPosts);
@@ -54,8 +54,9 @@ export default function BlogPage() {
 
         if (error) throw error;
 
-        // 合并显示：数据库文章 + localStorage 文章 + 内置文章，用 id 去重
+        // 合并显示：数据库文章 + localStorage 文章 + 内置文章，用 id 和标题去重
         const seenIds = new Set<string>();
+        const seenTitles = new Set<string>();
         const databasePosts: BlogPost[] = [];
 
         // 1) 数据库中的文章（按 created_at 倒序，优先级最高）
@@ -63,6 +64,8 @@ export default function BlogPage() {
           const post = normalizeBlogRow(row);
           if (!seenIds.has(post.id)) {
             seenIds.add(post.id);
+            const titleKey = post.title?.trim().toLowerCase();
+            if (titleKey) seenTitles.add(titleKey);
             databasePosts.push(post);
           }
         }
@@ -70,15 +73,22 @@ export default function BlogPage() {
         // 2) 追加 localStorage 中之前发布的文章
         for (const post of getStoredBlogPosts()) {
           if (!seenIds.has(post.id)) {
+            const titleKey = post.title?.trim().toLowerCase();
+            if (titleKey && seenTitles.has(titleKey)) continue;
             seenIds.add(post.id);
+            if (titleKey) seenTitles.add(titleKey);
             databasePosts.push(post);
           }
         }
 
         // 3) 追加内置文章作为补充（当无用户文章时不会空）
-        for (const post of getBuiltInBlogPosts(activeLocale)) {
+        // 只取英文版本，避免多语言重复
+        for (const post of getBuiltInBlogPosts('en')) {
           if (!seenIds.has(post.id)) {
+            const titleKey = post.title?.trim().toLowerCase();
+            if (titleKey && seenTitles.has(titleKey)) continue;
             seenIds.add(post.id);
+            if (titleKey) seenTitles.add(titleKey);
             databasePosts.push(post);
           }
         }
