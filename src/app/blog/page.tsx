@@ -68,7 +68,7 @@ export default function BlogPage() {
             .select('*')
             .eq('is_published', true)
             .order('created_at', { ascending: false })
-            .limit(200);
+            .limit(500);
           data = fallbackResult.data;
           error = fallbackResult.error;
         } else {
@@ -93,20 +93,15 @@ export default function BlogPage() {
 
         // 如果 locale 列不存在，使用语言检测来过滤
         if (!localeColumnExists && data && data.length > 0) {
-          // 检测每篇文章的语言，只保留当前语言的文章
           const filteredData = data.filter((row: any) => {
             const detectedLang = detectLanguage(row.title || '');
-            // 精确匹配当前语言
             if (detectedLang === activeLocale) return true;
-            // zh 和 zh-Hant 的特殊处理
             if (activeLocale === 'zh' && detectedLang === 'zh') return true;
             if (activeLocale === 'zh-Hant' && detectedLang === 'zh-Hant') return true;
-            // 如果当前语言是英文，显示所有检测为英文的文章
             if (activeLocale === 'en' && detectedLang === 'en') return true;
             return false;
           });
 
-          // 如果过滤后没有文章，fallback 到英文文章
           if (filteredData.length === 0) {
             const enArticles = data.filter((row: any) => detectLanguage(row.title || '') === 'en');
             data = enArticles.length > 0 ? enArticles : data.slice(0, 10);
@@ -115,9 +110,9 @@ export default function BlogPage() {
           }
         }
 
-        // 合并显示：数据库文章 + localStorage 文章 + 内置文章，用 id 和标题去重
+        // 合并显示：数据库文章 + localStorage 文章 + 内置文章
+        // 仅按 ID 去重，不按标题去重（不同语言版本可能有相同标题）
         const seenIds = new Set<string>();
-        const seenTitles = new Set<string>();
         const databasePosts: BlogPost[] = [];
 
         // 1) 数据库中的文章（按 created_at 倒序，优先级最高）
@@ -125,37 +120,32 @@ export default function BlogPage() {
           const post = normalizeBlogRow(row);
           if (!seenIds.has(post.id)) {
             seenIds.add(post.id);
-            const titleKey = post.title?.trim().toLowerCase();
-            if (titleKey) seenTitles.add(titleKey);
             databasePosts.push(post);
           }
         }
 
-        // 2) 追加 localStorage 中之前发布的文章
-        for (const post of getStoredBlogPosts(activeLocale)) {
-          if (!seenIds.has(post.id)) {
-            const titleKey = post.title?.trim().toLowerCase();
-            if (titleKey && seenTitles.has(titleKey)) continue;
-            seenIds.add(post.id);
-            if (titleKey) seenTitles.add(titleKey);
-            databasePosts.push(post);
+        // 2) 追加 localStorage 中之前发布的文章（仅当数据库无数据时）
+        if (databasePosts.length === 0) {
+          for (const post of getStoredBlogPosts(activeLocale)) {
+            if (!seenIds.has(post.id)) {
+              seenIds.add(post.id);
+              databasePosts.push(post);
+            }
           }
         }
 
-        // 3) 追加内置文章作为补充（当无用户文章时不会空）
-        for (const post of getBuiltInBlogPosts(activeLocale)) {
-          if (!seenIds.has(post.id)) {
-            const titleKey = post.title?.trim().toLowerCase();
-            if (titleKey && seenTitles.has(titleKey)) continue;
-            seenIds.add(post.id);
-            if (titleKey) seenTitles.add(titleKey);
-            databasePosts.push(post);
+        // 3) 追加内置文章作为补充（仅当无其他文章时）
+        if (databasePosts.length === 0) {
+          for (const post of getBuiltInBlogPosts(activeLocale)) {
+            if (!seenIds.has(post.id)) {
+              seenIds.add(post.id);
+              databasePosts.push(post);
+            }
           }
         }
 
         if (!cancelled) setPosts(databasePosts);
       } catch {
-        // 数据库出错：至少显示 localStorage + 内置文章
         if (!cancelled) setPosts(fallbackPosts);
       } finally {
         if (!cancelled) setLoading(false);

@@ -1644,34 +1644,16 @@ export function createLocalizedAdminPosts(input: {
   coverImage?: string;
   publish?: boolean;
 }): BlogPost[] {
-  const { title, category, content, coverImage, publish = true } = input;
-  const fallbackCover = coverImage && coverImage.trim().length > 0 ? coverImage : getDefaultCoverImage(category);
-  const text = stripHtml(content);
-  let summary = text.slice(0, 180).trim();
-  if (text.length > 180) summary += '...';
-  const publishedAt = new Date().toISOString();
-  const author = 'Clipop Team';
-  const localesOut: Locale[] = ['en', 'zh', 'zh-Hant'];
-  const now = Date.now();
-  return localesOut.map((loc, i) => ({
-    id: genUuid(),
-    slug: `admin-${now}-${loc}-${i}`,
-    title,
-    content,
-    summary,
-    category,
-    coverImage: fallbackCover,
-    cover_image: fallbackCover,
-    author,
-    publishedAt,
-    created_at: publishedAt,
-    view_count: 0,
-    views: 0,
-    is_published: publish,
-    locale: loc,
-    translation_group: `admin-${now}`,
-    isBuiltIn: false,
-  }));
+  // 只创建英文版文章，多语言翻译由翻译API处理
+  const post = createSingleAdminPost({
+    title: input.title,
+    category: input.category,
+    content: input.content,
+    coverImage: input.coverImage,
+    publish: input.publish,
+    locale: 'en',
+  });
+  return [post];
 }
 
 export function getStoredBlogPosts(_locale?: Locale): BlogPost[] {

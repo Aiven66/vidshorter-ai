@@ -173,8 +173,11 @@ interface BlogPost {
   content?: string;
   is_published: boolean;
   view_count?: number;
+  locale?: string;
   created_at: string;
   updated_at?: string;
+  _locales?: string[];
+  _groupSize?: number;
 }
 
 interface BlogPageProps {
@@ -240,9 +243,9 @@ export function BlogPage({ locale }: BlogPageProps) {
       let dbPosts: BlogPost[] = [];
       let total = 0;
 
-      // 方式1：通过 API 获取（需要 accessToken）
+      // 方式1：通过 API 获取（需要 accessToken），获取全部文章不分页
       if (accessToken) {
-        const res = await fetch(`/api/blog/posts?page=${page}&pageSize=${pageSize}`, {
+        const res = await fetch(`/api/blog/posts?page=1&pageSize=1000`, {
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${accessToken}`,
@@ -260,6 +263,7 @@ export function BlogPage({ locale }: BlogPageProps) {
             content: p.content,
             is_published: p.is_published,
             view_count: p.view_count,
+            locale: p.locale || '',
             created_at: new Date(p.created_at).toISOString(),
             updated_at: p.updated_at ? new Date(p.updated_at).toISOString() : undefined,
           }));
@@ -273,12 +277,11 @@ export function BlogPage({ locale }: BlogPageProps) {
           const { isSupabaseConfigured, getSupabaseClient } = await import('@/storage/database/supabase-client');
           if (isSupabaseConfigured()) {
             const client = getSupabaseClient();
-            // 先尝试查询所有文章（管理后台需要看到全部）
             const { data, error } = await client
               .from('blogs')
               .select('*')
               .order('created_at', { ascending: false })
-              .limit(200);
+              .limit(1000);
 
             if (!error && data && data.length > 0) {
               dbPosts = data.map((p: any) => ({
@@ -289,18 +292,18 @@ export function BlogPage({ locale }: BlogPageProps) {
                 content: p.content,
                 is_published: p.is_published,
                 view_count: p.view_count,
+                locale: p.locale || '',
                 created_at: new Date(p.created_at).toISOString(),
                 updated_at: p.updated_at ? new Date(p.updated_at).toISOString() : undefined,
               }));
               total = dbPosts.length;
             } else if (error) {
-              // RLS 可能阻止了查询所有文章，尝试只查已发布文章
               const { data: publishedData, error: publishedError } = await client
                 .from('blogs')
                 .select('*')
                 .eq('is_published', true)
                 .order('created_at', { ascending: false })
-                .limit(200);
+                .limit(1000);
 
               if (!publishedError && publishedData && publishedData.length > 0) {
                 dbPosts = publishedData.map((p: any) => ({
@@ -311,6 +314,7 @@ export function BlogPage({ locale }: BlogPageProps) {
                   content: p.content,
                   is_published: p.is_published,
                   view_count: p.view_count,
+                  locale: p.locale || '',
                   created_at: new Date(p.created_at).toISOString(),
                   updated_at: p.updated_at ? new Date(p.updated_at).toISOString() : undefined,
                 }));
@@ -323,10 +327,10 @@ export function BlogPage({ locale }: BlogPageProps) {
         }
       }
 
-      // 方式3：如果以上都失败，尝试不带 token 调用 API（只返回已发布文章）
+      // 方式3：如果以上都失败，尝试不带 token 调用 API
       if (dbPosts.length === 0 && !accessToken) {
         try {
-          const res = await fetch(`/api/blog/posts?page=${page}&pageSize=${pageSize}`, {
+          const res = await fetch(`/api/blog/posts?page=1&pageSize=1000`, {
             headers: { 'Content-Type': 'application/json' },
             cache: 'no-store',
           });
@@ -340,6 +344,7 @@ export function BlogPage({ locale }: BlogPageProps) {
               content: p.content,
               is_published: p.is_published,
               view_count: p.view_count,
+              locale: p.locale || '',
               created_at: new Date(p.created_at).toISOString(),
               updated_at: p.updated_at ? new Date(p.updated_at).toISOString() : undefined,
             }));
@@ -350,74 +355,41 @@ export function BlogPage({ locale }: BlogPageProps) {
         }
       }
 
-      const activeLocale = normalizeLocale(locale);
-      const storedPosts = getStoredBlogPosts(activeLocale).map(p => ({
-        id: p.id,
-        title: p.title,
-        category: p.category,
-        cover_image: p.cover_image,
-        content: p.content,
-        is_published: p.is_published,
-        view_count: p.view_count,
-        created_at: p.created_at,
-        updated_at: undefined,
-      }));
+      // 管理后台：按 translation_group 或 created_at 分组，合并相同内容的翻译版本
+      // 同一组的文章只显示一条（英文版为主），附带语言标签
+      const groups = new Map<string, BlogPost[]>();
+      for (const post of dbPosts) {
+        // 使用 created_at 日期（精确到分钟）作为分组键
+        // 同一次发布的文章 created_at 相同
+        const dateKey = post.created_at?.substring(0, 16) || post.id;
+        if (!groups.has(dateKey)) groups.set(dateKey, []);
+        groups.get(dateKey)!.push(post);
+      }
 
-      const builtInPosts = getBuiltInBlogPosts(activeLocale).map(p => ({
-        id: p.id,
-        title: p.title,
-        category: p.category,
-        cover_image: p.cover_image,
-        content: p.content,
-        is_published: p.is_published,
-        view_count: p.view_count,
-        created_at: p.created_at,
-        updated_at: undefined,
-      }));
+      // 每组取英文版为主，如果没有英文版取第一篇
+      const groupedPosts: BlogPost[] = [];
+      for (const [, group] of groups) {
+        // 优先选英文版
+        const enPost = group.find(p => p.locale === 'en') || group[0];
+        groupedPosts.push({
+          ...enPost,
+          // 保留组内所有 locale 信息
+          _locales: group.map(p => p.locale).filter(Boolean),
+          _groupSize: group.length,
+        } as BlogPost & { _locales: string[]; _groupSize: number });
+      }
 
-      const allPosts = [...dbPosts, ...storedPosts, ...builtInPosts];
-      const seenIds = new Set<string>();
-      const dbTitleSet = new Set<string>();
-      // 收集数据库文章的标题，用于去重 localStorage/内置文章
-      dbPosts.forEach(p => {
-        const t = p.title?.trim().toLowerCase();
-        if (t) dbTitleSet.add(t);
-      });
-      const uniquePosts = allPosts.filter(post => {
-        // 按 ID 去重
-        if (seenIds.has(post.id)) return false;
-        seenIds.add(post.id);
-        // 仅对非数据库文章按标题去重：如果数据库已有同标题文章，跳过 localStorage/内置的
-        const isFromDb = dbPosts.some(dp => dp.id === post.id);
-        if (!isFromDb) {
-          const titleKey = post.title?.trim().toLowerCase();
-          if (titleKey && dbTitleSet.has(titleKey)) return false;
-        }
-        return true;
-      });
-
-      uniquePosts.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      groupedPosts.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
       // 计算分页
       const startIdx = (page - 1) * pageSize;
       const endIdx = startIdx + pageSize;
-      const paginatedPosts = uniquePosts.slice(startIdx, endIdx);
+      const paginatedPosts = groupedPosts.slice(startIdx, endIdx);
 
       setPosts(paginatedPosts);
-      setTotalCount(uniquePosts.length);
+      setTotalCount(groupedPosts.length);
       setCurrentPage(page);
     } catch (err) {
-      const activeLocale = normalizeLocale(locale);
-      const fallbackPosts = [...getStoredBlogPosts(activeLocale), ...getBuiltInBlogPosts(activeLocale)];
-      fallbackPosts.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-
-      const startIdx = (page - 1) * pageSize;
-      const endIdx = startIdx + pageSize;
-      const paginatedPosts = fallbackPosts.slice(startIdx, endIdx);
-
-      setPosts(paginatedPosts);
-      setTotalCount(fallbackPosts.length);
-      setCurrentPage(page);
       setError(err instanceof Error ? err.message : 'Failed to load');
     } finally {
       setLoading(false);
@@ -650,34 +622,52 @@ export function BlogPage({ locale }: BlogPageProps) {
     }
     const confirmMessage =
       locale === 'zh'
-        ? `确认删除文章"${postTitle}"？此操作无法撤销。`
-        : `Confirm delete "${postTitle}"? This cannot be undone.`;
+        ? `确认删除文章"${postTitle}"及其所有语言版本？此操作无法撤销。`
+        : `Delete "${postTitle}" and all its language versions? This cannot be undone.`;
     if (!window.confirm(confirmMessage)) return;
 
     try {
-      // 使用 accessToken（来自 useAuth hook）而非 localStorage，确保 token 一致
       if (!accessToken) {
         throw new Error(locale === 'zh' ? '未登录或 token 失效' : 'Not logged in or token expired');
       }
 
-      const res = await fetch(`/api/blog/${encodeURIComponent(postId)}`, {
-        method: 'DELETE',
+      // 先查找同组的所有文章（相同 created_at 日期的文章）
+      const allPostsRes = await fetch('/api/blog/posts?page=1&pageSize=1000', {
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${accessToken}`,
         },
+        cache: 'no-store',
       });
 
-      const body = await res.json().catch(() => null);
-
-      if (!res.ok) {
-        throw new Error(
-          body?.error || (locale === 'zh' ? '删除失败' : 'Delete failed')
-        );
+      let idsToDelete = [postId];
+      if (allPostsRes.ok) {
+        const allData = await allPostsRes.json();
+        const allPostsList = allData.posts || [];
+        // 找到当前文章的 created_at
+        const currentPost = allPostsList.find((p: any) => p.id === postId);
+        if (currentPost) {
+          const dateKey = currentPost.created_at?.substring(0, 16);
+          // 找到所有同日期的文章
+          const sameGroup = allPostsList.filter((p: any) =>
+            p.created_at?.substring(0, 16) === dateKey
+          );
+          if (sameGroup.length > 1) {
+            idsToDelete = sameGroup.map((p: any) => p.id);
+          }
+        }
       }
 
-      const stored = getStoredBlogPosts().filter((p) => p.id !== postId);
-      saveAdminBlogPosts(stored);
+      // 逐个删除
+      for (const id of idsToDelete) {
+        await fetch(`/api/blog/${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+        });
+      }
 
       await fetchPosts();
       setError(null);
@@ -1058,6 +1048,14 @@ export function BlogPage({ locale }: BlogPageProps) {
                             ? (locale === 'zh' ? '已发布' : 'Published')
                             : (locale === 'zh' ? '草稿' : 'Draft')}
                         </Badge>
+                        {post._groupSize && post._groupSize > 1 && (
+                          <Badge variant="outline" className="text-xs">
+                            <Sparkles className="h-3 w-3 mr-1" />
+                            {locale === 'zh'
+                              ? `${post._groupSize} 种语言`
+                              : `${post._groupSize} languages`}
+                          </Badge>
+                        )}
                       </div>
                     </div>
 
