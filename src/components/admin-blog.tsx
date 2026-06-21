@@ -218,10 +218,16 @@ export function BlogPage({ locale }: BlogPageProps) {
       }));
 
       const allPosts = [...dbPosts, ...storedPosts, ...builtInPosts];
-      const seen = new Set<string>();
+      const seenIds = new Set<string>();
+      const seenTitles = new Set<string>();
       const uniquePosts = allPosts.filter(post => {
-        if (seen.has(post.id)) return false;
-        seen.add(post.id);
+        // 按 ID 去重
+        if (seenIds.has(post.id)) return false;
+        seenIds.add(post.id);
+        // 按标题去重（数据库已有则跳过 localStorage/内置的同标题文章）
+        const titleKey = post.title?.trim().toLowerCase();
+        if (titleKey && seenTitles.has(titleKey)) return false;
+        if (titleKey) seenTitles.add(titleKey);
         return true;
       });
 
@@ -271,8 +277,31 @@ export function BlogPage({ locale }: BlogPageProps) {
     if (!accessToken || !isAdmin) return;
     setSyncing(true);
     try {
+      // 先获取数据库中已有的文章标题，避免重复同步
+      const existingRes = await fetch('/api/blog/posts?page=1&pageSize=1000', {
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        cache: 'no-store',
+      });
+      const existingTitles = new Set<string>();
+      if (existingRes.ok) {
+        const existingData = await existingRes.json();
+        for (const p of existingData.posts || []) {
+          if (p.title) existingTitles.add(p.title.trim().toLowerCase());
+        }
+      }
+
       const builtInPosts = getBuiltInBlogPosts('en');
+      let syncedCount = 0;
+      let skippedCount = 0;
       for (const post of builtInPosts) {
+        // 跳过已存在的文章（按标题去重）
+        if (existingTitles.has(post.title.trim().toLowerCase())) {
+          skippedCount++;
+          continue;
+        }
         const payload = {
           title: post.title,
           category: post.category,
@@ -280,7 +309,7 @@ export function BlogPage({ locale }: BlogPageProps) {
           content: post.content || '',
           publish: true,
         };
-        await fetch('/api/blog/posts', {
+        const res = await fetch('/api/blog/posts', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -288,8 +317,12 @@ export function BlogPage({ locale }: BlogPageProps) {
           },
           body: JSON.stringify(payload),
         });
+        if (res.ok) syncedCount++;
       }
       await fetchPosts();
+      if (skippedCount > 0) {
+        setError(null);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sync failed');
     } finally {
