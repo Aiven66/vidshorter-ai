@@ -5,7 +5,7 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useLocale } from '@/lib/locale-context';
-import { Calendar, ArrowRight, FileText } from 'lucide-react';
+import { Calendar, ArrowRight, FileText, ChevronLeft, ChevronRight } from 'lucide-react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { isSupabaseConfigured } from '@/storage/database/supabase-client';
@@ -25,6 +25,8 @@ export default function BlogPage() {
   const activeLocale = normalizeLocale(locale);
   const [posts, setPosts] = useState<BlogPost[]>([]);
   const [loading, setLoading] = useState(true);
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 10;
 
   useEffect(() => {
     let cancelled = false;
@@ -119,6 +121,32 @@ export default function BlogPage() {
     );
   }
 
+  // 分页计算
+  const totalPages = Math.ceil(posts.length / pageSize);
+  const startIndex = (currentPage - 1) * pageSize;
+  const endIndex = startIndex + pageSize;
+  const paginatedPosts = posts.slice(startIndex, endIndex);
+
+  const handlePageChange = (page: number) => {
+    setCurrentPage(page);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // 生成分页页码
+  const getPageNumbers = (): number[] => {
+    const pages: number[] = [];
+    const maxVisible = 5;
+    let start = Math.max(1, currentPage - Math.floor(maxVisible / 2));
+    const end = Math.min(totalPages, start + maxVisible - 1);
+    if (end - start + 1 < maxVisible) {
+      start = Math.max(1, end - maxVisible + 1);
+    }
+    for (let i = start; i <= end; i++) {
+      pages.push(i);
+    }
+    return pages;
+  };
+
   return (
     <div className="min-h-screen bg-muted/30">
       <div className="container mx-auto px-4 py-16">
@@ -134,8 +162,9 @@ export default function BlogPage() {
               <p className="text-muted-foreground">{t('blog.noPosts')}</p>
             </div>
           ) : (
-            <div className="grid gap-8">
-              {posts.map((post) => (
+            <>
+              <div className="grid gap-8">
+                {paginatedPosts.map((post) => (
                 <Card key={post.id} className="overflow-hidden hover:shadow-lg transition-shadow">
                   <div className="md:flex">
                     <div className="relative h-48 md:min-h-[240px] md:w-1/3">
@@ -176,6 +205,51 @@ export default function BlogPage() {
                 </Card>
               ))}
             </div>
+
+            {/* 分页组件 */}
+            {totalPages > 1 && (
+              <div className="mt-12 flex items-center justify-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handlePageChange(currentPage - 1)}
+                  disabled={currentPage === 1}
+                  className="flex items-center gap-1"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                  {activeLocale === 'zh' ? '上一页' : 'Prev'}
+                </Button>
+
+                {getPageNumbers().map((pageNum) => (
+                  <Button
+                    key={pageNum}
+                    variant={currentPage === pageNum ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => handlePageChange(pageNum)}
+                  >
+                    {pageNum}
+                  </Button>
+                ))}
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handlePageChange(currentPage + 1)}
+                  disabled={currentPage === totalPages}
+                  className="flex items-center gap-1"
+                >
+                  {activeLocale === 'zh' ? '下一页' : 'Next'}
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+
+                <span className="text-sm text-muted-foreground ml-3">
+                  {activeLocale === 'zh'
+                    ? `第 ${currentPage}/${totalPages} 页，共 ${posts.length} 篇`
+                    : `Page ${currentPage}/${totalPages}, ${posts.length} articles`}
+                </span>
+              </div>
+            )}
+            </>
           )}
         </div>
       </div>
