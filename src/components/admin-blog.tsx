@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,12 +28,136 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import {
-  saveAdminBlogPosts,
   getBuiltInBlogPosts,
   getStoredBlogPosts,
-  normalizeLocale,
-  getDefaultCoverImage,
+  createSingleAdminPost,
 } from '@/lib/blog-content';
+import type { BlogPost } from '@/lib/blog-content';
+
+// ============================================================
+// FileDropZone — 独立的文件拖拽/点击上传组件
+// ============================================================
+// 解决的核心问题：
+// 1. 点击上传：用 <label htmlFor> 替代 ref.current.click()，浏览器安全策略100%允许
+// 2. 拖拽上传：组件内 useRef + useEffect 绑定原生事件，无闭包/时序问题
+// 3. 拖拽计数器：解决子元素触发 dragLeave 的经典问题
+interface FileDropZoneProps {
+  /** 唯一 id，用于 <label htmlFor> 关联 <input id> */
+  inputId: string;
+  /** file input 的 accept 属性 */
+  accept: string;
+  /** 是否允许多选 */
+  multiple?: boolean;
+  /** 拖拽/点击后的回调 */
+  onFiles: (files: File[]) => void;
+  /** 子元素（显示内容），支持函数形式接收 isDragOver 状态 */
+  children: ReactNode | ((isDragOver: boolean) => ReactNode);
+  /** 整个区域的 className，支持函数形式接收 isDragOver 状态 */
+  className?: string | ((isDragOver: boolean) => string);
+}
+
+function FileDropZone({
+  inputId,
+  accept,
+  multiple = false,
+  onFiles,
+  className = '',
+  children,
+}: FileDropZoneProps) {
+  const dropRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const dragCountRef = useRef(0);
+  const [isDragOver, setIsDragOver] = useState(false);
+  // 用 ref 存储最新的 onFiles 回调，避免闭包过期
+  const onFilesRef = useRef(onFiles);
+  onFilesRef.current = onFiles;
+
+  useEffect(() => {
+    const el = dropRef.current;
+    if (!el) return;
+
+    const onDragEnter = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCountRef.current++;
+      setIsDragOver(true);
+    };
+    const onDragOver = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      // 必须设置 dropEffect 才能让 drop 事件正常触发
+      if (e.dataTransfer) {
+        e.dataTransfer.dropEffect = 'copy';
+      }
+    };
+    const onDragLeave = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCountRef.current--;
+      if (dragCountRef.current <= 0) {
+        dragCountRef.current = 0;
+        setIsDragOver(false);
+      }
+    };
+    const onDrop = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCountRef.current = 0;
+      setIsDragOver(false);
+      if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+        const files = Array.from(e.dataTransfer.files);
+        onFilesRef.current(files);
+      }
+    };
+
+    el.addEventListener('dragenter', onDragEnter);
+    el.addEventListener('dragover', onDragOver);
+    el.addEventListener('dragleave', onDragLeave);
+    el.addEventListener('drop', onDrop);
+
+    return () => {
+      el.removeEventListener('dragenter', onDragEnter);
+      el.removeEventListener('dragover', onDragOver);
+      el.removeEventListener('dragleave', onDragLeave);
+      el.removeEventListener('drop', onDrop);
+    };
+  }, []);
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      onFilesRef.current(Array.from(e.target.files));
+      // 重置 input value，允许重复选择同一文件
+      e.target.value = '';
+    }
+  };
+
+  return (
+    <div
+      ref={dropRef}
+      className={typeof className === 'function' ? className(isDragOver) : className}
+    >
+      {/* 隐藏的 file input，用 <label htmlFor> 触发 */}
+      <input
+        id={inputId}
+        ref={inputRef}
+        type="file"
+        accept={accept}
+        multiple={multiple}
+        onChange={handleInputChange}
+        style={{ position: 'absolute', width: 0, height: 0, opacity: 0, overflow: 'hidden' }}
+        tabIndex={-1}
+      />
+      {/* label 包裹整个内容，点击即触发文件选择 */}
+      <label
+        htmlFor={inputId}
+        className="block w-full h-full cursor-pointer"
+        style={{ pointerEvents: 'auto' }}
+      >
+        {typeof children === 'function' ? children(isDragOver) : children}
+      </label>
+    </div>
+  );
+}
 import { RichTextEditor } from '@/components/rich-text-editor';
 import { CoverImageUploader } from '@/components/cover-image-uploader';
 import { type Locale } from './admin-layout';
@@ -90,56 +214,7 @@ export function BlogPage({ locale }: BlogPageProps) {
   const [htmlSaving, setHtmlSaving] = useState(false);
   const [htmlStatus, setHtmlStatus] = useState<string | null>(null);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
-  const additionalInputRef = useRef<HTMLInputElement>(null);
-  const coverInputRef = useRef<HTMLInputElement>(null);
-  const htmlInputRef = useRef<HTMLInputElement>(null);
 
-  // 拖拽状态
-  const [htmlDragOver, setHtmlDragOver] = useState(false);
-  const [coverDragOver, setCoverDragOver] = useState(false);
-  const [additionalDragOver, setAdditionalDragOver] = useState(false);
-
-  // 拖拽计数器（解决子元素触发 dragLeave 的问题）
-  const htmlDragCountRef = useRef(0);
-  const coverDragCountRef = useRef(0);
-  const additionalDragCountRef = useRef(0);
-
-  // ========= 通用拖拽事件处理函数 =========
-  // 使用 useCallback 确保函数引用稳定，避免闭包陷阱
-  const createDragHandlers = useCallback(
-    (dragCountRef: React.MutableRefObject<number>, setDragOver: (v: boolean) => void) => ({
-      onDragEnter: (e: React.DragEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        dragCountRef.current++;
-        setDragOver(true);
-      },
-      onDragOver: (e: React.DragEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-      },
-      onDragLeave: (e: React.DragEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        dragCountRef.current--;
-        if (dragCountRef.current <= 0) {
-          dragCountRef.current = 0;
-          setDragOver(false);
-        }
-      },
-      onDrop: (e: React.DragEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        dragCountRef.current = 0;
-        setDragOver(false);
-      },
-    }),
-    []
-  );
-
-  const htmlDragHandlers = createDragHandlers(htmlDragCountRef, setHtmlDragOver);
-  const coverDragHandlers = createDragHandlers(coverDragCountRef, setCoverDragOver);
-  const additionalDragHandlers = createDragHandlers(additionalDragCountRef, setAdditionalDragOver);
 
   const isAdmin = user?.role === 'admin' || user?.email === 'admin@126.com' || user?.email === 'admin@clipop.ai' || user?.email === 'admin@vidshorter.ai';
 
@@ -1006,24 +1081,14 @@ export function BlogPage({ locale }: BlogPageProps) {
           />
         </div>
 
-        {/* HTML 文件拖拽上传区 */}
+        {/* HTML 文件拖拽/点击上传区 */}
         <div className="grid gap-2">
           <Label>{locale === 'zh' ? '上传 HTML 内容文件' : 'Upload HTML content file'}</Label>
-          <input
-            ref={htmlInputRef}
-            type="file"
+          <FileDropZone
+            inputId="html-file-input"
             accept=".html,.htm,.txt"
-            onChange={handleHtmlFileChange}
-            className="hidden"
-          />
-          <div
-            onClick={() => htmlInputRef.current?.click()}
-            onDragEnter={htmlDragHandlers.onDragEnter}
-            onDragOver={htmlDragHandlers.onDragOver}
-            onDragLeave={htmlDragHandlers.onDragLeave}
-            onDrop={(e) => {
-              htmlDragHandlers.onDrop(e);
-              const file = e.dataTransfer.files?.[0];
+            onFiles={(files) => {
+              const file = files[0];
               if (file && (file.name.endsWith('.html') || file.name.endsWith('.htm') || file.name.endsWith('.txt'))) {
                 setHtmlFile(file);
                 file.text().then((text) => {
@@ -1035,36 +1100,45 @@ export function BlogPage({ locale }: BlogPageProps) {
                 });
               }
             }}
-            className={`relative border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
-              htmlDragOver
-                ? 'border-primary bg-primary/5'
-                : htmlFile
-                  ? 'border-green-500/50 bg-green-50/50 dark:bg-green-950/20'
-                  : 'border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/30'
-            }`}
+            className={(isDragOver) =>
+              `relative border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
+                isDragOver
+                  ? 'border-primary bg-primary/5'
+                  : htmlFile
+                    ? 'border-green-500/50 bg-green-50/50 dark:bg-green-950/20'
+                    : 'border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/30'
+              }`
+            }
           >
-            {htmlFile ? (
-              <div className="flex items-center justify-center gap-3 pointer-events-none">
-                <FileCode className="h-8 w-8 text-green-600" />
-                <div className="text-left">
-                  <p className="font-medium text-sm">{htmlFile.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {(htmlFile.size / 1024).toFixed(1)} KB
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <div className="pointer-events-none">
-                <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-                <p className="text-sm font-medium">
-                  {locale === 'zh' ? '拖拽 HTML 文件到此处' : 'Drag & drop HTML file here'}
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {locale === 'zh' ? '或点击选择文件 (.html, .htm, .txt)' : 'or click to select file (.html, .htm, .txt)'}
-                </p>
-              </div>
+            {(isDragOver) => (
+              <>
+                {htmlFile ? (
+                  <div className="flex items-center justify-center gap-3">
+                    <FileCode className="h-8 w-8 text-green-600" />
+                    <div className="text-left">
+                      <p className="font-medium text-sm">{htmlFile.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {(htmlFile.size / 1024).toFixed(1)} KB
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+                    <p className="text-sm font-medium">
+                      {isDragOver
+                        ? (locale === 'zh' ? '释放以选择文件' : 'Drop file here')
+                        : (locale === 'zh' ? '拖拽 HTML 文件到此处' : 'Drag & drop HTML file here')
+                      }
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {locale === 'zh' ? '或点击选择文件 (.html, .htm, .txt)' : 'or click to select file (.html, .htm, .txt)'}
+                    </p>
+                  </div>
+                )}
+              </>
             )}
-          </div>
+          </FileDropZone>
           {htmlFile && (
             <div className="flex items-center gap-2 mt-1">
               <Button
@@ -1074,7 +1148,6 @@ export function BlogPage({ locale }: BlogPageProps) {
                 onClick={() => {
                   setHtmlFile(null);
                   setHtmlPreview('');
-                  if (htmlInputRef.current) htmlInputRef.current.value = '';
                 }}
                 className="flex items-center gap-1 text-destructive hover:text-destructive"
               >
@@ -1090,65 +1163,64 @@ export function BlogPage({ locale }: BlogPageProps) {
           )}
         </div>
 
-        {/* 封面图片拖拽上传区 */}
+        {/* 封面图片拖拽/点击上传区 */}
         <div className="grid gap-2">
           <Label>{locale === 'zh' ? '封面图片' : 'Cover image'}</Label>
-          <input
-            ref={coverInputRef}
-            type="file"
+          <FileDropZone
+            inputId="cover-image-input"
             accept="image/*"
-            onChange={handleCoverChange}
-            className="hidden"
-          />
-          <div
-            onClick={() => coverInputRef.current?.click()}
-            onDragEnter={coverDragHandlers.onDragEnter}
-            onDragOver={coverDragHandlers.onDragOver}
-            onDragLeave={coverDragHandlers.onDragLeave}
-            onDrop={(e) => {
-              coverDragHandlers.onDrop(e);
-              const file = e.dataTransfer.files?.[0];
+            onFiles={(files) => {
+              const file = files[0];
               if (file && file.type.startsWith('image/')) {
                 setCoverImageFile(file);
                 readFileAsDataUrl(file).then((url) => setCoverImagePreview(url));
               }
             }}
-            className={`relative border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${
-              coverDragOver
-                ? 'border-primary bg-primary/5'
-                : coverImagePreview
-                  ? 'border-green-500/50 bg-green-50/50 dark:bg-green-950/20'
-                  : 'border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/30'
-            }`}
+            className={(isDragOver) =>
+              `relative border-2 border-dashed rounded-lg p-4 text-center transition-colors ${
+                isDragOver
+                  ? 'border-primary bg-primary/5'
+                  : coverImagePreview
+                    ? 'border-green-500/50 bg-green-50/50 dark:bg-green-950/20'
+                    : 'border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/30'
+              }`
+            }
           >
-            {coverImagePreview ? (
-              <div className="flex items-center gap-4 pointer-events-none">
-                <img
-                  src={coverImagePreview}
-                  alt="cover preview"
-                  className="h-20 w-32 object-cover rounded-md border border-border"
-                />
-                <div className="text-left flex-1">
-                  <p className="font-medium text-sm">{coverImageFile?.name || 'Cover image'}</p>
-                  {coverImageFile && (
-                    <p className="text-xs text-muted-foreground">
-                      {(coverImageFile.size / 1024).toFixed(1)} KB
+            {(isDragOver) => (
+              <>
+                {coverImagePreview ? (
+                  <div className="flex items-center gap-4">
+                    <img
+                      src={coverImagePreview}
+                      alt="cover preview"
+                      className="h-20 w-32 object-cover rounded-md border border-border"
+                    />
+                    <div className="text-left flex-1">
+                      <p className="font-medium text-sm">{coverImageFile?.name || 'Cover image'}</p>
+                      {coverImageFile && (
+                        <p className="text-xs text-muted-foreground">
+                          {(coverImageFile.size / 1024).toFixed(1)} KB
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <ImageIcon className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+                    <p className="text-sm font-medium">
+                      {isDragOver
+                        ? (locale === 'zh' ? '释放以选择封面' : 'Drop cover image')
+                        : (locale === 'zh' ? '拖拽封面图片到此处' : 'Drag & drop cover image here')
+                      }
                     </p>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div className="pointer-events-none">
-                <ImageIcon className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-                <p className="text-sm font-medium">
-                  {locale === 'zh' ? '拖拽封面图片到此处' : 'Drag & drop cover image here'}
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {locale === 'zh' ? '或点击选择图片' : 'or click to select image'}
-                </p>
-              </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {locale === 'zh' ? '或点击选择图片' : 'or click to select image'}
+                    </p>
+                  </div>
+                )}
+              </>
             )}
-          </div>
+          </FileDropZone>
           {coverImageFile && (
             <div className="flex items-center gap-2 mt-1">
               <Button
@@ -1158,7 +1230,6 @@ export function BlogPage({ locale }: BlogPageProps) {
                 onClick={() => {
                   setCoverImageFile(null);
                   setCoverImagePreview('');
-                  if (coverInputRef.current) coverInputRef.current.value = '';
                 }}
                 className="flex items-center gap-1 text-destructive hover:text-destructive"
               >
@@ -1169,76 +1240,78 @@ export function BlogPage({ locale }: BlogPageProps) {
           )}
         </div>
 
-        {/* 配图拖拽上传区（支持多文件） */}
+        {/* 配图拖拽/点击上传区（支持多文件） */}
         <div className="grid gap-2">
           <Label>
             {locale === 'zh' ? '其他配图（可选，支持多选）' : 'Additional images (optional, multi-select)'}
           </Label>
-          <input
-            ref={additionalInputRef}
-            type="file"
+          <FileDropZone
+            inputId="additional-images-input"
             accept="image/*"
             multiple
-            onChange={handleAdditionalImagesChange}
-            className="hidden"
-          />
-          <div
-            onClick={() => additionalInputRef.current?.click()}
-            onDragEnter={additionalDragHandlers.onDragEnter}
-            onDragOver={additionalDragHandlers.onDragOver}
-            onDragLeave={additionalDragHandlers.onDragLeave}
-            onDrop={(e) => {
-              additionalDragHandlers.onDrop(e);
-              const imageFiles = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+            onFiles={(files) => {
+              const imageFiles = files.filter(f => f.type.startsWith('image/'));
               if (imageFiles.length === 0) return;
               setAdditionalImages((prev) => [...prev, ...imageFiles]);
               Promise.all(imageFiles.map((f) => readFileAsDataUrl(f))).then((urls) => {
                 setAdditionalPreviews((prev) => [...prev, ...urls]);
               });
             }}
-            className={`relative border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${
-              additionalDragOver
-                ? 'border-primary bg-primary/5'
-                : additionalPreviews.length > 0
-                  ? 'border-green-500/50 bg-green-50/50 dark:bg-green-950/20'
-                  : 'border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/30'
-            }`}
+            className={(isDragOver) =>
+              `relative border-2 border-dashed rounded-lg p-4 text-center transition-colors ${
+                isDragOver
+                  ? 'border-primary bg-primary/5'
+                  : additionalPreviews.length > 0
+                    ? 'border-green-500/50 bg-green-50/50 dark:bg-green-950/20'
+                    : 'border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/30'
+              }`
+            }
           >
-            {additionalPreviews.length > 0 ? (
-              <div className="flex items-center gap-3 pointer-events-none">
-                <div className="flex -space-x-2">
-                  {additionalPreviews.slice(0, 4).map((url, idx) => (
-                    <img
-                      key={idx}
-                      src={url}
-                      alt={`img-${idx}`}
-                      className="h-12 w-12 object-cover rounded-md border-2 border-background"
-                    />
-                  ))}
-                </div>
-                <div className="text-left flex-1">
-                  <p className="font-medium text-sm">
-                    {locale === 'zh'
-                      ? `已选择 ${additionalImages.length} 张配图`
-                      : `${additionalImages.length} image(s) selected`}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {locale === 'zh' ? '点击继续添加或拖入更多图片' : 'Click or drag to add more images'}
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <div className="pointer-events-none">
-                <ImageIcon className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-                <p className="text-sm font-medium">
-                  {locale === 'zh' ? '拖拽配图到此处（可多张）' : 'Drag & drop images here (multi)'}
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {locale === 'zh' ? '或点击选择多张图片' : 'or click to select multiple images'}
-                </p>
-              </div>
+            {(isDragOver) => (
+              <>
+                {additionalPreviews.length > 0 ? (
+                  <div className="flex items-center gap-3">
+                    <div className="flex -space-x-2">
+                      {additionalPreviews.slice(0, 4).map((url, idx) => (
+                        <img
+                          key={idx}
+                          src={url}
+                          alt={`img-${idx}`}
+                          className="h-12 w-12 object-cover rounded-md border-2 border-background"
+                        />
+                      ))}
+                    </div>
+                    <div className="text-left flex-1">
+                      <p className="font-medium text-sm">
+                        {locale === 'zh'
+                          ? `已选择 ${additionalImages.length} 张配图`
+                          : `${additionalImages.length} image(s) selected`}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {isDragOver
+                          ? (locale === 'zh' ? '释放以添加更多图片' : 'Drop to add more images')
+                          : (locale === 'zh' ? '点击继续添加或拖入更多图片' : 'Click or drag to add more images')
+                        }
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <ImageIcon className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+                    <p className="text-sm font-medium">
+                      {isDragOver
+                        ? (locale === 'zh' ? '释放以添加配图' : 'Drop images here')
+                        : (locale === 'zh' ? '拖拽配图到此处（可多张）' : 'Drag & drop images here (multi)')
+                      }
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {locale === 'zh' ? '或点击选择多张图片' : 'or click to select multiple images'}
+                    </p>
+                  </div>
+                )}
+              </>
             )}
-          </div>
+          </FileDropZone>
 
           {/* 配图预览列表（带排序和删除） */}
           {additionalPreviews.length > 0 && (
