@@ -47,101 +47,86 @@ export default function BlogPage() {
         const { getSupabaseClient } = await import('@/storage/database/supabase-client');
         const client = getSupabaseClient();
 
-        // 先尝试按 locale 列过滤查询（如果 locale 列存在）
-        let data: any[] | null = null;
-        let error: any = null;
-        let localeColumnExists = false;
-
-        // 尝试带 locale 过滤的查询
-        const localeResult = await client
+        // 先获取所有已发布文章
+        const allResult = await client
           .from('blogs')
           .select('*')
           .eq('is_published', true)
-          .eq('locale', activeLocale)
           .order('created_at', { ascending: false })
-          .limit(50);
+          .limit(500);
 
-        if (localeResult.error) {
-          // locale 列可能不存在，fallback 到不带 locale 过滤
-          const fallbackResult = await client
-            .from('blogs')
-            .select('*')
-            .eq('is_published', true)
-            .order('created_at', { ascending: false })
-            .limit(500);
-          data = fallbackResult.data;
-          error = fallbackResult.error;
-        } else {
-          localeColumnExists = true;
-          data = localeResult.data;
-          // 如果当前语言没有文章，fallback 到英文
-          if (!data || data.length === 0) {
-            const enResult = await client
-              .from('blogs')
-              .select('*')
-              .eq('is_published', true)
-              .eq('locale', 'en')
-              .order('created_at', { ascending: false })
-              .limit(50);
-            if (enResult.data && enResult.data.length > 0) {
-              data = enResult.data;
-            }
-          }
+        let data = allResult.data;
+        const queryError = allResult.error;
+
+        if (queryError) throw queryError;
+
+        if (!data || data.length === 0) {
+          setPosts(fallbackPosts);
+          setLoading(false);
+          return;
         }
 
-        if (error) throw error;
-
-        // 如果 locale 列不存在，使用语言检测来过滤
-        if (!localeColumnExists && data && data.length > 0) {
-          const filteredData = data.filter((row: any) => {
-            const detectedLang = detectLanguage(row.title || '');
-            if (detectedLang === activeLocale) return true;
-            if (activeLocale === 'zh' && detectedLang === 'zh') return true;
-            if (activeLocale === 'zh-Hant' && detectedLang === 'zh-Hant') return true;
-            if (activeLocale === 'en' && detectedLang === 'en') return true;
-            return false;
-          });
-
-          if (filteredData.length === 0) {
-            const enArticles = data.filter((row: any) => detectLanguage(row.title || '') === 'en');
-            data = enArticles.length > 0 ? enArticles : data.slice(0, 10);
-          } else {
-            data = filteredData;
-          }
+        // 按标题归一化分组，每组代表同一篇文章的不同语言版本
+        // 每组只输出一条记录（优先当前语言，没有则显示英文版）
+        const groups = new Map<string, any[]>();
+        for (const row of data) {
+          const titleKey = String(row.title || '').trim().toLowerCase();
+          // 空标题的文章用 id 单独分组
+          const key = titleKey || 'untitled-' + String(row.id);
+          if (!groups.has(key)) groups.set(key, []);
+          groups.get(key)!.push(row);
         }
 
-        // 合并显示：数据库文章 + localStorage 文章 + 内置文章
-        // 仅按 ID 去重，不按标题去重（不同语言版本可能有相同标题）
-        const seenIds = new Set<string>();
-        const databasePosts: BlogPost[] = [];
+        // 每组选一篇展示：优先当前语言版本，其次英文版，其次组内最新的
+        const finalRows: any[] = [];
+        for (const [, group] of groups) {
+          // 按 created_at 降序排列
+          const sortedGroup = [...group].sort((a, b) =>
+            new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+          );
 
-        // 1) 数据库中的文章（按 created_at 倒序，优先级最高）
-        for (const row of (data || [])) {
-          const post = normalizeBlogRow(row);
-          if (!seenIds.has(post.id)) {
-            seenIds.add(post.id);
-            databasePosts.push(post);
+          // 1. 找当前语言版本
+          let selected = sortedGroup.find(r => r.locale === activeLocale);
+
+          // 2. 找英文版
+          if (!selected) selected = sortedGroup.find(r => r.locale === 'en');
+
+          // 3. 用语言检测找匹配当前语言的
+          if (!selected) {
+            selected = sortedGroup.find(r => {
+              const detected = detectLanguage(String(r.title || ''));
+              return detected === activeLocale;
+            });
           }
+
+          // 4. 取组内最新的（fallback）
+          if (!selected) selected = sortedGroup[0];
+
+          finalRows.push(selected);
         }
 
-        // 2) 追加 localStorage 中之前发布的文章（仅当数据库无数据时）
+        // 按 created_at 降序
+        finalRows.sort((a, b) =>
+          new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+        );
+
+        // 转化为 BlogPost 对象
+        const databasePosts = finalRows.map(row => normalizeBlogRow(row));
+
+        // localStorage 文章作为补充（仅数据库无数据时）
         if (databasePosts.length === 0) {
           for (const post of getStoredBlogPosts(activeLocale)) {
-            if (!seenIds.has(post.id)) {
-              seenIds.add(post.id);
-              databasePosts.push(post);
-            }
+            const key = (post.title || '').trim().toLowerCase();
+            const exists = databasePosts.some(p =>
+              (p.title || '').trim().toLowerCase() === key
+            );
+            if (!exists) databasePosts.push(post);
           }
         }
 
-        // 3) 追加内置文章作为补充（仅当无其他文章时）
+        // 内置文章作为补充（仅数据库和 localStorage 都无数据时）
         if (databasePosts.length === 0) {
-          for (const post of getBuiltInBlogPosts(activeLocale)) {
-            if (!seenIds.has(post.id)) {
-              seenIds.add(post.id);
-              databasePosts.push(post);
-            }
-          }
+          databasePosts.push(...getBuiltInBlogPosts(activeLocale));
         }
 
         if (!cancelled) setPosts(databasePosts);

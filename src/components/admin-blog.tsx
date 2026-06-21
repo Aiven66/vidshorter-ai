@@ -355,30 +355,39 @@ export function BlogPage({ locale }: BlogPageProps) {
         }
       }
 
-      // 管理后台：按 translation_group 或 created_at 分组，合并相同内容的翻译版本
-      // 同一组的文章只显示一条（英文版为主），附带语言标签
+      // 管理后台：按标题归一化后分组，合并所有同标题文章的翻译版本
+      // 数据库中可能存在多次发布产生的重复记录，按标题归一化后合并
       const groups = new Map<string, BlogPost[]>();
       for (const post of dbPosts) {
-        // 使用 created_at 日期（精确到分钟）作为分组键
-        // 同一次发布的文章 created_at 相同
-        const dateKey = post.created_at?.substring(0, 16) || post.id;
-        if (!groups.has(dateKey)) groups.set(dateKey, []);
-        groups.get(dateKey)!.push(post);
+        // 用标题小写去除首尾空格作为分组键，确保同标题文章合并
+        const titleKey = (post.title || '').trim().toLowerCase();
+        // 空标题的文章用 id 单独分组
+        const key = titleKey || 'untitled-' + post.id;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key)!.push(post);
       }
 
-      // 每组取英文版为主，如果没有英文版取第一篇
+      // 每组取最新的文章为主展示，并统计该组所有 locale
       const groupedPosts: BlogPost[] = [];
       for (const [, group] of groups) {
-        // 优先选英文版
-        const enPost = group.find(p => p.locale === 'en') || group[0];
+        // 按 created_at 降序，取最新的作为主展示
+        const sortedGroup = [...group].sort((a, b) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        );
+        // 优先选英文版作为展示文章，没有则取最新的
+        const enPost = sortedGroup.find(p => (p.locale || '') === 'en') || sortedGroup[0];
+        // 收集该组所有唯一的 locale
+        const allLocales = Array.from(
+          new Set(sortedGroup.map(p => p.locale).filter(Boolean))
+        );
         groupedPosts.push({
           ...enPost,
-          // 保留组内所有 locale 信息
-          _locales: group.map(p => p.locale).filter(Boolean),
-          _groupSize: group.length,
+          _locales: allLocales,
+          _groupSize: sortedGroup.length,
         } as BlogPost & { _locales: string[]; _groupSize: number });
       }
 
+      // 按 created_at 降序
       groupedPosts.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
       // 计算分页
@@ -631,7 +640,7 @@ export function BlogPage({ locale }: BlogPageProps) {
         throw new Error(locale === 'zh' ? '未登录或 token 失效' : 'Not logged in or token expired');
       }
 
-      // 先查找同组的所有文章（相同 created_at 日期的文章）
+      // 先查找同标题的所有文章（按标题归一化分组删除）
       const allPostsRes = await fetch('/api/blog/posts?page=1&pageSize=1000', {
         headers: {
           'Content-Type': 'application/json',
@@ -644,17 +653,15 @@ export function BlogPage({ locale }: BlogPageProps) {
       if (allPostsRes.ok) {
         const allData = await allPostsRes.json();
         const allPostsList = allData.posts || [];
-        // 找到当前文章的 created_at
+        // 找到当前文章的标题
         const currentPost = allPostsList.find((p: any) => p.id === postId);
-        if (currentPost) {
-          const dateKey = currentPost.created_at?.substring(0, 16);
-          // 找到所有同日期的文章
+        if (currentPost?.title) {
+          const titleKey = String(currentPost.title).trim().toLowerCase();
+          // 找到所有同标题的文章（归一化标题匹配）
           const sameGroup = allPostsList.filter((p: any) =>
-            p.created_at?.substring(0, 16) === dateKey
+            String(p.title || '').trim().toLowerCase() === titleKey
           );
-          if (sameGroup.length > 1) {
-            idsToDelete = sameGroup.map((p: any) => p.id);
-          }
+          idsToDelete = sameGroup.map((p: any) => p.id);
         }
       }
 
