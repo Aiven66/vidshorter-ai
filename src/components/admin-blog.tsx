@@ -98,153 +98,48 @@ export function BlogPage({ locale }: BlogPageProps) {
   const [htmlDragOver, setHtmlDragOver] = useState(false);
   const [coverDragOver, setCoverDragOver] = useState(false);
   const [additionalDragOver, setAdditionalDragOver] = useState(false);
+
   // 拖拽计数器（解决子元素触发 dragLeave 的问题）
   const htmlDragCountRef = useRef(0);
   const coverDragCountRef = useRef(0);
   const additionalDragCountRef = useRef(0);
 
-  // ========= 拖拽事件绑定（useEffect + data-drag-zone 属性标记）=========
-  // 使用 MutationObserver 监听 DOM 变化，确保拖拽区域渲染后才绑定事件
-  useEffect(() => {
-    // 只在新建模式且 HTML 上传模式时绑定
-    if (view !== 'new' || createMode !== 'html') return;
-
-    const container = document.querySelector('[data-html-form-container]');
-    if (!container) return;
-
-    const handlers = new Map<Element, { enter: (e: Event) => void; over: (e: Event) => void; leave: (e: Event) => void; drop: (e: Event) => void }>();
-
-    function bindZone(el: Element) {
-      const zone = el.getAttribute('data-drag-zone');
-      if (!zone || handlers.has(el)) return;
-
-      let dragCountRef: React.MutableRefObject<number>;
-      let setDragOver: (v: boolean) => void;
-      let onDropFiles: (files: FileList) => void;
-
-      if (zone === 'html') {
-        dragCountRef = htmlDragCountRef;
-        setDragOver = setHtmlDragOver;
-        onDropFiles = (files) => {
-          const file = files?.[0];
-          if (file && (file.name.endsWith('.html') || file.name.endsWith('.htm') || file.name.endsWith('.txt'))) {
-            setHtmlFile(file);
-            file.text().then((text) => {
-              setHtmlPreview(text);
-              const title = extractTitleFromHtml(text);
-              const category = extractCategoryFromHtml(text);
-              if (title) setHtmlTitle(title);
-              if (category) setHtmlCategory(category);
-            });
-          }
-        };
-      } else if (zone === 'cover') {
-        dragCountRef = coverDragCountRef;
-        setDragOver = setCoverDragOver;
-        onDropFiles = (files) => {
-          const file = files?.[0];
-          if (file && file.type.startsWith('image/')) {
-            setCoverImageFile(file);
-            readFileAsDataUrl(file).then((url) => setCoverImagePreview(url));
-          }
-        };
-      } else if (zone === 'additional') {
-        dragCountRef = additionalDragCountRef;
-        setDragOver = setAdditionalDragOver;
-        onDropFiles = (files) => {
-          const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
-          if (imageFiles.length === 0) return;
-          setAdditionalImages((prev) => [...prev, ...imageFiles]);
-          Promise.all(imageFiles.map((f) => readFileAsDataUrl(f))).then((urls) => {
-            setAdditionalPreviews((prev) => [...prev, ...urls]);
-          });
-        };
-      } else {
-        return;
-      }
-
-      const onDragEnter = (e: Event) => {
+  // ========= 通用拖拽事件处理函数 =========
+  // 使用 useCallback 确保函数引用稳定，避免闭包陷阱
+  const createDragHandlers = useCallback(
+    (dragCountRef: React.MutableRefObject<number>, setDragOver: (v: boolean) => void) => ({
+      onDragEnter: (e: React.DragEvent) => {
         e.preventDefault();
+        e.stopPropagation();
         dragCountRef.current++;
         setDragOver(true);
-      };
-      const onDragOver = (e: Event) => {
+      },
+      onDragOver: (e: React.DragEvent) => {
         e.preventDefault();
-      };
-      const onDragLeave = (e: Event) => {
+        e.stopPropagation();
+      },
+      onDragLeave: (e: React.DragEvent) => {
         e.preventDefault();
+        e.stopPropagation();
         dragCountRef.current--;
         if (dragCountRef.current <= 0) {
           dragCountRef.current = 0;
           setDragOver(false);
         }
-      };
-      const onDrop = (e: Event) => {
+      },
+      onDrop: (e: React.DragEvent) => {
         e.preventDefault();
+        e.stopPropagation();
         dragCountRef.current = 0;
         setDragOver(false);
-        const de = e as DragEvent;
-        if (de.dataTransfer?.files && de.dataTransfer.files.length > 0) {
-          onDropFiles(de.dataTransfer.files);
-        }
-      };
+      },
+    }),
+    []
+  );
 
-      el.addEventListener('dragenter', onDragEnter);
-      el.addEventListener('dragover', onDragOver);
-      el.addEventListener('dragleave', onDragLeave);
-      el.addEventListener('drop', onDrop);
-
-      handlers.set(el, { enter: onDragEnter, over: onDragOver, leave: onDragLeave, drop: onDrop });
-    }
-
-    function unbindZone(el: Element) {
-      const h = handlers.get(el);
-      if (!h) return;
-      el.removeEventListener('dragenter', h.enter);
-      el.removeEventListener('dragover', h.over);
-      el.removeEventListener('dragleave', h.leave);
-      el.removeEventListener('drop', h.drop);
-      handlers.delete(el);
-    }
-
-    // 绑定已存在的拖拽区域
-    container.querySelectorAll('[data-drag-zone]').forEach(bindZone);
-
-    // 监听后续 DOM 变化（例如条件渲染的区域）
-    const observer = new MutationObserver((mutations) => {
-      for (const mutation of mutations) {
-        for (const node of mutation.addedNodes) {
-          if (node instanceof Element) {
-            if (node.hasAttribute('data-drag-zone')) bindZone(node);
-            node.querySelectorAll('[data-drag-zone]').forEach(bindZone);
-          }
-        }
-        for (const node of mutation.removedNodes) {
-          if (node instanceof Element) {
-            unbindZone(node);
-            node.querySelectorAll('[data-drag-zone]').forEach(unbindZone);
-          }
-        }
-      }
-    });
-
-    observer.observe(container, { childList: true, subtree: true });
-
-    return () => {
-      observer.disconnect();
-      handlers.forEach((h, el) => {
-        el.removeEventListener('dragenter', h.enter);
-        el.removeEventListener('dragover', h.over);
-        el.removeEventListener('dragleave', h.leave);
-        el.removeEventListener('drop', h.drop);
-      });
-      handlers.clear();
-      // 重置拖拽计数器
-      htmlDragCountRef.current = 0;
-      coverDragCountRef.current = 0;
-      additionalDragCountRef.current = 0;
-    };
-  }, [view, createMode]);
+  const htmlDragHandlers = createDragHandlers(htmlDragCountRef, setHtmlDragOver);
+  const coverDragHandlers = createDragHandlers(coverDragCountRef, setCoverDragOver);
+  const additionalDragHandlers = createDragHandlers(additionalDragCountRef, setAdditionalDragOver);
 
   const isAdmin = user?.role === 'admin' || user?.email === 'admin@126.com' || user?.email === 'admin@clipop.ai' || user?.email === 'admin@vidshorter.ai';
 
@@ -1075,7 +970,6 @@ export function BlogPage({ locale }: BlogPageProps) {
 
   function renderHtmlUploadForm() {
     return (
-      <div data-html-form-container>
       <>
         <div className="grid gap-2">
           <Label htmlFor="html-title">
@@ -1123,8 +1017,24 @@ export function BlogPage({ locale }: BlogPageProps) {
             className="hidden"
           />
           <div
-            data-drag-zone="html"
             onClick={() => htmlInputRef.current?.click()}
+            onDragEnter={htmlDragHandlers.onDragEnter}
+            onDragOver={htmlDragHandlers.onDragOver}
+            onDragLeave={htmlDragHandlers.onDragLeave}
+            onDrop={(e) => {
+              htmlDragHandlers.onDrop(e);
+              const file = e.dataTransfer.files?.[0];
+              if (file && (file.name.endsWith('.html') || file.name.endsWith('.htm') || file.name.endsWith('.txt'))) {
+                setHtmlFile(file);
+                file.text().then((text) => {
+                  setHtmlPreview(text);
+                  const title = extractTitleFromHtml(text);
+                  const category = extractCategoryFromHtml(text);
+                  if (title) setHtmlTitle(title);
+                  if (category) setHtmlCategory(category);
+                });
+              }
+            }}
             className={`relative border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
               htmlDragOver
                 ? 'border-primary bg-primary/5'
@@ -1191,8 +1101,18 @@ export function BlogPage({ locale }: BlogPageProps) {
             className="hidden"
           />
           <div
-            data-drag-zone="cover"
             onClick={() => coverInputRef.current?.click()}
+            onDragEnter={coverDragHandlers.onDragEnter}
+            onDragOver={coverDragHandlers.onDragOver}
+            onDragLeave={coverDragHandlers.onDragLeave}
+            onDrop={(e) => {
+              coverDragHandlers.onDrop(e);
+              const file = e.dataTransfer.files?.[0];
+              if (file && file.type.startsWith('image/')) {
+                setCoverImageFile(file);
+                readFileAsDataUrl(file).then((url) => setCoverImagePreview(url));
+              }
+            }}
             className={`relative border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${
               coverDragOver
                 ? 'border-primary bg-primary/5'
@@ -1263,8 +1183,19 @@ export function BlogPage({ locale }: BlogPageProps) {
             className="hidden"
           />
           <div
-            data-drag-zone="additional"
             onClick={() => additionalInputRef.current?.click()}
+            onDragEnter={additionalDragHandlers.onDragEnter}
+            onDragOver={additionalDragHandlers.onDragOver}
+            onDragLeave={additionalDragHandlers.onDragLeave}
+            onDrop={(e) => {
+              additionalDragHandlers.onDrop(e);
+              const imageFiles = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+              if (imageFiles.length === 0) return;
+              setAdditionalImages((prev) => [...prev, ...imageFiles]);
+              Promise.all(imageFiles.map((f) => readFileAsDataUrl(f))).then((urls) => {
+                setAdditionalPreviews((prev) => [...prev, ...urls]);
+              });
+            }}
             className={`relative border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${
               additionalDragOver
                 ? 'border-primary bg-primary/5'
@@ -1404,7 +1335,6 @@ export function BlogPage({ locale }: BlogPageProps) {
           )}
         </div>
       </>
-      </div>
     );
   }
 
