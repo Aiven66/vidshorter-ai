@@ -92,8 +92,7 @@ function detectLocaleFromHtml(html: string): 'en' | 'zh' | 'zh-Hant' {
 /**
  * 安全的 HTML 处理：
  * - 提取 body 内容
- * - **删除** <style> 标签（防止原文 CSS 泄漏到页头页尾），
- *   仅保留单个元素的内联 style="..." 属性
+ * - 保留 <style> 标签但添加 .blog-article-scope 前缀（CSS scope 隔离）
  * - 删除危险元素：<script>/<iframe>/<object>/<embed>
  * - 删除 onclick 等事件属性
  * - 删除 href/src/action="javascript:..."
@@ -106,10 +105,17 @@ function sanitizeHtmlContent(html: string): string {
     bodyContent = bodyMatch[1];
   }
 
-  // 删除 <style> 标签（防止原文全局 CSS 泄漏污染页头页尾）
-  let cleaned = bodyContent.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
+  // 保留 <style> 标签但给所有选择器添加 .blog-article-scope 前缀
+  // 这样样式只作用于文章内容区域，不会污染页头页尾
+  let cleaned = bodyContent.replace(
+    /<style([^>]*)>([\s\S]*?)<\/style>/gi,
+    (_match, attrs: string, cssContent: string) => {
+      const scopedCss = scopeCssSelectors(cssContent, '.blog-article-scope');
+      return `<style${attrs}>${scopedCss}</style>`;
+    }
+  );
 
-  // 删除 <link>（外部 CSS 引用同样会泄漏）
+  // 删除 <link>（外部 CSS 引用会泄漏到全局）
   cleaned = cleaned.replace(/<link\b[^>]*\/?\s*>/gi, '');
   cleaned = cleaned.replace(/<meta\b[^>]*\/?\s*>/gi, '');
   cleaned = cleaned.replace(/<base\b[^>]*\/?\s*>/gi, '');
@@ -131,6 +137,58 @@ function sanitizeHtmlContent(html: string): string {
   cleaned = cleaned.replace(/\s+(?:href|src|action)=(["'])\s*javascript:[^"']*\1/gi, '');
 
   return cleaned.trim();
+}
+
+/**
+ * 给 CSS 选择器添加 scope 前缀，使样式只作用于指定容器内
+ * 例如：h1 { color: red; } → .blog-article-scope h1 { color: red; }
+ *       .my-class { ... } → .blog-article-scope .my-class { ... }
+ *       body { ... } → .blog-article-scope { ... }
+ *       @media (...) { h1 { ... } } → @media (...) { .blog-article-scope h1 { ... } }
+ */
+function scopeCssSelectors(css: string, scope: string): string {
+  // 处理 @media / @supports / @layer 等嵌套规则
+  let result = css.replace(
+    /(@(?:media|supports|layer|container|keyframes|font-face)[^{]*)\{([\s\S]*?)\}\s*\}/gi,
+    (match, atRule: string, innerContent: string) => {
+      // @keyframes 和 @font-face 不需要 scope
+      if (/@(keyframes|font-face)/i.test(atRule)) return match;
+      // 对 @media / @supports / @layer / @container 内的选择器递归处理
+      const scopedInner = scopeCssSelectors(innerContent, scope);
+      return `${atRule}{${scopedInner}}`;
+    }
+  );
+
+  // 处理普通 CSS 规则：选择器 { 声明 }
+  result = result.replace(
+    /([^{}@/]+)\{([^{}]*)\}/g,
+    (match, selectors: string, declarations: string) => {
+      // 跳过空规则
+      if (!selectors.trim() || !declarations.trim()) return match;
+
+      // 对每个选择器添加 scope 前缀
+      const scopedSelectors = selectors
+        .split(',')
+        .map((sel: string) => {
+          let s = sel.trim();
+          if (!s) return s;
+
+          // 将 body/html/:root 等全局选择器替换为 scope 容器
+          if (/^(body|html|:root)$/i.test(s)) {
+            return scope;
+          }
+          // 以 body/html/:root 开头的复合选择器
+          s = s.replace(/^(body|html|:root)\s+/gi, '');
+
+          return `${scope} ${s}`;
+        })
+        .join(', ');
+
+      return `${scopedSelectors}{${declarations}}`;
+    }
+  );
+
+  return result;
 }
 
 /**

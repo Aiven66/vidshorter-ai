@@ -1387,12 +1387,11 @@ export function BlogPage({ locale }: BlogPageProps) {
                 </span>
               </div>
 
-              {/* HTML 内容 - 使用 prose 样式渲染 */}
+              {/* HTML 内容 - 使用 blog-article-scope 隔离样式 */}
               {htmlPreview ? (
-                <div
-                  className="prose prose-sm md:prose-base max-w-none prose-headings:font-bold prose-a:text-primary prose-img:rounded-md prose-img:border prose-img:border-border"
-                  dangerouslySetInnerHTML={{ __html: htmlPreview }}
-                />
+                <div className="blog-article-scope prose prose-sm md:prose-base max-w-none prose-headings:font-bold prose-a:text-primary prose-img:rounded-md prose-img:border prose-img:border-border">
+                  <div dangerouslySetInnerHTML={{ __html: htmlPreview }} />
+                </div>
               ) : (
                 <p className="text-sm text-muted-foreground">
                   {locale === 'zh' ? '请先上传 HTML 内容文件' : 'Please upload HTML content file first'}

@@ -224,8 +224,10 @@ export default function BlogDetailPage() {
           </div>
 
           <Card>
-            <CardContent className="prose prose-neutral dark:prose-invert max-w-none p-8">
-              <div dangerouslySetInnerHTML={{ __html: post.content }} />
+            <CardContent className="max-w-none p-8">
+              <div className="blog-article-scope prose prose-neutral dark:prose-invert max-w-none">
+                <div dangerouslySetInnerHTML={{ __html: post.content }} />
+              </div>
             </CardContent>
           </Card>
 
