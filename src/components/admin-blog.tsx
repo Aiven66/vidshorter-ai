@@ -31,6 +31,8 @@ import {
   getBuiltInBlogPosts,
   getStoredBlogPosts,
   createSingleAdminPost,
+  normalizeLocale,
+  getDefaultCoverImage,
 } from '@/lib/blog-content';
 import type { BlogPost } from '@/lib/blog-content';
 
@@ -258,13 +260,14 @@ export function BlogPage({ locale }: BlogPageProps) {
           const { isSupabaseConfigured, getSupabaseClient } = await import('@/storage/database/supabase-client');
           if (isSupabaseConfigured()) {
             const client = getSupabaseClient();
+            // 查询所有文章（含未发布），管理后台需要看到全部
             const { data, error } = await client
               .from('blogs')
               .select('id,title,category,content,cover_image,author_id,is_published,view_count,created_at,updated_at')
               .order('created_at', { ascending: false })
               .limit(200);
 
-            if (!error && data) {
+            if (!error && data && data.length > 0) {
               dbPosts = data.map((p: any) => ({
                 id: p.id,
                 title: p.title,
@@ -281,6 +284,33 @@ export function BlogPage({ locale }: BlogPageProps) {
           }
         } catch {
           // Supabase 客户端查询也失败，继续用 fallback
+        }
+      }
+
+      // 方式3：如果以上都失败，尝试不带 token 调用 API（只返回已发布文章）
+      if (dbPosts.length === 0 && !accessToken) {
+        try {
+          const res = await fetch(`/api/blog/posts?page=${page}&pageSize=${pageSize}`, {
+            headers: { 'Content-Type': 'application/json' },
+            cache: 'no-store',
+          });
+          if (res.ok) {
+            const data = await res.json();
+            dbPosts = (data.posts || []).map((p: any) => ({
+              id: p.id,
+              title: p.title,
+              category: p.category,
+              cover_image: p.cover_image,
+              content: p.content,
+              is_published: p.is_published,
+              view_count: p.view_count,
+              created_at: new Date(p.created_at).toISOString(),
+              updated_at: p.updated_at ? new Date(p.updated_at).toISOString() : undefined,
+            }));
+            total = data.total || dbPosts.length;
+          }
+        } catch {
+          // 不带 token 的 API 也失败
         }
       }
 
@@ -351,12 +381,25 @@ export function BlogPage({ locale }: BlogPageProps) {
     }
   }, [accessToken, locale, pageSize]);
 
+  // 当 view 为 list 时，获取文章列表
   useEffect(() => {
     if (view === 'list') {
       setCurrentPage(1);
       fetchPosts(1);
     }
   }, [view, fetchPosts]);
+
+  // 关键修复：当 accessToken 从 null 变为有值时，重新获取文章列表
+  // 因为 AuthProvider 的 checkAuthState 是异步的，首次渲染时 accessToken 可能为 null
+  const accessTokenRef = useRef(accessToken);
+  useEffect(() => {
+    const prevToken = accessTokenRef.current;
+    accessTokenRef.current = accessToken;
+    // token 从 null/falsy 变为有值，且当前在列表视图，重新获取
+    if (!prevToken && accessToken && view === 'list') {
+      fetchPosts(1);
+    }
+  }, [accessToken, view, fetchPosts]);
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
