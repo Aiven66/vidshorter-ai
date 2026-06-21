@@ -101,6 +101,63 @@ export function BlogPage({ locale }: BlogPageProps) {
   const htmlDropRef = useRef<HTMLDivElement>(null);
   const coverDropRef = useRef<HTMLDivElement>(null);
   const additionalDropRef = useRef<HTMLDivElement>(null);
+  // 拖拽计数器（解决子元素触发 dragLeave 的问题）
+  const htmlDragCountRef = useRef(0);
+  const coverDragCountRef = useRef(0);
+  const additionalDragCountRef = useRef(0);
+
+  // 创建原生拖拽事件绑定函数（在 JSX ref callback 中调用，确保 DOM 存在时绑定）
+  const bindDragEvents = useCallback(
+    (
+      el: HTMLDivElement | null,
+      dragCountRef: React.MutableRefObject<number>,
+      setDragOver: (v: boolean) => void,
+      onDropFiles: (files: FileList) => void
+    ) => {
+      if (!el) return;
+
+      const onDragEnter = (e: DragEvent) => {
+        e.preventDefault();
+        dragCountRef.current++;
+        setDragOver(true);
+      };
+      const onDragOver = (e: DragEvent) => {
+        e.preventDefault();
+      };
+      const onDragLeave = (e: DragEvent) => {
+        e.preventDefault();
+        dragCountRef.current--;
+        if (dragCountRef.current <= 0) {
+          dragCountRef.current = 0;
+          setDragOver(false);
+        }
+      };
+      const onDrop = (e: DragEvent) => {
+        e.preventDefault();
+        dragCountRef.current = 0;
+        setDragOver(false);
+        if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+          onDropFiles(e.dataTransfer.files);
+        }
+      };
+
+      el.addEventListener('dragenter', onDragEnter);
+      el.addEventListener('dragover', onDragOver);
+      el.addEventListener('dragleave', onDragLeave);
+      el.addEventListener('drop', onDrop);
+
+      // 返回清理函数，存储在元素上以便卸载时清理
+      const cleanupKey = `__dragCleanup_${Date.now()}`;
+      (el as any)[cleanupKey] = () => {
+        el.removeEventListener('dragenter', onDragEnter);
+        el.removeEventListener('dragover', onDragOver);
+        el.removeEventListener('dragleave', onDragLeave);
+        el.removeEventListener('drop', onDrop);
+        delete (el as any)[cleanupKey];
+      };
+    },
+    []
+  );
 
   const isAdmin = user?.role === 'admin' || user?.email === 'admin@126.com' || user?.email === 'admin@clipop.ai' || user?.email === 'admin@vidshorter.ai';
 
@@ -354,44 +411,77 @@ export function BlogPage({ locale }: BlogPageProps) {
 
     try {
       if (accessToken) {
-        const payload = {
-          title: blogTitle.trim(),
-          category: blogCategory.trim() || 'AI Video Clipping',
-          coverImage: blogCoverImage.trim(),
-          content: blogContent.trim(),
-          publish: true,
-        };
+        if (editingPost) {
+          // 编辑模式：使用 PATCH 更新已有文章
+          const res = await fetch('/api/blog/posts', {
+            method: 'PATCH',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify({
+              id: editingPost.id,
+              title: blogTitle.trim(),
+              category: blogCategory.trim() || 'AI Video Clipping',
+              coverImage: blogCoverImage.trim(),
+              content: blogContent.trim(),
+              publish: true,
+            }),
+          });
 
-        const res = await fetch('/api/blog/posts', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${accessToken}`,
-          },
-          body: JSON.stringify(payload),
-        });
-
-        if (res.ok) {
-          const data = await res.json().catch(() => ({}));
-          if (Array.isArray(data.posts)) {
-            saveAdminBlogPosts(data.posts);
+          if (res.ok) {
+            setSaveStatus(locale === 'zh' ? '文章已更新' : 'Article updated');
+            setTimeout(() => {
+              setView('list');
+              setSaveStatus(null);
+            }, 1500);
+          } else {
+            const data = await res.json().catch(() => ({}));
+            setSaveStatus(
+              locale === 'zh'
+                ? `更新失败：${data.error || res.statusText}`
+                : `Update failed: ${data.error || res.statusText}`
+            );
           }
-          setSaveStatus(
-            editingPost
-              ? (locale === 'zh' ? '文章已更新' : 'Article updated')
-              : (locale === 'zh' ? `已发布 ${data.posts?.length || 1} 篇文章` : `Published ${data.posts?.length || 1} article(s)`)
-          );
-          setTimeout(() => {
-            setView('list');
-            setSaveStatus(null);
-          }, 1500);
         } else {
-          const data = await res.json().catch(() => ({}));
-          setSaveStatus(
-            locale === 'zh'
-              ? `保存失败：${data.error || res.statusText}`
-              : `Save failed: ${data.error || res.statusText}`
-          );
+          // 新建模式：使用 POST 创建新文章
+          const payload = {
+            title: blogTitle.trim(),
+            category: blogCategory.trim() || 'AI Video Clipping',
+            coverImage: blogCoverImage.trim(),
+            content: blogContent.trim(),
+            publish: true,
+          };
+
+          const res = await fetch('/api/blog/posts', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify(payload),
+          });
+
+          if (res.ok) {
+            const data = await res.json().catch(() => ({}));
+            if (Array.isArray(data.posts)) {
+              saveAdminBlogPosts(data.posts);
+            }
+            setSaveStatus(
+              locale === 'zh' ? `已发布 ${data.posts?.length || 1} 篇文章` : `Published ${data.posts?.length || 1} article(s)`
+            );
+            setTimeout(() => {
+              setView('list');
+              setSaveStatus(null);
+            }, 1500);
+          } else {
+            const data = await res.json().catch(() => ({}));
+            setSaveStatus(
+              locale === 'zh'
+                ? `保存失败：${data.error || res.statusText}`
+                : `Save failed: ${data.error || res.statusText}`
+            );
+          }
         }
       }
     } catch (err) {
@@ -479,106 +569,6 @@ export function BlogPage({ locale }: BlogPageProps) {
       return arr;
     });
   }
-
-  // 使用原生 DOM 事件监听器处理拖拽（绕过 React 合成事件 dataTransfer.files 丢失问题）
-  useEffect(() => {
-    const zones = [
-      {
-        ref: htmlDropRef,
-        setDragOver: setHtmlDragOver,
-        onDrop: (files: FileList) => {
-          const file = files?.[0];
-          if (file && (file.name.endsWith('.html') || file.name.endsWith('.htm') || file.name.endsWith('.txt'))) {
-            setHtmlFile(file);
-            file.text().then((text) => {
-              setHtmlPreview(text);
-              const title = extractTitleFromHtml(text);
-              const category = extractCategoryFromHtml(text);
-              if (title) setHtmlTitle(title);
-              if (category) setHtmlCategory(category);
-            });
-          }
-        },
-      },
-      {
-        ref: coverDropRef,
-        setDragOver: setCoverDragOver,
-        onDrop: (files: FileList) => {
-          const file = files?.[0];
-          if (file && file.type.startsWith('image/')) {
-            setCoverImageFile(file);
-            readFileAsDataUrl(file).then((url) => setCoverImagePreview(url));
-          }
-        },
-      },
-      {
-        ref: additionalDropRef,
-        setDragOver: setAdditionalDragOver,
-        onDrop: (files: FileList) => {
-          const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
-          if (imageFiles.length === 0) return;
-          setAdditionalImages((prev) => [...prev, ...imageFiles]);
-          Promise.all(imageFiles.map((f) => readFileAsDataUrl(f))).then((urls) => {
-            setAdditionalPreviews((prev) => [...prev, ...urls]);
-          });
-        },
-      },
-    ];
-
-    const cleanups: (() => void)[] = [];
-
-    for (const zone of zones) {
-      const el = zone.ref.current;
-      if (!el) continue;
-
-      let dragCounter = 0;
-
-      const onDragEnter = (e: DragEvent) => {
-        e.preventDefault();
-        dragCounter++;
-        zone.setDragOver(true);
-      };
-
-      const onDragOver = (e: DragEvent) => {
-        e.preventDefault();
-        // 必须持续 preventDefault 才能让 drop 事件触发
-      };
-
-      const onDragLeave = (e: DragEvent) => {
-        e.preventDefault();
-        dragCounter--;
-        if (dragCounter <= 0) {
-          dragCounter = 0;
-          zone.setDragOver(false);
-        }
-      };
-
-      const onDrop = (e: DragEvent) => {
-        e.preventDefault();
-        dragCounter = 0;
-        zone.setDragOver(false);
-        if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
-          zone.onDrop(e.dataTransfer.files);
-        }
-      };
-
-      el.addEventListener('dragenter', onDragEnter);
-      el.addEventListener('dragover', onDragOver);
-      el.addEventListener('dragleave', onDragLeave);
-      el.addEventListener('drop', onDrop);
-
-      cleanups.push(() => {
-        el.removeEventListener('dragenter', onDragEnter);
-        el.removeEventListener('dragover', onDragOver);
-        el.removeEventListener('dragleave', onDragLeave);
-        el.removeEventListener('drop', onDrop);
-      });
-    }
-
-    return () => {
-      for (const cleanup of cleanups) cleanup();
-    };
-  }, []); // 只在挂载时绑定一次
 
   function resetHtmlMode() {
     setHtmlFile(null);
@@ -968,7 +958,22 @@ export function BlogPage({ locale }: BlogPageProps) {
             className="hidden"
           />
           <div
-            ref={htmlDropRef}
+            ref={(el) => {
+              htmlDropRef.current = el;
+              bindDragEvents(el, htmlDragCountRef, setHtmlDragOver, (files) => {
+                const file = files?.[0];
+                if (file && (file.name.endsWith('.html') || file.name.endsWith('.htm') || file.name.endsWith('.txt'))) {
+                  setHtmlFile(file);
+                  file.text().then((text) => {
+                    setHtmlPreview(text);
+                    const title = extractTitleFromHtml(text);
+                    const category = extractCategoryFromHtml(text);
+                    if (title) setHtmlTitle(title);
+                    if (category) setHtmlCategory(category);
+                  });
+                }
+              });
+            }}
             onClick={() => htmlInputRef.current?.click()}
             className={`relative border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
               htmlDragOver
@@ -1036,7 +1041,16 @@ export function BlogPage({ locale }: BlogPageProps) {
             className="hidden"
           />
           <div
-            ref={coverDropRef}
+            ref={(el) => {
+              coverDropRef.current = el;
+              bindDragEvents(el, coverDragCountRef, setCoverDragOver, (files) => {
+                const file = files?.[0];
+                if (file && file.type.startsWith('image/')) {
+                  setCoverImageFile(file);
+                  readFileAsDataUrl(file).then((url) => setCoverImagePreview(url));
+                }
+              });
+            }}
             onClick={() => coverInputRef.current?.click()}
             className={`relative border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${
               coverDragOver
@@ -1108,7 +1122,17 @@ export function BlogPage({ locale }: BlogPageProps) {
             className="hidden"
           />
           <div
-            ref={additionalDropRef}
+            ref={(el) => {
+              additionalDropRef.current = el;
+              bindDragEvents(el, additionalDragCountRef, setAdditionalDragOver, (files) => {
+                const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
+                if (imageFiles.length === 0) return;
+                setAdditionalImages((prev) => [...prev, ...imageFiles]);
+                Promise.all(imageFiles.map((f) => readFileAsDataUrl(f))).then((urls) => {
+                  setAdditionalPreviews((prev) => [...prev, ...urls]);
+                });
+              });
+            }}
             onClick={() => additionalInputRef.current?.click()}
             className={`relative border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${
               additionalDragOver
@@ -1421,7 +1445,7 @@ export function BlogPage({ locale }: BlogPageProps) {
 
               {/* HTML 内容 - 使用 blog-article-scope 隔离样式 */}
               {htmlPreview ? (
-                <div className="blog-article-scope prose prose-sm md:prose-base max-w-none prose-headings:font-bold prose-a:text-primary prose-img:rounded-md prose-img:border prose-img:border-border">
+                <div className="blog-article-scope max-w-none">
                   <div dangerouslySetInnerHTML={{ __html: htmlPreview }} />
                 </div>
               ) : (

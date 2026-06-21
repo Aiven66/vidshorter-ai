@@ -221,3 +221,67 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
+
+// ==================== PATCH: Update existing blog article ====================
+export async function PATCH(req: NextRequest) {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.COZE_SUPABASE_URL || '';
+  const serviceRoleKey = getServiceRoleKey();
+
+  if (!url || !serviceRoleKey) {
+    return NextResponse.json({ error: 'Database not configured.' }, { status: 503 });
+  }
+
+  const token = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '').trim();
+  if (!token) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const client = createClient(url, serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+
+  const adminUser = await getAdminUser(client, token);
+  if (!adminUser) {
+    return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
+  }
+
+  const body = await req.json().catch(() => null) as {
+    id?: string;
+    title?: string;
+    category?: string;
+    content?: string;
+    coverImage?: string;
+    publish?: boolean;
+  } | null;
+
+  const postId = body?.id?.trim();
+  if (!postId) {
+    return NextResponse.json({ error: 'Post ID is required for update' }, { status: 400 });
+  }
+
+  try {
+    const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (body?.title?.trim()) updates.title = body.title.trim();
+    if (body?.category?.trim()) updates.category = body.category.trim();
+    if (body?.content?.trim()) updates.content = body.content.trim();
+    if (body?.coverImage !== undefined) updates.cover_image = body.coverImage.trim();
+    if (body?.publish !== undefined) updates.is_published = body.publish;
+
+    const { data, error } = await client
+      .from('blogs')
+      .update(updates)
+      .eq('id', postId)
+      .select('id,title,category,content,cover_image,is_published,view_count,created_at,updated_at')
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) {
+      return NextResponse.json({ error: 'Post not found' }, { status: 404 });
+    }
+
+    return NextResponse.json({ post: data });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to update blog post.';
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
