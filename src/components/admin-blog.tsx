@@ -273,7 +273,7 @@ export function BlogPage({ locale }: BlogPageProps) {
           const { isSupabaseConfigured, getSupabaseClient } = await import('@/storage/database/supabase-client');
           if (isSupabaseConfigured()) {
             const client = getSupabaseClient();
-            // 查询所有文章（含未发布），管理后台需要看到全部
+            // 先尝试查询所有文章（管理后台需要看到全部）
             const { data, error } = await client
               .from('blogs')
               .select('*')
@@ -293,6 +293,29 @@ export function BlogPage({ locale }: BlogPageProps) {
                 updated_at: p.updated_at ? new Date(p.updated_at).toISOString() : undefined,
               }));
               total = dbPosts.length;
+            } else if (error) {
+              // RLS 可能阻止了查询所有文章，尝试只查已发布文章
+              const { data: publishedData, error: publishedError } = await client
+                .from('blogs')
+                .select('*')
+                .eq('is_published', true)
+                .order('created_at', { ascending: false })
+                .limit(200);
+
+              if (!publishedError && publishedData && publishedData.length > 0) {
+                dbPosts = publishedData.map((p: any) => ({
+                  id: p.id,
+                  title: p.title,
+                  category: p.category,
+                  cover_image: p.cover_image,
+                  content: p.content,
+                  is_published: p.is_published,
+                  view_count: p.view_count,
+                  created_at: new Date(p.created_at).toISOString(),
+                  updated_at: p.updated_at ? new Date(p.updated_at).toISOString() : undefined,
+                }));
+                total = dbPosts.length;
+              }
             }
           }
         } catch {
@@ -354,15 +377,22 @@ export function BlogPage({ locale }: BlogPageProps) {
 
       const allPosts = [...dbPosts, ...storedPosts, ...builtInPosts];
       const seenIds = new Set<string>();
-      const seenTitles = new Set<string>();
+      const dbTitleSet = new Set<string>();
+      // 收集数据库文章的标题，用于去重 localStorage/内置文章
+      dbPosts.forEach(p => {
+        const t = p.title?.trim().toLowerCase();
+        if (t) dbTitleSet.add(t);
+      });
       const uniquePosts = allPosts.filter(post => {
         // 按 ID 去重
         if (seenIds.has(post.id)) return false;
         seenIds.add(post.id);
-        // 按标题去重（数据库已有则跳过 localStorage/内置的同标题文章）
-        const titleKey = post.title?.trim().toLowerCase();
-        if (titleKey && seenTitles.has(titleKey)) return false;
-        if (titleKey) seenTitles.add(titleKey);
+        // 仅对非数据库文章按标题去重：如果数据库已有同标题文章，跳过 localStorage/内置的
+        const isFromDb = dbPosts.some(dp => dp.id === post.id);
+        if (!isFromDb) {
+          const titleKey = post.title?.trim().toLowerCase();
+          if (titleKey && dbTitleSet.has(titleKey)) return false;
+        }
         return true;
       });
 
