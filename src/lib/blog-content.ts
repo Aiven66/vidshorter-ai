@@ -1582,16 +1582,9 @@ function seedToPosts(seed: BlogArticleSeed): BlogPost[] {
   });
 }
 
-export function getBuiltInBlogPosts(locale: Locale): BlogPost[] {
-  const all: BlogPost[] = [];
-  for (const seed of seoSeeds) {
-    all.push(...seedToPosts(seed));
-  }
-  const filtered = all.filter((p) => p.locale === locale);
-  if (filtered.length > 0) {
-    return filtered.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
-  }
-  return all.filter((p) => p.locale === 'en');
+export function getBuiltInBlogPosts(_locale: Locale): BlogPost[] {
+  // 内置文章已清空，后续由管理员手动发布
+  return [];
 }
 
 export function isPostForLocale(post: Pick<BlogPost, 'id' | 'locale'>, locale: Locale): boolean {
@@ -1681,37 +1674,9 @@ export function createLocalizedAdminPosts(input: {
   }));
 }
 
-export function getStoredBlogPosts(locale?: Locale): BlogPost[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const raw = window.localStorage.getItem(BLOG_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as unknown[];
-    if (!Array.isArray(parsed)) return [];
-    const rows: BlogPost[] = [];
-    const seenIds = new Set<string>();
-    for (const item of parsed) {
-      if (item && typeof item === 'object') {
-        const anyItem = item as Record<string, unknown>;
-        const post = normalizeBlogRow(anyItem as unknown as BlogRow);
-        if (!seenIds.has(post.id)) {
-          seenIds.add(post.id);
-          rows.push(post);
-        }
-      }
-    }
-    // 优先当前语言文章（排前），但不排除其他语言版本
-    const sorted = locale
-      ? [...rows].sort((a, b) => {
-          const aMatch = a.locale === locale ? 0 : 1;
-          const bMatch = b.locale === locale ? 0 : 1;
-          return aMatch - bMatch;
-        })
-      : rows;
-    return sorted;
-  } catch {
-    return [];
-  }
+export function getStoredBlogPosts(_locale?: Locale): BlogPost[] {
+  // localStorage 文章已清空，后续由管理员手动发布
+  return [];
 }
 
 export function saveAdminBlogPosts(posts: BlogPost[]): void {

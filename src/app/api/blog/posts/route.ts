@@ -285,3 +285,41 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
+
+// ==================== DELETE: Clear all blog articles ====================
+export async function DELETE(req: NextRequest) {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.COZE_SUPABASE_URL || '';
+  const serviceRoleKey = getServiceRoleKey();
+
+  if (!url || !serviceRoleKey) {
+    return NextResponse.json({ error: 'Database not configured.' }, { status: 503 });
+  }
+
+  const token = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '').trim();
+  if (!token) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const client = createClient(url, serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+
+  const adminUser = await getAdminUser(client, token);
+  if (!adminUser) {
+    return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
+  }
+
+  try {
+    const { error } = await client
+      .from('blogs')
+      .delete()
+      .neq('id', ''); // 删除所有行
+
+    if (error) throw error;
+
+    return NextResponse.json({ success: true, message: 'All blog articles deleted' });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to delete all blog articles.';
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}

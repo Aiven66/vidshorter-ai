@@ -61,6 +61,7 @@ export function BlogPage({ locale }: BlogPageProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [clearing, setClearing] = useState(false);
 
   // 分页状态
   const [currentPage, setCurrentPage] = useState(1);
@@ -327,6 +328,41 @@ export function BlogPage({ locale }: BlogPageProps) {
       setError(err instanceof Error ? err.message : 'Sync failed');
     } finally {
       setSyncing(false);
+    }
+  }
+
+  async function clearAllPosts() {
+    if (!accessToken || !isAdmin) return;
+    const confirmed = window.confirm(
+      locale === 'zh'
+        ? '确定要清空所有博客文章吗？此操作不可恢复！'
+        : 'Are you sure you want to delete ALL blog articles? This cannot be undone!'
+    );
+    if (!confirmed) return;
+
+    setClearing(true);
+    try {
+      const res = await fetch('/api/blog/posts', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+      if (res.ok) {
+        // 同时清空 localStorage
+        if (typeof window !== 'undefined') {
+          window.localStorage.removeItem('clipop_blog_posts');
+        }
+        await fetchPosts();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error || 'Clear failed');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Clear failed');
+    } finally {
+      setClearing(false);
     }
   }
 
@@ -713,6 +749,15 @@ export function BlogPage({ locale }: BlogPageProps) {
             >
               <RefreshCw className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
               {locale === 'zh' ? '同步内置文章' : 'Sync Built-in'}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={clearAllPosts}
+              disabled={clearing}
+              className="flex items-center gap-2"
+            >
+              <Trash2 className={`h-4 w-4 ${clearing ? 'animate-spin' : ''}`} />
+              {locale === 'zh' ? '清空所有文章' : 'Clear All'}
             </Button>
           </div>
         </div>
