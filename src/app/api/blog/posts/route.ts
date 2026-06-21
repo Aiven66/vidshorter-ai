@@ -118,7 +118,7 @@ export async function GET(req: NextRequest) {
   try {
     let query = client
       .from('blogs')
-      .select('id,title,category,content,cover_image,author_id,is_published,view_count,locale,created_at,updated_at');
+      .select('*');
 
     if (!isAdmin) {
       query = query.eq('is_published', true);
