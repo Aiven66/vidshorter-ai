@@ -97,10 +97,10 @@ export function BlogPage({ locale }: BlogPageProps) {
   const [htmlDragOver, setHtmlDragOver] = useState(false);
   const [coverDragOver, setCoverDragOver] = useState(false);
   const [additionalDragOver, setAdditionalDragOver] = useState(false);
-  // 拖拽计数器（解决子元素触发 dragLeave 的问题）
-  const htmlDragCountRef = useRef(0);
-  const coverDragCountRef = useRef(0);
-  const additionalDragCountRef = useRef(0);
+  // 拖拽区域 DOM ref
+  const htmlDropRef = useRef<HTMLDivElement>(null);
+  const coverDropRef = useRef<HTMLDivElement>(null);
+  const additionalDropRef = useRef<HTMLDivElement>(null);
 
   const isAdmin = user?.role === 'admin' || user?.email === 'admin@126.com' || user?.email === 'admin@clipop.ai' || user?.email === 'admin@vidshorter.ai';
 
@@ -480,73 +480,105 @@ export function BlogPage({ locale }: BlogPageProps) {
     });
   }
 
-  // 拖拽处理函数（使用计数器解决子元素触发 dragLeave 的问题）
-  function createDragHandlers(
-    setDragOver: (v: boolean) => void,
-    dragCountRef: React.MutableRefObject<number>,
-    onDrop: (e: React.DragEvent) => void
-  ) {
-    return {
-      onDragEnter: (e: React.DragEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        dragCountRef.current++;
-        setDragOver(true);
+  // 使用原生 DOM 事件监听器处理拖拽（绕过 React 合成事件 dataTransfer.files 丢失问题）
+  useEffect(() => {
+    const zones = [
+      {
+        ref: htmlDropRef,
+        setDragOver: setHtmlDragOver,
+        onDrop: (files: FileList) => {
+          const file = files?.[0];
+          if (file && (file.name.endsWith('.html') || file.name.endsWith('.htm') || file.name.endsWith('.txt'))) {
+            setHtmlFile(file);
+            file.text().then((text) => {
+              setHtmlPreview(text);
+              const title = extractTitleFromHtml(text);
+              const category = extractCategoryFromHtml(text);
+              if (title) setHtmlTitle(title);
+              if (category) setHtmlCategory(category);
+            });
+          }
+        },
       },
-      onDragOver: (e: React.DragEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        // 必须持续 preventDefault 才能让 drop 事件触发
+      {
+        ref: coverDropRef,
+        setDragOver: setCoverDragOver,
+        onDrop: (files: FileList) => {
+          const file = files?.[0];
+          if (file && file.type.startsWith('image/')) {
+            setCoverImageFile(file);
+            readFileAsDataUrl(file).then((url) => setCoverImagePreview(url));
+          }
+        },
       },
-      onDragLeave: (e: React.DragEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        dragCountRef.current--;
-        if (dragCountRef.current <= 0) {
-          dragCountRef.current = 0;
-          setDragOver(false);
-        }
+      {
+        ref: additionalDropRef,
+        setDragOver: setAdditionalDragOver,
+        onDrop: (files: FileList) => {
+          const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
+          if (imageFiles.length === 0) return;
+          setAdditionalImages((prev) => [...prev, ...imageFiles]);
+          Promise.all(imageFiles.map((f) => readFileAsDataUrl(f))).then((urls) => {
+            setAdditionalPreviews((prev) => [...prev, ...urls]);
+          });
+        },
       },
-      onDrop: (e: React.DragEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        dragCountRef.current = 0;
-        setDragOver(false);
-        onDrop(e);
-      },
-    };
-  }
+    ];
 
-  const htmlDragHandlers = createDragHandlers(setHtmlDragOver, htmlDragCountRef, (e: React.DragEvent) => {
-    const file = e.dataTransfer.files?.[0];
-    if (file && (file.name.endsWith('.html') || file.name.endsWith('.htm') || file.name.endsWith('.txt'))) {
-      setHtmlFile(file);
-      file.text().then((text) => {
-        setHtmlPreview(text);
-        const title = extractTitleFromHtml(text);
-        const category = extractCategoryFromHtml(text);
-        if (title) setHtmlTitle(title);
-        if (category) setHtmlCategory(category);
+    const cleanups: (() => void)[] = [];
+
+    for (const zone of zones) {
+      const el = zone.ref.current;
+      if (!el) continue;
+
+      let dragCounter = 0;
+
+      const onDragEnter = (e: DragEvent) => {
+        e.preventDefault();
+        dragCounter++;
+        zone.setDragOver(true);
+      };
+
+      const onDragOver = (e: DragEvent) => {
+        e.preventDefault();
+        // 必须持续 preventDefault 才能让 drop 事件触发
+      };
+
+      const onDragLeave = (e: DragEvent) => {
+        e.preventDefault();
+        dragCounter--;
+        if (dragCounter <= 0) {
+          dragCounter = 0;
+          zone.setDragOver(false);
+        }
+      };
+
+      const onDrop = (e: DragEvent) => {
+        e.preventDefault();
+        dragCounter = 0;
+        zone.setDragOver(false);
+        if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+          zone.onDrop(e.dataTransfer.files);
+        }
+      };
+
+      el.addEventListener('dragenter', onDragEnter);
+      el.addEventListener('dragover', onDragOver);
+      el.addEventListener('dragleave', onDragLeave);
+      el.addEventListener('drop', onDrop);
+
+      cleanups.push(() => {
+        el.removeEventListener('dragenter', onDragEnter);
+        el.removeEventListener('dragover', onDragOver);
+        el.removeEventListener('dragleave', onDragLeave);
+        el.removeEventListener('drop', onDrop);
       });
     }
-  });
 
-  const coverDragHandlers = createDragHandlers(setCoverDragOver, coverDragCountRef, (e: React.DragEvent) => {
-    const file = e.dataTransfer.files?.[0];
-    if (file && file.type.startsWith('image/')) {
-      setCoverImageFile(file);
-      readFileAsDataUrl(file).then((url) => setCoverImagePreview(url));
-    }
-  });
-
-  const additionalDragHandlers = createDragHandlers(setAdditionalDragOver, additionalDragCountRef, (e: React.DragEvent) => {
-    const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
-    if (files.length === 0) return;
-    setAdditionalImages((prev) => [...prev, ...files]);
-    Promise.all(files.map((f) => readFileAsDataUrl(f))).then((urls) => {
-      setAdditionalPreviews((prev) => [...prev, ...urls]);
-    });
-  });
+    return () => {
+      for (const cleanup of cleanups) cleanup();
+    };
+  }, []); // 只在挂载时绑定一次
 
   function resetHtmlMode() {
     setHtmlFile(null);
@@ -936,7 +968,7 @@ export function BlogPage({ locale }: BlogPageProps) {
             className="hidden"
           />
           <div
-            {...htmlDragHandlers}
+            ref={htmlDropRef}
             onClick={() => htmlInputRef.current?.click()}
             className={`relative border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
               htmlDragOver
@@ -1004,7 +1036,7 @@ export function BlogPage({ locale }: BlogPageProps) {
             className="hidden"
           />
           <div
-            {...coverDragHandlers}
+            ref={coverDropRef}
             onClick={() => coverInputRef.current?.click()}
             className={`relative border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${
               coverDragOver
@@ -1076,7 +1108,7 @@ export function BlogPage({ locale }: BlogPageProps) {
             className="hidden"
           />
           <div
-            {...additionalDragHandlers}
+            ref={additionalDropRef}
             onClick={() => additionalInputRef.current?.click()}
             className={`relative border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${
               additionalDragOver
