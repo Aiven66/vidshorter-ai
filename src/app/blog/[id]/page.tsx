@@ -190,50 +190,59 @@ export default function BlogDetailPage() {
   }
 
   return (
-    <div className="min-h-screen bg-muted/30">
-      <article className="container mx-auto px-4 py-16">
+    <div className="min-h-screen bg-background">
+      <article className="container mx-auto px-4 py-12 md:py-16">
         <div className="max-w-3xl mx-auto">
-          <Button variant="ghost" className="mb-8" asChild>
+          <Button variant="ghost" className="mb-8 -ml-4 text-muted-foreground hover:text-foreground" asChild>
             <Link href="/blog">
               <ArrowLeft className="h-4 w-4 mr-2" />
-              Back to Blog
+              {activeLocale === 'zh' ? '返回博客' : 'Back to Blog'}
             </Link>
           </Button>
 
-          <header className="mb-8">
-            <div className="flex flex-wrap items-center gap-4 mb-4">
-              <Badge variant="secondary">{post.category}</Badge>
-              <span className="text-sm text-muted-foreground flex items-center gap-1">
-                <Calendar className="h-4 w-4" />
+          <header className="mb-10">
+            <div className="flex flex-wrap items-center gap-3 mb-5">
+              <Badge variant="secondary" className="text-xs font-medium px-3 py-1">{post.category}</Badge>
+              <span className="text-sm text-muted-foreground flex items-center gap-1.5">
+                <Calendar className="h-3.5 w-3.5" />
                 {formatDate(post.created_at)}
               </span>
             </div>
-            <h1 className="text-4xl font-bold mb-4">{post.title}</h1>
+            <h1 className="text-3xl md:text-4xl lg:text-[2.75rem] font-extrabold leading-tight tracking-tight mb-6">
+              {post.title}
+            </h1>
           </header>
 
-          <div className="mb-8 rounded-lg overflow-hidden">
-            <img
-              src={post.cover_image || getDefaultCoverImage(post.category)}
-              alt={post.title}
-              className="w-full h-auto max-h-[400px] object-cover"
-              onError={(e) => {
-                const target = e.currentTarget as HTMLImageElement;
-                target.src = getDefaultCoverImage(post.category);
-              }}
-            />
+          {post.cover_image && (
+            <div className="mb-10 rounded-xl overflow-hidden shadow-sm">
+              <img
+                src={post.cover_image}
+                alt={post.title}
+                className="w-full h-auto max-h-[420px] object-cover"
+                onError={(e) => {
+                  const target = e.currentTarget as HTMLImageElement;
+                  target.style.display = 'none';
+                }}
+              />
+            </div>
+          )}
+
+          <div className="blog-article-scope max-w-none">
+            <div dangerouslySetInnerHTML={{ __html: post.content }} />
           </div>
 
-          <Card>
-            <CardContent className="max-w-none p-8">
-              <div className="blog-article-scope max-w-none">
-                <div dangerouslySetInnerHTML={{ __html: post.content }} />
-              </div>
-            </CardContent>
-          </Card>
+          <div className="mt-12 pt-8 border-t border-border">
+            <Button variant="outline" className="gap-2" asChild>
+              <Link href="/blog">
+                <ArrowLeft className="h-4 w-4" />
+                {activeLocale === 'zh' ? '返回博客列表' : 'Back to Blog List'}
+              </Link>
+            </Button>
+          </div>
 
           {relatedPosts.length > 0 && (
             <section className="mt-12">
-              <h2 className="text-2xl font-bold mb-6 text-center">
+              <h2 className="text-xl font-bold mb-6">
                 {t('blog.relatedPosts') || 'Related Posts'}
               </h2>
               <div className="grid gap-4 sm:grid-cols-2">
@@ -241,7 +250,7 @@ export default function BlogDetailPage() {
                   <Card key={relatedPost.id} className="overflow-hidden hover:shadow-md transition-shadow">
                     <CardContent className="p-4">
                       <div className="flex items-start gap-4">
-                        <div className="relative h-24 w-24 flex-shrink-0 overflow-hidden rounded-lg">
+                        <div className="relative h-20 w-20 flex-shrink-0 overflow-hidden rounded-lg">
                           <img
                             src={relatedPost.cover_image || getDefaultCoverImage(relatedPost.category)}
                             alt={relatedPost.title}
@@ -252,24 +261,20 @@ export default function BlogDetailPage() {
                             }}
                           />
                         </div>
-                        <div className="flex-1">
-                          <Badge variant="secondary" className="mb-2">
+                        <div className="flex-1 min-w-0">
+                          <Badge variant="secondary" className="mb-1.5 text-xs">
                             {relatedPost.category}
                           </Badge>
-                          <h3 className="font-semibold mb-1">
-                            <Link href={`/blog/${relatedPost.id}`} className="text-primary hover:text-primary/80 transition-colors">
+                          <h3 className="font-semibold mb-1 text-sm leading-snug">
+                            <Link href={`/blog/${relatedPost.id}`} className="text-foreground hover:text-primary transition-colors">
                               {relatedPost.title}
                             </Link>
                           </h3>
-                          <p className="mb-2 line-clamp-2 text-sm text-muted-foreground">
-                            {stripHtml(relatedPost.content)}
-                          </p>
-                          <p className="text-sm text-muted-foreground flex items-center gap-1">
+                          <p className="text-xs text-muted-foreground flex items-center gap-1">
                             <Calendar className="h-3 w-3" />
                             {formatDate(relatedPost.created_at)}
                           </p>
                         </div>
-                        <ArrowRight className="h-5 w-5 text-muted-foreground flex-shrink-0" />
                       </div>
                     </CardContent>
                   </Card>
