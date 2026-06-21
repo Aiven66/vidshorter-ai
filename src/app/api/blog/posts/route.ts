@@ -24,14 +24,16 @@ function decodeJwtPayload(token: string) {
 
 async function getAdminUser(client: ReturnType<typeof createClient>, token: string) {
   const demoPayload = decodeJwtPayload(token);
+  // 支持 admin@126.com 和 admin@vidshorter.ai 两个管理员邮箱
+  const adminEmails = ['admin@126.com', 'admin@vidshorter.ai'];
   if (
-    demoPayload?.email === 'admin@126.com' &&
-    demoPayload?.role === 'admin' &&
-    demoPayload?.iss === 'clipop-demo'
+    demoPayload?.email &&
+    adminEmails.includes(demoPayload.email as string) &&
+    (demoPayload?.role === 'admin' || demoPayload?.iss === 'clipop-demo')
   ) {
     return {
       id: typeof demoPayload.sub === 'string' ? demoPayload.sub : 'demo-admin-id',
-      email: 'admin@126.com',
+      email: demoPayload.email as string,
       name: typeof demoPayload.name === 'string' ? demoPayload.name : 'Admin',
       role: 'admin',
     };
@@ -46,7 +48,7 @@ async function getAdminUser(client: ReturnType<typeof createClient>, token: stri
     .eq('id', authData.user.id)
     .maybeSingle();
 
-  const role = userRow?.role || (authData.user.email === 'admin@126.com' ? 'admin' : 'user');
+  const role = userRow?.role || (adminEmails.includes(authData.user.email) ? 'admin' : 'user');
   if (role !== 'admin') return null;
 
   return {
@@ -310,14 +312,29 @@ export async function DELETE(req: NextRequest) {
   }
 
   try {
-    const { error } = await client
+    // 先查询所有文章 ID，再逐批删除
+    // .neq('id', '') 对 UUID 列不生效，必须先查后删
+    const { data: allRows, error: selectError } = await client
+      .from('blogs')
+      .select('id');
+
+    if (selectError) throw selectError;
+
+    if (!allRows || allRows.length === 0) {
+      return NextResponse.json({ success: true, message: 'No articles to delete' });
+    }
+
+    const ids = allRows.map((row: { id: string }) => row.id);
+
+    // Supabase delete 支持 .in() 批量删除
+    const { error: deleteError } = await client
       .from('blogs')
       .delete()
-      .neq('id', ''); // 删除所有行
+      .in('id', ids);
 
-    if (error) throw error;
+    if (deleteError) throw deleteError;
 
-    return NextResponse.json({ success: true, message: 'All blog articles deleted' });
+    return NextResponse.json({ success: true, message: `Deleted ${ids.length} article(s)` });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to delete all blog articles.';
     return NextResponse.json({ error: message }, { status: 500 });
