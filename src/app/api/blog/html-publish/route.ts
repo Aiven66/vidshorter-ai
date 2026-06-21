@@ -38,7 +38,7 @@ async function getAdminUser(
   if (
     typeof demoPayload?.email === 'string' &&
     TRUSTED_ADMIN_EMAILS.has(demoPayload.email.toLowerCase()) &&
-    demoPayload?.role === 'admin'
+    (demoPayload?.role === 'admin' || demoPayload?.iss === 'clipop-demo')
   ) {
     return {
       id: typeof demoPayload.sub === 'string' ? demoPayload.sub : 'demo-admin-id',
