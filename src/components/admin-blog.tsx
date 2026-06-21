@@ -22,6 +22,9 @@ import {
   FileCode,
   Sparkles,
   Trash2,
+  GripVertical,
+  ChevronUp,
+  ChevronDown,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import {
@@ -89,6 +92,11 @@ export function BlogPage({ locale }: BlogPageProps) {
   const additionalInputRef = useRef<HTMLInputElement>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
   const htmlInputRef = useRef<HTMLInputElement>(null);
+
+  // 拖拽状态
+  const [htmlDragOver, setHtmlDragOver] = useState(false);
+  const [coverDragOver, setCoverDragOver] = useState(false);
+  const [additionalDragOver, setAdditionalDragOver] = useState(false);
 
   const isAdmin = user?.role === 'admin' || user?.email === 'admin@126.com' || user?.email === 'admin@clipop.ai' || user?.email === 'admin@vidshorter.ai';
 
@@ -451,6 +459,74 @@ export function BlogPage({ locale }: BlogPageProps) {
   function removeAdditionalImage(index: number) {
     setAdditionalImages((prev) => prev.filter((_f, i) => i !== index));
     setAdditionalPreviews((prev) => prev.filter((_u, i) => i !== index));
+  }
+
+  function moveAdditionalImage(index: number, direction: 'up' | 'down') {
+    const newIndex = direction === 'up' ? index - 1 : index + 1;
+    if (newIndex < 0 || newIndex >= additionalImages.length) return;
+    setAdditionalImages((prev) => {
+      const arr = [...prev];
+      [arr[index], arr[newIndex]] = [arr[newIndex], arr[index]];
+      return arr;
+    });
+    setAdditionalPreviews((prev) => {
+      const arr = [...prev];
+      [arr[index], arr[newIndex]] = [arr[newIndex], arr[index]];
+      return arr;
+    });
+  }
+
+  // 拖拽处理通用函数
+  function handleDragOver(e: React.DragEvent, setDragOver: (v: boolean) => void) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(true);
+  }
+
+  function handleDragLeave(e: React.DragEvent, setDragOver: (v: boolean) => void) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+  }
+
+  function handleHtmlDrop(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setHtmlDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file && (file.name.endsWith('.html') || file.name.endsWith('.htm') || file.name.endsWith('.txt'))) {
+      setHtmlFile(file);
+      file.text().then((text) => {
+        setHtmlPreview(text);
+        const title = extractTitleFromHtml(text);
+        const category = extractCategoryFromHtml(text);
+        if (title) setHtmlTitle(title);
+        if (category) setHtmlCategory(category);
+      });
+    }
+  }
+
+  function handleCoverDrop(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setCoverDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file && file.type.startsWith('image/')) {
+      setCoverImageFile(file);
+      readFileAsDataUrl(file).then((url) => setCoverImagePreview(url));
+    }
+  }
+
+  function handleAdditionalDrop(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setAdditionalDragOver(false);
+    const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+    if (files.length === 0) return;
+    setAdditionalImages((prev) => [...prev, ...files]);
+    Promise.all(files.map((f) => readFileAsDataUrl(f))).then((urls) => {
+      setAdditionalPreviews((prev) => [...prev, ...urls]);
+    });
   }
 
   function resetHtmlMode() {
@@ -830,10 +906,9 @@ export function BlogPage({ locale }: BlogPageProps) {
           />
         </div>
 
+        {/* HTML 文件拖拽上传区 */}
         <div className="grid gap-2">
-          <Label>
-            {locale === 'zh' ? '上传 HTML 内容文件' : 'Upload HTML content file'}
-          </Label>
+          <Label>{locale === 'zh' ? '上传 HTML 内容文件' : 'Upload HTML content file'}</Label>
           <input
             ref={htmlInputRef}
             type="file"
@@ -841,42 +916,60 @@ export function BlogPage({ locale }: BlogPageProps) {
             onChange={handleHtmlFileChange}
             className="hidden"
           />
-          <div className="flex flex-wrap items-center gap-3">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => htmlInputRef.current?.click()}
-              className="flex items-center gap-2"
-            >
-              <Upload className="h-4 w-4" />
-              {htmlFile
-                ? (locale === 'zh' ? `已选择：${htmlFile.name}` : `Selected: ${htmlFile.name}`)
-                : (locale === 'zh' ? '选择 HTML 文件' : 'Choose HTML file')}
-            </Button>
-            {htmlFile && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={resetHtmlMode}
-                className="flex items-center gap-1 text-muted-foreground"
-              >
-                <X className="h-4 w-4" />
-                {locale === 'zh' ? '清除' : 'Clear'}
-              </Button>
+          <div
+            onDragOver={(e) => handleDragOver(e, setHtmlDragOver)}
+            onDragLeave={(e) => handleDragLeave(e, setHtmlDragOver)}
+            onDrop={handleHtmlDrop}
+            onClick={() => htmlInputRef.current?.click()}
+            className={`relative border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
+              htmlDragOver
+                ? 'border-primary bg-primary/5'
+                : htmlFile
+                  ? 'border-green-500/50 bg-green-50/50 dark:bg-green-950/20'
+                  : 'border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/30'
+            }`}
+          >
+            {htmlFile ? (
+              <div className="flex items-center justify-center gap-3">
+                <FileCode className="h-8 w-8 text-green-600" />
+                <div className="text-left">
+                  <p className="font-medium text-sm">{htmlFile.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {(htmlFile.size / 1024).toFixed(1)} KB
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={(e) => { e.stopPropagation(); resetHtmlMode(); }}
+                  className="ml-2 text-muted-foreground hover:text-destructive"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            ) : (
+              <div>
+                <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+                <p className="text-sm font-medium">
+                  {locale === 'zh' ? '拖拽 HTML 文件到此处' : 'Drag & drop HTML file here'}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {locale === 'zh' ? '或点击选择文件 (.html, .htm, .txt)' : 'or click to select file (.html, .htm, .txt)'}
+                </p>
+              </div>
             )}
           </div>
-          {htmlPreview && (
+          {htmlPreview && !htmlFile && (
             <div className="mt-2 p-3 border border-border rounded-md max-h-32 overflow-y-auto text-xs text-muted-foreground bg-muted/20 whitespace-pre-wrap break-words">
               {htmlPreview.slice(0, 500)}{htmlPreview.length > 500 ? '...' : ''}
             </div>
           )}
         </div>
 
+        {/* 封面图片拖拽上传区 */}
         <div className="grid gap-2">
-          <Label>
-            {locale === 'zh' ? '封面图片' : 'Cover image'}
-          </Label>
+          <Label>{locale === 'zh' ? '封面图片' : 'Cover image'}</Label>
           <input
             ref={coverInputRef}
             type="file"
@@ -884,33 +977,66 @@ export function BlogPage({ locale }: BlogPageProps) {
             onChange={handleCoverChange}
             className="hidden"
           />
-          <div className="flex flex-wrap items-center gap-3">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => coverInputRef.current?.click()}
-              className="flex items-center gap-2"
-            >
-              <ImageIcon className="h-4 w-4" />
-              {coverImageFile
-                ? (locale === 'zh' ? `已选择：${coverImageFile.name}` : `Selected: ${coverImageFile.name}`)
-                : (locale === 'zh' ? '选择封面图片' : 'Choose cover image')}
-            </Button>
-            {coverImagePreview && (
-              <div className="relative">
+          <div
+            onDragOver={(e) => handleDragOver(e, setCoverDragOver)}
+            onDragLeave={(e) => handleDragLeave(e, setCoverDragOver)}
+            onDrop={handleCoverDrop}
+            onClick={() => coverInputRef.current?.click()}
+            className={`relative border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${
+              coverDragOver
+                ? 'border-primary bg-primary/5'
+                : coverImagePreview
+                  ? 'border-green-500/50 bg-green-50/50 dark:bg-green-950/20'
+                  : 'border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/30'
+            }`}
+          >
+            {coverImagePreview ? (
+              <div className="flex items-center gap-4">
                 <img
                   src={coverImagePreview}
                   alt="cover preview"
-                  className="h-16 w-16 object-cover rounded-md border border-border"
+                  className="h-20 w-32 object-cover rounded-md border border-border"
                 />
+                <div className="text-left flex-1">
+                  <p className="font-medium text-sm">{coverImageFile?.name || 'Cover image'}</p>
+                  {coverImageFile && (
+                    <p className="text-xs text-muted-foreground">
+                      {(coverImageFile.size / 1024).toFixed(1)} KB
+                    </p>
+                  )}
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCoverImageFile(null);
+                    setCoverImagePreview('');
+                  }}
+                  className="text-muted-foreground hover:text-destructive"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            ) : (
+              <div>
+                <ImageIcon className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+                <p className="text-sm font-medium">
+                  {locale === 'zh' ? '拖拽封面图片到此处' : 'Drag & drop cover image here'}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {locale === 'zh' ? '或点击选择图片' : 'or click to select image'}
+                </p>
               </div>
             )}
           </div>
         </div>
 
+        {/* 配图拖拽上传区（支持多文件） */}
         <div className="grid gap-2">
           <Label>
-            {locale === 'zh' ? '其他配图（可选，可多选）' : 'Additional images (optional, multi-select)'}
+            {locale === 'zh' ? '其他配图（可选，支持多选）' : 'Additional images (optional, multi-select)'}
           </Label>
           <input
             ref={additionalInputRef}
@@ -920,39 +1046,110 @@ export function BlogPage({ locale }: BlogPageProps) {
             onChange={handleAdditionalImagesChange}
             className="hidden"
           />
-          <div className="flex flex-wrap items-center gap-3">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => additionalInputRef.current?.click()}
-              className="flex items-center gap-2"
-            >
-              <ImageIcon className="h-4 w-4" />
-              {locale === 'zh' ? '选择配图（可多张）' : 'Add images (multi)'}
-            </Button>
-            {additionalImages.length > 0 && (
-              <span className="text-sm text-muted-foreground">
-                {locale === 'zh' ? `已选择 ${additionalImages.length} 张` : `${additionalImages.length} image(s) selected`}
-              </span>
+          <div
+            onDragOver={(e) => handleDragOver(e, setAdditionalDragOver)}
+            onDragLeave={(e) => handleDragLeave(e, setAdditionalDragOver)}
+            onDrop={handleAdditionalDrop}
+            onClick={() => additionalInputRef.current?.click()}
+            className={`relative border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${
+              additionalDragOver
+                ? 'border-primary bg-primary/5'
+                : additionalPreviews.length > 0
+                  ? 'border-green-500/50 bg-green-50/50 dark:bg-green-950/20'
+                  : 'border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/30'
+            }`}
+          >
+            {additionalPreviews.length > 0 ? (
+              <div className="flex items-center gap-3">
+                <div className="flex -space-x-2">
+                  {additionalPreviews.slice(0, 4).map((url, idx) => (
+                    <img
+                      key={idx}
+                      src={url}
+                      alt={`img-${idx}`}
+                      className="h-12 w-12 object-cover rounded-md border-2 border-background"
+                    />
+                  ))}
+                </div>
+                <div className="text-left flex-1">
+                  <p className="font-medium text-sm">
+                    {locale === 'zh'
+                      ? `已选择 ${additionalImages.length} 张配图`
+                      : `${additionalImages.length} image(s) selected`}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {locale === 'zh' ? '点击继续添加或拖入更多图片' : 'Click or drag to add more images'}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <ImageIcon className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+                <p className="text-sm font-medium">
+                  {locale === 'zh' ? '拖拽配图到此处（可多张）' : 'Drag & drop images here (multi)'}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {locale === 'zh' ? '或点击选择多张图片' : 'or click to select multiple images'}
+                </p>
+              </div>
             )}
           </div>
+
+          {/* 配图预览列表（带排序和删除） */}
           {additionalPreviews.length > 0 && (
-            <div className="flex flex-wrap items-center gap-3 pt-2">
+            <div className="mt-3 space-y-2">
               {additionalPreviews.map((url, idx) => (
-                <div key={idx} className="relative group">
+                <div
+                  key={idx}
+                  className="flex items-center gap-3 p-2 rounded-md border border-border bg-background hover:bg-muted/30 transition-colors"
+                >
+                  <GripVertical className="h-4 w-4 text-muted-foreground flex-shrink-0 cursor-grab" />
                   <img
                     src={url}
                     alt={`image-${idx}`}
-                    className="h-16 w-16 object-cover rounded-md border border-border"
+                    className="h-14 w-14 object-cover rounded-md border border-border flex-shrink-0"
                   />
-                  <button
-                    type="button"
-                    onClick={() => removeAdditionalImage(idx)}
-                    className="absolute -top-2 -right-2 bg-background border border-border rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                    aria-label="remove"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">
+                      {additionalImages[idx]?.name || `image-${idx + 1}`}
+                    </p>
+                    {additionalImages[idx] && (
+                      <p className="text-xs text-muted-foreground">
+                        {(additionalImages[idx].size / 1024).toFixed(1)} KB
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => moveAdditionalImage(idx, 'up')}
+                      disabled={idx === 0}
+                      className="h-7 w-7 p-0"
+                    >
+                      <ChevronUp className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => moveAdditionalImage(idx, 'down')}
+                      disabled={idx === additionalPreviews.length - 1}
+                      className="h-7 w-7 p-0"
+                    >
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => removeAdditionalImage(idx)}
+                      className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -1104,21 +1301,23 @@ export function BlogPage({ locale }: BlogPageProps) {
       {/* Preview Modal */}
       {showPreviewModal && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 overflow-y-auto"
           onClick={() => setShowPreviewModal(false)}
         >
           <div
-            className="bg-background border border-border rounded-lg max-w-4xl w-full max-h-[85vh] flex flex-col shadow-2xl"
+            className="bg-background border border-border rounded-lg w-full max-w-3xl my-8 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between p-4 border-b border-border">
-              <div>
-                <h2 className="text-lg font-semibold">
+            {/* Header */}
+            <div className="sticky top-0 z-10 flex items-center justify-between p-4 border-b border-border bg-background rounded-t-lg">
+              <div className="flex items-center gap-2">
+                <Eye className="h-4 w-4 text-muted-foreground" />
+                <h2 className="text-sm font-semibold">
                   {locale === 'zh' ? '发布预览' : 'Publish Preview'}
                 </h2>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  {htmlTitle || (locale === 'zh' ? '(未填写标题)' : '(title not set)')}
-                </p>
+                <span className="text-xs text-muted-foreground">
+                  — {htmlTitle || (locale === 'zh' ? '(未填写标题)' : '(title not set)')}
+                </span>
               </div>
               <Button
                 type="button"
@@ -1129,32 +1328,42 @@ export function BlogPage({ locale }: BlogPageProps) {
                 <X className="h-4 w-4" />
               </Button>
             </div>
-            <div className="flex-1 overflow-y-auto p-6">
+
+            {/* Preview Content - 模拟博客详情页样式 */}
+            <div className="p-6 md:p-8">
+              {/* 封面图 */}
               {(coverImagePreview || additionalPreviews[0]) && (
-                <img
-                  src={coverImagePreview || additionalPreviews[0]}
-                  alt="cover"
-                  className="w-full max-h-80 object-cover rounded-md mb-6 border border-border"
-                />
-              )}
-              {htmlTitle && (
-                <h1 className="text-3xl font-bold mb-4">{htmlTitle}</h1>
-              )}
-              {additionalPreviews.length > 0 && (
-                <div className="flex flex-wrap gap-3 mb-6">
-                  {additionalPreviews.map((url, idx) => (
-                    <img
-                      key={idx}
-                      src={url}
-                      alt={`img-${idx}`}
-                      className="h-24 w-24 object-cover rounded-md border border-border"
-                    />
-                  ))}
+                <div className="mb-6 rounded-lg overflow-hidden border border-border">
+                  <img
+                    src={coverImagePreview || additionalPreviews[0]}
+                    alt="cover"
+                    className="w-full h-auto max-h-72 object-cover"
+                  />
                 </div>
               )}
+
+              {/* 标题 */}
+              {htmlTitle && (
+                <h1 className="text-2xl md:text-3xl font-bold mb-3 leading-tight">{htmlTitle}</h1>
+              )}
+
+              {/* 元信息 */}
+              <div className="flex items-center gap-3 text-sm text-muted-foreground mb-6 pb-6 border-b border-border">
+                {htmlCategory && (
+                  <Badge variant="secondary">{htmlCategory}</Badge>
+                )}
+                <span className="flex items-center gap-1">
+                  <Calendar className="h-3.5 w-3.5" />
+                  {new Date().toLocaleDateString(activeLocale === 'zh' ? 'zh-CN' : 'en-US', {
+                    year: 'numeric', month: 'short', day: 'numeric',
+                  })}
+                </span>
+              </div>
+
+              {/* HTML 内容 - 使用 prose 样式渲染 */}
               {htmlPreview ? (
                 <div
-                  className="prose prose-sm max-w-none"
+                  className="prose prose-sm md:prose-base max-w-none prose-headings:font-bold prose-a:text-primary prose-img:rounded-md prose-img:border prose-img:border-border"
                   dangerouslySetInnerHTML={{ __html: htmlPreview }}
                 />
               ) : (
@@ -1163,7 +1372,9 @@ export function BlogPage({ locale }: BlogPageProps) {
                 </p>
               )}
             </div>
-            <div className="flex items-center justify-end gap-2 p-4 border-t border-border">
+
+            {/* Footer */}
+            <div className="sticky bottom-0 flex items-center justify-end gap-2 p-4 border-t border-border bg-background rounded-b-lg">
               <Button variant="outline" onClick={() => setShowPreviewModal(false)}>
                 {locale === 'zh' ? '关闭' : 'Close'}
               </Button>
@@ -1174,7 +1385,17 @@ export function BlogPage({ locale }: BlogPageProps) {
                 }}
                 disabled={htmlSaving || !isAdmin}
               >
-                {locale === 'zh' ? '立即发布' : 'Publish Now'}
+                {htmlSaving ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    {locale === 'zh' ? '发布中...' : 'Publishing...'}
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="mr-2 h-4 w-4" />
+                    {locale === 'zh' ? '立即发布' : 'Publish Now'}
+                  </>
+                )}
               </Button>
             </div>
           </div>
