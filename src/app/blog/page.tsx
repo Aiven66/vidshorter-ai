@@ -34,7 +34,7 @@ export default function BlogPage() {
     fetchPosts();
 
     async function fetchPosts() {
-      const fallbackPosts = [...getStoredBlogPosts(), ...getBuiltInBlogPosts('en')];
+      const fallbackPosts = [...getStoredBlogPosts(activeLocale), ...getBuiltInBlogPosts(activeLocale)];
 
       if (!isSupabaseConfigured()) {
         setPosts(fallbackPosts);
@@ -45,12 +45,46 @@ export default function BlogPage() {
       try {
         const { getSupabaseClient } = await import('@/storage/database/supabase-client');
         const client = getSupabaseClient();
-        const { data, error } = await client
+
+        // 先尝试按 locale 过滤查询（如果 locale 列存在）
+        let data: any[] | null = null;
+        let error: any = null;
+
+        // 尝试带 locale 过滤的查询
+        const localeResult = await client
           .from('blogs')
           .select('*')
           .eq('is_published', true)
+          .eq('locale', activeLocale)
           .order('created_at', { ascending: false })
           .limit(50);
+
+        if (localeResult.error) {
+          // locale 列可能不存在，fallback 到不带 locale 过滤
+          const fallbackResult = await client
+            .from('blogs')
+            .select('*')
+            .eq('is_published', true)
+            .order('created_at', { ascending: false })
+            .limit(50);
+          data = fallbackResult.data;
+          error = fallbackResult.error;
+        } else {
+          data = localeResult.data;
+          // 如果当前语言没有文章，fallback 到英文
+          if (!data || data.length === 0) {
+            const enResult = await client
+              .from('blogs')
+              .select('*')
+              .eq('is_published', true)
+              .eq('locale', 'en')
+              .order('created_at', { ascending: false })
+              .limit(50);
+            if (enResult.data && enResult.data.length > 0) {
+              data = enResult.data;
+            }
+          }
+        }
 
         if (error) throw error;
 
@@ -71,7 +105,7 @@ export default function BlogPage() {
         }
 
         // 2) 追加 localStorage 中之前发布的文章
-        for (const post of getStoredBlogPosts()) {
+        for (const post of getStoredBlogPosts(activeLocale)) {
           if (!seenIds.has(post.id)) {
             const titleKey = post.title?.trim().toLowerCase();
             if (titleKey && seenTitles.has(titleKey)) continue;
@@ -82,8 +116,7 @@ export default function BlogPage() {
         }
 
         // 3) 追加内置文章作为补充（当无用户文章时不会空）
-        // 只取英文版本，避免多语言重复
-        for (const post of getBuiltInBlogPosts('en')) {
+        for (const post of getBuiltInBlogPosts(activeLocale)) {
           if (!seenIds.has(post.id)) {
             const titleKey = post.title?.trim().toLowerCase();
             if (titleKey && seenTitles.has(titleKey)) continue;

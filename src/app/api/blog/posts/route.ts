@@ -118,7 +118,7 @@ export async function GET(req: NextRequest) {
   try {
     let query = client
       .from('blogs')
-      .select('id,title,category,content,cover_image,author_id,is_published,view_count,created_at,updated_at');
+      .select('id,title,category,content,cover_image,author_id,is_published,view_count,locale,created_at,updated_at');
 
     if (!isAdmin) {
       query = query.eq('is_published', true);
@@ -207,6 +207,7 @@ export async function POST(req: NextRequest) {
       author_id: authorId,
       is_published: post.is_published !== false,
       view_count: post.view_count || 0,
+      locale: post.locale || 'en',
       created_at: post.created_at,
       updated_at: new Date().toISOString(),
     }));

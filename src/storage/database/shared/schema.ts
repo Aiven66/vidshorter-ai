@@ -124,6 +124,7 @@ export const blogs = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     isPublished: boolean("is_published").default(false).notNull(),
     viewCount: integer("view_count").default(0).notNull(),
+    locale: varchar("locale", { length: 10 }), // e.g. 'en', 'zh', 'zh-Hant'
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
   },

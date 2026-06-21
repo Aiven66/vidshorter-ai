@@ -175,6 +175,7 @@ export async function POST(req: NextRequest) {
             author_id: finalAuthorId,
             is_published: true,
             view_count: 0,
+            locale: targetLocale,
             created_at: post.created_at,
             updated_at: new Date().toISOString(),
           };

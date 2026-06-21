@@ -276,7 +276,7 @@ export function BlogPage({ locale }: BlogPageProps) {
             // 查询所有文章（含未发布），管理后台需要看到全部
             const { data, error } = await client
               .from('blogs')
-              .select('id,title,category,content,cover_image,author_id,is_published,view_count,created_at,updated_at')
+              .select('*')
               .order('created_at', { ascending: false })
               .limit(200);
 
@@ -1642,7 +1642,7 @@ export function BlogPage({ locale }: BlogPageProps) {
   }
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
+    <div className="p-6 pb-16 max-w-4xl mx-auto">
       <div className="mb-6">
         <Button
           variant="ghost"
