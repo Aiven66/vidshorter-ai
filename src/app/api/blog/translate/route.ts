@@ -185,8 +185,24 @@ export async function POST(req: NextRequest) {
             .insert([row]);
 
           if (dbError) {
-            errors.push(`${targetLocale}: DB error - ${dbError.message}`);
-            results.push({ locale: targetLocale, postId: '', title: result.title, success: false, error: dbError.message });
+            // 如果 locale 列不存在，尝试不包含 locale 重试
+            if (dbError.message?.includes('locale') || dbError.message?.includes('column')) {
+              const rowWithoutLocale = { ...row };
+              delete (rowWithoutLocale as any).locale;
+              const { error: retryError } = await client
+                .from('blogs')
+                .insert([rowWithoutLocale]);
+
+              if (retryError) {
+                errors.push(`${targetLocale}: DB error - ${retryError.message}`);
+                results.push({ locale: targetLocale, postId: '', title: result.title, success: false, error: retryError.message });
+              } else {
+                results.push({ locale: targetLocale, postId: post.id, title: result.title, success: true });
+              }
+            } else {
+              errors.push(`${targetLocale}: DB error - ${dbError.message}`);
+              results.push({ locale: targetLocale, postId: '', title: result.title, success: false, error: dbError.message });
+            }
           } else {
             results.push({ locale: targetLocale, postId: post.id, title: result.title, success: true });
           }

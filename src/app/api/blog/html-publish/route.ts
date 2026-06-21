@@ -554,11 +554,28 @@ export async function POST(req: NextRequest) {
       .insert([row]);
 
     if (dbError) {
-      console.error('DB error:', dbError);
-      return NextResponse.json(
-        { error: `DB error: ${dbError.message || String(dbError)}` },
-        { status: 500 }
-      );
+      // 如果 locale 列不存在，尝试不包含 locale 重试
+      if (dbError.message?.includes('locale') || dbError.message?.includes('column')) {
+        const rowWithoutLocale = { ...row };
+        delete (rowWithoutLocale as any).locale;
+        const { error: retryError } = await client
+          .from('blogs')
+          .insert([rowWithoutLocale]);
+
+        if (retryError) {
+          console.error('DB error (retry):', retryError);
+          return NextResponse.json(
+            { error: `DB error: ${retryError.message || String(retryError)}` },
+            { status: 500 }
+          );
+        }
+      } else {
+        console.error('DB error:', dbError);
+        return NextResponse.json(
+          { error: `DB error: ${dbError.message || String(dbError)}` },
+          { status: 500 }
+        );
+      }
     }
 
     return NextResponse.json({

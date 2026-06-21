@@ -216,7 +216,21 @@ export async function POST(req: NextRequest) {
       .from('blogs')
       .upsert(rows, { onConflict: 'id' });
 
-    if (error) throw error;
+    if (error) {
+      // 如果 locale 列不存在，尝试不包含 locale 重试
+      if (error.message?.includes('locale') || error.message?.includes('column')) {
+        const rowsWithoutLocale = rows.map(row => {
+          const { locale: _locale, ...rest } = row;
+          return rest;
+        });
+        const { error: retryError } = await client
+          .from('blogs')
+          .upsert(rowsWithoutLocale, { onConflict: 'id' });
+        if (retryError) throw retryError;
+      } else {
+        throw error;
+      }
+    }
 
     return NextResponse.json({ posts: localizedPosts });
   } catch (error) {
