@@ -25,6 +25,8 @@ function decodeJwtPayload(token: string) {
  * POST /api/blog/migrate
  * 添加 locale 列到 blogs 表（如果不存在）
  * 需要管理员权限
+ *
+ * 使用 Supabase 的 service role key 通过 REST API 添加列
  */
 export async function POST(req: NextRequest) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.COZE_SUPABASE_URL || '';
@@ -65,7 +67,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    // 检查 locale 列是否已存在
+    // Step 1: 检查 locale 列是否已存在
     const { data: existingRows, error: checkError } = await client
       .from('blogs')
       .select('locale')
@@ -92,11 +94,9 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // locale 列不存在，需要通过 RPC 添加
-    // Supabase JS 客户端不支持 ALTER TABLE，需要使用 rpc 或直接 SQL
-    // 尝试使用 Supabase REST API 执行 SQL
-    const supabaseUrl = url;
-    const response = await fetch(`${supabaseUrl}/rest/v1/rpc/add_locale_column`, {
+    // Step 2: locale 列不存在，尝试通过 Supabase 的 RPC 添加
+    // 先尝试调用 add_locale_column RPC（如果存在的话）
+    const rpcResponse = await fetch(`${url}/rest/v1/rpc/add_locale_column`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -106,18 +106,61 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({}),
     });
 
-    if (response.ok) {
-      return NextResponse.json({
-        success: true,
-        message: 'locale column added successfully via RPC',
-      });
+    if (rpcResponse.ok) {
+      // RPC 成功，验证列是否已添加
+      const { error: verifyError } = await client
+        .from('blogs')
+        .select('locale')
+        .limit(1);
+
+      if (!verifyError) {
+        // 更新 null 值
+        await client
+          .from('blogs')
+          .update({ locale: 'en' })
+          .is('locale', null);
+
+        return NextResponse.json({
+          success: true,
+          message: 'locale column added successfully via RPC',
+        });
+      }
     }
 
-    // RPC 不存在，返回需要手动执行的 SQL
+    // Step 3: RPC 不存在，尝试通过 Supabase 的 SQL 执行接口
+    // Supabase Dashboard 使用 /api/project/{ref}/sql/query 端点
+    // 但这需要 Supabase 的 access token，不是 service role key
+
+    // Step 4: 尝试通过 PostgreSQL 连接字符串直接执行 SQL
+    const databaseUrl = process.env.DATABASE_URL || process.env.SUPABASE_DATABASE_URL || '';
+    if (databaseUrl) {
+      try {
+        const { Pool } = await import('pg');
+        const pool = new Pool({ connectionString: databaseUrl, ssl: { rejectUnauthorized: false } });
+        await pool.query('ALTER TABLE blogs ADD COLUMN IF NOT EXISTS locale VARCHAR(10)');
+        await pool.query("UPDATE blogs SET locale = 'en' WHERE locale IS NULL");
+        await pool.end();
+
+        return NextResponse.json({
+          success: true,
+          message: 'locale column added successfully via direct PostgreSQL connection',
+        });
+      } catch (pgErr) {
+        const pgMessage = pgErr instanceof Error ? pgErr.message : 'PostgreSQL connection failed';
+        return NextResponse.json({
+          success: false,
+          message: 'Failed to add locale column via PostgreSQL connection',
+          error: pgMessage,
+          sql: "ALTER TABLE blogs ADD COLUMN IF NOT EXISTS locale VARCHAR(10); UPDATE blogs SET locale = 'en' WHERE locale IS NULL;",
+        });
+      }
+    }
+
+    // Step 5: 所有方式都失败，返回需要手动执行的 SQL
     return NextResponse.json({
       success: false,
       message: 'Please add the locale column manually in Supabase SQL Editor',
-      sql: 'ALTER TABLE blogs ADD COLUMN IF NOT EXISTS locale VARCHAR(10); UPDATE blogs SET locale = \'en\' WHERE locale IS NULL;',
+      sql: "ALTER TABLE blogs ADD COLUMN IF NOT EXISTS locale VARCHAR(10); UPDATE blogs SET locale = 'en' WHERE locale IS NULL;",
       checkError: checkError.message,
     });
   } catch (err) {
