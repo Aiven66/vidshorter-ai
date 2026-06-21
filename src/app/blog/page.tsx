@@ -19,6 +19,7 @@ import {
   normalizeLocale,
   stripHtml,
 } from '@/lib/blog-content';
+import { detectLanguage } from '@/lib/lang-detect';
 
 export default function BlogPage() {
   const { t, locale } = useLocale();
@@ -46,9 +47,10 @@ export default function BlogPage() {
         const { getSupabaseClient } = await import('@/storage/database/supabase-client');
         const client = getSupabaseClient();
 
-        // 先尝试按 locale 过滤查询（如果 locale 列存在）
+        // 先尝试按 locale 列过滤查询（如果 locale 列存在）
         let data: any[] | null = null;
         let error: any = null;
+        let localeColumnExists = false;
 
         // 尝试带 locale 过滤的查询
         const localeResult = await client
@@ -66,10 +68,11 @@ export default function BlogPage() {
             .select('*')
             .eq('is_published', true)
             .order('created_at', { ascending: false })
-            .limit(50);
+            .limit(200);
           data = fallbackResult.data;
           error = fallbackResult.error;
         } else {
+          localeColumnExists = true;
           data = localeResult.data;
           // 如果当前语言没有文章，fallback 到英文
           if (!data || data.length === 0) {
@@ -87,6 +90,30 @@ export default function BlogPage() {
         }
 
         if (error) throw error;
+
+        // 如果 locale 列不存在，使用语言检测来过滤
+        if (!localeColumnExists && data && data.length > 0) {
+          // 检测每篇文章的语言，只保留当前语言的文章
+          const filteredData = data.filter((row: any) => {
+            const detectedLang = detectLanguage(row.title || '');
+            // 精确匹配当前语言
+            if (detectedLang === activeLocale) return true;
+            // zh 和 zh-Hant 的特殊处理
+            if (activeLocale === 'zh' && detectedLang === 'zh') return true;
+            if (activeLocale === 'zh-Hant' && detectedLang === 'zh-Hant') return true;
+            // 如果当前语言是英文，显示所有检测为英文的文章
+            if (activeLocale === 'en' && detectedLang === 'en') return true;
+            return false;
+          });
+
+          // 如果过滤后没有文章，fallback 到英文文章
+          if (filteredData.length === 0) {
+            const enArticles = data.filter((row: any) => detectLanguage(row.title || '') === 'en');
+            data = enArticles.length > 0 ? enArticles : data.slice(0, 10);
+          } else {
+            data = filteredData;
+          }
+        }
 
         // 合并显示：数据库文章 + localStorage 文章 + 内置文章，用 id 和标题去重
         const seenIds = new Set<string>();
