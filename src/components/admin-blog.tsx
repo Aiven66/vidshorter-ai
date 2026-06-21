@@ -219,34 +219,69 @@ export function BlogPage({ locale }: BlogPageProps) {
   const isAdmin = user?.role === 'admin' || user?.email === 'admin@126.com' || user?.email === 'admin@clipop.ai' || user?.email === 'admin@vidshorter.ai';
 
   const fetchPosts = useCallback(async (page: number = 1) => {
-    if (!accessToken) return;
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/blog/posts?page=${page}&pageSize=${pageSize}`, {
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${accessToken}`,
-        },
-        cache: 'no-store',
-      });
-
       let dbPosts: BlogPost[] = [];
       let total = 0;
-      if (res.ok) {
-        const data = await res.json();
-        dbPosts = (data.posts || []).map((p: any) => ({
-          id: p.id,
-          title: p.title,
-          category: p.category,
-          cover_image: p.cover_image,
-          content: p.content,
-          is_published: p.is_published,
-          view_count: p.view_count,
-          created_at: new Date(p.created_at).toISOString(),
-          updated_at: p.updated_at ? new Date(p.updated_at).toISOString() : undefined,
-        }));
-        total = data.total || dbPosts.length;
+
+      // 方式1：通过 API 获取（需要 accessToken）
+      if (accessToken) {
+        const res = await fetch(`/api/blog/posts?page=${page}&pageSize=${pageSize}`, {
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          cache: 'no-store',
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          dbPosts = (data.posts || []).map((p: any) => ({
+            id: p.id,
+            title: p.title,
+            category: p.category,
+            cover_image: p.cover_image,
+            content: p.content,
+            is_published: p.is_published,
+            view_count: p.view_count,
+            created_at: new Date(p.created_at).toISOString(),
+            updated_at: p.updated_at ? new Date(p.updated_at).toISOString() : undefined,
+          }));
+          total = data.total || dbPosts.length;
+        }
+      }
+
+      // 方式2：API 失败或无 accessToken 时，直接用 Supabase 客户端查询
+      if (dbPosts.length === 0) {
+        try {
+          const { isSupabaseConfigured, getSupabaseClient } = await import('@/storage/database/supabase-client');
+          if (isSupabaseConfigured()) {
+            const client = getSupabaseClient();
+            const { data, error } = await client
+              .from('blogs')
+              .select('id,title,category,content,cover_image,author_id,is_published,view_count,created_at,updated_at')
+              .order('created_at', { ascending: false })
+              .limit(200);
+
+            if (!error && data) {
+              dbPosts = data.map((p: any) => ({
+                id: p.id,
+                title: p.title,
+                category: p.category,
+                cover_image: p.cover_image,
+                content: p.content,
+                is_published: p.is_published,
+                view_count: p.view_count,
+                created_at: new Date(p.created_at).toISOString(),
+                updated_at: p.updated_at ? new Date(p.updated_at).toISOString() : undefined,
+              }));
+              total = dbPosts.length;
+            }
+          }
+        } catch {
+          // Supabase 客户端查询也失败，继续用 fallback
+        }
       }
 
       const activeLocale = normalizeLocale(locale);
