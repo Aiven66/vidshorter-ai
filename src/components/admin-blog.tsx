@@ -761,11 +761,9 @@ export function BlogPage({ locale }: BlogPageProps) {
         openEditForm(editingPost);
       } else {
         const data = await res.json().catch(() => ({}));
-        setTranslationResult({ successCount: 0, failCount: 31 });
         setSaveStatus(locale === 'zh' ? `翻译失败：${data.error || ''}` : `Translation failed: ${data.error || ''}`);
       }
     } catch (err) {
-      setTranslationResult({ successCount: 0, failCount: 31 });
       setSaveStatus(err instanceof Error ? err.message : (locale === 'zh' ? '翻译失败' : 'Translation failed'));
     } finally {
       setTranslating(false);

@@ -89,6 +89,39 @@ async function ensureAuthor(client: ReturnType<typeof createClient>, user: { id:
   return (data?.id as string) || safeId;
 }
 
+async function checkColumns(client: ReturnType<typeof createClient>) {
+  const result: Record<string, boolean> = {};
+  for (const col of ['locale', 'parent_id']) {
+    const { error } = await client.from('blogs').select(col).limit(1);
+    result[col] = !error;
+  }
+  return result;
+}
+
+async function ensureBlogColumns(client: ReturnType<typeof createClient>) {
+  let info = await checkColumns(client);
+  if (info.locale && info.parent_id) return info;
+
+  // 尝试通过直连 PostgreSQL 自动添加列
+  const databaseUrl = process.env.DATABASE_URL || process.env.SUPABASE_DATABASE_URL || '';
+  if (databaseUrl) {
+    try {
+      const { Pool } = await import('pg');
+      const pool = new Pool({ connectionString: databaseUrl, ssl: { rejectUnauthorized: false } });
+      await pool.query('ALTER TABLE blogs ADD COLUMN IF NOT EXISTS locale VARCHAR(10);');
+      await pool.query('ALTER TABLE blogs ADD COLUMN IF NOT EXISTS parent_id VARCHAR(36);');
+      await pool.query("UPDATE blogs SET locale = 'en' WHERE locale IS NULL;");
+      await pool.end();
+      info = await checkColumns(client);
+      if (info.locale && info.parent_id) return info;
+    } catch (pgErr) {
+      console.error('Auto migration failed:', pgErr);
+    }
+  }
+
+  return info;
+}
+
 /**
  * POST /api/blog/translate
  * 翻译博客文章到所有目标语言并保存到数据库
@@ -136,14 +169,52 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'sourcePostId is required' }, { status: 400 });
     }
 
-    // 获取源英文文章
-    const { data: sourcePost, error: sourceError } = await client
-      .from('blogs')
-      .select('id,title,category,content,cover_image,author_id,locale,parent_id')
-      .eq('id', sourcePostId)
-      .maybeSingle();
+    // 检查/自动添加目标表 locale / parent_id 列
+    const { locale: hasLocaleCol, parent_id: hasParentIdCol } = await ensureBlogColumns(client);
+    if (!hasLocaleCol || !hasParentIdCol) {
+      return NextResponse.json({
+        error: 'Database columns missing. Please run /api/blog/migrate or execute the SQL in Supabase SQL Editor.',
+        sql: `ALTER TABLE blogs ADD COLUMN IF NOT EXISTS locale VARCHAR(10);
+ALTER TABLE blogs ADD COLUMN IF NOT EXISTS parent_id VARCHAR(36);
+UPDATE blogs SET locale = 'en' WHERE locale IS NULL;`,
+      }, { status: 503 });
+    }
 
-    if (sourceError || !sourcePost) {
+    // 获取源英文文章；如果列不存在则只查询已知字段
+    const baseColumns = 'id,title,category,content,cover_image,author_id';
+    let sourcePost: any = null;
+    let sourceError: any = null;
+
+    if (hasLocaleCol && hasParentIdCol) {
+      const res = await client
+        .from('blogs')
+        .select(`${baseColumns},locale,parent_id`)
+        .eq('id', sourcePostId)
+        .maybeSingle();
+      sourcePost = res.data;
+      sourceError = res.error;
+    } else if (hasLocaleCol) {
+      const res = await client
+        .from('blogs')
+        .select(`${baseColumns},locale`)
+        .eq('id', sourcePostId)
+        .maybeSingle();
+      sourcePost = res.data;
+      sourceError = res.error;
+    } else {
+      const res = await client
+        .from('blogs')
+        .select(baseColumns)
+        .eq('id', sourcePostId)
+        .maybeSingle();
+      sourcePost = res.data;
+      sourceError = res.error;
+    }
+
+    if (sourceError) {
+      console.error('Source post query error:', sourceError);
+    }
+    if (!sourcePost) {
       return NextResponse.json({ error: 'Source post not found' }, { status: 404 });
     }
 
@@ -160,12 +231,21 @@ export async function POST(req: NextRequest) {
     // 获取或创建 author
     const finalAuthorId = authorId || await ensureAuthor(client, adminUser);
 
+    // 确定 root id：如果当前文章本身就是翻译版本，则以其 parent_id 为 root
+    const rootId = hasParentIdCol ? (sourcePost.parent_id || sourcePostId) : sourcePostId;
+
     // 删除该文章已有的旧翻译（避免重复）
-    await client
-      .from('blogs')
-      .delete()
-      .eq('parent_id', sourcePostId)
-      .neq('id', sourcePostId);
+    if (hasParentIdCol) {
+      try {
+        await client
+          .from('blogs')
+          .delete()
+          .eq('parent_id', rootId)
+          .neq('id', rootId);
+      } catch (delErr) {
+        console.error('Delete old translations error:', delErr);
+      }
+    }
 
     // 翻译到所有目标语言
     const results: { locale: string; postId: string; title: string; success: boolean; error?: string }[] = [];
@@ -185,7 +265,7 @@ export async function POST(req: NextRequest) {
             locale: targetLocale,
           });
 
-          const row = {
+          const row: Record<string, unknown> = {
             id: post.id,
             title: post.title,
             category: post.category,
@@ -194,11 +274,11 @@ export async function POST(req: NextRequest) {
             author_id: finalAuthorId,
             is_published: true,
             view_count: 0,
-            locale: targetLocale,
-            parent_id: sourcePostId,
             created_at: post.created_at,
             updated_at: new Date().toISOString(),
           };
+          if (hasLocaleCol) row.locale = targetLocale;
+          if (hasParentIdCol) row.parent_id = rootId;
 
           const { error: dbError } = await client
             .from('blogs')
