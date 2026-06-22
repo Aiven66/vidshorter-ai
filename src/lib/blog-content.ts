@@ -32,6 +32,7 @@ export interface BlogPost {
   views?: number;
   is_published?: boolean;
   locale: Locale;
+  parentId?: string | null;
   translation_group?: string;
   isBuiltIn?: boolean;
 }
@@ -52,6 +53,8 @@ export type BlogRow = {
   created_at?: string | null;
   views?: number | null;
   locale?: string | null;
+  parent_id?: string | null;
+  parentId?: string | null;
   is_published?: boolean | null;
 };
 
@@ -1500,13 +1503,14 @@ export function normalizeBlogRow(row: BlogRow): BlogPost {
       ? row.views
       : 0;
   const locale = normalizeLocale(row.locale);
+  const parentId = row.parent_id ?? row.parentId ?? null;
   return {
     id, slug, title, content: rawContent, summary, category,
     coverImage, cover_image: coverImage,
     author,
     publishedAt: dateValue, created_at: dateValue,
     view_count: viewCount, views: viewCount,
-    is_published: true, locale, isBuiltIn: false,
+    is_published: true, locale, parentId, isBuiltIn: false,
   };
 }
 
@@ -1632,6 +1636,7 @@ export function createSingleAdminPost(input: {
     views: 0,
     is_published: publish,
     locale,
+    parentId: null,
     translation_group: `admin-${Date.now()}`,
     isBuiltIn: false,
   };

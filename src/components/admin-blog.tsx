@@ -32,6 +32,7 @@ import {
   getStoredBlogPosts,
   createSingleAdminPost,
   normalizeLocale,
+  normalizeBlogRow,
   getDefaultCoverImage,
   saveAdminBlogPosts,
   stripHtml,
@@ -174,21 +175,6 @@ import { RichTextEditor } from '@/components/rich-text-editor';
 import { CoverImageUploader } from '@/components/cover-image-uploader';
 import { type Locale } from './admin-layout';
 
-interface BlogPost {
-  id: string;
-  title: string;
-  category: string;
-  cover_image?: string;
-  content?: string;
-  is_published: boolean;
-  view_count?: number;
-  locale?: string;
-  created_at: string;
-  updated_at?: string;
-  _locales?: string[];
-  _groupSize?: number;
-}
-
 interface BlogPageProps {
   locale: Locale;
 }
@@ -230,6 +216,20 @@ export function BlogPage({ locale }: BlogPageProps) {
   const [htmlStatus, setHtmlStatus] = useState<string | null>(null);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
 
+  // ========= Translation state =========
+  const [editingLocale, setEditingLocale] = useState<string>('en');
+  const [translations, setTranslations] = useState<Record<string, BlogPost>>({});
+  const [translating, setTranslating] = useState(false);
+  const [translationProgress, setTranslationProgress] = useState<{
+    total: number;
+    completed: number;
+    current?: string;
+  } | null>(null);
+  const [translationResult, setTranslationResult] = useState<{
+    successCount: number;
+    failCount: number;
+  } | null>(null);
+
 
   const isAdmin = user?.role === 'admin' || user?.email === 'admin@126.com' || user?.email === 'admin@clipop.ai' || user?.email === 'admin@vidshorter.ai';
 
@@ -253,15 +253,9 @@ export function BlogPage({ locale }: BlogPageProps) {
         if (res.ok) {
           const data = await res.json();
           dbPosts = (data.posts || []).map((p: any) => ({
-            id: p.id,
-            title: p.title,
-            category: p.category,
-            cover_image: p.cover_image,
-            content: p.content,
+            ...normalizeBlogRow(p),
             is_published: p.is_published,
-            view_count: p.view_count,
             locale: p.locale || '',
-            created_at: new Date(p.created_at).toISOString(),
             updated_at: p.updated_at ? new Date(p.updated_at).toISOString() : undefined,
           }));
           total = data.total || dbPosts.length;
@@ -282,15 +276,9 @@ export function BlogPage({ locale }: BlogPageProps) {
 
             if (!error && data && data.length > 0) {
               dbPosts = data.map((p: any) => ({
-                id: p.id,
-                title: p.title,
-                category: p.category,
-                cover_image: p.cover_image,
-                content: p.content,
+                ...normalizeBlogRow(p),
                 is_published: p.is_published,
-                view_count: p.view_count,
                 locale: p.locale || '',
-                created_at: new Date(p.created_at).toISOString(),
                 updated_at: p.updated_at ? new Date(p.updated_at).toISOString() : undefined,
               }));
               total = dbPosts.length;
@@ -334,15 +322,9 @@ export function BlogPage({ locale }: BlogPageProps) {
           if (res.ok) {
             const data = await res.json();
             dbPosts = (data.posts || []).map((p: any) => ({
-              id: p.id,
-              title: p.title,
-              category: p.category,
-              cover_image: p.cover_image,
-              content: p.content,
+              ...normalizeBlogRow(p),
               is_published: p.is_published,
-              view_count: p.view_count,
               locale: p.locale || '',
-              created_at: new Date(p.created_at).toISOString(),
               updated_at: p.updated_at ? new Date(p.updated_at).toISOString() : undefined,
             }));
             total = data.total || dbPosts.length;
@@ -352,50 +334,16 @@ export function BlogPage({ locale }: BlogPageProps) {
         }
       }
 
-      // 管理后台：按内容摘要分组，合并所有同内容文章的翻译版本
-      // 数据库中可能存在同一文章的不同语言版本，它们标题不同但内容相同
-      const groups = new Map<string, BlogPost[]>();
-      for (const post of dbPosts) {
-        // 提取内容前200字符（去除HTML标签）作为分组键
-        // 这样同一内容的不同语言版本会被分到同一组
-        const contentText = stripHtml(post.content || '');
-        const contentKey = contentText.substring(0, 200).trim().toLowerCase();
-        // 空内容的文章用 id 单独分组
-        const key = contentKey || 'empty-content-' + post.id;
-        if (!groups.has(key)) groups.set(key, []);
-        groups.get(key)!.push(post);
-      }
-
-      // 每组取最新的文章为主展示，并统计该组所有 locale
-      const groupedPosts: BlogPost[] = [];
-      for (const [, group] of groups) {
-        // 按 created_at 降序，取最新的作为主展示
-        const sortedGroup = [...group].sort((a, b) =>
-          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-        );
-        // 优先选英文版作为展示文章，没有则取最新的
-        const enPost = sortedGroup.find(p => (p.locale || '') === 'en') || sortedGroup[0];
-        // 收集该组所有唯一的 locale
-        const allLocales = Array.from(
-          new Set(sortedGroup.map(p => p.locale).filter(Boolean))
-        );
-        groupedPosts.push({
-          ...enPost,
-          _locales: allLocales,
-          _groupSize: sortedGroup.length,
-        } as BlogPost & { _locales: string[]; _groupSize: number });
-      }
-
-      // 按 created_at 降序
-      groupedPosts.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      // 管理后台只显示 root 英文文章，翻译版本通过编辑页管理
+      const rootPosts = dbPosts.filter(p => !p.parentId && (p.locale || 'en') === 'en');
 
       // 计算分页
       const startIdx = (page - 1) * pageSize;
       const endIdx = startIdx + pageSize;
-      const paginatedPosts = groupedPosts.slice(startIdx, endIdx);
+      const paginatedPosts = rootPosts.slice(startIdx, endIdx);
 
       setPosts(paginatedPosts);
-      setTotalCount(groupedPosts.length);
+      setTotalCount(rootPosts.length);
       setCurrentPage(page);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load');
@@ -540,6 +488,10 @@ export function BlogPage({ locale }: BlogPageProps) {
     setAdditionalImages([]);
     setAdditionalPreviews([]);
     setHtmlStatus(null);
+    setEditingLocale('en');
+    setTranslations({});
+    setTranslationResult(null);
+    setTranslationProgress(null);
     setView('new');
   }
 
@@ -550,11 +502,15 @@ export function BlogPage({ locale }: BlogPageProps) {
     setBlogCoverImage(post.cover_image || '');
     setBlogContent(post.content || '');
     setSaveStatus(null);
+    setEditingLocale('en');
+    setTranslations({});
+    setTranslationResult(null);
+    setTranslationProgress(null);
 
-    // 如果 content 为空，从数据库加载完整内容
-    if (!post.content && accessToken) {
+    // 加载文章及其翻译版本
+    if (accessToken) {
       try {
-        const res = await fetch(`/api/blog/posts`, {
+        const res = await fetch(`/api/blog/posts/${encodeURIComponent(post.id)}`, {
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${accessToken}`,
@@ -563,13 +519,33 @@ export function BlogPage({ locale }: BlogPageProps) {
         });
         if (res.ok) {
           const data = await res.json();
-          const fullPost = (data.posts || []).find((p: any) => p.id === post.id);
-          if (fullPost?.content) {
-            setBlogContent(fullPost.content);
+          const rootPost = data.post;
+          const transList = data.translations || [];
+          if (rootPost?.content) {
+            setBlogContent(rootPost.content);
           }
+          if (rootPost?.title) setBlogTitle(rootPost.title);
+          if (rootPost?.category) setBlogCategory(rootPost.category);
+          if (rootPost?.cover_image) setBlogCoverImage(rootPost.cover_image);
+          const transMap: Record<string, BlogPost> = {};
+          for (const t of transList) {
+            transMap[t.locale || 'unknown'] = {
+              id: t.id,
+              title: t.title,
+              category: t.category,
+              cover_image: t.cover_image,
+              content: t.content,
+              is_published: t.is_published,
+              view_count: t.view_count,
+              locale: t.locale,
+              created_at: t.created_at,
+              updated_at: t.updated_at,
+            };
+          }
+          setTranslations(transMap);
         }
       } catch {
-        // 静默失败，使用空内容
+        // 静默失败，使用列表中已有的内容
       }
     }
 
@@ -592,43 +568,18 @@ export function BlogPage({ locale }: BlogPageProps) {
         throw new Error(locale === 'zh' ? '未登录或 token 失效' : 'Not logged in or token expired');
       }
 
-      // 先查找同内容的所有文章（按内容摘要分组删除）
-      const allPostsRes = await fetch('/api/blog/posts?page=1&pageSize=1000', {
+      // API 会删除 root 及其所有翻译版本
+      const res = await fetch(`/api/blog/${encodeURIComponent(postId)}`, {
+        method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${accessToken}`,
         },
-        cache: 'no-store',
       });
 
-      let idsToDelete = [postId];
-      if (allPostsRes.ok) {
-        const allData = await allPostsRes.json();
-        const allPostsList = allData.posts || [];
-        // 找到当前文章的内容摘要
-        const currentPost = allPostsList.find((p: any) => p.id === postId);
-        if (currentPost?.content) {
-          const currentContent = stripHtml(String(currentPost.content));
-          const currentKey = currentContent.substring(0, 200).trim().toLowerCase();
-          // 找到所有内容相同的文章
-          const sameGroup = allPostsList.filter((p: any) => {
-            const content = stripHtml(String(p.content || ''));
-            const key = content.substring(0, 200).trim().toLowerCase();
-            return key === currentKey;
-          });
-          idsToDelete = sameGroup.map((p: any) => p.id);
-        }
-      }
-
-      // 逐个删除
-      for (const id of idsToDelete) {
-        await fetch(`/api/blog/${encodeURIComponent(id)}`, {
-          method: 'DELETE',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${accessToken}`,
-          },
-        });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Delete failed');
       }
 
       await fetchPosts();
@@ -657,36 +608,77 @@ export function BlogPage({ locale }: BlogPageProps) {
     try {
       if (accessToken) {
         if (editingPost) {
-          // 编辑模式：使用 PATCH 更新已有文章
-          const res = await fetch('/api/blog/posts', {
-            method: 'PATCH',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${accessToken}`,
-            },
-            body: JSON.stringify({
-              id: editingPost.id,
-              title: blogTitle.trim(),
-              category: blogCategory.trim() || 'AI Video Clipping',
-              coverImage: blogCoverImage.trim(),
-              content: blogContent.trim(),
-              publish: true,
-            }),
-          });
+          if (editingLocale === 'en') {
+            // 编辑英文 root 文章
+            const res = await fetch('/api/blog/posts', {
+              method: 'PATCH',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${accessToken}`,
+              },
+              body: JSON.stringify({
+                id: editingPost.id,
+                title: blogTitle.trim(),
+                category: blogCategory.trim() || 'AI Video Clipping',
+                coverImage: blogCoverImage.trim(),
+                content: blogContent.trim(),
+                publish: true,
+              }),
+            });
 
-          if (res.ok) {
-            setSaveStatus(locale === 'zh' ? '文章已更新' : 'Article updated');
-            setTimeout(() => {
-              setView('list');
-              setSaveStatus(null);
-            }, 1500);
+            if (res.ok) {
+              setSaveStatus(locale === 'zh' ? '文章已更新' : 'Article updated');
+              setTimeout(() => {
+                setView('list');
+                setSaveStatus(null);
+              }, 1500);
+            } else {
+              const data = await res.json().catch(() => ({}));
+              setSaveStatus(
+                locale === 'zh'
+                  ? `更新失败：${data.error || res.statusText}`
+                  : `Update failed: ${data.error || res.statusText}`
+              );
+            }
           } else {
-            const data = await res.json().catch(() => ({}));
-            setSaveStatus(
-              locale === 'zh'
-                ? `更新失败：${data.error || res.statusText}`
-                : `Update failed: ${data.error || res.statusText}`
-            );
+            // 保存翻译版本
+            const res = await fetch(`/api/blog/posts/${encodeURIComponent(editingPost.id)}`, {
+              method: 'PATCH',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${accessToken}`,
+              },
+              body: JSON.stringify({
+                locale: editingLocale,
+                title: blogTitle.trim(),
+                category: blogCategory.trim() || 'AI Video Clipping',
+                coverImage: blogCoverImage.trim(),
+                content: blogContent.trim(),
+                publish: true,
+              }),
+            });
+
+            if (res.ok) {
+              const data = await res.json().catch(() => ({}));
+              if (data.translation) {
+                setTranslations(prev => ({
+                  ...prev,
+                  [editingLocale]: {
+                    ...prev[editingLocale],
+                    ...data.translation,
+                    locale: editingLocale,
+                  },
+                }));
+              }
+              setSaveStatus(locale === 'zh' ? '翻译已保存' : 'Translation saved');
+            } else {
+              const data = await res.json().catch(() => ({}));
+              setSaveStatus(
+                locale === 'zh'
+                  ? `保存失败：${data.error || res.statusText}`
+                  : `Save failed: ${data.error || res.statusText}`
+              );
+            }
           }
         } else {
           // 新建模式：使用 POST 创建新文章
@@ -735,6 +727,48 @@ export function BlogPage({ locale }: BlogPageProps) {
       );
     } finally {
       setSaving(false);
+    }
+  }
+
+  // ========= 手动触发多语言翻译 =========
+  async function handleTranslate() {
+    if (!editingPost || !accessToken || !isAdmin) return;
+    setTranslating(true);
+    setTranslationProgress({ total: 31, completed: 0 });
+    setTranslationResult(null);
+    setSaveStatus(locale === 'zh' ? '正在翻译，请稍候...' : 'Translating, please wait...');
+
+    try {
+      const res = await fetch('/api/blog/translate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ sourcePostId: editingPost.id }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        // 由于翻译 API 是同步完成的（无流式进度），这里直接显示最终结果
+        setTranslationResult({
+          successCount: data.successCount || 0,
+          failCount: data.failCount || 0,
+        });
+        setTranslationProgress({ total: data.total || 31, completed: data.successCount || 0 });
+        setSaveStatus(locale === 'zh' ? '翻译完成' : 'Translation complete');
+        // 刷新翻译版本
+        openEditForm(editingPost);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setTranslationResult({ successCount: 0, failCount: 31 });
+        setSaveStatus(locale === 'zh' ? `翻译失败：${data.error || ''}` : `Translation failed: ${data.error || ''}`);
+      }
+    } catch (err) {
+      setTranslationResult({ successCount: 0, failCount: 31 });
+      setSaveStatus(err instanceof Error ? err.message : (locale === 'zh' ? '翻译失败' : 'Translation failed'));
+    } finally {
+      setTranslating(false);
     }
   }
 
@@ -1002,14 +1036,6 @@ export function BlogPage({ locale }: BlogPageProps) {
                             ? (locale === 'zh' ? '已发布' : 'Published')
                             : (locale === 'zh' ? '草稿' : 'Draft')}
                         </Badge>
-                        {post._groupSize && post._groupSize > 1 && (
-                          <Badge variant="outline" className="text-xs">
-                            <Sparkles className="h-3 w-3 mr-1" />
-                            {locale === 'zh'
-                              ? `${post._groupSize} 种语言`
-                              : `${post._groupSize} languages`}
-                          </Badge>
-                        )}
                       </div>
                     </div>
 
@@ -1097,9 +1123,49 @@ export function BlogPage({ locale }: BlogPageProps) {
     return (
       <>
         <div className="grid gap-2">
-          <Label htmlFor="blog-title">
-            {locale === 'zh' ? '英文标题' : 'English Title'}
-          </Label>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="blog-title">
+              {locale === 'zh' ? '文章标题' : 'Article Title'}
+            </Label>
+            {isEditing && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">
+                  {locale === 'zh' ? '编辑语言：' : 'Editing language:'}
+                </span>
+                <select
+                  value={editingLocale}
+                  onChange={(e) => {
+                    const newLocale = e.target.value;
+                    setEditingLocale(newLocale);
+                    if (newLocale === 'en') {
+                      setBlogTitle(editingPost?.title || '');
+                      setBlogCategory(editingPost?.category || 'AI Video Clipping');
+                      setBlogCoverImage(editingPost?.cover_image || '');
+                      setBlogContent(editingPost?.content || '');
+                    } else if (translations[newLocale]) {
+                      const t = translations[newLocale];
+                      setBlogTitle(t.title);
+                      setBlogCategory(t.category);
+                      setBlogCoverImage(t.cover_image || '');
+                      setBlogContent(t.content || '');
+                    } else {
+                      setBlogTitle('');
+                      setBlogCategory('AI Video Clipping');
+                      setBlogCoverImage('');
+                      setBlogContent('');
+                      setSaveStatus(locale === 'zh' ? '该语言暂无翻译，请先点击翻译按钮' : 'No translation for this language yet. Click translate first.');
+                    }
+                  }}
+                  className="text-xs border border-border rounded-md px-2 py-1 bg-background"
+                >
+                  <option value="en">English</option>
+                  {Object.keys(translations).sort().map((loc) => (
+                    <option key={loc} value={loc}>{loc}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
           <Input
             id="blog-title"
             value={blogTitle}
@@ -1149,7 +1215,7 @@ export function BlogPage({ locale }: BlogPageProps) {
         </div>
 
         <div className="flex flex-wrap items-center gap-3 pt-2">
-          <Button onClick={savePost} disabled={saving || !isAdmin}>
+          <Button onClick={savePost} disabled={saving || translating || !isAdmin}>
             {saving ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -1161,8 +1227,53 @@ export function BlogPage({ locale }: BlogPageProps) {
               locale === 'zh' ? '发布文章' : 'Publish Article'
             )}
           </Button>
+
+          {isEditing && (
+            <Button
+              variant="outline"
+              onClick={handleTranslate}
+              disabled={translating || !isAdmin}
+              className="flex items-center gap-2"
+            >
+              {translating ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Sparkles className="h-4 w-4" />
+              )}
+              {translating
+                ? (locale === 'zh' ? '翻译中...' : 'Translating...')
+                : (locale === 'zh' ? '多语言翻译' : 'Translate')}
+            </Button>
+          )}
+
           {saveStatus && (
             <span className="text-sm text-muted-foreground">{saveStatus}</span>
+          )}
+
+          {translating && translationProgress && (
+            <span className="text-sm text-primary font-medium">
+              {locale === 'zh'
+                ? `正在翻译 (${translationProgress.completed}/${translationProgress.total})...`
+                : `Translating (${translationProgress.completed}/${translationProgress.total})...`}
+            </span>
+          )}
+
+          {translationResult && !translating && (
+            <span className="text-sm font-medium">
+              {translationResult.failCount === 0 ? (
+                <span className="text-green-600">
+                  {locale === 'zh'
+                    ? `翻译完成：${translationResult.successCount} 种语言`
+                    : `Translation complete: ${translationResult.successCount} languages`}
+                </span>
+              ) : (
+                <span className="text-amber-600">
+                  {locale === 'zh'
+                    ? `翻译完成：${translationResult.successCount} 成功，${translationResult.failCount} 失败`
+                    : `Translation done: ${translationResult.successCount} succeeded, ${translationResult.failCount} failed`}
+                </span>
+              )}
+            </span>
           )}
         </div>
       </>
@@ -1547,6 +1658,10 @@ export function BlogPage({ locale }: BlogPageProps) {
             setSaveStatus(null);
             setHtmlStatus(null);
             setShowPreviewModal(false);
+            setEditingLocale('en');
+            setTranslations({});
+            setTranslationResult(null);
+            setTranslationProgress(null);
           }}
           className="flex items-center gap-2 mb-4 -ml-3"
         >

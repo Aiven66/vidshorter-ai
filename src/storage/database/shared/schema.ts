@@ -124,7 +124,8 @@ export const blogs = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     isPublished: boolean("is_published").default(false).notNull(),
     viewCount: integer("view_count").default(0).notNull(),
-    locale: varchar("locale", { length: 10 }), // e.g. 'en', 'zh', 'zh-Hant'
+    locale: varchar("locale", { length: 10 }).default('en'), // e.g. 'en', 'zh', 'zh-Hant'
+    parentId: varchar("parent_id", { length: 36 }), // Points to the English root blog; null means English root
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
   },
@@ -133,6 +134,8 @@ export const blogs = pgTable(
     index("blogs_category_idx").on(table.category),
     index("blogs_is_published_idx").on(table.isPublished),
     index("blogs_created_at_idx").on(table.createdAt),
+    index("blogs_parent_id_idx").on(table.parentId),
+    index("blogs_locale_idx").on(table.locale),
   ]
 );
 

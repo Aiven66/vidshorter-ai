@@ -155,10 +155,23 @@ export async function DELETE(
   }
 
   try {
+    // 查询目标文章以确定 parent_id
+    const { data: target } = await client
+      .from('blogs')
+      .select('id,parent_id')
+      .eq('id', blogId)
+      .maybeSingle();
+
+    if (!target) {
+      return NextResponse.json({ ok: true, deleted: blogId });
+    }
+
+    const parentId = target.parent_id || target.id;
+    // 删除 root 及其所有翻译版本
     const { error } = await client
       .from('blogs')
       .delete()
-      .eq('id', blogId);
+      .or(`id.eq.${parentId},and(parent_id.eq.${parentId},parent_id.not.is.null)`);
 
     if (error) {
       console.error('Delete error:', error);
@@ -168,7 +181,7 @@ export async function DELETE(
       );
     }
 
-    return NextResponse.json({ ok: true, deleted: blogId });
+    return NextResponse.json({ ok: true, deleted: parentId });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err) || 'Failed to delete';
     console.error('Delete error:', message, err);

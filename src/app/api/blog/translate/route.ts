@@ -94,12 +94,10 @@ async function ensureAuthor(client: ReturnType<typeof createClient>, user: { id:
  * 翻译博客文章到所有目标语言并保存到数据库
  *
  * 请求体：
- * - title: 英文标题
- * - category: 英文分类
- * - content: 英文内容（HTML）
- * - coverImage: 封面图片 URL
- * - sourcePostId: 源文章 ID（用于关联）
- * - authorId: 作者 ID
+ * - sourcePostId: 源英文文章 ID（必须）
+ * - authorId: 作者 ID（可选，默认从当前管理员获取）
+ *
+ * 翻译结果以 parent_id 关联到源英文文章，前台按 locale 过滤。
  */
 export async function POST(req: NextRequest) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.COZE_SUPABASE_URL || '';
@@ -133,19 +131,41 @@ export async function POST(req: NextRequest) {
       authorId?: string;
     };
 
-    const title = body.title?.trim();
-    const category = body.category?.trim() || 'AI Video Clipping';
-    const content = body.content?.trim();
-    const coverImage = body.coverImage?.trim() || '';
     const sourcePostId = body.sourcePostId;
-    const authorId = body.authorId;
+    if (!sourcePostId) {
+      return NextResponse.json({ error: 'sourcePostId is required' }, { status: 400 });
+    }
+
+    // 获取源英文文章
+    const { data: sourcePost, error: sourceError } = await client
+      .from('blogs')
+      .select('id,title,category,content,cover_image,author_id,locale,parent_id')
+      .eq('id', sourcePostId)
+      .maybeSingle();
+
+    if (sourceError || !sourcePost) {
+      return NextResponse.json({ error: 'Source post not found' }, { status: 404 });
+    }
+
+    const title = String(sourcePost.title || '').trim();
+    const category = String(sourcePost.category || 'AI Video Clipping').trim();
+    const content = String(sourcePost.content || '').trim();
+    const coverImage = String(sourcePost.cover_image || '');
+    const authorId = body.authorId || sourcePost.author_id;
 
     if (!title || !content) {
-      return NextResponse.json({ error: 'Title and content are required' }, { status: 400 });
+      return NextResponse.json({ error: 'Source post title and content are empty' }, { status: 400 });
     }
 
     // 获取或创建 author
     const finalAuthorId = authorId || await ensureAuthor(client, adminUser);
+
+    // 删除该文章已有的旧翻译（避免重复）
+    await client
+      .from('blogs')
+      .delete()
+      .eq('parent_id', sourcePostId)
+      .neq('id', sourcePostId);
 
     // 翻译到所有目标语言
     const results: { locale: string; postId: string; title: string; success: boolean; error?: string }[] = [];
@@ -156,7 +176,6 @@ export async function POST(req: NextRequest) {
         const result = await translateBlogPost(title, category, content, targetLocale, 'en');
 
         if (result.success) {
-          // 创建翻译后的文章对象
           const post = createSingleAdminPost({
             title: result.title,
             category: result.category,
@@ -176,6 +195,7 @@ export async function POST(req: NextRequest) {
             is_published: true,
             view_count: 0,
             locale: targetLocale,
+            parent_id: sourcePostId,
             created_at: post.created_at,
             updated_at: new Date().toISOString(),
           };
@@ -185,24 +205,8 @@ export async function POST(req: NextRequest) {
             .insert([row]);
 
           if (dbError) {
-            // 如果 locale 列不存在，尝试不包含 locale 重试
-            if (dbError.message?.includes('locale') || dbError.message?.includes('column')) {
-              const rowWithoutLocale = { ...row };
-              delete (rowWithoutLocale as any).locale;
-              const { error: retryError } = await client
-                .from('blogs')
-                .insert([rowWithoutLocale]);
-
-              if (retryError) {
-                errors.push(`${targetLocale}: DB error - ${retryError.message}`);
-                results.push({ locale: targetLocale, postId: '', title: result.title, success: false, error: retryError.message });
-              } else {
-                results.push({ locale: targetLocale, postId: post.id, title: result.title, success: true });
-              }
-            } else {
-              errors.push(`${targetLocale}: DB error - ${dbError.message}`);
-              results.push({ locale: targetLocale, postId: '', title: result.title, success: false, error: dbError.message });
-            }
+            errors.push(`${targetLocale}: DB error - ${dbError.message}`);
+            results.push({ locale: targetLocale, postId: '', title: result.title, success: false, error: dbError.message });
           } else {
             results.push({ locale: targetLocale, postId: post.id, title: result.title, success: true });
           }

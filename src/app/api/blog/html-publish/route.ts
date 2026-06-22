@@ -457,7 +457,8 @@ export async function POST(req: NextRequest) {
       category = 'AI Video Clipping';
     }
 
-    const locale = detectLocaleFromHtml(htmlContent);
+    // 所有 HTML 上传的文章都作为英文 root 文章，locale 固定为 en，parent_id 为空
+    const locale = 'en';
 
     // 确保 author 存在（通过 email 查，UUID 不会冲突
     let authorId: string;
@@ -545,6 +546,7 @@ export async function POST(req: NextRequest) {
       is_published: true,
       view_count: 0,
       locale: locale || 'en',
+      parent_id: null,
       created_at: post.created_at,
       updated_at: new Date().toISOString(),
     };

@@ -67,32 +67,63 @@ export default function BlogDetailPage() {
       try {
         const { getSupabaseClient } = await import('@/storage/database/supabase-client');
         const client = getSupabaseClient();
-        const { data, error } = await client
+
+        // 1. 先按 id 找到目标文章，确定 parent_id
+        const { data: targetRow, error: targetError } = await client
           .from('blogs')
           .select('*')
           .eq('id', postId)
           .maybeSingle();
 
-        if (error) throw error;
+        if (targetError) throw targetError;
 
-        // 详情页不做 locale 过滤，确保所有文章可访问
-        const databasePost = data ? normalizeBlogRow(data) : null;
+        let databasePost: BlogPost | null = null;
+
+        if (targetRow) {
+          const parentId = String(targetRow.parent_id || targetRow.id);
+
+          // 2. 查询该 parent_id 下的所有版本（root + 翻译）
+          const { data: versions, error: versionsError } = await client
+            .from('blogs')
+            .select('*')
+            .eq('parent_id', parentId)
+            .neq('id', parentId)
+            .or(`id.eq.${parentId}`);
+
+          if (!versionsError && versions && versions.length > 0) {
+            // 优先当前语言版本
+            let selected = versions.find(r => r.locale === activeLocale && r.is_published);
+            // 其次英文版
+            if (!selected) selected = versions.find(r => (r.locale === 'en' || !r.locale) && r.is_published);
+            // fallback 到 targetRow
+            if (!selected) selected = targetRow;
+            databasePost = normalizeBlogRow(selected);
+
+            // 更新浏览量（更新实际展示的那一行）
+            try {
+              await client
+                .from('blogs')
+                .update({ view_count: (selected.view_count || 0) + 1 })
+                .eq('id', selected.id);
+            } catch {}
+          } else {
+            databasePost = normalizeBlogRow(targetRow);
+            try {
+              await client
+                .from('blogs')
+                .update({ view_count: (targetRow.view_count || 0) + 1 })
+                .eq('id', targetRow.id);
+            } catch {}
+          }
+        }
+
         const finalPost = databasePost || fallbackPost;
 
         if (!cancelled) {
           setPost(finalPost);
         }
 
-        if (databasePost) {
-          try {
-            await client
-              .from('blogs')
-              .update({ view_count: (databasePost.view_count || 0) + 1 })
-              .eq('id', databasePost.id);
-          } catch {}
-        }
-
-        // 相关文章：从数据库读取同分类最新文章，再补入 localStorage/内置
+        // 相关文章：从数据库读取同分类最新文章，按 parent_id 去重，按当前语言优先
         const seenRelated = new Set<string>();
         const rPosts: BlogPost[] = [];
 
@@ -104,11 +135,22 @@ export default function BlogDetailPage() {
             .neq('id', finalPost?.id || '')
             .eq('category', finalPost?.category || '')
             .order('created_at', { ascending: false })
-            .limit(6);
+            .limit(50);
 
+          // 按 parent_id 分组，每组取当前语言优先
+          const groups = new Map<string, any[]>();
           for (const row of (relatedData || [])) {
-            const p = normalizeBlogRow(row);
-            const key = (row as any).slug || p.id;
+            const pid = String(row.parent_id || row.id);
+            if (!groups.has(pid)) groups.set(pid, []);
+            groups.get(pid)!.push(row);
+          }
+
+          for (const [, group] of groups) {
+            let selected = group.find(r => r.locale === activeLocale);
+            if (!selected) selected = group.find(r => r.locale === 'en' || !r.locale);
+            if (!selected) selected = group[0];
+            const p = normalizeBlogRow(selected);
+            const key = String(selected.parent_id || selected.id);
             if (!seenRelated.has(key)) {
               seenRelated.add(key);
               rPosts.push(p);

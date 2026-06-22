@@ -66,41 +66,38 @@ export default function BlogPage() {
           return;
         }
 
-        // 按标题归一化分组，每组代表同一篇文章的不同语言版本
-        // 每组只输出一条记录（优先当前语言，没有则显示英文版）
+        // 按 parent_id 分组：root 文章（parent_id 为空）为一组，
+        // 翻译版本（parent_id 指向 root）归到同一组。
+        // 每组只输出一条记录：优先当前语言版本，没有则 fallback 英文版。
         const groups = new Map<string, any[]>();
         for (const row of data) {
-          const titleKey = String(row.title || '').trim().toLowerCase();
-          // 空标题的文章用 id 单独分组
-          const key = titleKey || 'untitled-' + String(row.id);
-          if (!groups.has(key)) groups.set(key, []);
-          groups.get(key)!.push(row);
+          const parentId = String(row.parent_id || row.id || '');
+          if (!groups.has(parentId)) groups.set(parentId, []);
+          groups.get(parentId)!.push(row);
         }
 
-        // 每组选一篇展示：优先当前语言版本，其次英文版，其次组内最新的
         const finalRows: any[] = [];
         for (const [, group] of groups) {
-          // 按 created_at 降序排列
-          const sortedGroup = [...group].sort((a, b) =>
-            new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
-          );
+          // 1. 优先当前语言版本
+          let selected = group.find(r => r.locale === activeLocale);
 
-          // 1. 找当前语言版本
-          let selected = sortedGroup.find(r => r.locale === activeLocale);
-
-          // 2. 找英文版
-          if (!selected) selected = sortedGroup.find(r => r.locale === 'en');
+          // 2. 找英文 root 版
+          if (!selected) selected = group.find(r => r.locale === 'en' || !r.locale);
 
           // 3. 用语言检测找匹配当前语言的
           if (!selected) {
-            selected = sortedGroup.find(r => {
+            selected = group.find(r => {
               const detected = detectLanguage(String(r.title || ''));
               return detected === activeLocale;
             });
           }
 
           // 4. 取组内最新的（fallback）
-          if (!selected) selected = sortedGroup[0];
+          if (!selected) {
+            selected = [...group].sort((a, b) =>
+              new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+            )[0];
+          }
 
           finalRows.push(selected);
         }

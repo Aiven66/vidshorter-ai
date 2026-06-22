@@ -124,12 +124,44 @@ export async function GET(req: NextRequest) {
       query = query.eq('is_published', true);
     }
 
+    // 只返回 root 英文文章（parent_id 为空）。
+    // 翻译版本通过 parent_id 关联，不在列表中展示。
+    // 如果 parent_id 列不存在（老数据库），fallback 到不过滤，依赖前端过滤。
+    let parentIdColumnExists = true;
+    try {
+      query = query.is('parent_id', null);
+    } catch {
+      parentIdColumnExists = false;
+    }
+
     // 获取总数（无分页限制）
-    const { data: allData, error: countError } = await query
-      .order('created_at', { ascending: false })
-      .limit(1000); // 限制最大数量防止性能问题
+    let allData: any[] | null = null;
+    let countError: any = null;
+    try {
+      const result = await query
+        .order('created_at', { ascending: false })
+        .limit(1000); // 限制最大数量防止性能问题
+      allData = result.data;
+      countError = result.error;
+    } catch (err) {
+      // 如果 .is('parent_id', null) 导致查询失败，重试不带 parent_id 过滤
+      const retryResult = await client
+        .from('blogs')
+        .select('*')
+        .eq('is_published', !isAdmin ? true : undefined as any)
+        .order('created_at', { ascending: false })
+        .limit(1000);
+      allData = retryResult.data;
+      countError = retryResult.error;
+      parentIdColumnExists = false;
+    }
 
     if (countError) throw countError;
+
+    // 如果 parent_id 列不存在，在前端过滤：只保留 locale 为 en 或没有 locale 的文章
+    if (!parentIdColumnExists && allData) {
+      allData = allData.filter((row: any) => !row.locale || row.locale === 'en');
+    }
 
     const total = (allData || []).length;
 
