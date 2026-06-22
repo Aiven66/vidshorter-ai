@@ -89,7 +89,6 @@ function FileDropZone({
     const onDragOver = (e: DragEvent) => {
       e.preventDefault();
       e.stopPropagation();
-      // 必须设置 dropEffect 才能让 drop 事件正常触发
       if (e.dataTransfer) {
         e.dataTransfer.dropEffect = 'copy';
       }
@@ -130,17 +129,33 @@ function FileDropZone({
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       onFilesRef.current(Array.from(e.target.files));
-      // 重置 input value，允许重复选择同一文件
       e.target.value = '';
     }
+  };
+
+  // 点击整个区域触发文件选择
+  const handleAreaClick = (e: React.MouseEvent) => {
+    // 避免点击内部按钮时也触发文件选择
+    const target = e.target as HTMLElement;
+    if (target.closest('button') || target.closest('a')) return;
+    inputRef.current?.click();
   };
 
   return (
     <div
       ref={dropRef}
-      className={typeof className === 'function' ? className(isDragOver) : className}
+      className={`relative cursor-pointer ${typeof className === 'function' ? className(isDragOver) : className}`}
+      onClick={handleAreaClick}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          inputRef.current?.click();
+        }
+      }}
     >
-      {/* 隐藏的 file input，用 <label htmlFor> 触发 */}
+      {/* 隐藏的 file input，使用 sr-only 保证可访问性和功能正常 */}
       <input
         id={inputId}
         ref={inputRef}
@@ -148,17 +163,10 @@ function FileDropZone({
         accept={accept}
         multiple={multiple}
         onChange={handleInputChange}
-        style={{ position: 'absolute', width: 0, height: 0, opacity: 0, overflow: 'hidden' }}
+        className="sr-only"
         tabIndex={-1}
       />
-      {/* label 包裹整个内容，点击即触发文件选择 */}
-      <label
-        htmlFor={inputId}
-        className="block w-full h-full cursor-pointer"
-        style={{ pointerEvents: 'auto' }}
-      >
-        {typeof children === 'function' ? children(isDragOver) : children}
-      </label>
+      {typeof children === 'function' ? children(isDragOver) : children}
     </div>
   );
 }
@@ -221,18 +229,6 @@ export function BlogPage({ locale }: BlogPageProps) {
   const [htmlSaving, setHtmlSaving] = useState(false);
   const [htmlStatus, setHtmlStatus] = useState<string | null>(null);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
-
-  // ========= 翻译状态 =========
-  const [translating, setTranslating] = useState(false);
-  const [translationProgress, setTranslationProgress] = useState<{
-    total: number;
-    completed: number;
-    current?: string;
-  } | null>(null);
-  const [translationResult, setTranslationResult] = useState<{
-    successCount: number;
-    failCount: number;
-  } | null>(null);
 
 
   const isAdmin = user?.role === 'admin' || user?.email === 'admin@126.com' || user?.email === 'admin@clipop.ai' || user?.email === 'admin@vidshorter.ai';
@@ -527,49 +523,6 @@ export function BlogPage({ locale }: BlogPageProps) {
     }
   }
 
-  // ========= 触发多语言翻译 =========
-  async function triggerTranslation(title: string, category: string, content: string, coverImage: string) {
-    if (!accessToken || !isAdmin) return;
-
-    setTranslating(true);
-    setTranslationProgress({ total: 31, completed: 0 });
-    setTranslationResult(null);
-
-    try {
-      const res = await fetch('/api/blog/translate', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({
-          title,
-          category,
-          content,
-          coverImage,
-        }),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        setTranslationResult({
-          successCount: data.successCount || 0,
-          failCount: data.failCount || 0,
-        });
-        setTranslationProgress({ total: data.total || 31, completed: data.successCount || 0 });
-      } else {
-        const data = await res.json().catch(() => ({}));
-        setTranslationResult({ successCount: 0, failCount: 31 });
-        setError(data.error || 'Translation failed');
-      }
-    } catch (err) {
-      setTranslationResult({ successCount: 0, failCount: 31 });
-      setError(err instanceof Error ? err.message : 'Translation failed');
-    } finally {
-      setTranslating(false);
-    }
-  }
-
   function openNewForm() {
     setEditingPost(null);
     setBlogTitle('');
@@ -587,10 +540,6 @@ export function BlogPage({ locale }: BlogPageProps) {
     setAdditionalImages([]);
     setAdditionalPreviews([]);
     setHtmlStatus(null);
-    // Reset translation state
-    setTranslating(false);
-    setTranslationProgress(null);
-    setTranslationResult(null);
     setView('new');
   }
 
@@ -764,15 +713,12 @@ export function BlogPage({ locale }: BlogPageProps) {
               saveAdminBlogPosts(data.posts);
             }
             setSaveStatus(
-              locale === 'zh' ? `已发布英文文章，正在翻译其他语言...` : `English article published, translating other languages...`
+              locale === 'zh' ? '文章已发布' : 'Article published'
             );
-            // 新建成功后触发多语言翻译
-            triggerTranslation(
-              blogTitle.trim(),
-              blogCategory.trim() || 'AI Video Clipping',
-              blogContent.trim(),
-              blogCoverImage.trim()
-            );
+            setTimeout(() => {
+              setView('list');
+              setSaveStatus(null);
+            }, 1500);
           } else {
             const data = await res.json().catch(() => ({}));
             setSaveStatus(
@@ -916,17 +862,12 @@ export function BlogPage({ locale }: BlogPageProps) {
         const data = await res.json().catch(() => ({}));
         if (Array.isArray(data.posts)) saveAdminBlogPosts(data.posts);
         setHtmlStatus(
-          locale === 'zh'
-            ? `已发布英文文章，正在翻译其他语言...`
-            : `English article published, translating other languages...`
+          locale === 'zh' ? '文章已发布' : 'Article published'
         );
-        // HTML 发布成功后触发多语言翻译
-        triggerTranslation(
-          data.title || htmlTitle.trim(),
-          data.category || htmlCategory.trim() || 'AI Video Clipping',
-          htmlPreview.trim(),
-          data.coverImage || ''
-        );
+        setTimeout(() => {
+          setView('list');
+          setHtmlStatus(null);
+        }, 1500);
       } else {
         const data = await res.json().catch(() => ({}));
         setHtmlStatus(
@@ -1208,7 +1149,7 @@ export function BlogPage({ locale }: BlogPageProps) {
         </div>
 
         <div className="flex flex-wrap items-center gap-3 pt-2">
-          <Button onClick={savePost} disabled={saving || translating || !isAdmin}>
+          <Button onClick={savePost} disabled={saving || !isAdmin}>
             {saving ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -1222,49 +1163,6 @@ export function BlogPage({ locale }: BlogPageProps) {
           </Button>
           {saveStatus && (
             <span className="text-sm text-muted-foreground">{saveStatus}</span>
-          )}
-          {/* 翻译进度显示 */}
-          {translating && translationProgress && (
-            <div className="flex items-center gap-2 text-sm">
-              <Loader2 className="h-4 w-4 animate-spin text-primary" />
-              <span className="text-primary font-medium">
-                {locale === 'zh'
-                  ? `正在翻译其他语言 (${translationProgress.completed}/${translationProgress.total})...`
-                  : `Translating languages (${translationProgress.completed}/${translationProgress.total})...`
-                }
-              </span>
-            </div>
-          )}
-          {translationResult && !translating && (
-            <div className="flex items-center gap-2 text-sm">
-              {translationResult.failCount === 0 ? (
-                <span className="text-green-600 font-medium">
-                  {locale === 'zh'
-                    ? `翻译完成！全部 ${translationResult.successCount} 种语言已同步`
-                    : `Translation complete! All ${translationResult.successCount} languages synced`
-                  }
-                </span>
-              ) : (
-                <span className="text-amber-600 font-medium">
-                  {locale === 'zh'
-                    ? `翻译完成：${translationResult.successCount} 种成功，${translationResult.failCount} 种失败`
-                    : `Translation done: ${translationResult.successCount} succeeded, ${translationResult.failCount} failed`
-                  }
-                </span>
-              )}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setView('list');
-                  setSaveStatus(null);
-                  setTranslationResult(null);
-                  setTranslationProgress(null);
-                }}
-              >
-                {locale === 'zh' ? '返回列表' : 'Back to list'}
-              </Button>
-            </div>
           )}
         </div>
       </>
@@ -1329,7 +1227,7 @@ export function BlogPage({ locale }: BlogPageProps) {
               }
             }}
             className={(isDragOver) =>
-              `relative border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
+              `border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
                 isDragOver
                   ? 'border-primary bg-primary/5'
                   : htmlFile
@@ -1405,7 +1303,7 @@ export function BlogPage({ locale }: BlogPageProps) {
               }
             }}
             className={(isDragOver) =>
-              `relative border-2 border-dashed rounded-lg p-4 text-center transition-colors ${
+              `border-2 border-dashed rounded-lg p-4 text-center transition-colors ${
                 isDragOver
                   ? 'border-primary bg-primary/5'
                   : coverImagePreview
@@ -1486,7 +1384,7 @@ export function BlogPage({ locale }: BlogPageProps) {
               });
             }}
             className={(isDragOver) =>
-              `relative border-2 border-dashed rounded-lg p-4 text-center transition-colors ${
+              `border-2 border-dashed rounded-lg p-4 text-center transition-colors ${
                 isDragOver
                   ? 'border-primary bg-primary/5'
                   : additionalPreviews.length > 0
@@ -1616,7 +1514,7 @@ export function BlogPage({ locale }: BlogPageProps) {
           <Button
             type="button"
             onClick={handlePublishHtml}
-            disabled={htmlSaving || translating || !isAdmin}
+            disabled={htmlSaving || !isAdmin}
             className="flex items-center gap-2"
           >
             {htmlSaving ? (
@@ -1633,49 +1531,6 @@ export function BlogPage({ locale }: BlogPageProps) {
           </Button>
           {htmlStatus && (
             <span className="text-sm text-muted-foreground">{htmlStatus}</span>
-          )}
-          {/* 翻译进度显示 */}
-          {translating && translationProgress && (
-            <div className="flex items-center gap-2 text-sm">
-              <Loader2 className="h-4 w-4 animate-spin text-primary" />
-              <span className="text-primary font-medium">
-                {locale === 'zh'
-                  ? `正在翻译其他语言 (${translationProgress.completed}/${translationProgress.total})...`
-                  : `Translating languages (${translationProgress.completed}/${translationProgress.total})...`
-                }
-              </span>
-            </div>
-          )}
-          {translationResult && !translating && (
-            <div className="flex items-center gap-2 text-sm">
-              {translationResult.failCount === 0 ? (
-                <span className="text-green-600 font-medium">
-                  {locale === 'zh'
-                    ? `翻译完成！全部 ${translationResult.successCount} 种语言已同步`
-                    : `Translation complete! All ${translationResult.successCount} languages synced`
-                  }
-                </span>
-              ) : (
-                <span className="text-amber-600 font-medium">
-                  {locale === 'zh'
-                    ? `翻译完成：${translationResult.successCount} 种成功，${translationResult.failCount} 种失败`
-                    : `Translation done: ${translationResult.successCount} succeeded, ${translationResult.failCount} failed`
-                  }
-                </span>
-              )}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setView('list');
-                  setHtmlStatus(null);
-                  setTranslationResult(null);
-                  setTranslationProgress(null);
-                }}
-              >
-                {locale === 'zh' ? '返回列表' : 'Back to list'}
-              </Button>
-            </div>
           )}
         </div>
       </>
@@ -1763,11 +1618,11 @@ export function BlogPage({ locale }: BlogPageProps) {
           <CardDescription>
             {!isEditing && createMode === 'html'
               ? (locale === 'zh'
-                  ? '上传 HTML 文件与配图，发布后自动支持多语言版本'
-                  : 'Upload HTML file and images; auto-translated to multiple languages')
+                  ? '上传 HTML 文件与配图，发布到平台'
+                  : 'Upload HTML file and images to publish')
               : (locale === 'zh'
-                  ? '输入英文标题与内容，系统自动翻译为多种语言版本'
-                  : 'Enter English title & content; auto-translated to multiple languages')}
+                  ? '输入文章标题与内容，发布到平台'
+                  : 'Enter article title & content to publish')}
           </CardDescription>
         </CardHeader>
         <CardContent>
