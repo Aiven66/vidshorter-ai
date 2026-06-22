@@ -34,6 +34,7 @@ import {
   normalizeLocale,
   getDefaultCoverImage,
   saveAdminBlogPosts,
+  stripHtml,
 } from '@/lib/blog-content';
 import type { BlogPost } from '@/lib/blog-content';
 
@@ -355,14 +356,16 @@ export function BlogPage({ locale }: BlogPageProps) {
         }
       }
 
-      // 管理后台：按标题归一化后分组，合并所有同标题文章的翻译版本
-      // 数据库中可能存在多次发布产生的重复记录，按标题归一化后合并
+      // 管理后台：按内容摘要分组，合并所有同内容文章的翻译版本
+      // 数据库中可能存在同一文章的不同语言版本，它们标题不同但内容相同
       const groups = new Map<string, BlogPost[]>();
       for (const post of dbPosts) {
-        // 用标题小写去除首尾空格作为分组键，确保同标题文章合并
-        const titleKey = (post.title || '').trim().toLowerCase();
-        // 空标题的文章用 id 单独分组
-        const key = titleKey || 'untitled-' + post.id;
+        // 提取内容前200字符（去除HTML标签）作为分组键
+        // 这样同一内容的不同语言版本会被分到同一组
+        const contentText = stripHtml(post.content || '');
+        const contentKey = contentText.substring(0, 200).trim().toLowerCase();
+        // 空内容的文章用 id 单独分组
+        const key = contentKey || 'empty-content-' + post.id;
         if (!groups.has(key)) groups.set(key, []);
         groups.get(key)!.push(post);
       }
@@ -640,7 +643,7 @@ export function BlogPage({ locale }: BlogPageProps) {
         throw new Error(locale === 'zh' ? '未登录或 token 失效' : 'Not logged in or token expired');
       }
 
-      // 先查找同标题的所有文章（按标题归一化分组删除）
+      // 先查找同内容的所有文章（按内容摘要分组删除）
       const allPostsRes = await fetch('/api/blog/posts?page=1&pageSize=1000', {
         headers: {
           'Content-Type': 'application/json',
@@ -653,14 +656,17 @@ export function BlogPage({ locale }: BlogPageProps) {
       if (allPostsRes.ok) {
         const allData = await allPostsRes.json();
         const allPostsList = allData.posts || [];
-        // 找到当前文章的标题
+        // 找到当前文章的内容摘要
         const currentPost = allPostsList.find((p: any) => p.id === postId);
-        if (currentPost?.title) {
-          const titleKey = String(currentPost.title).trim().toLowerCase();
-          // 找到所有同标题的文章（归一化标题匹配）
-          const sameGroup = allPostsList.filter((p: any) =>
-            String(p.title || '').trim().toLowerCase() === titleKey
-          );
+        if (currentPost?.content) {
+          const currentContent = stripHtml(String(currentPost.content));
+          const currentKey = currentContent.substring(0, 200).trim().toLowerCase();
+          // 找到所有内容相同的文章
+          const sameGroup = allPostsList.filter((p: any) => {
+            const content = stripHtml(String(p.content || ''));
+            const key = content.substring(0, 200).trim().toLowerCase();
+            return key === currentKey;
+          });
           idsToDelete = sameGroup.map((p: any) => p.id);
         }
       }
