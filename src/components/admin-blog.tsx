@@ -69,11 +69,9 @@ function FileDropZone({
   className = '',
   children,
 }: FileDropZoneProps) {
-  const dropRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const dropRef = useRef<HTMLLabelElement>(null);
   const dragCountRef = useRef(0);
   const [isDragOver, setIsDragOver] = useState(false);
-  // 用 ref 存储最新的 onFiles 回调，避免闭包过期
   const onFilesRef = useRef(onFiles);
   onFilesRef.current = onFiles;
 
@@ -134,32 +132,25 @@ function FileDropZone({
     }
   };
 
-  // 点击整个区域触发文件选择
-  const handleAreaClick = (e: React.MouseEvent) => {
-    // 避免点击内部按钮时也触发文件选择
+  const handleLabelClick = (e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
-    if (target.closest('button') || target.closest('a')) return;
-    inputRef.current?.click();
+    if (target.closest('button') || target.closest('a')) {
+      e.preventDefault();
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      const input = document.getElementById(inputId) as HTMLInputElement | null;
+      input?.click();
+    }
   };
 
   return (
-    <div
-      ref={dropRef}
-      className={`relative cursor-pointer ${typeof className === 'function' ? className(isDragOver) : className}`}
-      onClick={handleAreaClick}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          inputRef.current?.click();
-        }
-      }}
-    >
-      {/* 隐藏的 file input，使用 sr-only 保证可访问性和功能正常 */}
+    <>
       <input
         id={inputId}
-        ref={inputRef}
         type="file"
         accept={accept}
         multiple={multiple}
@@ -167,8 +158,17 @@ function FileDropZone({
         className="sr-only"
         tabIndex={-1}
       />
-      {typeof children === 'function' ? children(isDragOver) : children}
-    </div>
+      <label
+        ref={dropRef}
+        htmlFor={inputId}
+        className={`relative cursor-pointer block ${typeof className === 'function' ? className(isDragOver) : className}`}
+        onClick={handleLabelClick}
+        tabIndex={0}
+        onKeyDown={handleKeyDown}
+      >
+        {typeof children === 'function' ? children(isDragOver) : children}
+      </label>
+    </>
   );
 }
 import { RichTextEditor } from '@/components/rich-text-editor';
