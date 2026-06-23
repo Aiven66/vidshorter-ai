@@ -556,13 +556,14 @@ export async function POST(req: NextRequest) {
       .insert([row]);
 
     if (dbError) {
-      // 如果 locale 列不存在，尝试不包含 locale 重试
-      if (dbError.message?.includes('locale') || dbError.message?.includes('column')) {
-        const rowWithoutLocale = { ...row };
-        delete (rowWithoutLocale as any).locale;
+      // 如果 locale 或 parent_id 列不存在，尝试不包含这些列重试
+      if (dbError.message?.includes('locale') || dbError.message?.includes('parent_id') || dbError.message?.includes('column')) {
+        const rowWithoutNewColumns = { ...row };
+        delete (rowWithoutNewColumns as any).locale;
+        delete (rowWithoutNewColumns as any).parent_id;
         const { error: retryError } = await client
           .from('blogs')
-          .insert([rowWithoutLocale]);
+          .insert([rowWithoutNewColumns]);
 
         if (retryError) {
           console.error('DB error (retry):', retryError);
