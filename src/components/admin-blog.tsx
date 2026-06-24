@@ -43,11 +43,11 @@ import type { BlogPost } from '@/lib/blog-content';
 // FileDropZone — 独立的文件拖拽/点击上传组件
 // ============================================================
 // 解决的核心问题：
-// 1. 点击上传：用 <label htmlFor> 替代 ref.current.click()，浏览器安全策略100%允许
-// 2. 拖拽上传：组件内 useRef + useEffect 绑定原生事件，无闭包/时序问题
+// 1. 点击上传：透明 input 覆盖整个区域，直接接收点击事件，100%可靠
+// 2. 拖拽上传：React 合成事件 onDragEnter/onDragOver/onDragLeave/onDrop
 // 3. 拖拽计数器：解决子元素触发 dragLeave 的经典问题
 interface FileDropZoneProps {
-  /** 唯一 id，用于 <label htmlFor> 关联 <input id> */
+  /** 唯一 id */
   inputId: string;
   /** file input 的 accept 属性 */
   accept: string;
@@ -69,61 +69,10 @@ function FileDropZone({
   className = '',
   children,
 }: FileDropZoneProps) {
-  const dropRef = useRef<HTMLLabelElement>(null);
   const dragCountRef = useRef(0);
   const [isDragOver, setIsDragOver] = useState(false);
   const onFilesRef = useRef(onFiles);
   onFilesRef.current = onFiles;
-
-  useEffect(() => {
-    const el = dropRef.current;
-    if (!el) return;
-
-    const onDragEnter = (e: DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      dragCountRef.current++;
-      setIsDragOver(true);
-    };
-    const onDragOver = (e: DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (e.dataTransfer) {
-        e.dataTransfer.dropEffect = 'copy';
-      }
-    };
-    const onDragLeave = (e: DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      dragCountRef.current--;
-      if (dragCountRef.current <= 0) {
-        dragCountRef.current = 0;
-        setIsDragOver(false);
-      }
-    };
-    const onDrop = (e: DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      dragCountRef.current = 0;
-      setIsDragOver(false);
-      if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
-        const files = Array.from(e.dataTransfer.files);
-        onFilesRef.current(files);
-      }
-    };
-
-    el.addEventListener('dragenter', onDragEnter);
-    el.addEventListener('dragover', onDragOver);
-    el.addEventListener('dragleave', onDragLeave);
-    el.addEventListener('drop', onDrop);
-
-    return () => {
-      el.removeEventListener('dragenter', onDragEnter);
-      el.removeEventListener('dragover', onDragOver);
-      el.removeEventListener('dragleave', onDragLeave);
-      el.removeEventListener('drop', onDrop);
-    };
-  }, []);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -132,43 +81,60 @@ function FileDropZone({
     }
   };
 
-  const handleLabelClick = (e: React.MouseEvent) => {
-    const target = e.target as HTMLElement;
-    if (target.closest('button') || target.closest('a')) {
-      e.preventDefault();
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragCountRef.current++;
+    setIsDragOver(true);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = 'copy';
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      const input = document.getElementById(inputId) as HTMLInputElement | null;
-      input?.click();
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragCountRef.current--;
+    if (dragCountRef.current <= 0) {
+      dragCountRef.current = 0;
+      setIsDragOver(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragCountRef.current = 0;
+    setIsDragOver(false);
+    if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+      const files = Array.from(e.dataTransfer.files);
+      onFilesRef.current(files);
     }
   };
 
   return (
-    <>
+    <div
+      className={`relative ${typeof className === 'function' ? className(isDragOver) : className}`}
+    >
+      {/* 透明 input 覆盖整个区域，直接接收点击和拖拽事件 */}
       <input
         id={inputId}
         type="file"
         accept={accept}
         multiple={multiple}
         onChange={handleInputChange}
-        className="sr-only"
-        tabIndex={-1}
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
       />
-      <label
-        ref={dropRef}
-        htmlFor={inputId}
-        className={`relative cursor-pointer block ${typeof className === 'function' ? className(isDragOver) : className}`}
-        onClick={handleLabelClick}
-        tabIndex={0}
-        onKeyDown={handleKeyDown}
-      >
+      {/* UI 内容使用 pointer-events-none，不干扰 input 的事件捕获 */}
+      <div className="pointer-events-none">
         {typeof children === 'function' ? children(isDragOver) : children}
-      </label>
-    </>
+      </div>
+    </div>
   );
 }
 import { RichTextEditor } from '@/components/rich-text-editor';
