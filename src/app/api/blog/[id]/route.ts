@@ -171,7 +171,7 @@ export async function DELETE(
     const { error } = await client
       .from('blogs')
       .delete()
-      .or(`id.eq.${parentId},and(parent_id.eq.${parentId},parent_id.not.is.null)`);
+      .or(`id.eq.${parentId},parent_id.eq.${parentId}`);
 
     if (error) {
       console.error('Delete error:', error);
