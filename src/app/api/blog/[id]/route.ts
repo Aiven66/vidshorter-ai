@@ -1,12 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
-const TRUSTED_ADMIN_EMAILS = new Set([
-  'admin@vidshorter.ai',
-  'admin@126.com',
-  'admin@clipop.ai',
-]);
-
 function getServiceRoleKey() {
   return (
     process.env.SUPABASE_SERVICE_ROLE_KEY ||
@@ -17,101 +11,50 @@ function getServiceRoleKey() {
   );
 }
 
-function decodeJwtPayload(token: string): Record<string, unknown> | null {
+function decodeJwtPayload(token: string) {
   try {
-    const parts = token.split('.');
-    if (parts.length !== 3) return null;
-    // 处理 URL-safe base64（Supabase JWT 使用）和标准 base64
-    let payload = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-    const pad = payload.length % 4;
-    if (pad) payload += '='.repeat(4 - pad);
-    return JSON.parse(Buffer.from(payload, 'base64').toString('utf8'));
+    const payload = token.split('.')[1];
+    const padded = payload + '='.repeat((4 - payload.length % 4) % 4);
+    return JSON.parse(Buffer.from(padded, 'base64').toString('utf8')) as Record<string, unknown>;
   } catch {
     return null;
   }
 }
 
-async function getAdminUser(
-  client: ReturnType<typeof createClient>,
-  token: string
-) {
-  // 1. 先尝试 JWT 解码检查（demo token 和 Supabase JWT 都适用）
-  const payload = decodeJwtPayload(token);
-  if (payload) {
-    const email = typeof payload.email === 'string' ? payload.email.toLowerCase() : '';
-    const role = typeof payload.role === 'string' ? payload.role : '';
-
-    // demo token: role=admin 且 email 在白名单
-    if (role === 'admin' && email && TRUSTED_ADMIN_EMAILS.has(email)) {
-      return {
-        id: typeof payload.sub === 'string' ? payload.sub : 'demo-admin-id',
-        email,
-        name: typeof payload.name === 'string' ? payload.name : 'Admin',
-        role: 'admin',
-      };
-    }
-
-    // Supabase JWT: email 在白名单（即使 role=authenticated 也允许）
-    if (email && TRUSTED_ADMIN_EMAILS.has(email)) {
-      return {
-        id: typeof payload.sub === 'string' ? payload.sub : 'admin-id',
-        email,
-        name: typeof payload.name === 'string' ? payload.name : 'Admin',
-        role: 'admin',
-      };
-    }
-
-    // 检查 user_metadata 中的 email
-    if (payload.user_metadata && typeof payload.user_metadata === 'object') {
-      const meta = payload.user_metadata as Record<string, unknown>;
-      const metaEmail = typeof meta.email === 'string' ? meta.email.toLowerCase() : '';
-      if (metaEmail && TRUSTED_ADMIN_EMAILS.has(metaEmail)) {
-        return {
-          id: typeof payload.sub === 'string' ? payload.sub : 'admin-id',
-          email: metaEmail,
-          name: typeof meta.name === 'string' ? meta.name : 'Admin',
-          role: 'admin',
-        };
-      }
-    }
-  }
-
-  // 2. 尝试 Supabase auth 验证
-  try {
-    const { data: authData, error: authError } = await client.auth.getUser(token);
-    if (authError || !authData.user?.email) return null;
-
-    const email = authData.user.email.toLowerCase();
-
-    // email 在白名单，直接允许
-    if (TRUSTED_ADMIN_EMAILS.has(email)) {
-      return {
-        id: authData.user.id,
-        email: authData.user.email,
-        name: authData.user.user_metadata?.name || 'Admin',
-        role: 'admin',
-      };
-    }
-
-    // 检查 users 表的 role
-    const { data: userRow } = await client
-      .from('users')
-      .select('id, email, name, role')
-      .eq('id', authData.user.id)
-      .maybeSingle();
-
-    const role = userRow?.role || 'user';
-    if (role !== 'admin') return null;
-
+async function getAdminUser(client: ReturnType<typeof createClient>, token: string) {
+  const demoPayload = decodeJwtPayload(token);
+  const adminEmails = ['admin@126.com', 'admin@vidshorter.ai', 'admin@clipop.ai'];
+  if (
+    demoPayload?.email &&
+    adminEmails.includes(demoPayload.email as string) &&
+    (demoPayload?.role === 'admin' || demoPayload?.iss === 'clipop-demo')
+  ) {
     return {
-      id: userRow?.id || authData.user.id,
-      email: authData.user.email,
-      name: userRow?.name || authData.user.user_metadata?.name || 'Admin',
-      role,
+      id: typeof demoPayload.sub === 'string' ? demoPayload.sub : 'demo-admin-id',
+      email: demoPayload.email as string,
+      name: typeof demoPayload.name === 'string' ? demoPayload.name : 'Admin',
+      role: 'admin',
     };
-  } catch {
-    return null;
   }
+
+  const { data: authData, error: authError } = await client.auth.getUser(token);
+  if (authError || !authData.user?.email) return null;
+
+  const { data: userRow } = await client
+    .from('users')
+    .select('id,email,name,role')
+    .eq('id', authData.user.id)
+    .maybeSingle();
+
+  const role = userRow?.role || (adminEmails.includes(authData.user.email) ? 'admin' : 'user');
+  if (role !== 'admin') return null;
+
+  return {
+    id: userRow?.id || authData.user.id,
+    email: authData.user.email,
+    name: userRow?.name || authData.user.user_metadata?.name || 'Admin',
+    role,
+  };
 }
 
 export async function DELETE(
@@ -125,7 +68,6 @@ export async function DELETE(
     return NextResponse.json({ error: 'Database not configured' }, { status: 503 });
   }
 
-  // Next.js 15+: params 是 Promise，需要 await
   const resolvedParams = params instanceof Promise ? await params : params;
   const blogId = resolvedParams?.id;
 
@@ -133,7 +75,6 @@ export async function DELETE(
     return NextResponse.json({ error: 'Blog id required' }, { status: 400 });
   }
 
-  // 从 Authorization header 或 cookie 获取 token
   const authHeader = req.headers.get('authorization') || '';
   const bearerToken = authHeader.toLowerCase().startsWith('bearer ')
     ? authHeader.slice(7).trim()
@@ -155,7 +96,6 @@ export async function DELETE(
   }
 
   try {
-    // 查询目标文章以确定 parent_id
     const { data: target } = await client
       .from('blogs')
       .select('id,parent_id')
@@ -167,7 +107,6 @@ export async function DELETE(
     }
 
     const parentId = target.parent_id || target.id;
-    // 先查询所有要删除的 ID（root + 所有翻译版本）
     const { data: allPosts } = await client
       .from('blogs')
       .select('id')
@@ -180,7 +119,6 @@ export async function DELETE(
     const idsToDelete = allPosts.map(p => p.id);
     console.log('Deleting blog posts:', idsToDelete);
 
-    // 使用 .in() 批量删除，比 .or() 更可靠
     const { error, count } = await client
       .from('blogs')
       .delete({ count: 'exact' })
