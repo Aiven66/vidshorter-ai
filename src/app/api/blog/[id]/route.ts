@@ -167,11 +167,24 @@ export async function DELETE(
     }
 
     const parentId = target.parent_id || target.id;
-    // 删除 root 及其所有翻译版本
-    const { error } = await client
+    // 先查询所有要删除的 ID（root + 所有翻译版本）
+    const { data: allPosts } = await client
       .from('blogs')
-      .delete()
+      .select('id')
       .or(`id.eq.${parentId},parent_id.eq.${parentId}`);
+
+    if (!allPosts || allPosts.length === 0) {
+      return NextResponse.json({ ok: true, deleted: parentId });
+    }
+
+    const idsToDelete = allPosts.map(p => p.id);
+    console.log('Deleting blog posts:', idsToDelete);
+
+    // 使用 .in() 批量删除，比 .or() 更可靠
+    const { error, count } = await client
+      .from('blogs')
+      .delete({ count: 'exact' })
+      .in('id', idsToDelete);
 
     if (error) {
       console.error('Delete error:', error);
@@ -181,7 +194,8 @@ export async function DELETE(
       );
     }
 
-    return NextResponse.json({ ok: true, deleted: parentId });
+    console.log(`Deleted ${count} blog posts`);
+    return NextResponse.json({ ok: true, deleted: parentId, count });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err) || 'Failed to delete';
     console.error('Delete error:', message, err);
