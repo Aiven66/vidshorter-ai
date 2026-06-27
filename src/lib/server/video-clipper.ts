@@ -965,9 +965,11 @@ async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInf
   u.searchParams.set('videoId', videoId);
   u.searchParams.set('maxHeight', String(maxHeight));
   const endpoint = u.toString();
+  // CF Worker resolve may need 60s+ on cold cache (tryClient calls InnerTube,
+  // downloads player.js, deciphers signatures). Use 90s timeout to accommodate.
   const fetchResolved = async () => fetch(endpoint, {
     headers: { 'Accept': 'application/json' },
-    signal: AbortSignal.timeout(25_000),
+    signal: AbortSignal.timeout(90_000),
   });
 
   let res: Response | null = null;
