@@ -1028,19 +1028,17 @@ async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInf
     };
   }
 
-  // For combined (muxed) streams, use the /stream proxy endpoint which handles
-  // rate-limiting and IP rotation on the CF Worker side.
-  const streamEndpoint = new URL(cfWorkerUrl);
-  streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
-  streamEndpoint.searchParams.set('videoId', videoId);
-  streamEndpoint.searchParams.set('maxHeight', String(maxHeight));
-
+  // For combined (muxed) streams, prefer the googlevideo.com direct URL
+  // (data.streamUrl) over the /stream proxy. The /stream proxy adds latency
+  // because each cold request triggers tryClient (InnerTube API call, 60s+),
+  // which causes ffmpeg/fast-seek timeouts. googlevideo.com CDN is accessible
+  // from Vercel and supports HTTP Range for fast-seek.
   const dbg = data._debug ? ` debug=${JSON.stringify(data._debug)}` : '';
   console.log(`CF Worker success: "${(data.title ?? '').slice(0, 50)}", client=${data.client}, quality=${data.quality}${dbg}`);
   return {
     title: data.title || 'YouTube Video',
     duration: data.duration || 300,
-    streamUrl: streamEndpoint.toString(),
+    streamUrl: data.streamUrl,
     subtitleUrl: null,
   };
 }
@@ -2353,18 +2351,11 @@ async function downloadYouTubeOrGenericVideo(
         };
       }
 
-      // Combined (muxed) stream: download to /tmp for reliable seeking.
-      try {
-        const localPath = path.join(path.dirname(outputTemplate), 'source.mp4');
-        const ok = await preflightStream(streamUrl);
-        if (ok) {
-          const downloaded = await downloadStreamToLocalFile(streamUrl, localPath);
-          if (downloaded) {
-            console.log('Vercel environment: using locally cached stream for ffmpeg input');
-            return { inputPath: localPath };
-          }
-        }
-      } catch {}
+      // Combined (muxed) stream: use remote URL directly with ffmpeg fast-seek.
+      // 720p combined can be 100MB+ — downloading to /tmp would timeout and
+      // exceed /tmp limits. googlevideo.com URLs support HTTP Range, so ffmpeg
+      // can seek efficiently without downloading the whole file.
+      console.log('Vercel environment: using combined stream URL directly (remote ffmpeg fast-seek)');
       return {
         inputPath: streamUrl,
         ffmpegHeaders,
