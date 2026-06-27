@@ -644,11 +644,15 @@ async function getYouTubeAvStreamUrlsViaYtDlp(videoId: string): Promise<{ videoU
 // ── Piped proxy (YouTube stream URLs, bypasses bot detection) ────────────────
 async function getYouTubeInfoViaPiped(videoId: string): Promise<PipedVideoInfo> {
   let lastError = 'No Piped instance reachable';
-  for (const instance of PIPED_INSTANCES) {
+  // Same rationale as Invidious: most public Piped instances are now blocked.
+  // Cap at first 3 instances and 5s timeout on Vercel so fallback completes quickly.
+  const instancesToTry = IS_VERCEL ? PIPED_INSTANCES.slice(0, 3) : PIPED_INSTANCES;
+  const perInstanceTimeout = IS_VERCEL ? 5000 : 12000;
+  for (const instance of instancesToTry) {
     try {
       const res = await fetch(`${instance}/streams/${videoId}`, {
         headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Clipop/1.0)' },
-        signal: AbortSignal.timeout(12000),
+        signal: AbortSignal.timeout(perInstanceTimeout),
       });
       if (!res.ok) { lastError = `${instance}: HTTP ${res.status}`; continue; }
 
@@ -735,13 +739,18 @@ async function getYouTubeInfoViaPiped(videoId: string): Promise<PipedVideoInfo> 
 // ── Invidious API (alternative YouTube proxy, returns direct googlevideo.com URLs) ─
 async function getYouTubeInfoViaInvidious(videoId: string): Promise<PipedVideoInfo> {
   let lastError = 'No instance tried';
-  for (const instance of INVIDIOUS_INSTANCES) {
+  // Most public Invidious instances now block YouTube (403/401) or are down.
+  // Reduce per-instance timeout from 12s → 5s and cap at first 3 instances
+  // so the fallback path completes in <15s instead of 60-84s.
+  const instancesToTry = IS_VERCEL ? INVIDIOUS_INSTANCES.slice(0, 3) : INVIDIOUS_INSTANCES;
+  const perInstanceTimeout = IS_VERCEL ? 5000 : 12000;
+  for (const instance of instancesToTry) {
     try {
       const res = await fetch(
         `${instance}/api/v1/videos/${videoId}?fields=title,lengthSeconds,formatStreams,adaptiveFormats`,
         {
           headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Clipop/1.0)' },
-          signal: AbortSignal.timeout(12000),
+          signal: AbortSignal.timeout(perInstanceTimeout),
         },
       );
       if (!res.ok) { lastError = `${instance}: HTTP ${res.status}`; continue; }
@@ -2004,12 +2013,17 @@ async function getYouTubeStreamUrlWithFallbacks(videoId: string): Promise<{ stre
   const budgetMs = IS_VERCEL ? 120_000 : 180_000;
   const streamGetters = IS_VERCEL
     ? [
-        // Invidious & Piped first — they now support HD video-only + separate audio
-        // via adaptiveFormats, producing 720p/1080p clips instead of 360p combined.
+        // CF Worker first — it runs on Cloudflare IP space (not blocked by YouTube),
+        // returns 720p/1080p streams reliably (~40s cold, <1s warm cache).
+        // Putting Invidious/Piped first wasted 60-84s on failed instances
+        // (most public Invidious/Piped instances now return 403/401 for YouTube)
+        // and exhausted the 120s budget before CF Worker could even start.
+        ...(getCfWorkerUrl() ? [{ name: 'CF Worker', fn: () => getYouTubeInfoViaCFWorker(videoId) }] : []),
+        // Invidious & Piped as fallback — they support HD video-only + separate audio
+        // via adaptiveFormats, but most public instances are now blocked.
         { name: 'Invidious', fn: () => getYouTubeInfoViaInvidious(videoId) },
         { name: 'Piped', fn: () => getYouTubeInfoViaPiped(videoId) },
         ...(allowCobalt ? [{ name: 'cobalt', fn: () => getYouTubeInfoViaCobalt(videoId) }] : []),
-        ...(getCfWorkerUrl() ? [{ name: 'CF Worker', fn: () => getYouTubeInfoViaCFWorker(videoId) }] : []),
         ...(getAppBaseUrl()
           ? [{ name: 'EdgeFunction', fn: () => getYouTubeInfoViaEdgeFunction(videoId) }]
           : []),
