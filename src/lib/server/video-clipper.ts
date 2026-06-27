@@ -169,6 +169,7 @@ interface PipedVideoInfo {
   duration: number;
   streamUrl: string;
   subtitleUrl: string | null;
+  audioUrl?: string; // optional separate audio stream URL (for adaptive formats)
 }
 
 // ── Clip config ──────────────────────────────────────────────────────────────
@@ -199,16 +200,24 @@ function clipDurations(duration: number) {
   return { target: CLIP_TARGET_DURATION, min: CLIP_MIN_DURATION, max: CLIP_MAX_DURATION };
 }
 
-const VERCEL_CRF = String(clampInt(process.env.VERCEL_CLIP_CRF, 18, 40, 23));
+// CRF 18 = visually lossless quality (was 23 which caused blurry output).
+// Combined with adaptiveFormats (720p/1080p video-only + audio-only) merged via ffmpeg,
+// this produces HD clips instead of the previous 360p/322kbps output.
+const VERCEL_CRF = String(clampInt(process.env.VERCEL_CLIP_CRF, 16, 40, 18));
 const VERCEL_TARGET_WIDTH_NUM = ensureEven(clampInt(process.env.VERCEL_CLIP_WIDTH, 640, 1920, 1920));
 const VERCEL_TARGET_HEIGHT_NUM = ensureEven(clampInt(process.env.VERCEL_CLIP_HEIGHT, 360, 1080, 1080));
 const VERCEL_TARGET_WIDTH = String(VERCEL_TARGET_WIDTH_NUM);
 const VERCEL_TARGET_HEIGHT = String(VERCEL_TARGET_HEIGHT_NUM);
 const VERCEL_SCALE = `scale=trunc(min(iw\\,${VERCEL_TARGET_WIDTH})/2)*2:trunc(min(ih\\,${VERCEL_TARGET_HEIGHT})/2)*2:force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2`;
 const INLINE_CRF = IS_VERCEL ? VERCEL_CRF : String(clampInt(process.env.LOCAL_INLINE_CRF, 16, 32, 20));
-const INLINE_PRESET = IS_VERCEL ? 'veryfast' : String(process.env.LOCAL_INLINE_PRESET || 'fast');
+// 'fast' preset gives better visual quality than 'veryfast' at the same CRF,
+// at the cost of slightly longer encoding time (acceptable for 30-60s clips).
+const INLINE_PRESET = IS_VERCEL ? 'fast' : String(process.env.LOCAL_INLINE_PRESET || 'fast');
 
-const MAX_INLINE_BYTES = 25 * 1024 * 1024; // 25 MB
+// Raised from 25 MB → 45 MB so 720p/1080p CRF-18 clips (typically 6-12 MB for 30-60s)
+// are inlined directly without triggering the cascading downscale fallback (which
+// previously degraded HD output to 360p).
+const MAX_INLINE_BYTES = 45 * 1024 * 1024; // 45 MB
 const LOCAL_MAX_HEIGHT = process.env.CLIP_MAX_HEIGHT || '1080';
 const YOUTUBE_MAX_HEIGHT = parseInt(
   process.env.YOUTUBE_MAX_HEIGHT || (IS_VERCEL ? '1080' : LOCAL_MAX_HEIGHT),
@@ -957,6 +966,7 @@ async function getYouTubeInfoViaEdgeFunction(videoId: string): Promise<PipedVide
     quality?: string;
     client?: string;
     error?: string;
+    audioUrl?: string;
   };
 
   if (!data.streamUrl) throw new Error(data.error ?? 'Edge function: missing streamUrl');
@@ -964,13 +974,15 @@ async function getYouTubeInfoViaEdgeFunction(videoId: string): Promise<PipedVide
   const proxyUrl = `${baseUrl}/api/yt-proxy?videoId=${encodeURIComponent(videoId)}&maxHeight=${encodeURIComponent(String(YOUTUBE_MAX_HEIGHT))}`;
   console.log(
     `Edge function success: "${(data.title ?? '').slice(0, 50)}", ` +
-    `client=${data.client}, quality=${data.quality}`,
+    `client=${data.client}, quality=${data.quality}` +
+    `${data.audioUrl ? `, hasSeparateAudio=true` : ''}`,
   );
   return {
     title: data.title || 'YouTube Video',
     duration: data.duration || 300,
-    streamUrl: proxyUrl,
+    streamUrl: data.streamUrl, // use the direct stream URL (audio may be separate)
     subtitleUrl: null,
+    ...(data.audioUrl ? { audioUrl: data.audioUrl } : {}),
   };
 }
 
@@ -1833,7 +1845,7 @@ async function downloadBilibiliVideo(
 // ── YouTube stream URL retrieval with all fallbacks ───────────────────────────
 // Used directly on Vercel (skips yt-dlp) and as fallback after yt-dlp fails.
 // Priority: Edge Function (CDN IPs) > CF Worker > cobalt.tools (age-restricted OK) > DirectInnerTube > YouTube.js > Invidious > Piped
-async function getYouTubeStreamUrlWithFallbacks(videoId: string): Promise<string> {
+async function getYouTubeStreamUrlWithFallbacks(videoId: string): Promise<{ streamUrl: string; audioUrl?: string }> {
   const allowCobalt = true;
   const startedAt = Date.now();
   const budgetMs = IS_VERCEL ? 120_000 : 180_000;
@@ -1863,9 +1875,10 @@ async function getYouTubeStreamUrlWithFallbacks(videoId: string): Promise<string
   for (const getter of streamGetters) {
     try {
       if (Date.now() - startedAt > budgetMs) break;
-      const { streamUrl } = await getter.fn();
-      console.log(`Stream URL obtained via ${getter.name} for videoId=${videoId}`);
-      return streamUrl; // ffmpeg accepts HTTPS URLs directly as -i input
+      const result = await getter.fn();
+      console.log(`Stream URL obtained via ${getter.name} for videoId=${videoId}` +
+        `${result.audioUrl ? ' (with separate audio)' : ''}`);
+      return { streamUrl: result.streamUrl, ...(result.audioUrl ? { audioUrl: result.audioUrl } : {}) };
     } catch (err) {
       const msg = err instanceof Error ? err.message.slice(0, 150) : String(err);
       errors.push(`${getter.name}: ${msg}`);
@@ -1877,7 +1890,7 @@ async function getYouTubeStreamUrlWithFallbacks(videoId: string): Promise<string
     try {
       const streamUrl = await getYouTubeStreamUrlViaYtDlp(videoId);
       console.log(`Stream URL obtained via yt-dlp for videoId=${videoId}`);
-      return streamUrl;
+      return { streamUrl };
     } catch (err) {
       const msg = err instanceof Error ? err.message.slice(0, 150) : String(err);
       errors.push(`yt-dlp: ${msg}`);
@@ -2238,7 +2251,7 @@ async function downloadYouTubeOrGenericVideo(
     }
 
     console.log('Vercel environment: using non-yt-dlp YouTube stream fallbacks');
-    const streamUrl = await getYouTubeStreamUrlWithFallbacks(videoId);
+    const { streamUrl, audioUrl } = await getYouTubeStreamUrlWithFallbacks(videoId);
     try {
       const localPath = path.join(path.dirname(outputTemplate), 'source.mp4');
       const ok = await preflightStream(streamUrl);
@@ -2246,6 +2259,19 @@ async function downloadYouTubeOrGenericVideo(
         const downloaded = await downloadStreamToLocalFile(streamUrl, localPath);
         if (downloaded) {
           console.log('Vercel environment: using locally cached fallback stream for ffmpeg input');
+          // If we have a separate audio URL, also download it locally so ffmpeg
+          // can combine video + audio streams into a single high-quality output.
+          if (audioUrl) {
+            const localAudioPath = path.join(path.dirname(outputTemplate), 'source-audio.mp4');
+            const audioOk = await preflightStream(audioUrl);
+            if (audioOk) {
+              const audioDownloaded = await downloadStreamToLocalFile(audioUrl, localAudioPath);
+              if (audioDownloaded) {
+                console.log('Vercel environment: using locally cached fallback audio stream for ffmpeg input');
+                return { inputPath: localPath, audioInputPath: localAudioPath };
+              }
+            }
+          }
           return { inputPath: localPath };
         }
       }
@@ -2258,7 +2284,11 @@ async function downloadYouTubeOrGenericVideo(
       'Origin: https://www.youtube.com\r\n' +
       'Accept: */*\r\n' +
       'Accept-Encoding: identity\r\n';
-    return { inputPath: streamUrl, ffmpegHeaders };
+    return {
+      inputPath: streamUrl,
+      ...(audioUrl ? { audioInputPath: audioUrl } : {}),
+      ffmpegHeaders,
+    };
   }
 
   if (isYouTubeUrl(videoUrl)) {
@@ -2353,7 +2383,11 @@ async function downloadYouTubeOrGenericVideo(
     console.warn(`yt-dlp download failed (${ytdlpErr.slice(0, 120)}), trying stream proxy fallbacks…`);
     const videoId = extractYouTubeVideoId(videoUrl);
     if (!videoId) throw new Error('Invalid YouTube URL');
-    return { inputPath: await getYouTubeStreamUrlWithFallbacks(videoId) };
+    const { streamUrl, audioUrl } = await getYouTubeStreamUrlWithFallbacks(videoId);
+    return {
+      inputPath: streamUrl,
+      ...(audioUrl ? { audioInputPath: audioUrl } : {}),
+    };
   }
 
   if (!resolvedPath) {

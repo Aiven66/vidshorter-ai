@@ -141,6 +141,7 @@ interface InnerTubeResponse {
 
 async function tryClient(videoId: string, client: Client): Promise<{
   title: string; duration: number; streamUrl: string; quality: string;
+  audioUrl?: string;
 } | null> {
   // Build the InnerTube request body. For WEB_EMBEDDED, include thirdParty to bypass age checks.
   const isEmbedClient = client.clientName === 'TVHTML5_SIMPLY_EMBEDDED_PLAYER' ||
@@ -199,7 +200,7 @@ async function tryClient(videoId: string, client: Client): Promise<{
     f.url && f.mimeType?.startsWith('video/mp4') && (f.audioQuality || f.audioChannels)
   );
 
-  const format =
+  const combinedBest =
     combined
       .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
       .filter(item => item.q > 0 && item.q <= MAX_HEIGHT)
@@ -211,6 +212,46 @@ async function tryClient(videoId: string, client: Client): Promise<{
     || formats.find(f => f.url);
 
   const cookieHeader = (process.env.YOUTUBE_COOKIES || '').trim();
+
+  // If the best combined format is low quality (<=480p), try adaptive formats
+  // for a higher-resolution video-only stream + an audio-only stream.
+  // YouTube's combined formats are often limited to 360p without auth,
+  // but adaptiveFormats include 720p/1080p video-only streams.
+  const combinedHeight = combinedBest ? parseQuality(combinedBest.qualityLabel ?? combinedBest.quality) : 0;
+  let format = combinedBest;
+  let audioUrl: string | undefined;
+
+  if (combinedHeight < 720) {
+    const videoOnly = formats.filter(f =>
+      f.url && f.mimeType?.startsWith('video/mp4') && !(f.audioQuality || f.audioChannels)
+    );
+    const audioOnly = formats.filter(f =>
+      f.url && (f.mimeType?.startsWith('audio/mp4') || f.mimeType?.includes('audio/'))
+    );
+
+    const bestVideo =
+      videoOnly
+        .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
+        .filter(item => item.q > 0 && item.q <= MAX_HEIGHT)
+        .sort((a, b) => b.q - a.q)[0]?.f
+      || videoOnly
+        .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
+        .sort((a, b) => b.q - a.q)[0]?.f;
+
+    // Pick the first available audio stream (audio quality differences are negligible
+    // for short clips; selecting any reliable audio URL is more important)
+    const bestAudio = audioOnly[0];
+
+    if (bestVideo && parseQuality(bestVideo.qualityLabel ?? bestVideo.quality) > combinedHeight) {
+      const videoResolvedUrl = await resolveFormatUrl(bestVideo, videoId, cookieHeader);
+      if (videoResolvedUrl) {
+        format = bestVideo;
+        const audioResolvedUrl = bestAudio ? await resolveFormatUrl(bestAudio, videoId, cookieHeader) : '';
+        if (audioResolvedUrl) audioUrl = audioResolvedUrl;
+      }
+    }
+  }
+
   const resolvedUrl = await resolveFormatUrl(format, videoId, cookieHeader);
   if (!resolvedUrl) {
     const hasCipher = formats.some(f => f.signatureCipher || f.cipher);
@@ -222,6 +263,7 @@ async function tryClient(videoId: string, client: Client): Promise<{
     duration: parseInt(data.videoDetails?.lengthSeconds ?? '300', 10) || 300,
     streamUrl: resolvedUrl,
     quality: format.qualityLabel ?? format.quality ?? 'unknown',
+    ...(audioUrl ? { audioUrl } : {}),
   };
 }
 
@@ -412,7 +454,7 @@ export async function GET(request: Request) {
             const combined = formats.filter(f =>
               f.url && f.mimeType?.startsWith('video/mp4') && (f.audioQuality || f.audioChannels)
             );
-            const format =
+            const combinedBest =
               combined
                 .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
                 .filter(item => item.q > 0 && item.q <= MAX_HEIGHT)
@@ -422,6 +464,33 @@ export async function GET(request: Request) {
                 .sort((a, b) => b.q - a.q)[0]?.f
               || combined[0]
               || formats.find(f => f.url);
+
+            // Use adaptive formats if combined is low quality
+            const combinedHeight = combinedBest ? parseQuality(combinedBest.qualityLabel ?? combinedBest.quality) : 0;
+            let format = combinedBest;
+            let audioUrl: string | undefined;
+
+            if (combinedHeight < 720) {
+              const videoOnly = formats.filter(f =>
+                f.url && f.mimeType?.startsWith('video/mp4') && !(f.audioQuality || f.audioChannels)
+              );
+              const audioOnly = formats.filter(f =>
+                f.url && (f.mimeType?.startsWith('audio/mp4') || f.mimeType?.includes('audio/'))
+              );
+              const bestVideo =
+                videoOnly
+                  .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
+                  .filter(item => item.q > 0 && item.q <= MAX_HEIGHT)
+                  .sort((a, b) => b.q - a.q)[0]?.f
+                || videoOnly
+                  .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
+                  .sort((a, b) => b.q - a.q)[0]?.f;
+              if (bestVideo && parseQuality(bestVideo.qualityLabel ?? bestVideo.quality) > combinedHeight) {
+                format = bestVideo;
+                if (audioOnly[0]?.url) audioUrl = audioOnly[0].url;
+              }
+            }
+
             if (format?.url) {
               return Response.json({
                 title: data.videoDetails?.title ?? 'YouTube Video',
@@ -429,6 +498,7 @@ export async function GET(request: Request) {
                 streamUrl: format.url,
                 quality: format.qualityLabel ?? format.quality ?? 'unknown',
                 client: 'WEB_COOKIES',
+                ...(audioUrl ? { audioUrl } : {}),
               }, { status: 200, headers: { ...CORS, 'Cache-Control': 'no-store' } });
             }
           }
