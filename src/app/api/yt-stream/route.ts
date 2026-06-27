@@ -29,15 +29,32 @@ function parseQuality(value?: string) {
 }
 
 // Client configurations — ordered by success rate and age-restriction bypass capability
+// Updated 2026-06 to latest known working versions. YouTube's bot detection is primarily
+// IP-based (datacenter IPs get LOGIN_REQUIRED), so client version alone won't fix Vercel
+// Edge blocks — but newer versions improve compatibility and reduce false positives.
 const CLIENTS = [
+  // TVHTML5 — Cobalt/TV client, often bypasses bot detection on residential IPs
   {
     name: 'TV',
     clientName: 'TVHTML5',
-    clientVersion: '7.20250312.16.00',
+    clientVersion: '7.20250623.16.00',
     userAgent: 'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/24.0.0',
     xClientName: '7',
     extra: { clientScreen: 'TV' },
     extraHeaders: {},
+  },
+  // TVHTML5_SIMPLY_EMBEDDED_PLAYER — strongest age-restriction bypass via embed context
+  {
+    name: 'TV_EMBEDDED',
+    clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
+    clientVersion: '2.20250623.00.00',
+    userAgent: 'Mozilla/5.0 (SMART-TV; LINUX; Tizen 7.0) AppleWebKit/538.1 (KHTML, like Gecko) Version/7.0 TV Safari/538.1',
+    xClientName: '85',
+    extra: {},
+    extraHeaders: {
+      'Referer': 'https://www.youtube.com/',
+      'Origin': 'https://www.youtube.com',
+    },
   },
   // ANDROID_VR (Quest/Oculus) — bypasses age restrictions without auth on most content
   {
@@ -49,28 +66,28 @@ const CLIENTS = [
     extra: { androidSdkVersion: 32 },
     extraHeaders: {},
   },
-  // IOS v20 — returns direct un-ciphered stream URLs for most videos
+  // IOS v20.10 — returns direct un-ciphered stream URLs for most videos
   {
     name: 'IOS_v20',
     clientName: 'IOS',
-    clientVersion: '20.03.03',
-    userAgent: 'com.google.ios.youtube/20.03.03 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)',
+    clientVersion: '20.10.4',
+    userAgent: 'com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_5_0 like Mac OS X;)',
     xClientName: '5',
     extra: {
       deviceMake: 'Apple',
       deviceModel: 'iPhone16,2',
       osName: 'iPhone',
-      osVersion: '18.3.2.22D82',
+      osVersion: '18.5.0.22F75',
       clientFormFactor: 'SMALL_FORM_FACTOR',
     },
     extraHeaders: {},
   },
-  // ANDROID v20 — broad compatibility
+  // ANDROID v20.10 — broad compatibility
   {
     name: 'ANDROID_v20',
     clientName: 'ANDROID',
-    clientVersion: '20.03.03',
-    userAgent: 'com.google.android.youtube/20.03.03 (Linux; U; Android 14) gzip',
+    clientVersion: '20.10.4',
+    userAgent: 'com.google.android.youtube/20.10.4 (Linux; U; Android 14) gzip',
     xClientName: '3',
     extra: { androidSdkVersion: 34, clientFormFactor: 'SMALL_FORM_FACTOR' },
     extraHeaders: {},
@@ -79,8 +96,8 @@ const CLIENTS = [
   {
     name: 'WEB_EMBEDDED',
     clientName: 'WEB_EMBEDDED_PLAYER',
-    clientVersion: '2.20240101.00.00',
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+    clientVersion: '2.20250623.00.00',
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
     xClientName: '56',
     extra: { clientScreen: 'EMBED' },
     extraHeaders: {
@@ -96,19 +113,6 @@ const CLIENTS = [
     userAgent: 'com.google.android.youtube/1.9 (Linux; U; Android 11) gzip',
     xClientName: '30',
     extra: { androidSdkVersion: 30 },
-    extraHeaders: {},
-  },
-  // IOS v19 — legacy fallback
-  {
-    name: 'IOS_v19',
-    clientName: 'IOS',
-    clientVersion: '19.29.1',
-    userAgent: 'com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)',
-    xClientName: '5',
-    extra: {
-      deviceMake: 'Apple', deviceModel: 'iPhone16,2',
-      osName: 'iPhone', osVersion: '17.5.1.21F90',
-    },
     extraHeaders: {},
   },
 ] as const;
