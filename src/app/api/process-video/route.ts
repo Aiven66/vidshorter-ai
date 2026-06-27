@@ -521,6 +521,7 @@ export async function POST(request: NextRequest) {
               try {
                 const result = await videoClipper.createLocalClip({
                   inputPath: currentSource.inputPath,
+                  audioInputPath: currentSource.audioInputPath,
                   inputHeaders: currentSource.ffmpegHeaders,
                   startTime: safeStart,
                   endTime: safeEnd,
