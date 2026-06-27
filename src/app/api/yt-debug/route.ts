@@ -11,9 +11,11 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const videoId = url.searchParams.get('videoId') || 'v1wZwxY3CMg';
 
-  const baseUrl = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : process.env.NEXT_PUBLIC_APP_URL || '';
+  const baseUrl =
+    process.env.APP_BASE_URL ||
+    process.env.NEXT_PUBLIC_APP_URL ||
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '') ||
+    'https://www.clipopai.com';
 
   if (!baseUrl) {
     return Response.json({ error: 'No base URL available' }, { status: 500 });
