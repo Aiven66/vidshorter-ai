@@ -139,9 +139,10 @@ interface InnerTubeResponse {
   };
 }
 
-async function tryClient(videoId: string, client: Client): Promise<{
+async function tryClient(videoId: string, client: Client, debug = false): Promise<{
   title: string; duration: number; streamUrl: string; quality: string;
   audioUrl?: string;
+  debug?: unknown;
 } | null> {
   // Build the InnerTube request body. For WEB_EMBEDDED, include thirdParty to bypass age checks.
   const isEmbedClient = client.clientName === 'TVHTML5_SIMPLY_EMBEDDED_PLAYER' ||
@@ -194,6 +195,15 @@ async function tryClient(videoId: string, client: Client): Promise<{
     ...(data.streamingData?.adaptiveFormats ?? []),
   ];
   if (!formats.length) throw new Error('No formats in response');
+
+  // Debug info: summarize all available formats
+  const debugFormats = debug ? formats.map(f => ({
+    mimeType: f.mimeType?.split(';')[0] || 'unknown',
+    quality: f.qualityLabel || f.quality || 'unknown',
+    hasUrl: !!f.url,
+    hasCipher: !!(f.signatureCipher || f.cipher),
+    audio: !!(f.audioQuality || f.audioChannels),
+  })) : undefined;
 
   // Prefer combined audio+video MP4 with a direct URL (not ciphered)
   const combined = formats.filter(f =>
@@ -274,6 +284,13 @@ async function tryClient(videoId: string, client: Client): Promise<{
     streamUrl: resolvedUrl,
     quality: format.qualityLabel ?? format.quality ?? 'unknown',
     ...(audioUrl ? { audioUrl } : {}),
+    ...(debugFormats ? { debug: {
+      formatsCount: formats.length,
+      combinedHeight,
+      selectedQuality: format.qualityLabel ?? format.quality,
+      hasAudioUrl: !!audioUrl,
+      formats: debugFormats,
+    } } : {}),
   };
 }
 
@@ -405,6 +422,7 @@ export async function OPTIONS() {
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const videoId = url.searchParams.get('videoId');
+  const debug = url.searchParams.get('debug') === '1';
 
   if (!videoId || !/^[a-zA-Z0-9_-]{7,15}$/.test(videoId)) {
     return Response.json({ error: 'Missing or invalid videoId' }, { status: 400, headers: CORS });
@@ -524,7 +542,7 @@ export async function GET(request: Request) {
 
   for (const client of CLIENTS) {
     try {
-      const result = await tryClient(videoId, client);
+      const result = await tryClient(videoId, client, debug);
       if (result) {
         return Response.json(
           { ...result, client: client.name },
