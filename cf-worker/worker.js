@@ -420,6 +420,15 @@ async function tryClient(videoId, client, maxHeight, cookieHeader) {
   // If combined is below 720p, try adaptiveFormats for HD video-only + audio
   let chosen = combinedFormat || videoFormats[0] || formats[0];
   let audioUrl = '';
+  const debug = {
+    combinedHeight,
+    videoOnlyCount: 0,
+    audioOnlyCount: 0,
+    audioOnlyWithUrl: 0,
+    audioOnlyCiphered: 0,
+    videoResolvedOk: false,
+    audioResolvedOk: false,
+  };
 
   if (combinedHeight < 720) {
     const videoOnly = videoFormats.filter((f) => !(f.audioQuality || f.audioChannels || f.audioBitrate));
@@ -427,6 +436,11 @@ async function tryClient(videoId, client, maxHeight, cookieHeader) {
       (f?.url || f?.signatureCipher || f?.cipher) &&
       typeof f.mimeType === 'string' && (f.mimeType.startsWith('audio/mp4') || f.mimeType.includes('audio/'))
     );
+
+    debug.videoOnlyCount = videoOnly.length;
+    debug.audioOnlyCount = audioOnly.length;
+    debug.audioOnlyWithUrl = audioOnly.filter((a) => a.url).length;
+    debug.audioOnlyCiphered = audioOnly.filter((a) => a.signatureCipher || a.cipher).length;
 
     const videoCandidates = videoOnly
       .map((f) => ({ f, q: formatHeight(f) }))
@@ -437,6 +451,7 @@ async function tryClient(videoId, client, maxHeight, cookieHeader) {
       if (candidate.q <= combinedHeight) break;
       const videoResolved = await resolveFormatUrl(candidate.f, videoId, cookieHeader);
       if (!videoResolved) continue;
+      debug.videoResolvedOk = true;
 
       // Find a resolvable audio stream
       for (const a of audioOnly) {
@@ -447,8 +462,14 @@ async function tryClient(videoId, client, maxHeight, cookieHeader) {
         }
       }
 
-      chosen = candidate.f;
-      break;
+      // Only choose video-only if we have a matching audio stream.
+      // Otherwise fall back to combined (lower quality but has audio).
+      if (audioUrl) {
+        chosen = candidate.f;
+        debug.audioResolvedOk = true;
+        break;
+      }
+      // audioUrl failed for this candidate — try next video candidate
     }
   }
 
@@ -468,6 +489,7 @@ async function tryClient(videoId, client, maxHeight, cookieHeader) {
     xClientName: client.xClientName,
     clientVersion: client.clientVersion,
     ...(audioUrl ? { audioUrl } : {}),
+    _debug: debug,
   };
 }
 

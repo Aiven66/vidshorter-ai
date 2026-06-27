@@ -1001,6 +1001,15 @@ async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInf
     quality?: string;
     client?: string;
     error?: string;
+    _debug?: {
+      combinedHeight?: number;
+      videoOnlyCount?: number;
+      audioOnlyCount?: number;
+      audioOnlyWithUrl?: number;
+      audioOnlyCiphered?: number;
+      videoResolvedOk?: boolean;
+      audioResolvedOk?: boolean;
+    };
   };
 
   if (!data.streamUrl) throw new Error(data.error ?? 'CF Worker: missing streamUrl');
@@ -1026,7 +1035,8 @@ async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInf
   streamEndpoint.searchParams.set('videoId', videoId);
   streamEndpoint.searchParams.set('maxHeight', String(maxHeight));
 
-  console.log(`CF Worker success: "${(data.title ?? '').slice(0, 50)}", client=${data.client}, quality=${data.quality}`);
+  const dbg = data._debug ? ` debug=${JSON.stringify(data._debug)}` : '';
+  console.log(`CF Worker success: "${(data.title ?? '').slice(0, 50)}", client=${data.client}, quality=${data.quality}${dbg}`);
   return {
     title: data.title || 'YouTube Video',
     duration: data.duration || 300,
