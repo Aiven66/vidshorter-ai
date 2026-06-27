@@ -217,38 +217,48 @@ async function tryClient(videoId: string, client: Client): Promise<{
   // for a higher-resolution video-only stream + an audio-only stream.
   // YouTube's combined formats are often limited to 360p without auth,
   // but adaptiveFormats include 720p/1080p video-only streams.
+  // NOTE: adaptiveFormats are often ciphered (signatureCipher) without a direct `url`,
+  // so we must NOT filter by `f.url` — instead, use resolveFormatUrl() which can
+  // decipher the signature using the player.js.
   const combinedHeight = combinedBest ? parseQuality(combinedBest.qualityLabel ?? combinedBest.quality) : 0;
   let format = combinedBest;
   let audioUrl: string | undefined;
 
   if (combinedHeight < 720) {
+    // Include all video-only MP4 streams (both direct-URL and ciphered)
     const videoOnly = formats.filter(f =>
-      f.url && f.mimeType?.startsWith('video/mp4') && !(f.audioQuality || f.audioChannels)
+      (f.url || f.signatureCipher || f.cipher) &&
+      f.mimeType?.startsWith('video/mp4') && !(f.audioQuality || f.audioChannels)
     );
+    // Include all audio-only streams (both direct-URL and ciphered)
     const audioOnly = formats.filter(f =>
-      f.url && (f.mimeType?.startsWith('audio/mp4') || f.mimeType?.includes('audio/'))
+      (f.url || f.signatureCipher || f.cipher) &&
+      (f.mimeType?.startsWith('audio/mp4') || f.mimeType?.includes('audio/'))
     );
 
-    const bestVideo =
-      videoOnly
-        .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
-        .filter(item => item.q > 0 && item.q <= MAX_HEIGHT)
-        .sort((a, b) => b.q - a.q)[0]?.f
-      || videoOnly
-        .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
-        .sort((a, b) => b.q - a.q)[0]?.f;
+    // Sort video-only streams by quality (highest first, capped at MAX_HEIGHT)
+    const videoCandidates = videoOnly
+      .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
+      .filter(item => item.q > 0 && item.q <= MAX_HEIGHT)
+      .sort((a, b) => b.q - a.q);
 
-    // Pick the first available audio stream (audio quality differences are negligible
-    // for short clips; selecting any reliable audio URL is more important)
-    const bestAudio = audioOnly[0];
+    // Try the best video-only stream first; if its URL cannot be resolved
+    // (e.g. decipher fails), fall back to the next candidate.
+    for (const candidate of videoCandidates) {
+      if (candidate.q <= combinedHeight) break; // no improvement over combined
+      const videoResolvedUrl = await resolveFormatUrl(candidate.f, videoId, cookieHeader);
+      if (!videoResolvedUrl) continue;
 
-    if (bestVideo && parseQuality(bestVideo.qualityLabel ?? bestVideo.quality) > combinedHeight) {
-      const videoResolvedUrl = await resolveFormatUrl(bestVideo, videoId, cookieHeader);
-      if (videoResolvedUrl) {
-        format = bestVideo;
-        const audioResolvedUrl = bestAudio ? await resolveFormatUrl(bestAudio, videoId, cookieHeader) : '';
-        if (audioResolvedUrl) audioUrl = audioResolvedUrl;
+      // Try to find a resolvable audio stream
+      let resolvedAudioUrl = '';
+      for (const a of audioOnly) {
+        resolvedAudioUrl = await resolveFormatUrl(a, videoId, cookieHeader);
+        if (resolvedAudioUrl) break;
       }
+
+      format = candidate.f;
+      if (resolvedAudioUrl) audioUrl = resolvedAudioUrl;
+      break;
     }
   }
 
