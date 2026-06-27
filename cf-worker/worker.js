@@ -265,8 +265,8 @@ export default {
           }
 
           const hdOnlyHeights = Array.from(
-            new Set([720, effectiveMaxHeight, 1080].filter((h) => h >= 720 && h <= MAX_HEIGHT)),
-          ).sort((a, b) => a - b);
+            new Set([effectiveMaxHeight, 720, 1080].filter((h) => h >= 480 && h <= MAX_HEIGHT)),
+          ).sort((a, b) => b - a);
 
           for (const h of hdOnlyHeights) {
             const cacheKey = `${videoId}|${String(h)}`;
@@ -285,12 +285,14 @@ export default {
               errors.push(`cachedHD@${h}: HTTP ${cachedUpstream.status} ${cachedBody.slice(0, 80)}`);
             }
 
-            // Try each client — only accept HD results (audioUrl or quality ≥ 720p).
+            // Try each client — accept SD-or-better results (audioUrl or quality ≥ 480p).
+            // 360p is rejected to avoid the blurry output bug. 480p is accepted as
+            // fallback when YouTube rate-limits 720p+ (common after repeated requests).
             for (const client of CLIENTS) {
               try {
                 const info = await tryClient(videoId, client, h, cookieHeader);
                 const infoHeight = parseQuality(info.quality);
-                const isHd = !!info.audioUrl || infoHeight >= 720;
+                const isHd = !!info.audioUrl || infoHeight >= 480;
                 if (!isHd) {
                   errors.push(`${client.name}@${h}: non-HD (${info.quality || '?'})`);
                   continue;
@@ -321,10 +323,10 @@ export default {
             }
           }
 
-          return json(
-            { error: 'Direct stream failed and HD re-resolve unavailable', details: errors.slice(0, 12).join(' | ') },
-            502,
-          );
+          // HD re-resolve failed — fall through to the full heights loop below
+          // which accepts any quality (including 360p). 360p is better than
+          // failing entirely and producing no clip at all.
+          // The heights loop will try cache + tryClient + cobalt for all heights.
         }
 
         const heights = Array.from(new Set([effectiveMaxHeight, 720, 480, 360, 240, 144].filter(Boolean)));
