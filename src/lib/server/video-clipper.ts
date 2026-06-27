@@ -1294,7 +1294,7 @@ async function getYouTubeInfoViaDirectInnerTube(videoId: string): Promise<PipedV
         const m = value?.match(/(\d{3,4})/);
         return m ? parseInt(m[1], 10) : 0;
       };
-      const format =
+      const combinedBest =
         combined
           .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
           .filter(item => item.q > 0 && item.q <= YOUTUBE_MAX_HEIGHT)
@@ -1302,8 +1302,40 @@ async function getYouTubeInfoViaDirectInnerTube(videoId: string): Promise<PipedV
         || combined
           .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
           .sort((a, b) => b.q - a.q)[0]?.f
-        || combined[0]
-        || allFormats.find(f => f.url);
+        || combined[0];
+
+      const combinedHeight = combinedBest
+        ? parseQuality(combinedBest.qualityLabel ?? combinedBest.quality)
+        : 0;
+
+      // If combined is below 720p, try adaptiveFormats for HD video-only + audio
+      let format = combinedBest;
+      let audioUrl = '';
+
+      if (combinedHeight < 720) {
+        const videoOnly = allFormats.filter(f =>
+          f.url && f.mimeType?.startsWith('video/mp4') && !(f.audioQuality || f.audioChannels)
+        );
+        const audioOnly = allFormats.filter(f =>
+          f.url && f.mimeType?.startsWith('audio/mp4')
+        );
+
+        const videoCandidates = videoOnly
+          .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
+          .filter(item => item.q > 0 && item.q > combinedHeight && item.q <= YOUTUBE_MAX_HEIGHT)
+          .sort((a, b) => b.q - a.q);
+
+        for (const candidate of videoCandidates) {
+          const bestAudio = audioOnly
+            .map(f => ({ f, bitrate: parseQuality(f.quality) }))
+            .sort((a, b) => b.bitrate - a.bitrate)[0]?.f;
+          if (bestAudio?.url) {
+            format = candidate.f;
+            audioUrl = bestAudio.url;
+            break;
+          }
+        }
+      }
 
       if (!format?.url) {
         const hasCipher = allFormats.some(f => f.signatureCipher);
@@ -1313,12 +1345,13 @@ async function getYouTubeInfoViaDirectInnerTube(videoId: string): Promise<PipedV
 
       const title = data.videoDetails?.title ?? 'YouTube Video';
       const dur = parseInt(data.videoDetails?.lengthSeconds ?? '300', 10);
-      console.log(`DirectInnerTube (${client.name}): "${title.slice(0, 50)}", quality=${format.qualityLabel ?? format.quality}`);
+      console.log(`DirectInnerTube (${client.name}): "${title.slice(0, 50)}", quality=${format.qualityLabel ?? format.quality}${audioUrl ? ' (HD video+audio)' : ''}`);
       const result: PipedVideoInfo = {
         title,
         duration: Number.isFinite(dur) ? dur : 300,
         streamUrl: format.url,
         subtitleUrl: null,
+        ...(audioUrl ? { audioUrl } : {}),
       };
       // Populate cache — the download path will reuse this without a second request
       innerTubeCache.set(videoId, { result, expiresAt: Date.now() + 30 * 60 * 1000 });
