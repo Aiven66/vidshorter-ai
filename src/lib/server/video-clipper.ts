@@ -2352,6 +2352,36 @@ async function preflightStream(url: string): Promise<boolean> {
   return false;
 }
 
+// Wrap a googlevideo.com direct URL in CF Worker /stream proxy if needed.
+// googlevideo.com returns 403 for Vercel IP (ip= param tied to the IP that
+// resolved the stream). CF Worker /stream fetches via Cloudflare IP and
+// forwards to Vercel. If the URL is already a /stream proxy URL (from
+// getYouTubeInfoViaCFWorker) or CF Worker is not configured, returns as-is.
+function wrapInStreamProxyIfNeeded(streamUrl: string, videoId: string): string {
+  const cfWorkerUrl = getCfWorkerUrl();
+  if (!cfWorkerUrl) return streamUrl;
+
+  // Already a CF Worker /stream proxy URL — no wrapping needed.
+  if (streamUrl.includes('/stream') && streamUrl.includes(cfWorkerUrl.replace(/^https?:\/\//, ''))) {
+    return streamUrl;
+  }
+
+  // Already an internal proxy URL (e.g. /api/yt-proxy) — no wrapping needed.
+  const baseUrl = getAppBaseUrl();
+  if (baseUrl && streamUrl.startsWith(baseUrl)) return streamUrl;
+
+  // Only wrap googlevideo.com direct URLs (these 403 for Vercel IP).
+  if (!streamUrl.includes('googlevideo.com')) return streamUrl;
+
+  const maxHeight = getCfWorkerMaxHeight();
+  const endpoint = new URL(cfWorkerUrl);
+  endpoint.pathname = `${endpoint.pathname.replace(/\/$/, '')}/stream`;
+  endpoint.searchParams.set('videoId', videoId);
+  endpoint.searchParams.set('maxHeight', String(maxHeight));
+  endpoint.searchParams.set('streamUrl', streamUrl);
+  return endpoint.toString();
+}
+
 async function downloadYouTubeOrGenericVideo(
   videoUrl: string, outputTemplate: string, hasCookies: boolean,
 ): Promise<PreparedSource> {
@@ -2364,40 +2394,49 @@ async function downloadYouTubeOrGenericVideo(
     if (!videoId) throw new Error('Invalid YouTube URL');
 
     // ── Primary path: getYouTubeStreamUrlWithFallbacks ────────────────────────
-    // Tries Invidious/Piped first (HD video-only + audio via adaptiveFormats),
-    // then cobalt, then CF Worker, then EdgeFunction. This is the HD-capable path.
+    // Tries CF Worker first (returns /stream proxy URLs), then Invidious/Piped,
+    // cobalt, EdgeFunction. EdgeFunction and Invidious/Piped return googlevideo.com
+    // direct URLs which 403 for Vercel IP — wrapInStreamProxyIfNeeded routes
+    // them through CF Worker /stream proxy so ffmpeg can read them.
     try {
-      console.log('Vercel environment: trying HD stream fallbacks (Invidious/Piped first)');
+      console.log('Vercel environment: trying HD stream fallbacks (CF Worker first)');
       const { streamUrl, audioUrl } = await getYouTubeStreamUrlWithFallbacks(videoId);
+
+      // Wrap googlevideo.com direct URLs in CF Worker /stream proxy.
+      // CF Worker /stream fetches via Cloudflare IP (not blocked by googlevideo.com)
+      // and forwards to Vercel. /stream also handles colo mismatch via HD re-resolve.
+      const wrappedStreamUrl = wrapInStreamProxyIfNeeded(streamUrl, videoId);
+      const wrappedAudioUrl = audioUrl ? wrapInStreamProxyIfNeeded(audioUrl, videoId) : undefined;
+
       const internalBaseUrl = getAppBaseUrl();
+      const isProxied = wrappedStreamUrl.includes('youtube-proxy') || wrappedStreamUrl.includes('/stream');
       const ffmpegHeaders =
-        `${internalBaseUrl && streamUrl.startsWith(internalBaseUrl) ? getBypassFfmpegHeaderString() : ''}` +
-        'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36\r\n' +
-        'Referer: https://www.youtube.com/\r\n' +
-        'Origin: https://www.youtube.com\r\n' +
-        'Accept: */*\r\n' +
-        'Accept-Encoding: identity\r\n';
+        `${internalBaseUrl && wrappedStreamUrl.startsWith(internalBaseUrl) ? getBypassFfmpegHeaderString() : ''}` +
+        (isProxied
+          ? 'Accept: */*\r\nAccept-Encoding: identity\r\n'
+          : 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36\r\n' +
+            'Referer: https://www.youtube.com/\r\n' +
+            'Origin: https://www.youtube.com\r\n' +
+            'Accept: */*\r\n' +
+            'Accept-Encoding: identity\r\n');
 
       // HD video-only + separate audio: use remote URLs directly with ffmpeg fast-seek.
       // Downloading 300MB+ 1080p video to /tmp would timeout and exceed /tmp limits.
       // googlevideo.com URLs support HTTP Range, so ffmpeg can seek efficiently.
-      if (audioUrl) {
-        console.log('Vercel environment: using HD video-only + audio streams directly (remote ffmpeg fast-seek)');
+      if (wrappedAudioUrl) {
+        console.log('Vercel environment: using HD video-only + audio streams (remote ffmpeg fast-seek, proxied via CF Worker)');
         return {
-          inputPath: streamUrl,
-          audioInputPath: audioUrl,
+          inputPath: wrappedStreamUrl,
+          audioInputPath: wrappedAudioUrl,
           ffmpegHeaders,
         };
       }
 
       // Combined (muxed) stream via /stream proxy: the proxy fetches from
-      // googlevideo.com via CF IP and forwards to Vercel. Since resolve already
-      // cached the stream URL, /stream responds quickly (no tryClient delay).
-      // Use the remote URL directly with ffmpeg fast-seek — downloading 720p
-      // combined (100MB+) to /tmp would timeout.
+      // googlevideo.com via CF IP and forwards to Vercel.
       console.log('Vercel environment: using CF Worker /stream proxy (combined stream, remote ffmpeg fast-seek)');
       return {
-        inputPath: streamUrl,
+        inputPath: wrappedStreamUrl,
         ffmpegHeaders,
       };
     } catch (fallbackErr) {
