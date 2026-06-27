@@ -1000,6 +1000,10 @@ async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInf
     audioUrl?: string;
     quality?: string;
     client?: string;
+    userAgent?: string;
+    visitorData?: string;
+    xClientName?: number | string;
+    clientVersion?: string;
     error?: string;
     _debug?: {
       combinedHeight?: number;
@@ -1032,12 +1036,22 @@ async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInf
   // googlevideo.com direct URLs returned by CF Worker are tied to the CF IP
   // (ip= query param) and return 403 when accessed from Vercel's IP space.
   // The /stream proxy fetches from googlevideo.com via CF IP (which works)
-  // and forwards the response to Vercel. Since resolve already cached the
-  // resolved stream URL, /stream hits the cache and responds quickly.
+  // and forwards the response to Vercel.
+  //
+  // Pass the resolved streamUrl + metadata as query params so /stream can
+  // fetch directly without re-running tryClient (60s+ InnerTube call).
+  // This avoids cold-cache latency when /stream and /resolve route to
+  // different Cloudflare colos (caches.default is per-colo, not global).
   const streamEndpoint = new URL(cfWorkerUrl);
   streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
   streamEndpoint.searchParams.set('videoId', videoId);
   streamEndpoint.searchParams.set('maxHeight', String(maxHeight));
+  streamEndpoint.searchParams.set('streamUrl', data.streamUrl);
+  if (data.userAgent) streamEndpoint.searchParams.set('userAgent', data.userAgent);
+  if (data.visitorData) streamEndpoint.searchParams.set('visitorData', data.visitorData);
+  if (data.xClientName) streamEndpoint.searchParams.set('xClientName', String(data.xClientName));
+  if (data.clientVersion) streamEndpoint.searchParams.set('clientVersion', data.clientVersion);
+  if (data.client) streamEndpoint.searchParams.set('clientName', data.client);
 
   const dbg = data._debug ? ` debug=${JSON.stringify(data._debug)}` : '';
   console.log(`CF Worker success: "${(data.title ?? '').slice(0, 50)}", client=${data.client}, quality=${data.quality}${dbg}`);

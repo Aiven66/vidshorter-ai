@@ -208,7 +208,30 @@ export default {
           });
         };
 
+        // Fast path: if caller provides a pre-resolved streamUrl (from /resolve),
+        // fetch it directly — skips tryClient (60s+ InnerTube call) entirely.
+        // This avoids cold-cache latency when /stream and /resolve route to
+        // different Cloudflare colos (caches.default is per-colo, not global).
         const errors = [];
+        const directStreamUrl = url.searchParams.get('streamUrl');
+        if (directStreamUrl) {
+          const directResolved = {
+            streamUrl: directStreamUrl,
+            userAgent: url.searchParams.get('userAgent') || '',
+            visitorData: url.searchParams.get('visitorData') || '',
+            xClientName: url.searchParams.get('xClientName') || '1',
+            clientVersion: url.searchParams.get('clientVersion') || '2.20240101.00.00',
+            client: url.searchParams.get('clientName') || 'direct',
+          };
+          const upstream = await doFetch(directResolved);
+          if (upstream.status === 200 || upstream.status === 206) {
+            return passthroughStream(upstream);
+          }
+          const body = await upstream.text().catch(() => '');
+          // Fall through to tryClient if direct fetch fails
+          errors.push(`direct: HTTP ${upstream.status} ${body.slice(0, 120)}`);
+        }
+
         const heights = Array.from(new Set([effectiveMaxHeight, 720, 480, 360, 240, 144].filter(Boolean)));
 
         for (const h of heights) {
