@@ -1,54 +1,69 @@
 /**
- * Temporary debug endpoint: calls /api/yt-stream from inside Vercel
- * to inspect what formats are actually returned.
+ * Temporary debug endpoint: tests the full YouTube stream URL resolution
+ * pipeline (same path used by process-video) and reports which getter
+ * succeeded, what quality was returned, and whether audio is separate.
  * DELETE after debugging is complete.
  */
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+export const maxDuration = 180;
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const videoId = url.searchParams.get('videoId') || 'v1wZwxY3CMg';
 
-  const baseUrl =
-    process.env.APP_BASE_URL ||
-    process.env.NEXT_PUBLIC_APP_URL ||
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '') ||
-    'https://www.clipopai.com';
+  // Dynamically import video-clipper to access internal getters
+  const videoClipper = await import('@/lib/server/video-clipper');
 
-  if (!baseUrl) {
-    return Response.json({ error: 'No base URL available' }, { status: 500 });
-  }
-
-  const endpoint = `${baseUrl}/api/yt-stream?videoId=${encodeURIComponent(videoId)}&debug=1`;
   const startedAt = Date.now();
+  const logs: string[] = [];
 
   try {
-    const res = await fetch(endpoint, {
-      headers: { Accept: 'application/json' },
-      signal: AbortSignal.timeout(50_000),
-    });
+    // Call the internal downloadSourceVideo (which calls getYouTubeStreamUrlWithFallbacks)
+    const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    logs.push(`Calling downloadSourceVideo for ${videoUrl}`);
+
+    const source = await videoClipper.default.downloadSourceVideo(videoUrl);
     const elapsed = Date.now() - startedAt;
-    const data = await res.json();
+
+    logs.push(`Success in ${elapsed}ms`);
+    logs.push(`inputPath: ${source.inputPath.slice(0, 120)}`);
+    logs.push(`audioInputPath: ${source.audioInputPath || '(none)'}`);
+    logs.push(`ffmpegHeaders: ${source.ffmpegHeaders ? '(set)' : '(none)'}`);
+
+    // If inputPath is a URL, do a HEAD request to check content-length
+    if (source.inputPath.startsWith('http')) {
+      try {
+        const headRes = await fetch(source.inputPath, { method: 'HEAD', signal: AbortSignal.timeout(10_000) });
+        logs.push(`HEAD response: ${headRes.status}, content-length: ${headRes.headers.get('content-length') || '?'}, content-type: ${headRes.headers.get('content-type') || '?'}`);
+      } catch (e) {
+        logs.push(`HEAD failed: ${e instanceof Error ? e.message.slice(0, 100) : e}`);
+      }
+    }
 
     return Response.json({
-      ok: res.ok,
-      status: res.status,
+      ok: true,
       elapsedMs: elapsed,
-      endpoint,
-      result: data,
+      videoId,
+      source: {
+        inputPath: source.inputPath.slice(0, 200),
+        audioInputPath: source.audioInputPath || null,
+        hasHeaders: !!source.ffmpegHeaders,
+      },
+      logs,
     }, {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     });
   } catch (err) {
     const elapsed = Date.now() - startedAt;
+    logs.push(`Failed after ${elapsed}ms`);
     return Response.json({
       ok: false,
       elapsedMs: elapsed,
-      endpoint,
+      videoId,
       error: err instanceof Error ? err.message : String(err),
+      logs,
     }, {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
