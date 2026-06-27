@@ -1032,7 +1032,14 @@ async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInf
   // Helper: build a /stream proxy URL with streamUrl + metadata as query params.
   // googlevideo.com direct URLs return 403 for Vercel IP (ip= param tied to CF IP).
   // /stream proxy fetches via CF IP and forwards to Vercel.
-  const buildStreamProxyUrl = (targetStreamUrl: string, extra?: { quickCheck?: boolean }) => {
+  //
+  // Note: /resolve and /stream may hit different Cloudflare colos (caches.default
+  // is per-colo). When they do, the streamUrl's ip= param won't match the /stream
+  // colo's IP, and the fast path fails. /stream then falls back to HD re-resolve
+  // (tryClient with 720p+ filter on THIS colo), which gets a fresh streamUrl bound
+  // to this colo's IP. This adds ~6s latency on cold cache but produces correct HD
+  // output instead of silently degrading to 360p.
+  const buildStreamProxyUrl = (targetStreamUrl: string) => {
     const endpoint = new URL(cfWorkerUrl);
     endpoint.pathname = `${endpoint.pathname.replace(/\/$/, '')}/stream`;
     endpoint.searchParams.set('videoId', videoId);
@@ -1043,44 +1050,17 @@ async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInf
     if (data.xClientName) endpoint.searchParams.set('xClientName', String(data.xClientName));
     if (data.clientVersion) endpoint.searchParams.set('clientVersion', data.clientVersion);
     if (data.client) endpoint.searchParams.set('clientName', data.client);
-    if (extra?.quickCheck) endpoint.searchParams.set('quickCheck', '1');
     return endpoint.toString();
   };
-
-  // Preflight: verify the /stream proxy's fast path works on THIS CF colo.
-  // /resolve and /stream may hit different Cloudflare colos (caches.default is
-  // per-colo). If they do, the streamUrl's ip= param won't match the /stream
-  // colo's IP, and googlevideo.com returns 403. The quickCheck preflight detects
-  // this in <2s. On failure, /stream returns 502 immediately (no tryClient delay),
-  // and we throw so getYouTubeStreamUrlWithFallbacks advances to the next getter
-  // (Invidious/Piped/cobalt) instead of silently degrading to 360p.
-  const videoProxyUrl = buildStreamProxyUrl(data.streamUrl);
-  const preflightUrl = buildStreamProxyUrl(data.streamUrl, { quickCheck: true });
-  try {
-    const preflight = await fetch(preflightUrl, {
-      method: 'HEAD',
-      signal: AbortSignal.timeout(12_000),
-    });
-    if (preflight.status !== 200 && preflight.status !== 206) {
-      const detail = `CF Worker /stream quickCheck failed: HTTP ${preflight.status}`;
-      console.warn(detail);
-      throw new Error(detail);
-    }
-  } catch (e) {
-    // Re-throw if it's our own error; otherwise wrap.
-    const msg = e instanceof Error ? e.message : String(e);
-    if (msg.includes('quickCheck failed')) throw e;
-    throw new Error(`CF Worker /stream quickCheck error: ${msg.slice(0, 120)}`);
-  }
 
   // If CF Worker returns a separate audioUrl (HD video-only + audio from adaptiveFormats),
   // build /stream proxy URLs for both. ffmpeg merges them via -map 0:v:0 -map 1:a:0.
   if (data.audioUrl) {
-    console.log(`CF Worker HD success: "${(data.title ?? '').slice(0, 50)}", client=${data.client}, quality=${data.quality} + separate audio (via /stream proxy, preflight OK)`);
+    console.log(`CF Worker HD success: "${(data.title ?? '').slice(0, 50)}", client=${data.client}, quality=${data.quality} + separate audio (via /stream proxy)`);
     return {
       title: data.title || 'YouTube Video',
       duration: data.duration || 300,
-      streamUrl: videoProxyUrl,
+      streamUrl: buildStreamProxyUrl(data.streamUrl),
       subtitleUrl: null,
       audioUrl: buildStreamProxyUrl(data.audioUrl),
     };
@@ -1088,11 +1068,11 @@ async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInf
 
   // Combined (muxed) stream: single /stream proxy URL.
   const dbg = data._debug ? ` debug=${JSON.stringify(data._debug)}` : '';
-  console.log(`CF Worker success: "${(data.title ?? '').slice(0, 50)}", client=${data.client}, quality=${data.quality}${dbg} (preflight OK)`);
+  console.log(`CF Worker success: "${(data.title ?? '').slice(0, 50)}", client=${data.client}, quality=${data.quality}${dbg}`);
   return {
     title: data.title || 'YouTube Video',
     duration: data.duration || 300,
-    streamUrl: videoProxyUrl,
+    streamUrl: buildStreamProxyUrl(data.streamUrl),
     subtitleUrl: null,
   };
 }
