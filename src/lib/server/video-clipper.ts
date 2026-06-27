@@ -1018,47 +1018,43 @@ async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInf
 
   if (!data.streamUrl) throw new Error(data.error ?? 'CF Worker: missing streamUrl');
 
+  // Helper: build a /stream proxy URL with streamUrl + metadata as query params.
+  // googlevideo.com direct URLs return 403 for Vercel IP (ip= param tied to CF IP).
+  // /stream proxy fetches via CF IP and forwards to Vercel.
+  const buildStreamProxyUrl = (targetStreamUrl: string) => {
+    const endpoint = new URL(cfWorkerUrl);
+    endpoint.pathname = `${endpoint.pathname.replace(/\/$/, '')}/stream`;
+    endpoint.searchParams.set('videoId', videoId);
+    endpoint.searchParams.set('maxHeight', String(maxHeight));
+    endpoint.searchParams.set('streamUrl', targetStreamUrl);
+    if (data.userAgent) endpoint.searchParams.set('userAgent', data.userAgent);
+    if (data.visitorData) endpoint.searchParams.set('visitorData', data.visitorData);
+    if (data.xClientName) endpoint.searchParams.set('xClientName', String(data.xClientName));
+    if (data.clientVersion) endpoint.searchParams.set('clientVersion', data.clientVersion);
+    if (data.client) endpoint.searchParams.set('clientName', data.client);
+    return endpoint.toString();
+  };
+
   // If CF Worker returns a separate audioUrl (HD video-only + audio from adaptiveFormats),
-  // use the googlevideo.com direct URLs directly — ffmpeg can fast-seek via HTTP Range.
-  // The /stream proxy endpoint can only proxy a single stream, so we bypass it for HD.
+  // build /stream proxy URLs for both. ffmpeg merges them via -map 0:v:0 -map 1:a:0.
   if (data.audioUrl) {
-    console.log(`CF Worker HD success: "${(data.title ?? '').slice(0, 50)}", client=${data.client}, quality=${data.quality} + separate audio`);
+    console.log(`CF Worker HD success: "${(data.title ?? '').slice(0, 50)}", client=${data.client}, quality=${data.quality} + separate audio (via /stream proxy)`);
     return {
       title: data.title || 'YouTube Video',
       duration: data.duration || 300,
-      streamUrl: data.streamUrl,
+      streamUrl: buildStreamProxyUrl(data.streamUrl),
       subtitleUrl: null,
-      audioUrl: data.audioUrl,
+      audioUrl: buildStreamProxyUrl(data.audioUrl),
     };
   }
 
-  // For combined (muxed) streams, use the /stream proxy endpoint.
-  // googlevideo.com direct URLs returned by CF Worker are tied to the CF IP
-  // (ip= query param) and return 403 when accessed from Vercel's IP space.
-  // The /stream proxy fetches from googlevideo.com via CF IP (which works)
-  // and forwards the response to Vercel.
-  //
-  // Pass the resolved streamUrl + metadata as query params so /stream can
-  // fetch directly without re-running tryClient (60s+ InnerTube call).
-  // This avoids cold-cache latency when /stream and /resolve route to
-  // different Cloudflare colos (caches.default is per-colo, not global).
-  const streamEndpoint = new URL(cfWorkerUrl);
-  streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
-  streamEndpoint.searchParams.set('videoId', videoId);
-  streamEndpoint.searchParams.set('maxHeight', String(maxHeight));
-  streamEndpoint.searchParams.set('streamUrl', data.streamUrl);
-  if (data.userAgent) streamEndpoint.searchParams.set('userAgent', data.userAgent);
-  if (data.visitorData) streamEndpoint.searchParams.set('visitorData', data.visitorData);
-  if (data.xClientName) streamEndpoint.searchParams.set('xClientName', String(data.xClientName));
-  if (data.clientVersion) streamEndpoint.searchParams.set('clientVersion', data.clientVersion);
-  if (data.client) streamEndpoint.searchParams.set('clientName', data.client);
-
+  // Combined (muxed) stream: single /stream proxy URL.
   const dbg = data._debug ? ` debug=${JSON.stringify(data._debug)}` : '';
   console.log(`CF Worker success: "${(data.title ?? '').slice(0, 50)}", client=${data.client}, quality=${data.quality}${dbg}`);
   return {
     title: data.title || 'YouTube Video',
     duration: data.duration || 300,
-    streamUrl: streamEndpoint.toString(),
+    streamUrl: buildStreamProxyUrl(data.streamUrl),
     subtitleUrl: null,
   };
 }
