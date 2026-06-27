@@ -409,13 +409,49 @@ async function tryClient(videoId, client, maxHeight, cookieHeader) {
 
   if (!formats.length) throw new Error('No formats in response');
 
+  // Combined (muxed) formats — usually limited to 360p without auth
   const videoFormats = formats.filter((f) =>
-    f?.url && typeof f.mimeType === 'string' && f.mimeType.startsWith('video/')
+    (f?.url || f?.signatureCipher || f?.cipher) && typeof f.mimeType === 'string' && f.mimeType.startsWith('video/')
   );
   const muxed = videoFormats.filter((f) => f.audioQuality || f.audioChannels || f.audioBitrate);
-  const format = pickBest(muxed.length ? muxed : videoFormats, maxHeight);
+  const combinedFormat = pickBest(muxed.length ? muxed : videoFormats, maxHeight);
+  const combinedHeight = formatHeight(combinedFormat);
 
-  const chosen = format || videoFormats[0] || formats[0];
+  // If combined is below 720p, try adaptiveFormats for HD video-only + audio
+  let chosen = combinedFormat || videoFormats[0] || formats[0];
+  let audioUrl = '';
+
+  if (combinedHeight < 720) {
+    const videoOnly = videoFormats.filter((f) => !(f.audioQuality || f.audioChannels || f.audioBitrate));
+    const audioOnly = formats.filter((f) =>
+      (f?.url || f?.signatureCipher || f?.cipher) &&
+      typeof f.mimeType === 'string' && (f.mimeType.startsWith('audio/mp4') || f.mimeType.includes('audio/'))
+    );
+
+    const videoCandidates = videoOnly
+      .map((f) => ({ f, q: formatHeight(f) }))
+      .filter((x) => x.q > 0 && x.q <= (maxHeight || MAX_HEIGHT))
+      .sort((a, b) => b.q - a.q);
+
+    for (const candidate of videoCandidates) {
+      if (candidate.q <= combinedHeight) break;
+      const videoResolved = await resolveFormatUrl(candidate.f, videoId, cookieHeader);
+      if (!videoResolved) continue;
+
+      // Find a resolvable audio stream
+      for (const a of audioOnly) {
+        const audioResolved = await resolveFormatUrl(a, videoId, cookieHeader);
+        if (audioResolved) {
+          audioUrl = audioResolved;
+          break;
+        }
+      }
+
+      chosen = candidate.f;
+      break;
+    }
+  }
+
   const resolvedUrl = await resolveFormatUrl(chosen, videoId, cookieHeader);
   if (!resolvedUrl) {
     const hasCipher = formats.some((f) => f.signatureCipher || f.cipher);
@@ -431,6 +467,7 @@ async function tryClient(videoId, client, maxHeight, cookieHeader) {
     visitorData,
     xClientName: client.xClientName,
     clientVersion: client.clientVersion,
+    ...(audioUrl ? { audioUrl } : {}),
   };
 }
 

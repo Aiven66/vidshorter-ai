@@ -997,6 +997,7 @@ async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInf
     title?: string;
     duration?: number;
     streamUrl?: string;
+    audioUrl?: string;
     quality?: string;
     client?: string;
     error?: string;
@@ -1004,6 +1005,22 @@ async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInf
 
   if (!data.streamUrl) throw new Error(data.error ?? 'CF Worker: missing streamUrl');
 
+  // If CF Worker returns a separate audioUrl (HD video-only + audio from adaptiveFormats),
+  // use the googlevideo.com direct URLs directly — ffmpeg can fast-seek via HTTP Range.
+  // The /stream proxy endpoint can only proxy a single stream, so we bypass it for HD.
+  if (data.audioUrl) {
+    console.log(`CF Worker HD success: "${(data.title ?? '').slice(0, 50)}", client=${data.client}, quality=${data.quality} + separate audio`);
+    return {
+      title: data.title || 'YouTube Video',
+      duration: data.duration || 300,
+      streamUrl: data.streamUrl,
+      subtitleUrl: null,
+      audioUrl: data.audioUrl,
+    };
+  }
+
+  // For combined (muxed) streams, use the /stream proxy endpoint which handles
+  // rate-limiting and IP rotation on the CF Worker side.
   const streamEndpoint = new URL(cfWorkerUrl);
   streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
   streamEndpoint.searchParams.set('videoId', videoId);
