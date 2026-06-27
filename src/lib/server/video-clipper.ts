@@ -1028,17 +1028,23 @@ async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInf
     };
   }
 
-  // For combined (muxed) streams, prefer the googlevideo.com direct URL
-  // (data.streamUrl) over the /stream proxy. The /stream proxy adds latency
-  // because each cold request triggers tryClient (InnerTube API call, 60s+),
-  // which causes ffmpeg/fast-seek timeouts. googlevideo.com CDN is accessible
-  // from Vercel and supports HTTP Range for fast-seek.
+  // For combined (muxed) streams, use the /stream proxy endpoint.
+  // googlevideo.com direct URLs returned by CF Worker are tied to the CF IP
+  // (ip= query param) and return 403 when accessed from Vercel's IP space.
+  // The /stream proxy fetches from googlevideo.com via CF IP (which works)
+  // and forwards the response to Vercel. Since resolve already cached the
+  // resolved stream URL, /stream hits the cache and responds quickly.
+  const streamEndpoint = new URL(cfWorkerUrl);
+  streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
+  streamEndpoint.searchParams.set('videoId', videoId);
+  streamEndpoint.searchParams.set('maxHeight', String(maxHeight));
+
   const dbg = data._debug ? ` debug=${JSON.stringify(data._debug)}` : '';
   console.log(`CF Worker success: "${(data.title ?? '').slice(0, 50)}", client=${data.client}, quality=${data.quality}${dbg}`);
   return {
     title: data.title || 'YouTube Video',
     duration: data.duration || 300,
-    streamUrl: data.streamUrl,
+    streamUrl: streamEndpoint.toString(),
     subtitleUrl: null,
   };
 }
@@ -2351,11 +2357,12 @@ async function downloadYouTubeOrGenericVideo(
         };
       }
 
-      // Combined (muxed) stream: use remote URL directly with ffmpeg fast-seek.
-      // 720p combined can be 100MB+ — downloading to /tmp would timeout and
-      // exceed /tmp limits. googlevideo.com URLs support HTTP Range, so ffmpeg
-      // can seek efficiently without downloading the whole file.
-      console.log('Vercel environment: using combined stream URL directly (remote ffmpeg fast-seek)');
+      // Combined (muxed) stream via /stream proxy: the proxy fetches from
+      // googlevideo.com via CF IP and forwards to Vercel. Since resolve already
+      // cached the stream URL, /stream responds quickly (no tryClient delay).
+      // Use the remote URL directly with ffmpeg fast-seek — downloading 720p
+      // combined (100MB+) to /tmp would timeout.
+      console.log('Vercel environment: using CF Worker /stream proxy (combined stream, remote ffmpeg fast-seek)');
       return {
         inputPath: streamUrl,
         ffmpegHeaders,
