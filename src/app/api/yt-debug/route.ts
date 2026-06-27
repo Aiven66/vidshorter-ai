@@ -19,6 +19,16 @@ export async function GET(request: Request) {
   const startedAt = Date.now();
   const logs: string[] = [];
 
+  // Report relevant env vars
+  logs.push(`ENV: CF_WORKER_URL=${process.env.CF_WORKER_URL ? '(set)' : '(not set)'}`);
+  logs.push(`ENV: APP_BASE_URL=${process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || '(not set)'}`);
+  logs.push(`ENV: VERCEL_URL=${process.env.VERCEL_URL || '(not set)'}`);
+  logs.push(`ENV: VERCEL=${process.env.VERCEL || '(not set)'}`);
+  logs.push(`ENV: YOUTUBE_MAX_HEIGHT=${process.env.YOUTUBE_MAX_HEIGHT || '(default)'}`);
+  if (process.env.CF_WORKER_URL) {
+    logs.push(`ENV: CF_WORKER_URL value=${process.env.CF_WORKER_URL.slice(0, 80)}`);
+  }
+
   // Capture console.log to trace which getter succeeded
   const origLog = console.log;
   const origWarn = console.warn;

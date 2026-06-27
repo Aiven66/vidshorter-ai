@@ -2266,6 +2266,58 @@ async function downloadYouTubeOrGenericVideo(
     const videoId = extractYouTubeVideoId(videoUrl);
     if (!videoId) throw new Error('Invalid YouTube URL');
 
+    // ── Primary path: getYouTubeStreamUrlWithFallbacks ────────────────────────
+    // Tries Invidious/Piped first (HD video-only + audio via adaptiveFormats),
+    // then cobalt, then CF Worker, then EdgeFunction. This is the HD-capable path.
+    try {
+      console.log('Vercel environment: trying HD stream fallbacks (Invidious/Piped first)');
+      const { streamUrl, audioUrl } = await getYouTubeStreamUrlWithFallbacks(videoId);
+      const internalBaseUrl = getAppBaseUrl();
+      const ffmpegHeaders =
+        `${internalBaseUrl && streamUrl.startsWith(internalBaseUrl) ? getBypassFfmpegHeaderString() : ''}` +
+        'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36\r\n' +
+        'Referer: https://www.youtube.com/\r\n' +
+        'Origin: https://www.youtube.com\r\n' +
+        'Accept: */*\r\n' +
+        'Accept-Encoding: identity\r\n';
+
+      // HD video-only + separate audio: use remote URLs directly with ffmpeg fast-seek.
+      // Downloading 300MB+ 1080p video to /tmp would timeout and exceed /tmp limits.
+      // googlevideo.com URLs support HTTP Range, so ffmpeg can seek efficiently.
+      if (audioUrl) {
+        console.log('Vercel environment: using HD video-only + audio streams directly (remote ffmpeg fast-seek)');
+        return {
+          inputPath: streamUrl,
+          audioInputPath: audioUrl,
+          ffmpegHeaders,
+        };
+      }
+
+      // Combined (muxed) stream: download to /tmp for reliable seeking.
+      try {
+        const localPath = path.join(path.dirname(outputTemplate), 'source.mp4');
+        const ok = await preflightStream(streamUrl);
+        if (ok) {
+          const downloaded = await downloadStreamToLocalFile(streamUrl, localPath);
+          if (downloaded) {
+            console.log('Vercel environment: using locally cached stream for ffmpeg input');
+            return { inputPath: localPath };
+          }
+        }
+      } catch {}
+      return {
+        inputPath: streamUrl,
+        ffmpegHeaders,
+      };
+    } catch (fallbackErr) {
+      console.warn(
+        'All stream fallbacks failed, trying CF Worker /stream and yt-proxy:',
+        fallbackErr instanceof Error ? fallbackErr.message.slice(0, 150) : fallbackErr,
+      );
+    }
+
+    // ── Fallback: CF Worker /stream direct download ───────────────────────────
+    // Only reached if getYouTubeStreamUrlWithFallbacks fails entirely.
     const cfWorkerUrl = getCfWorkerUrl();
     if (cfWorkerUrl) {
       try {
@@ -2286,24 +2338,24 @@ async function downloadYouTubeOrGenericVideo(
           }
           const downloaded = await downloadStreamToLocalFile(streamProxyUrl, localPath);
           if (downloaded) {
-            console.log('Vercel environment: using locally cached YouTube source for ffmpeg input');
+            console.log('Vercel environment: using CF Worker stream (fallback) for ffmpeg input');
             return { inputPath: localPath };
           }
           remoteCandidate = streamProxyUrl;
         }
         if (remoteCandidate) {
-          console.log('Vercel environment: using CF Worker stream proxy directly as ffmpeg input (no local cache)');
+          console.log('Vercel environment: using CF Worker stream proxy directly (fallback)');
           return { inputPath: remoteCandidate };
         }
-        throw new Error('CF Worker stream is unavailable');
       } catch (e) {
         console.warn(
-          'CF Worker stream URL build failed, trying Vercel edge proxy…',
+          'CF Worker stream fallback failed:',
           e instanceof Error ? e.message.slice(0, 120) : e,
         );
       }
     }
 
+    // ── Last resort: yt-proxy ─────────────────────────────────────────────────
     const baseUrl = getAppBaseUrl();
     if (baseUrl) {
       const proxyUrl = `${baseUrl}/api/yt-proxy?videoId=${encodeURIComponent(videoId)}`;
@@ -2313,62 +2365,22 @@ async function downloadYouTubeOrGenericVideo(
           signal: AbortSignal.timeout(10_000),
         });
         if (res.status === 200 || res.status === 206) {
-          console.log('Vercel environment: using /api/yt-proxy as ffmpeg input');
+          console.log('Vercel environment: using /api/yt-proxy as ffmpeg input (last resort)');
           const ffmpegHeaders =
             `${getBypassFfmpegHeaderString()}` +
             'Accept: */*\r\n' +
             'Accept-Encoding: identity\r\n';
           return { inputPath: proxyUrl, ffmpegHeaders };
         }
-        console.warn(`yt-proxy preflight failed (HTTP ${res.status}), falling back to yt-dlp stream URL`);
       } catch (e) {
         console.warn(
-          'yt-proxy preflight failed, falling back to yt-dlp stream URL:',
+          'yt-proxy fallback failed:',
           e instanceof Error ? e.message.slice(0, 120) : e,
         );
       }
     }
 
-    console.log('Vercel environment: using non-yt-dlp YouTube stream fallbacks');
-    const { streamUrl, audioUrl } = await getYouTubeStreamUrlWithFallbacks(videoId);
-    const internalBaseUrl = getAppBaseUrl();
-    const ffmpegHeaders =
-      `${internalBaseUrl && streamUrl.startsWith(internalBaseUrl) ? getBypassFfmpegHeaderString() : ''}` +
-      'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36\r\n' +
-      'Referer: https://www.youtube.com/\r\n' +
-      'Origin: https://www.youtube.com\r\n' +
-      'Accept: */*\r\n' +
-      'Accept-Encoding: identity\r\n';
-
-    // When we have a separate audioUrl (HD video-only + audio), use remote URLs
-    // directly with ffmpeg fast-seek. Downloading the entire HD video to /tmp
-    // would timeout (300MB+ for 1080p) and exceed the 512MB /tmp limit.
-    // googlevideo.com URLs support HTTP Range, so ffmpeg can seek efficiently.
-    if (audioUrl) {
-      console.log('Vercel environment: using HD video-only + audio streams directly (remote ffmpeg fast-seek)');
-      return {
-        inputPath: streamUrl,
-        audioInputPath: audioUrl,
-        ffmpegHeaders,
-      };
-    }
-
-    // For combined (muxed) streams, download to /tmp first for reliable seeking.
-    try {
-      const localPath = path.join(path.dirname(outputTemplate), 'source.mp4');
-      const ok = await preflightStream(streamUrl);
-      if (ok) {
-        const downloaded = await downloadStreamToLocalFile(streamUrl, localPath);
-        if (downloaded) {
-          console.log('Vercel environment: using locally cached fallback stream for ffmpeg input');
-          return { inputPath: localPath };
-        }
-      }
-    } catch {}
-    return {
-      inputPath: streamUrl,
-      ffmpegHeaders,
-    };
+    throw new Error('Failed to prepare source video: all download methods exhausted');
   }
 
   if (isYouTubeUrl(videoUrl)) {
