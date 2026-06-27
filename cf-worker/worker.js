@@ -187,6 +187,10 @@ export default {
       try {
         const effectiveMaxHeight = maxHeight || MAX_HEIGHT;
         const range = request.headers.get('Range') || request.headers.get('range') || 'bytes=0-';
+        // quickCheck=1: only try the fast path (streamUrl param) + cache.
+        // Skip tryClient/HD re-resolve. Used by Vercel preflight to quickly
+        // detect colo-mismatch failures before committing to ffmpeg input.
+        const quickCheck = url.searchParams.get('quickCheck') === '1';
 
         const doFetch = (resolved) => {
           const isCobalt = resolved?.client === 'cobalt';
@@ -228,8 +232,99 @@ export default {
             return passthroughStream(upstream);
           }
           const body = await upstream.text().catch(() => '');
-          // Fall through to tryClient if direct fetch fails
           errors.push(`direct: HTTP ${upstream.status} ${body.slice(0, 120)}`);
+
+          // quickCheck: caller only wants to know if the fast path works.
+          // Return 502 immediately on failure — Vercel will try other getters.
+          if (quickCheck) {
+            return json(
+              { error: 'quickCheck: direct stream failed', details: errors.slice(0, 4).join(' | ') },
+              502,
+            );
+          }
+
+          // Fast path failed (typically googlevideo.com 403 when /resolve and
+          // /stream hit different CF colos — the streamUrl's ip= param is bound
+          // to the /resolve colo's IP, not the /stream colo's IP).
+          //
+          // Do NOT fall through to the full heights loop below — it accepts the
+          // first success regardless of quality, which returns 360p combined
+          // (itag 18) and produces blurry clips. Instead, re-resolve HD only
+          // (720p+). If HD is unavailable, return 502 so Vercel's
+          // getYouTubeStreamUrlWithFallbacks advances to the next getter
+          // (Invidious/Piped/cobalt) instead of silently degrading to 360p.
+          const directAudioUrl = url.searchParams.get('audioUrl');
+          if (directAudioUrl) {
+            // Try the audioUrl too — if video failed but audio works, the video
+            // URL might be stale while audio is still valid (different CDN node).
+            const audioResolved = { ...directResolved, streamUrl: directAudioUrl };
+            const audioUpstream = await doFetch(audioResolved);
+            // Don't return audio-only; just log for diagnostics.
+            errors.push(`directAudio: HTTP ${audioUpstream.status}`);
+            audioUpstream.body?.cancel?.();
+          }
+
+          const hdOnlyHeights = Array.from(
+            new Set([720, effectiveMaxHeight, 1080].filter((h) => h >= 720 && h <= MAX_HEIGHT)),
+          ).sort((a, b) => a - b);
+
+          for (const h of hdOnlyHeights) {
+            const cacheKey = `${videoId}|${String(h)}`;
+
+            // Try cache first — /resolve may have populated it on this colo.
+            const cachedResolved = await cacheGetResolved(videoId, h);
+            if (cachedResolved?.streamUrl) {
+              const cachedUpstream = await doFetch(cachedResolved);
+              if (cachedUpstream.status === 200 || cachedUpstream.status === 206) {
+                if (!cache.get(cacheKey)) {
+                  cache.set(cacheKey, { value: cachedResolved, expiresAt: Date.now() + 10 * 60 * 1000 });
+                }
+                return passthroughStream(cachedUpstream);
+              }
+              const cachedBody = await cachedUpstream.text().catch(() => '');
+              errors.push(`cachedHD@${h}: HTTP ${cachedUpstream.status} ${cachedBody.slice(0, 80)}`);
+            }
+
+            // Try each client — only accept HD results (audioUrl or quality ≥ 720p).
+            for (const client of CLIENTS) {
+              try {
+                const info = await tryClient(videoId, client, h, cookieHeader);
+                const infoHeight = parseQuality(info.quality);
+                const isHd = !!info.audioUrl || infoHeight >= 720;
+                if (!isHd) {
+                  errors.push(`${client.name}@${h}: non-HD (${info.quality || '?'})`);
+                  continue;
+                }
+                const resolved = {
+                  streamUrl: info.streamUrl,
+                  userAgent: info.userAgent,
+                  visitorData: info.visitorData,
+                  xClientName: info.xClientName,
+                  clientVersion: info.clientVersion,
+                  title: info.title,
+                  duration: info.duration,
+                  quality: info.quality,
+                  client: client.name,
+                  ...(info.audioUrl ? { audioUrl: info.audioUrl } : {}),
+                };
+                const hdUpstream = await doFetch(resolved);
+                if (hdUpstream.status === 200 || hdUpstream.status === 206) {
+                  cache.set(cacheKey, { value: resolved, expiresAt: Date.now() + 10 * 60 * 1000 });
+                  await cachePutResolved(videoId, h, resolved);
+                  return passthroughStream(hdUpstream);
+                }
+                const hdBody = await hdUpstream.text().catch(() => '');
+                errors.push(`${client.name}@${h}: HTTP ${hdUpstream.status} ${hdBody.slice(0, 80)}`);
+              } catch (e) {
+                errors.push(`${client.name}@${h}: ${(e instanceof Error ? e.message : String(e)).slice(0, 80)}`);
+              }
+            }
+          }
+
+          return json(
+            { error: 'Direct stream failed and HD re-resolve unavailable', details: errors.slice(0, 12).join(' | ') },
+            502,
+          );
         }
 
         const heights = Array.from(new Set([effectiveMaxHeight, 720, 480, 360, 240, 144].filter(Boolean)));
@@ -268,6 +363,10 @@ export default {
                 duration: info.duration,
                 quality: info.quality,
                 client: client.name,
+                // Preserve audioUrl from tryClient (HD video-only + separate audio).
+                // Previously this was dropped, so /stream cached entries lacked
+                // audioUrl and subsequent /resolve cache hits returned video-only.
+                ...(info.audioUrl ? { audioUrl: info.audioUrl } : {}),
               };
               const upstream = await doFetch(resolved);
               if (upstream.status === 200 || upstream.status === 206) {
@@ -332,6 +431,10 @@ export default {
           xClientName: cached.xClientName,
           clientVersion: cached.clientVersion,
           client: cached.client || 'cached',
+          // Preserve audioUrl from cache (HD video-only + separate audio path).
+          // Previously this was dropped on cache hit, causing Vercel to receive
+          // a video-only stream without audio and ffmpeg to fail.
+          ...(cached.audioUrl ? { audioUrl: cached.audioUrl } : {}),
         });
       }
 
