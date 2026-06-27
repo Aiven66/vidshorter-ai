@@ -402,7 +402,7 @@ export async function POST(request: NextRequest) {
         }
 
         const clips: ClipResult[] = [];
-        let source: { inputPath: string; ffmpegHeaders?: string } | null = null;
+        let source: { inputPath: string; audioInputPath?: string; ffmpegHeaders?: string } | null = null;
         let isLinkOnlyMode = false;
         let linkOnlyVideoId: string | null = null;
 
