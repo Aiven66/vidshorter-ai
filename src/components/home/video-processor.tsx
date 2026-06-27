@@ -14,7 +14,7 @@ import { getSupabaseClient } from '@/storage/database/supabase-client';
 import {
   Video, Upload, Link2, Sparkles, Download, Play,
   Film, Scissors, Zap, ArrowRight, CheckCircle,
-  AlertCircle, Loader2, Clock, Eye
+  AlertCircle, Loader2, Clock, Eye, ExternalLink
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -43,7 +43,8 @@ interface VideoClip {
   engagementScore: number;
   thumbnailUrl: string;
   videoUrl: string | null;
-  status: 'processing' | 'completed' | 'failed';
+  status: 'processing' | 'completed' | 'failed' | 'link_only';
+  linkOnlyUrl?: string;
 }
 
 interface SSEData {
@@ -191,7 +192,10 @@ export default function VideoProcessor() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const trimmedVideoUrl = videoUrl.trim();
   const canStart = (!!trimmedVideoUrl && isHttpVideoUrl(trimmedVideoUrl)) || !!selectedFile;
-  const completedClips = clips.filter(clip => clip.status === 'completed' && clip.videoUrl);
+  const completedClips = clips.filter(clip =>
+    (clip.status === 'completed' && clip.videoUrl) ||
+    (clip.status === 'link_only' && clip.linkOnlyUrl)
+  );
 
   useEffect(() => {
     try {
@@ -754,7 +758,10 @@ export default function VideoProcessor() {
                       <p className="text-sm text-muted-foreground">{t('video.openToPreview')}</p>
                     </div>
                     <div className="flex items-center gap-3 text-sm">
-                      <Badge variant="outline">{completedClips.length} {t('video.playableClips')}</Badge>
+                      <Badge variant="outline">{completedClips.filter(c => c.status === 'completed').length} {t('video.playableClips')}</Badge>
+                      {completedClips.some(c => c.status === 'link_only') && (
+                        <Badge variant="outline">{completedClips.filter(c => c.status === 'link_only').length} YouTube links</Badge>
+                      )}
                       <Badge variant="outline">{clips.filter(clip => clip.status === 'failed').length} {t('video.failedClips')}</Badge>
                     </div>
                   </CardContent>
@@ -762,7 +769,13 @@ export default function VideoProcessor() {
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
                   {clips.map(clip => (
                     <Card key={clip.id} className="overflow-hidden group">
-                      <div className="relative aspect-video bg-muted cursor-pointer" onClick={() => clip.status === 'completed' && setPreviewClip(clip)}>
+                      <div
+                        className="relative aspect-video bg-muted cursor-pointer"
+                        onClick={() => {
+                          if (clip.status === 'completed') setPreviewClip(clip);
+                          else if (clip.status === 'link_only' && clip.linkOnlyUrl) window.open(clip.linkOnlyUrl, '_blank');
+                        }}
+                      >
                         {clip.thumbnailUrl ? (
                           <img src={clip.thumbnailUrl} alt={clip.title} className="w-full h-full object-cover" />
                         ) : (
@@ -777,12 +790,24 @@ export default function VideoProcessor() {
                             </div>
                           </div>
                         )}
+                        {clip.status === 'link_only' && (
+                          <div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <div className="h-14 w-14 rounded-full bg-red-600/90 flex items-center justify-center">
+                              <ExternalLink className="h-7 w-7 text-white" />
+                            </div>
+                          </div>
+                        )}
                         <Badge className="absolute bottom-2 right-2 text-xs">
                           <Clock className="h-3 w-3 mr-1" />{fmt(clip.duration)}
                         </Badge>
                         {clip.status === 'completed' && (
                           <Badge className="absolute top-2 left-2 bg-green-500 text-xs">
                             <CheckCircle className="h-3 w-3 mr-1" />{t('common.ready')}
+                          </Badge>
+                        )}
+                        {clip.status === 'link_only' && (
+                          <Badge className="absolute top-2 left-2 bg-blue-500 text-xs">
+                            <ExternalLink className="h-3 w-3 mr-1" />YouTube
                           </Badge>
                         )}
                         {clip.status === 'failed' && (
@@ -804,27 +829,39 @@ export default function VideoProcessor() {
                           </Badge>
                         </div>
                         <div className="flex gap-2 pt-1">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="flex-1 gap-1.5"
-                            onClick={() => clip.status === 'completed' && setPreviewClip(clip)}
-                            disabled={clip.status !== 'completed'}
-                          >
-                            <Eye className="h-4 w-4" />{t('video.preview')}
-                          </Button>
-                          <Button
-                            size="sm"
-                            className="flex-1 gap-1.5"
-                            onClick={() => handleDownload(clip)}
-                            disabled={clip.status !== 'completed' || downloadingId === clip.id}
-                          >
-                            {downloadingId === clip.id ? (
-                              <><Loader2 className="h-4 w-4 animate-pulse" />{t('common.saving')}</>
-                            ) : (
-                              <><Download className="h-4 w-4" />{t('video.download')}</>
-                            )}
-                          </Button>
+                          {clip.status === 'link_only' ? (
+                            <Button
+                              size="sm"
+                              className="flex-1 gap-1.5"
+                              onClick={() => clip.linkOnlyUrl && window.open(clip.linkOnlyUrl, '_blank')}
+                            >
+                              <ExternalLink className="h-4 w-4" />Watch on YouTube
+                            </Button>
+                          ) : (
+                            <>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="flex-1 gap-1.5"
+                                onClick={() => clip.status === 'completed' && setPreviewClip(clip)}
+                                disabled={clip.status !== 'completed'}
+                              >
+                                <Eye className="h-4 w-4" />{t('video.preview')}
+                              </Button>
+                              <Button
+                                size="sm"
+                                className="flex-1 gap-1.5"
+                                onClick={() => handleDownload(clip)}
+                                disabled={clip.status !== 'completed' || downloadingId === clip.id}
+                              >
+                                {downloadingId === clip.id ? (
+                                  <><Loader2 className="h-4 w-4 animate-pulse" />{t('common.saving')}</>
+                                ) : (
+                                  <><Download className="h-4 w-4" />{t('video.download')}</>
+                                )}
+                              </Button>
+                            </>
+                          )}
                         </div>
                       </CardContent>
                     </Card>

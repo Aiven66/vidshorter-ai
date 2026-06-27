@@ -30,7 +30,8 @@ interface VideoClip {
   engagementScore: number;
   thumbnailUrl: string;
   videoUrl: string | null;
-  status: 'processing' | 'completed' | 'failed';
+  status: 'processing' | 'completed' | 'failed' | 'link_only';
+  linkOnlyUrl?: string;
 }
 
 interface VideoRecord {
@@ -444,7 +445,8 @@ export default function DashboardPage() {
             engagementScore: 0,
             thumbnailUrl: c.thumbnail_url || '',
             videoUrl: url,
-            status: url ? 'completed' : 'failed',
+            status: url ? (url.startsWith('https://youtu.be/') || url.startsWith('https://www.youtube.com/') ? 'link_only' : 'completed') : 'failed',
+            linkOnlyUrl: url && (url.startsWith('https://youtu.be/') || url.startsWith('https://www.youtube.com/')) ? url : undefined,
           };
         });
 

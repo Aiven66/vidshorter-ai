@@ -39,7 +39,8 @@ interface ClipResult {
   engagementScore: number;
   thumbnailUrl: string;
   videoUrl: string | null;   // data URL (preferred) or serve-clip URL
-  status: 'processing' | 'completed' | 'failed';
+  status: 'processing' | 'completed' | 'failed' | 'link_only';
+  linkOnlyUrl?: string;      // YouTube timestamp link (when video download is blocked)
 }
 
 interface SSEMessage {
@@ -94,6 +95,37 @@ function isValidVideoUrl(value: string) {
 
 function hasPlayableUrl(clip: ClipResult): clip is ClipResult & { videoUrl: string } {
   return clip.status === 'completed' && typeof clip.videoUrl === 'string' && clip.videoUrl.length > 0;
+}
+
+function isLinkOnlyClip(clip: ClipResult): clip is ClipResult & { linkOnlyUrl: string } {
+  return clip.status === 'link_only' && typeof clip.linkOnlyUrl === 'string' && clip.linkOnlyUrl.length > 0;
+}
+
+function extractYouTubeId(url: string): string | null {
+  try {
+    const u = new URL(url);
+    if (u.hostname.includes('youtu.be')) {
+      const id = u.pathname.replace('/', '').trim();
+      return /^[a-zA-Z0-9_-]{7,15}$/.test(id) ? id : null;
+    }
+    if (u.hostname.includes('youtube.com')) {
+      const v = u.searchParams.get('v');
+      if (v && /^[a-zA-Z0-9_-]{7,15}$/.test(v)) return v;
+      const m = u.pathname.match(/\/(?:embed|shorts)\/([a-zA-Z0-9_-]{7,15})/);
+      if (m) return m[1];
+    }
+  } catch {}
+  return null;
+}
+
+function buildYouTubeTimestampUrl(videoId: string, startTime: number): string {
+  const t = Math.max(0, Math.floor(startTime));
+  return `https://youtu.be/${videoId}?t=${t}s`;
+}
+
+function buildYouTubeThumbnailUrl(videoId: string): string {
+  // maxresdefault may not exist for all videos; frontend falls back to hqdefault
+  return `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
 }
 
 const DEFAULT_BATCH_SIZE =
@@ -371,6 +403,8 @@ export async function POST(request: NextRequest) {
 
         const clips: ClipResult[] = [];
         let source: { inputPath: string; ffmpegHeaders?: string } | null = null;
+        let isLinkOnlyMode = false;
+        let linkOnlyVideoId: string | null = null;
 
         if (abortSignal.aborted) return;
         if (!send({
@@ -398,14 +432,26 @@ export async function POST(request: NextRequest) {
             'Failed to prepare source video within time limit. This YouTube video may require login or be blocked. Please retry or try another video.',
           );
         } catch (error) {
-          throw new Error(
-            error instanceof Error
-              ? `Failed to prepare source video: ${error.message}`
-              : 'Failed to prepare source video.'
-          );
+          const errorMsg = error instanceof Error ? error.message : 'Failed to prepare source video.';
+          // Fallback: if this is a YouTube video, switch to link-only mode
+          // (AI highlights with YouTube timestamp links + thumbnails, no video clips)
+          const ytId = extractYouTubeId(videoUrl);
+          if (ytId) {
+            console.warn(`Video download failed, switching to link-only mode for YouTube video ${ytId}:`, errorMsg);
+            isLinkOnlyMode = true;
+            linkOnlyVideoId = ytId;
+            if (!send({
+              stage: 'generating_clip',
+              progress: 49,
+              message: 'Video download blocked by YouTube. Generating highlight links with timestamps instead...',
+              data: { jobId, videoId: dbVideoId || undefined, linkOnlyMode: true },
+            })) return;
+          } else {
+            throw new Error(`Failed to prepare source video: ${errorMsg}`);
+          }
         }
 
-        if (!source?.inputPath) {
+        if (!isLinkOnlyMode && !source?.inputPath) {
           throw new Error('Failed to prepare source video: no file path returned.');
         }
 
@@ -413,8 +459,10 @@ export async function POST(request: NextRequest) {
         if (!send({
           stage: 'generating_clip',
           progress: 49,
-          message: 'Source ready. Generating highlight clips...',
-          data: { jobId, videoId: dbVideoId || undefined },
+          message: isLinkOnlyMode
+            ? 'Generating highlight links with YouTube timestamps...'
+            : 'Source ready. Generating highlight clips...',
+          data: { jobId, videoId: dbVideoId || undefined, linkOnlyMode: isLinkOnlyMode },
         })) return;
 
         for (let index = 0; index < highlights.length; index += 1) {
@@ -445,6 +493,24 @@ export async function POST(request: NextRequest) {
             message: `Generating clip ${clipOffset + index + 1}/${allHighlights.length}: "${highlight.title}"`,
             data: { clip: draftClip, clipIndex: clipOffset + index, jobId, videoId: dbVideoId || undefined },
           })) return;
+
+          // Link-only mode: generate YouTube timestamp links + thumbnails (no video download)
+          if (isLinkOnlyMode && linkOnlyVideoId) {
+            draftClip.status = 'link_only';
+            draftClip.videoUrl = null;
+            draftClip.linkOnlyUrl = buildYouTubeTimestampUrl(linkOnlyVideoId, safeStart);
+            draftClip.thumbnailUrl = buildYouTubeThumbnailUrl(linkOnlyVideoId);
+            clips.push(draftClip);
+
+            if (abortSignal.aborted) return;
+            if (!send({
+              stage: 'clip_ready',
+              progress: 55 + Math.floor(((index + 1) / highlights.length) * 35),
+              message: `Highlight link ready: "${highlight.title}"`,
+              data: { clip: draftClip, clipIndex: clipOffset + index, jobId, videoId: dbVideoId || undefined, linkOnlyMode: true },
+            })) return;
+            continue;
+          }
 
           try {
             for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -496,8 +562,10 @@ export async function POST(request: NextRequest) {
         }
 
         const completedClips = clips.filter(hasPlayableUrl);
+        const linkOnlyClips = clips.filter(isLinkOnlyClip);
+        const successfulClips = [...completedClips, ...linkOnlyClips];
         if (abortSignal.aborted) return;
-        if (completedClips.length === 0 && clipOffset === 0) {
+        if (successfulClips.length === 0 && clipOffset === 0) {
           const lastFailed = clips.findLast(c => c.status === 'failed') as (ClipResult & { error?: string }) | undefined;
           const extra = lastFailed?.error ? ` Last error: ${lastFailed.error}` : '';
           throw new Error(`All highlight clip generation failed. Please retry or try a different video.${extra}`);
@@ -506,16 +574,16 @@ export async function POST(request: NextRequest) {
         if (!send({
           stage: 'saving',
           progress: 93,
-          message: 'Saving generated clips...',
-          data: { jobId, videoId: dbVideoId || undefined },
+          message: isLinkOnlyMode ? 'Saving highlight links...' : 'Saving generated clips...',
+          data: { jobId, videoId: dbVideoId || undefined, linkOnlyMode: isLinkOnlyMode },
         })) return;
 
         if (dbVideoId && isSupabaseMode) {
           try {
-            for (const clip of completedClips) {
+            for (const clip of successfulClips) {
               const dbVideoUrl = clip.videoUrl?.startsWith('data:')
                 ? `data-url:${clip.id}`
-                : clip.videoUrl;
+                : (clip.videoUrl || (isLinkOnlyClip(clip) ? clip.linkOnlyUrl : null));
               await supabaseClient!.from('short_videos').insert({
                 video_id: dbVideoId,
                 user_id: userId,
@@ -538,20 +606,24 @@ export async function POST(request: NextRequest) {
         const done = nextOffset >= allHighlights.length;
         if (dbVideoId && isSupabaseMode) {
           try {
+            const finalStatus = isLinkOnlyMode
+              ? (done ? 'link_only_completed' : 'link_only_processing')
+              : done
+                ? (completedClips.length === clips.length ? 'completed' : 'partial')
+                : 'processing';
             await supabaseClient!
               .from('videos')
-              .update({
-                status: done
-                  ? (completedClips.length === clips.length ? 'completed' : 'partial')
-                  : 'processing',
-              })
+              .update({ status: finalStatus })
               .eq('id', dbVideoId);
           } catch {}
         }
+        const completionMessage = isLinkOnlyMode
+          ? `Generated ${linkOnlyClips.length} highlight links with YouTube timestamps (video download blocked).`
+          : `Generated ${completedClips.length} playable highlight clips.`;
         sendSSE(controller, {
           stage: 'complete',
           progress: 100,
-          message: `Generated ${completedClips.length} playable highlight clips.`,
+          message: completionMessage,
           data: {
             jobId,
             videoId: dbVideoId || undefined,
@@ -563,6 +635,7 @@ export async function POST(request: NextRequest) {
             totalHighlights: allHighlights.length,
             nextOffset,
             done,
+            linkOnlyMode: isLinkOnlyMode,
           },
         });
         clearInterval(heartbeat);
