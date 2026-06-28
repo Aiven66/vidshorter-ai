@@ -437,19 +437,33 @@ export async function POST(request: NextRequest) {
           );
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : 'Failed to prepare source video.';
-          // Fallback: if this is a YouTube video, switch to link-only mode
-          // (AI highlights with YouTube timestamp links + thumbnails, no video clips)
           const ytId = extractYouTubeId(videoUrl);
-          if (ytId) {
-            console.warn(`Video download failed, switching to link-only mode for YouTube video ${ytId}:`, errorMsg);
-            isLinkOnlyMode = true;
-            linkOnlyVideoId = ytId;
-            if (!send({
-              stage: 'generating_clip',
-              progress: 49,
-              message: 'Video download blocked by YouTube. Generating highlight links with timestamps instead...',
-              data: { jobId, videoId: dbVideoId || undefined, linkOnlyMode: true },
-            })) return;
+
+          // SD fallback (B-plan): if HD source preparation fails, try SD (360p)
+          // before giving up. This handles bot-detected videos where 720p
+          // adaptiveFormats are blocked but 360p combined streams may work.
+          if (ytId && !isLinkOnlyMode) {
+            console.warn(`HD source preparation failed, trying SD fallback (360p) for ${ytId}:`, errorMsg.slice(0, 150));
+            try {
+              source = await promiseWithTimeout(
+                videoClipper.downloadSourceVideo(videoUrl, { forceRefresh: true, forceMaxHeight: 360 }),
+                150_000,
+                'SD fallback also failed. Video may be fully blocked by YouTube bot detection.',
+              );
+              console.log('SD fallback succeeded — will generate SD clips instead of link_only');
+            } catch (sdError) {
+              const sdMsg = sdError instanceof Error ? sdError.message : 'SD fallback failed.';
+              console.warn(`SD fallback also failed for ${ytId}:`, sdMsg.slice(0, 150));
+              // Both HD and SD failed — switch to link-only mode as last resort
+              isLinkOnlyMode = true;
+              linkOnlyVideoId = ytId;
+              if (!send({
+                stage: 'generating_clip',
+                progress: 49,
+                message: 'Video download blocked by YouTube. Generating highlight links with timestamps instead...',
+                data: { jobId, videoId: dbVideoId || undefined, linkOnlyMode: true },
+              })) return;
+            }
           } else {
             throw new Error(`Failed to prepare source video: ${errorMsg}`);
           }
