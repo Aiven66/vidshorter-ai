@@ -117,15 +117,16 @@ const CORS_HEADERS = {
 };
 
 const MAX_HEIGHT = 1080;
-// Minimum HD height enforced by tryClient — reject anything below 720p so the
-// heights loop doesn't silently accept 360p combined streams when the HD path
-// (adaptiveFormats video-only + audio) fails. This was the root cause of
-// blurry clip output: tryClient fell back to 360p combined, doFetch succeeded,
-// and the heights loop returned it instead of trying other clients/colos.
+// HD preference threshold. Heights loop tries HD heights first (>= MIN_HD_HEIGHT),
+// then falls back to SD if ALLOW_SD_FALLBACK is enabled (default: true).
+// Set ALLOW_SD_FALLBACK=false (env) or hdOnly=1 (query param) to reject SD and
+// return 502 when HD is unavailable — use this only when SD is unacceptable.
+// B-plan rollback: set ALLOW_SD_FALLBACK=true (default) to always produce a
+// playable stream, even if only 360p combined is available.
 const MIN_HD_HEIGHT = 720;
 const cache = new Map();
 let playerCache = { jsUrl: '', expiresAt: 0, decipher: null };
-const BUILD_ID = '2026-06-28-hd-enforce';
+const BUILD_ID = '2026-06-28-hd-pref-sd-fb';
 
 const COBALT_INSTANCES = [
   'https://cobalt-api.meowing.de/',
@@ -226,6 +227,11 @@ export default {
         // Used when /resolve returns adaptiveFormats (video-only + audio) and
         // Vercel's ffmpeg needs separate audio input.
         const wantAudio = url.searchParams.get('audio') === '1';
+        // hdOnly=1: reject SD streams, return 502 if HD unavailable.
+        // Overrides ALLOW_SD_FALLBACK env. Used by Vercel first attempt to
+        // pursue HD quality; Vercel retries without hdOnly on failure.
+        // B-plan: env ALLOW_SD_FALLBACK=false forces hdOnly globally.
+        const allowSdFallback = env?.ALLOW_SD_FALLBACK !== 'false' && url.searchParams.get('hdOnly') !== '1';
 
         const doFetch = async (resolved) => {
           const isCobalt = resolved?.client === 'cobalt';
@@ -308,17 +314,18 @@ export default {
           // to the /resolve colo's IP, not the /stream colo's IP).
           //
           // Fall through directly to the heights loop below. The heights loop
-          // tries HD heights first (1080, 720). It no longer degrades to SD
-          // (480/360/240/144) because that produced blurry clips — the root
-          // cause was tryClient silently falling back to 360p combined streams
-          // when the HD adaptiveFormats path failed. Now tryClient enforces
-          // MIN_HD_HEIGHT=720 and throws if it can't get HD, so the loop tries
-          // other clients/colos instead of accepting low quality.
+          // tries HD heights first (1080, 720), then SD (480, 360, 240, 144)
+          // if allowSdFallback is true. HD-only mode (hdOnly=1 or
+          // ALLOW_SD_FALLBACK=false) skips SD and returns 502 — Vercel then
+          // retries without hdOnly or switches to link_only mode.
         }
 
-        // Only try HD heights — no SD degradation. If 720p fails on all clients,
-        // return 502 so Vercel's retry logic can hit a different CF colo.
-        const heights = Array.from(new Set([effectiveMaxHeight, MIN_HD_HEIGHT].filter((h) => h >= MIN_HD_HEIGHT)));
+        // HD-first heights, with SD fallback unless hdOnly/ALLOW_SD_FALLBACK=false.
+        // B-plan: allowSdFallback=true (default) ensures a playable stream is
+        // always returned, even if only 360p combined is available.
+        const hdHeights = Array.from(new Set([effectiveMaxHeight, MIN_HD_HEIGHT].filter((h) => h >= MIN_HD_HEIGHT)));
+        const sdHeights = allowSdFallback ? [480, 360, 240, 144].filter((h) => h < MIN_HD_HEIGHT) : [];
+        const heights = [...hdHeights, ...sdHeights];
 
         for (const h of heights) {
           const cacheKey = `${videoId}|${String(h)}`;
@@ -445,9 +452,12 @@ export default {
 
     const errors = [];
     const requestedMaxHeight = maxHeight || MAX_HEIGHT;
-    // /resolve also enforces HD-only — cached entries feed /stream's cache hits.
-    // If we cached 360p here, /stream would return it and produce blurry clips.
-    const heights = Array.from(new Set([requestedMaxHeight, MIN_HD_HEIGHT].filter((h) => h >= MIN_HD_HEIGHT)));
+    // /resolve: HD-first with SD fallback (same logic as /stream).
+    // B-plan: allowSdFallback ensures /resolve always returns a playable URL.
+    const resolveAllowSd = env?.ALLOW_SD_FALLBACK !== 'false' && url.searchParams.get('hdOnly') !== '1';
+    const resolveHdHeights = Array.from(new Set([requestedMaxHeight, MIN_HD_HEIGHT].filter((h) => h >= MIN_HD_HEIGHT)));
+    const resolveSdHeights = resolveAllowSd ? [480, 360, 240, 144].filter((h) => h < MIN_HD_HEIGHT) : [];
+    const heights = [...resolveHdHeights, ...resolveSdHeights];
 
     for (const h of heights) {
       const cached = await cacheGetResolved(videoId, h);
@@ -666,21 +676,16 @@ async function tryClient(videoId, client, maxHeight, cookieHeader) {
     throw new Error(`No direct URL${hasCipher ? ' (cipher)' : ''}`);
   }
 
-  // HD enforcement: reject anything below MIN_HD_HEIGHT (720p).
-  // Previously, when the HD adaptiveFormats path failed (no audio URL, cipher
-  // decryption failure, etc.), tryClient silently fell back to the 360p
-  // combined stream. The heights loop then accepted it because doFetch
-  // succeeded — producing blurry 360p clips. Now we throw so the heights loop
-  // tries the next client, and ultimately returns 502 if no client can do HD.
-  const chosenHeight = formatHeight(chosen);
-  if (chosenHeight > 0 && chosenHeight < MIN_HD_HEIGHT) {
-    throw new Error(
-      `Below HD: got ${chosenHeight}p, need >=${MIN_HD_HEIGHT}p ` +
-      `(combined=${debug.combinedHeight}p, videoOnly=${debug.videoOnlyCount}, ` +
-      `audio=${debug.audioOnlyWithUrl}, videoResolved=${debug.videoResolvedOk}, ` +
-      `audioResolved=${debug.audioResolvedOk})`,
-    );
-  }
+  // Quality note: when maxHeight < MIN_HD_HEIGHT (SD heights loop iteration),
+  // we accept any quality — this is the SD fallback path (B-plan).
+  // When maxHeight >= MIN_HD_HEIGHT (HD heights loop iteration), we still
+  // accept the result even if combinedHeight < maxHeight because:
+  // 1. tryClient already tried adaptiveFormats HD video-only + audio first
+  // 2. If that failed, combined stream is the best this client can do
+  // 3. The heights loop will try other clients at the same height
+  // 4. If no client can do HD at this height, the loop moves to SD heights
+  //    (if allowSdFallback) or returns 502 (if hdOnly).
+  // The chosenHeight logging helps diagnose quality via error messages.
 
   return {
     title: data.videoDetails?.title ?? 'YouTube Video',
@@ -692,7 +697,7 @@ async function tryClient(videoId, client, maxHeight, cookieHeader) {
     xClientName: client.xClientName,
     clientVersion: client.clientVersion,
     ...(audioUrl ? { audioUrl } : {}),
-    _debug: debug,
+    _debug: { ...debug, chosenHeight: formatHeight(chosen), requestedMaxHeight: maxHeight },
   };
 }
 

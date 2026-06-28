@@ -567,6 +567,98 @@ export async function POST(request: NextRequest) {
         const successfulClips = [...completedClips, ...linkOnlyClips];
         if (abortSignal.aborted) return;
         if (successfulClips.length === 0 && clipOffset === 0) {
+          // Last-resort fallback: if this is a YouTube video and ALL clip
+          // generation failed (typically CF Worker /stream returns 502 due to
+          // YouTube bot detection / LOGIN_REQUIRED), switch to link_only mode.
+          // This ensures users always get highlight links with timestamps +
+          // thumbnails, even when video download is completely blocked.
+          const fallbackYtId = extractYouTubeId(videoUrl);
+          if (fallbackYtId && !isLinkOnlyMode) {
+            console.warn(
+              `All clips failed for YouTube video ${fallbackYtId}, switching to link_only fallback mode`,
+            );
+            isLinkOnlyMode = true;
+            linkOnlyVideoId = fallbackYtId;
+            // Rebuild clips as link_only entries with YouTube timestamp links
+            for (let i = 0; i < clips.length; i += 1) {
+              const c = clips[i];
+              const h = highlights[i];
+              const safeStart = Math.max(0, Math.floor(h.start_time));
+              c.status = 'link_only';
+              c.videoUrl = null;
+              (c as unknown as { error?: string }).error = undefined;
+              c.linkOnlyUrl = buildYouTubeTimestampUrl(fallbackYtId, safeStart);
+              c.thumbnailUrl = buildYouTubeThumbnailUrl(fallbackYtId);
+            }
+            if (!send({
+              stage: 'generating_clip',
+              progress: 70,
+              message: 'Video download blocked by YouTube. Generated highlight links with timestamps instead.',
+              data: { jobId, videoId: dbVideoId || undefined, linkOnlyMode: true },
+            })) return;
+            // Re-filter after fallback conversion
+            const newLinkOnlyClips = clips.filter(isLinkOnlyClip);
+            if (newLinkOnlyClips.length > 0) {
+              // Skip the error throw below — we have link_only clips to return
+              if (!send({
+                stage: 'saving',
+                progress: 93,
+                message: 'Saving highlight links...',
+                data: { jobId, videoId: dbVideoId || undefined, linkOnlyMode: true },
+              })) return;
+              // Save link_only clips to DB if in Supabase mode
+              if (dbVideoId && isSupabaseMode) {
+                try {
+                  for (const clip of newLinkOnlyClips) {
+                    await supabaseClient!.from('short_videos').insert({
+                      video_id: dbVideoId,
+                      user_id: userId,
+                      url: clip.linkOnlyUrl,
+                      start_time: clip.startTime,
+                      end_time: clip.endTime,
+                      duration: clip.duration,
+                      highlight_title: clip.title,
+                      highlight_summary: clip.summary,
+                      thumbnail_url: clip.thumbnailUrl,
+                    });
+                  }
+                } catch (dbError) {
+                  console.warn('Database save failed (link_only fallback):', dbError);
+                }
+              }
+              // Send completion with link_only clips
+              const nextOffset = clipOffset + highlights.length;
+              const done = nextOffset >= allHighlights.length;
+              if (dbVideoId && isSupabaseMode) {
+                try {
+                  await supabaseClient!
+                    .from('videos')
+                    .update({ status: done ? 'link_only_completed' : 'link_only_processing' })
+                    .eq('id', dbVideoId);
+                } catch {}
+              }
+              if (!send({
+                stage: 'clips_complete',
+                progress: 100,
+                message: `Generated ${newLinkOnlyClips.length} highlight links with YouTube timestamps (video download blocked).`,
+                data: {
+                  jobId,
+                  clips: newLinkOnlyClips,
+                  highlights,
+                  estimatedDuration: suppliedDuration || 0,
+                  title: suppliedTitle,
+                  clipOffset,
+                  clipLimit: highlights.length,
+                  totalHighlights: allHighlights.length,
+                  nextOffset,
+                  done,
+                  linkOnlyMode: true,
+                },
+              })) return;
+              clearInterval(heartbeat);
+              return;
+            }
+          }
           const lastFailed = clips.findLast(c => c.status === 'failed') as (ClipResult & { error?: string }) | undefined;
           const extra = lastFailed?.error ? ` Last error: ${lastFailed.error}` : '';
           throw new Error(`All highlight clip generation failed. Please retry or try a different video.${extra}`);
