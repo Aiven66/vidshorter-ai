@@ -413,11 +413,9 @@ export async function POST(request: NextRequest) {
         if (abortSignal.aborted) return;
         if (!send({
           stage: 'generating_clip',
-          progress: 48,
-          message: isBilibili
-            ? 'Connecting to Bilibili video stream...'
-            : 'Connecting to video stream...',
-          data: { jobId },
+          progress: 46,
+          message: 'Preparing video source...',
+          data: { jobId, videoId: dbVideoId || undefined },
         })) return;
 
         if (dbVideoId) {
@@ -429,6 +427,29 @@ export async function POST(request: NextRequest) {
           });
         }
 
+        let lastSourceProgress = 46;
+        const sourceStartAt = Date.now();
+        const sourceProgressInterval = setInterval(() => {
+          const stages = [
+            { p: 47, m: isBilibili ? 'Connecting to Bilibili video stream...' : 'Connecting to video stream...' },
+            { p: 48, m: 'Downloading video to local cache...' },
+            { p: 49, m: 'Finalizing video source...' },
+          ];
+          const now = Date.now();
+          const elapsed = now - sourceStartAt;
+          const stageIndex = Math.min(stages.length - 1, Math.floor(elapsed / 15000));
+          const stage = stages[stageIndex];
+          if (lastSourceProgress !== stage.p) {
+            lastSourceProgress = stage.p;
+            send({
+              stage: 'generating_clip',
+              progress: stage.p,
+              message: stage.m,
+              data: { jobId, videoId: dbVideoId || undefined },
+            });
+          }
+        }, 5000);
+
         try {
           source = await promiseWithTimeout(
             videoClipper.downloadSourceVideo(videoUrl),
@@ -439,11 +460,17 @@ export async function POST(request: NextRequest) {
           const errorMsg = error instanceof Error ? error.message : 'Failed to prepare source video.';
           const ytId = extractYouTubeId(videoUrl);
 
-          // SD fallback (B-plan): if HD source preparation fails, try SD (360p)
-          // before giving up. This handles bot-detected videos where 720p
-          // adaptiveFormats are blocked but 360p combined streams may work.
           if (ytId && !isLinkOnlyMode) {
             console.warn(`HD source preparation failed, trying SD fallback (360p) for ${ytId}:`, errorMsg.slice(0, 150));
+            if (!send({
+              stage: 'generating_clip',
+              progress: 48,
+              message: 'HD download failed, trying SD quality...',
+              data: { jobId, videoId: dbVideoId || undefined },
+            })) {
+              clearInterval(sourceProgressInterval);
+              return;
+            }
             try {
               source = await promiseWithTimeout(
                 videoClipper.downloadSourceVideo(videoUrl, { forceRefresh: true, forceMaxHeight: 360 }),
@@ -454,20 +481,23 @@ export async function POST(request: NextRequest) {
             } catch (sdError) {
               const sdMsg = sdError instanceof Error ? sdError.message : 'SD fallback failed.';
               console.warn(`SD fallback also failed for ${ytId}:`, sdMsg.slice(0, 150));
-              // Both HD and SD failed — switch to link-only mode as last resort
               isLinkOnlyMode = true;
               linkOnlyVideoId = ytId;
+              clearInterval(sourceProgressInterval);
               if (!send({
                 stage: 'generating_clip',
-                progress: 49,
+                progress: 50,
                 message: 'Video download blocked by YouTube. Generating highlight links with timestamps instead...',
                 data: { jobId, videoId: dbVideoId || undefined, linkOnlyMode: true },
               })) return;
             }
           } else {
+            clearInterval(sourceProgressInterval);
             throw new Error(`Failed to prepare source video: ${errorMsg}`);
           }
         }
+
+        clearInterval(sourceProgressInterval);
 
         if (!isLinkOnlyMode && !source?.inputPath) {
           throw new Error('Failed to prepare source video: no file path returned.');
@@ -476,7 +506,7 @@ export async function POST(request: NextRequest) {
         if (abortSignal.aborted) return;
         if (!send({
           stage: 'generating_clip',
-          progress: 49,
+          progress: 50,
           message: isLinkOnlyMode
             ? 'Generating highlight links with YouTube timestamps...'
             : 'Source ready. Generating highlight clips...',
@@ -531,43 +561,79 @@ export async function POST(request: NextRequest) {
           }
 
           try {
-            // 3 attempts: HD (default) → HD refresh → SD fallback (360p).
-            // The SD fallback is critical for bot-detected videos where 720p
-            // adaptiveFormats are blocked but 360p combined streams work.
-            // This is the "B-plan" — at least produce a downloadable SD clip
-            // when HD fails, rather than falling through to link_only.
+            const baseProgress = 50 + Math.floor((index / highlights.length) * 35);
+            const attemptMessages = [
+              'Generating clip...',
+              'Retrying with fresh source...',
+              'Trying SD quality fallback...',
+            ];
+            let clipSucceeded = false;
+
             for (let attempt = 0; attempt < 3; attempt += 1) {
-              const currentSource = attempt === 0
-                ? source
-                : attempt === 1
-                  ? await videoClipper.downloadSourceVideo(videoUrl, { forceRefresh: true })
-                  : await videoClipper.downloadSourceVideo(videoUrl, { forceRefresh: true, forceMaxHeight: 360 });
+              if (abortSignal.aborted) return;
+              if (attempt > 0) {
+                send({
+                  stage: 'generating_clip',
+                  progress: baseProgress + Math.floor(attempt * 3),
+                  message: `Clip ${clipOffset + index + 1}/${allHighlights.length}: ${attemptMessages[attempt]}`,
+                  data: { clip: draftClip, clipIndex: clipOffset + index, jobId, videoId: dbVideoId || undefined, attempt: attempt + 1 },
+                });
+              }
+
+              let currentSource = source;
+              if (attempt === 1 || attempt === 2) {
+                const sdOnly = attempt === 2;
+                try {
+                  const freshSource = await promiseWithTimeout(
+                    videoClipper.downloadSourceVideo(videoUrl, {
+                      forceRefresh: true,
+                      ...(sdOnly ? { forceMaxHeight: 360 } : {}),
+                    }),
+                    120_000,
+                    `Source refresh timed out (${sdOnly ? 'SD' : 'HD'})`,
+                  );
+                  if (freshSource?.inputPath) {
+                    currentSource = freshSource;
+                    if (attempt === 1) source = freshSource;
+                  }
+                } catch (refreshErr) {
+                  console.warn(`Clip ${clipOffset + index + 1} attempt ${attempt + 1}: source refresh failed`,
+                    refreshErr instanceof Error ? refreshErr.message.slice(0, 100) : refreshErr);
+                  if (attempt === 2) throw refreshErr;
+                  continue;
+                }
+              }
 
               try {
-                const result = await videoClipper.createLocalClip({
-                  inputPath: currentSource.inputPath,
-                  audioInputPath: currentSource.audioInputPath,
-                  inputHeaders: currentSource.ffmpegHeaders,
-                  startTime: safeStart,
-                  endTime: safeEnd,
-                  title: highlight.title,
-                });
+                const result = await promiseWithTimeout(
+                  videoClipper.createLocalClip({
+                    inputPath: currentSource.inputPath,
+                    audioInputPath: currentSource.audioInputPath,
+                    inputHeaders: currentSource.ffmpegHeaders,
+                    startTime: safeStart,
+                    endTime: safeEnd,
+                    title: highlight.title,
+                  }),
+                  120_000,
+                  'Clip generation timed out. This may be due to slow video decoding. Trying lower quality...',
+                );
 
                 draftClip.videoUrl = result.dataUrl || result.publicUrl;
                 draftClip.thumbnailUrl = result.thumbnailUrl || '';
                 draftClip.status = 'completed';
                 if (attempt === 2) {
-                  // SD fallback succeeded — mark for UI transparency
                   (draftClip as unknown as { quality?: string }).quality = 'SD';
                 }
+                clipSucceeded = true;
                 break;
               } catch (err) {
                 if (attempt === 2) throw err;
+                console.warn(`Clip ${clipOffset + index + 1} attempt ${attempt + 1} failed:`,
+                  err instanceof Error ? err.message.slice(0, 100) : err);
               }
             }
 
-            // Prefer data URL (works across Lambda invocations without /tmp dependency)
-            // Fall back to serve-clip URL (works only within same Lambda instance)
+            if (!clipSucceeded) throw new Error('All clip generation attempts failed');
           } catch (error) {
             console.warn(`Clip generation failed for "${highlight.title}":`, error);
             draftClip.status = 'failed';

@@ -2471,11 +2471,51 @@ async function downloadYouTubeOrGenericVideo(
             'Accept: */*\r\n' +
             'Accept-Encoding: identity\r\n');
 
-      // HD video-only + separate audio: use remote URLs directly with ffmpeg fast-seek.
-      // Downloading 300MB+ 1080p video to /tmp would timeout and exceed /tmp limits.
-      // googlevideo.com URLs support HTTP Range, so ffmpeg can seek efficiently.
+      // Always download to local file first for reliable ffmpeg seeking.
+      // Remote ffmpeg fast-seek causes "stuck at 48%" issues because ffmpeg
+      // may need to download large portions of the video before seeking,
+      // with no progress feedback to the user.
+      //
+      // Local file seeking is instant and reliable. We stay within /tmp limits
+      // by capping at 400MB in downloadStreamToLocalFile.
+      const localPath = path.join(path.dirname(outputTemplate), 'source.mp4');
+      const audioLocalPath = wrappedAudioUrl
+        ? path.join(path.dirname(outputTemplate), 'audio.mp4')
+        : undefined;
+
+      try {
+        const videoDownloaded = await downloadStreamToLocalFile(wrappedStreamUrl, localPath);
+        if (!videoDownloaded) throw new Error('Video stream download failed');
+
+        let audioDownloaded = true;
+        if (wrappedAudioUrl && audioLocalPath) {
+          try {
+            audioDownloaded = await downloadStreamToLocalFile(wrappedAudioUrl, audioLocalPath);
+          } catch (audioErr) {
+            console.warn('Audio stream download failed, will try video-only:', audioErr instanceof Error ? audioErr.message.slice(0, 100) : audioErr);
+            audioDownloaded = false;
+          }
+        }
+
+        if (wrappedAudioUrl && audioDownloaded && audioLocalPath) {
+          console.log(`Vercel environment: downloaded HD video + audio to local files (reliable seeking)`);
+          return {
+            inputPath: localPath,
+            audioInputPath: audioLocalPath,
+          };
+        }
+
+        console.log(`Vercel environment: downloaded video to local file (reliable seeking)${forceMaxHeight > 0 ? ` (SD fallback ${forceMaxHeight}p)` : ''}`);
+        return { inputPath: localPath };
+      } catch (downloadErr) {
+        console.warn(
+          `Local download failed (${downloadErr instanceof Error ? downloadErr.message.slice(0, 100) : downloadErr}), falling back to remote ffmpeg fast-seek`,
+        );
+      }
+
+      // Fallback: remote ffmpeg fast-seek (only if local download fails)
       if (wrappedAudioUrl) {
-        console.log('Vercel environment: using HD video-only + audio streams (remote ffmpeg fast-seek, proxied via CF Worker)');
+        console.log('Vercel environment: falling back to HD remote streams (remote ffmpeg fast-seek)');
         return {
           inputPath: wrappedStreamUrl,
           audioInputPath: wrappedAudioUrl,
@@ -2483,26 +2523,7 @@ async function downloadYouTubeOrGenericVideo(
         };
       }
 
-      // Combined (muxed) stream via /stream proxy: the proxy fetches from
-      // googlevideo.com via CF IP and forwards to Vercel.
-      //
-      // SD fallback (forceMaxHeight > 0): download the full stream to /tmp
-      // first, then ffmpeg seeks locally. This is more reliable than remote
-      // ffmpeg fast-seek when bot detection is active, because:
-      // 1. Single HTTP request (vs ffmpeg's multiple Range requests)
-      // 2. Avoids colo-switching between Range requests
-      // 3. CF Worker /stream downloads with fresh tryClient on each request
-      if (forceMaxHeight > 0) {
-        const localPath = path.join(path.dirname(outputTemplate), 'source.mp4');
-        const downloaded = await downloadStreamToLocalFile(wrappedStreamUrl, localPath);
-        if (downloaded) {
-          console.log(`Vercel SD fallback: downloaded ${forceMaxHeight}p stream to local file`);
-          return { inputPath: localPath };
-        }
-        console.warn(`Vercel SD fallback: downloadStreamToLocalFile failed, falling back to remote ffmpeg`);
-      }
-
-      console.log('Vercel environment: using CF Worker /stream proxy (combined stream, remote ffmpeg fast-seek)');
+      console.log('Vercel environment: falling back to CF Worker /stream proxy (remote ffmpeg fast-seek)');
       return {
         inputPath: wrappedStreamUrl,
         ffmpegHeaders,
