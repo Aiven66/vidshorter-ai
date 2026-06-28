@@ -396,13 +396,200 @@ export async function OPTIONS() {
   return new Response(null, { status: 204, headers: CORS });
 }
 
+async function resolveStream(videoId: string, debug: boolean, isAudio: boolean): Promise<{
+  title: string;
+  duration: number;
+  streamUrl: string;
+  audioUrl?: string;
+  quality: string;
+  client: string;
+} | null> {
+  const errors: string[] = [];
+
+  const ytCookies = (process.env.YOUTUBE_COOKIES || '').trim();
+  if (ytCookies) {
+    let cookieHeader = ytCookies;
+    if (ytCookies.includes('\t')) {
+      cookieHeader = ytCookies
+        .split('\n')
+        .filter(l => !l.startsWith('#') && l.trim())
+        .map(l => { const p = l.split('\t'); return p.length >= 7 ? `${p[5]}=${p[6]}` : ''; })
+        .filter(Boolean)
+        .join('; ');
+    }
+
+    if (cookieHeader) {
+      try {
+        const body: Record<string, unknown> = {
+          videoId,
+          context: {
+            client: { clientName: 'WEB', clientVersion: '2.20240101.00.00', hl: 'en', gl: 'US' },
+          },
+          playbackContext: { contentPlaybackContext: { html5Preference: 'HTML5_PREF_WANTS' } },
+        };
+        const res = await fetch('https://www.youtube.com/youtubei/v1/player?prettyPrint=false', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+            'Origin': 'https://www.youtube.com',
+            'Referer': 'https://www.youtube.com/',
+            'X-Youtube-Client-Name': '1',
+            'X-Youtube-Client-Version': '2.20240101.00.00',
+            'Cookie': cookieHeader,
+          },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(8_000),
+        });
+        if (res.ok) {
+          const data = await res.json() as InnerTubeResponse;
+          const ps = data.playabilityStatus?.status;
+          if (ps === 'OK') {
+            const formats: Format[] = [
+              ...(data.streamingData?.formats ?? []),
+              ...(data.streamingData?.adaptiveFormats ?? []),
+            ];
+            const combined = formats.filter(f =>
+              f.url && f.mimeType?.startsWith('video/mp4') && (f.audioQuality || f.audioChannels)
+            );
+            const combinedBest =
+              combined
+                .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
+                .filter(item => item.q > 0 && item.q <= MAX_HEIGHT)
+                .sort((a, b) => b.q - a.q)[0]?.f
+              || combined
+                .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
+                .sort((a, b) => b.q - a.q)[0]?.f
+              || combined[0]
+              || formats.find(f => f.url);
+
+            const combinedHeight = combinedBest ? parseQuality(combinedBest.qualityLabel ?? combinedBest.quality) : 0;
+            let format = combinedBest;
+            let audioUrl: string | undefined;
+
+            if (combinedHeight < 720) {
+              const videoOnly = formats.filter(f =>
+                f.url && f.mimeType?.startsWith('video/mp4') && !(f.audioQuality || f.audioChannels)
+              );
+              const audioOnly = formats.filter(f =>
+                f.url && (f.mimeType?.startsWith('audio/mp4') || f.mimeType?.includes('audio/'))
+              );
+              const bestVideo =
+                videoOnly
+                  .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
+                  .filter(item => item.q > 0 && item.q <= MAX_HEIGHT)
+                  .sort((a, b) => b.q - a.q)[0]?.f
+                || videoOnly
+                  .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
+                  .sort((a, b) => b.q - a.q)[0]?.f;
+              if (bestVideo && parseQuality(bestVideo.qualityLabel ?? bestVideo.quality) > combinedHeight) {
+                format = bestVideo;
+                if (audioOnly[0]?.url) audioUrl = audioOnly[0].url;
+              }
+            }
+
+            if (format?.url) {
+              return {
+                title: data.videoDetails?.title ?? 'YouTube Video',
+                duration: parseInt(data.videoDetails?.lengthSeconds ?? '300', 10) || 300,
+                streamUrl: format.url,
+                quality: format.qualityLabel ?? format.quality ?? 'unknown',
+                ...(audioUrl ? { audioUrl } : {}),
+                client: 'WEB_COOKIES',
+              };
+            }
+          }
+          errors.push(`WEB_COOKIES: ${ps ?? 'no stream'}: ${data.playabilityStatus?.reason ?? ''}`);
+        } else {
+          errors.push(`WEB_COOKIES: HTTP ${res.status}`);
+        }
+      } catch (e) {
+        errors.push(`WEB_COOKIES: ${e instanceof Error ? e.message.slice(0, 100) : String(e)}`);
+      }
+    }
+  }
+
+  for (const client of CLIENTS) {
+    try {
+      const result = await tryClient(videoId, client, debug);
+      if (result) {
+        return { ...result, client: client.name };
+      }
+      errors.push(`${client.name}: no stream URL`);
+    } catch (e) {
+      const msg = (e instanceof Error ? e.message : String(e)).slice(0, 150);
+      errors.push(`${client.name}: ${msg}`);
+    }
+  }
+
+  return null;
+}
+
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const videoId = url.searchParams.get('videoId');
   const debug = url.searchParams.get('debug') === '1';
+  const proxy = url.searchParams.get('proxy') === '1';
+  const isAudio = url.searchParams.get('audio') === '1';
+  const maxHeight = Math.min(parseInt(url.searchParams.get('maxHeight') || String(MAX_HEIGHT), 10) || MAX_HEIGHT, MAX_HEIGHT);
 
   if (!videoId || !/^[a-zA-Z0-9_-]{7,15}$/.test(videoId)) {
     return Response.json({ error: 'Missing or invalid videoId' }, { status: 400, headers: CORS });
+  }
+
+  // Proxy mode: resolve stream URL + proxy video bytes in one request (same Edge colo = no IP mismatch)
+  if (proxy) {
+    const result = await resolveStream(videoId, false, isAudio);
+    if (!result) {
+      return Response.json({ error: 'Failed to resolve stream URL' }, { status: 502, headers: CORS });
+    }
+
+    const streamUrl = isAudio && result.audioUrl ? result.audioUrl : result.streamUrl;
+
+    const rangeHeader = request.headers.get('Range');
+    const fetchHeaders: Record<string, string> = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+      'Accept': '*/*',
+      'Accept-Encoding': 'identity',
+      'Referer': 'https://www.youtube.com/',
+      'Origin': 'https://www.youtube.com',
+    };
+    if (rangeHeader) fetchHeaders['Range'] = rangeHeader;
+
+    try {
+      const streamRes = await fetch(streamUrl, {
+        headers: fetchHeaders,
+        signal: AbortSignal.timeout(30_000),
+      });
+
+      if (!streamRes.ok && streamRes.status !== 206) {
+        return Response.json(
+          { error: `Stream fetch failed: HTTP ${streamRes.status}` },
+          { status: 502, headers: CORS },
+        );
+      }
+
+      const responseHeaders: Record<string, string> = { ...CORS };
+      const ct = streamRes.headers.get('Content-Type');
+      responseHeaders['Content-Type'] = ct || (isAudio ? 'audio/mp4' : 'video/mp4');
+      responseHeaders['Accept-Ranges'] = 'bytes';
+
+      const cl = streamRes.headers.get('Content-Length');
+      if (cl) responseHeaders['Content-Length'] = cl;
+
+      const cr = streamRes.headers.get('Content-Range');
+      if (cr) responseHeaders['Content-Range'] = cr;
+
+      return new Response(streamRes.body, {
+        status: streamRes.status,
+        headers: responseHeaders,
+      });
+    } catch (e) {
+      return Response.json(
+        { error: e instanceof Error ? e.message.slice(0, 200) : String(e) },
+        { status: 502, headers: CORS },
+      );
+    }
   }
 
   const errors: string[] = [];

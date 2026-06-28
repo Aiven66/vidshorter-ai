@@ -2424,12 +2424,14 @@ function wrapInStreamProxyIfNeeded(
     return endpoint.toString();
   }
 
-  // No CF Worker — use Vercel Edge Runtime proxy as fallback
-  // Edge Runtime runs on Vercel Edge Network (different IPs, not blocked by googlevideo.com)
+  // No CF Worker — use /api/yt-stream?proxy=1 as Edge Runtime proxy
+  // /api/yt-stream runs on Vercel Edge Network (different IPs, not blocked by googlevideo.com)
+  // proxy=1 mode resolves stream URL AND proxies bytes in the same request,
+  // avoiding googlevideo.com IP-binding issues (resolve and fetch on same Edge colo)
   if (baseUrl) {
     const maxHeight = maxHeightOverride > 0 ? maxHeightOverride : 360;
     const audioParam = isAudio ? '&audio=1' : '';
-    return `${baseUrl}/api/yt-proxy-edge?videoId=${encodeURIComponent(videoId)}&maxHeight=${maxHeight}${audioParam}`;
+    return `${baseUrl}/api/yt-stream?videoId=${encodeURIComponent(videoId)}&proxy=1&maxHeight=${maxHeight}${audioParam}`;
   }
 
   return streamUrl;
