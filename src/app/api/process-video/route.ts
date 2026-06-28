@@ -602,8 +602,40 @@ export async function POST(request: NextRequest) {
             data: { clip: draftClip, clipIndex: clipOffset + index, jobId, videoId: dbVideoId || undefined },
           })) return;
 
-          // Link-only mode: generate fallback video from thumbnail + YouTube timestamp link
+          // Link-only mode: try real video stream first, then fallback to thumbnail video
           if (isLinkOnlyMode && linkOnlyVideoId) {
+            // Strategy 1: Try to get real video content via stream URL + remote ffmpeg
+            try {
+              const streamClip = await videoClipper.createClipFromYouTubeStream({
+                videoId: linkOnlyVideoId,
+                title: highlight.title,
+                summary: highlight.summary,
+                startTime: safeStart,
+                endTime: safeEnd,
+              });
+
+              if (streamClip && streamClip.videoUrl) {
+                streamClip.id = draftClip.id;
+                streamClip.engagementScore = draftClip.engagementScore;
+                streamClip.linkOnlyUrl = buildYouTubeTimestampUrl(linkOnlyVideoId, safeStart);
+
+                clips.push(streamClip);
+
+                if (abortSignal.aborted) return;
+                if (!send({
+                  stage: 'clip_ready',
+                  progress: 55 + Math.floor(((index + 1) / highlights.length) * 35),
+                  message: `Clip ready: "${highlight.title}"`,
+                  data: { clip: streamClip, clipIndex: clipOffset + index, jobId, videoId: dbVideoId || undefined, linkOnlyMode: true },
+                })) return;
+                continue;
+              }
+            } catch (streamErr) {
+              console.warn(`Stream clip failed for highlight ${index}, trying thumbnail fallback:`,
+                streamErr instanceof Error ? streamErr.message.slice(0, 100) : streamErr);
+            }
+
+            // Strategy 2: Generate thumbnail video as last resort
             try {
               const fallbackClip = await videoClipper.generateFallbackClip({
                 videoId: linkOnlyVideoId,
@@ -761,27 +793,55 @@ export async function POST(request: NextRequest) {
               const h = highlights[i];
               const safeStart = Math.max(0, Math.floor(h.start_time));
               const safeEnd = Math.max(safeStart + 1, Math.floor(h.end_time));
+
+              // Strategy 1: Try real video stream first
+              let clipCreated = false;
               try {
-                const fallbackClip = await videoClipper.generateFallbackClip({
+                const streamClip = await videoClipper.createClipFromYouTubeStream({
                   videoId: fallbackYtId,
                   title: h.title,
                   summary: h.summary,
                   startTime: safeStart,
                   endTime: safeEnd,
                 });
-                c.status = 'completed';
-                c.videoUrl = fallbackClip.videoUrl;
-                c.thumbnailUrl = fallbackClip.thumbnailUrl;
-                c.duration = fallbackClip.duration;
-                c.linkOnlyUrl = buildYouTubeTimestampUrl(fallbackYtId, safeStart);
-                (c as unknown as { error?: string }).error = undefined;
-              } catch (fbErr) {
-                console.warn(`Fallback clip ${i} also failed:`, fbErr instanceof Error ? fbErr.message.slice(0, 80) : fbErr);
-                c.status = 'link_only';
-                c.videoUrl = null;
-                (c as unknown as { error?: string }).error = undefined;
-                c.linkOnlyUrl = buildYouTubeTimestampUrl(fallbackYtId, safeStart);
-                c.thumbnailUrl = buildYouTubeThumbnailUrl(fallbackYtId);
+                if (streamClip && streamClip.videoUrl) {
+                  c.status = 'completed';
+                  c.videoUrl = streamClip.videoUrl;
+                  c.thumbnailUrl = streamClip.thumbnailUrl || '';
+                  c.duration = streamClip.duration;
+                  c.linkOnlyUrl = buildYouTubeTimestampUrl(fallbackYtId, safeStart);
+                  (c as unknown as { error?: string }).error = undefined;
+                  clipCreated = true;
+                }
+              } catch (streamErr) {
+                console.warn(`Stream clip ${i} failed, trying thumbnail fallback:`,
+                  streamErr instanceof Error ? streamErr.message.slice(0, 80) : streamErr);
+              }
+
+              // Strategy 2: Thumbnail video as fallback
+              if (!clipCreated) {
+                try {
+                  const fallbackClip = await videoClipper.generateFallbackClip({
+                    videoId: fallbackYtId,
+                    title: h.title,
+                    summary: h.summary,
+                    startTime: safeStart,
+                    endTime: safeEnd,
+                  });
+                  c.status = 'completed';
+                  c.videoUrl = fallbackClip.videoUrl;
+                  c.thumbnailUrl = fallbackClip.thumbnailUrl;
+                  c.duration = fallbackClip.duration;
+                  c.linkOnlyUrl = buildYouTubeTimestampUrl(fallbackYtId, safeStart);
+                  (c as unknown as { error?: string }).error = undefined;
+                } catch (fbErr) {
+                  console.warn(`Fallback clip ${i} also failed:`, fbErr instanceof Error ? fbErr.message.slice(0, 80) : fbErr);
+                  c.status = 'link_only';
+                  c.videoUrl = null;
+                  (c as unknown as { error?: string }).error = undefined;
+                  c.linkOnlyUrl = buildYouTubeTimestampUrl(fallbackYtId, safeStart);
+                  c.thumbnailUrl = buildYouTubeThumbnailUrl(fallbackYtId);
+                }
               }
             }
 

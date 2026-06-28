@@ -3142,9 +3142,83 @@ function formatTime(seconds: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
+// ── Create clip from YouTube stream (for link-only mode recovery) ────────────
+// When downloadSourceVideo fails entirely (all proxies/CF Worker/Invidious down),
+// route.ts enters link-only mode and calls generateFallbackClip (thumbnail video).
+// This function tries one more time to get a real video stream URL and clip it
+// remotely via ffmpeg, so users get actual video content instead of a static image.
+async function createClipFromYouTubeStream(params: {
+  videoId: string;
+  title: string;
+  summary?: string;
+  startTime: number;
+  endTime: number;
+}): Promise<ClipResult | null> {
+  const { videoId, title, summary, startTime, endTime } = params;
+  const duration = Math.max(1, endTime - startTime);
+
+  // Try to get a stream URL via CF Worker / Invidious / Piped / cobalt
+  let streamUrl = '';
+  let audioUrl: string | undefined;
+  try {
+    const result = await getYouTubeStreamUrlWithFallbacks(videoId, 360);
+    streamUrl = result.streamUrl;
+    audioUrl = result.audioUrl;
+  } catch (err) {
+    console.warn(`createClipFromYouTubeStream: stream URL fetch failed:`,
+      err instanceof Error ? err.message.slice(0, 120) : err);
+    return null;
+  }
+
+  if (!streamUrl) return null;
+
+  // Wrap googlevideo.com direct URLs in CF Worker /stream proxy
+  const wrappedStreamUrl = wrapInStreamProxyIfNeeded(streamUrl, videoId, false, 360);
+  const wrappedAudioUrl = audioUrl ? wrapInStreamProxyIfNeeded(audioUrl, videoId, true, 360) : undefined;
+
+  const internalBaseUrl = getAppBaseUrl();
+  const isProxied = wrappedStreamUrl.includes('youtube-proxy') || wrappedStreamUrl.includes('/stream');
+  const ffmpegHeaders =
+    `${internalBaseUrl && wrappedStreamUrl.startsWith(internalBaseUrl) ? getBypassFfmpegHeaderString() : ''}` +
+    (isProxied
+      ? 'Accept: */*\r\nAccept-Encoding: identity\r\n'
+      : 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36\r\n' +
+        'Referer: https://www.youtube.com/\r\n' +
+        'Origin: https://www.youtube.com\r\n' +
+        'Accept: */*\r\n' +
+        'Accept-Encoding: identity\r\n');
+
+  try {
+    const result = await createLocalClip({
+      inputPath: wrappedStreamUrl,
+      audioInputPath: wrappedAudioUrl,
+      inputHeaders: ffmpegHeaders,
+      startTime,
+      endTime,
+      title,
+    });
+    return {
+      id: result.outputPath ? path.basename(result.outputPath) : clipFileName(title),
+      title,
+      startTime,
+      endTime,
+      duration,
+      summary: summary || '',
+      engagementScore: 0,
+      videoUrl: result.dataUrl || result.publicUrl,
+      thumbnailUrl: result.thumbnailUrl || '',
+      status: 'completed',
+    };
+  } catch (err) {
+    console.warn(`createClipFromYouTubeStream: ffmpeg remote clip failed:`,
+      err instanceof Error ? err.message.slice(0, 120) : err);
+    return null;
+  }
+}
+
 const videoClipper = {
   analyzeVideo, createLocalClip, downloadSourceVideo, downloadYouTubeClip, generateFallbackClip,
-  isYouTubeUrl, isBilibiliUrl,
+  createClipFromYouTubeStream, isYouTubeUrl, isBilibiliUrl,
 };
 
 export default videoClipper;
