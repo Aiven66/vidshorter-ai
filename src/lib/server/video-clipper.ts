@@ -2485,6 +2485,23 @@ async function downloadYouTubeOrGenericVideo(
 
       // Combined (muxed) stream via /stream proxy: the proxy fetches from
       // googlevideo.com via CF IP and forwards to Vercel.
+      //
+      // SD fallback (forceMaxHeight > 0): download the full stream to /tmp
+      // first, then ffmpeg seeks locally. This is more reliable than remote
+      // ffmpeg fast-seek when bot detection is active, because:
+      // 1. Single HTTP request (vs ffmpeg's multiple Range requests)
+      // 2. Avoids colo-switching between Range requests
+      // 3. CF Worker /stream downloads with fresh tryClient on each request
+      if (forceMaxHeight > 0) {
+        const localPath = path.join(path.dirname(outputTemplate), 'source.mp4');
+        const downloaded = await downloadStreamToLocalFile(wrappedStreamUrl, localPath);
+        if (downloaded) {
+          console.log(`Vercel SD fallback: downloaded ${forceMaxHeight}p stream to local file`);
+          return { inputPath: localPath };
+        }
+        console.warn(`Vercel SD fallback: downloadStreamToLocalFile failed, falling back to remote ffmpeg`);
+      }
+
       console.log('Vercel environment: using CF Worker /stream proxy (combined stream, remote ffmpeg fast-seek)');
       return {
         inputPath: wrappedStreamUrl,
