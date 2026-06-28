@@ -517,10 +517,17 @@ export async function POST(request: NextRequest) {
           }
 
           try {
+            // 3 attempts: HD (default) → HD refresh → SD fallback (360p).
+            // The SD fallback is critical for bot-detected videos where 720p
+            // adaptiveFormats are blocked but 360p combined streams work.
+            // This is the "B-plan" — at least produce a downloadable SD clip
+            // when HD fails, rather than falling through to link_only.
             for (let attempt = 0; attempt < 3; attempt += 1) {
               const currentSource = attempt === 0
                 ? source
-                : await videoClipper.downloadSourceVideo(videoUrl, { forceRefresh: true });
+                : attempt === 1
+                  ? await videoClipper.downloadSourceVideo(videoUrl, { forceRefresh: true })
+                  : await videoClipper.downloadSourceVideo(videoUrl, { forceRefresh: true, forceMaxHeight: 360 });
 
               try {
                 const result = await videoClipper.createLocalClip({
@@ -535,6 +542,10 @@ export async function POST(request: NextRequest) {
                 draftClip.videoUrl = result.dataUrl || result.publicUrl;
                 draftClip.thumbnailUrl = result.thumbnailUrl || '';
                 draftClip.status = 'completed';
+                if (attempt === 2) {
+                  // SD fallback succeeded — mark for UI transparency
+                  (draftClip as unknown as { quality?: string }).quality = 'SD';
+                }
                 break;
               } catch (err) {
                 if (attempt === 2) throw err;

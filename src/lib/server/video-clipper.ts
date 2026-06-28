@@ -642,7 +642,10 @@ async function getYouTubeAvStreamUrlsViaYtDlp(videoId: string): Promise<{ videoU
 }
 
 // ── Piped proxy (YouTube stream URLs, bypasses bot detection) ────────────────
-async function getYouTubeInfoViaPiped(videoId: string): Promise<PipedVideoInfo> {
+async function getYouTubeInfoViaPiped(
+  videoId: string,
+  maxHeightOverride: number = 0,
+): Promise<PipedVideoInfo> {
   let lastError = 'No Piped instance reachable';
   // Same rationale as Invidious: most public Piped instances are now blocked.
   // Cap at first 3 instances and 5s timeout on Vercel so fallback completes quickly.
@@ -737,7 +740,10 @@ async function getYouTubeInfoViaPiped(videoId: string): Promise<PipedVideoInfo> 
 }
 
 // ── Invidious API (alternative YouTube proxy, returns direct googlevideo.com URLs) ─
-async function getYouTubeInfoViaInvidious(videoId: string): Promise<PipedVideoInfo> {
+async function getYouTubeInfoViaInvidious(
+  videoId: string,
+  maxHeightOverride: number = 0,
+): Promise<PipedVideoInfo> {
   let lastError = 'No instance tried';
   // Most public Invidious instances now block YouTube (403/401) or are down.
   // Reduce per-instance timeout from 12s → 5s and cap at first 3 instances
@@ -964,10 +970,19 @@ async function getYouTubeInfoViaCobalt(videoId: string): Promise<PipedVideoInfo>
 // ── Cloudflare Worker proxy (optional — set CF_WORKER_URL env var) ────────────
 // The CF Worker calls YouTube InnerTube API from Cloudflare's IP space,
 // which YouTube does not block. Deploy the worker from /cf-worker/.
-async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInfo> {
+async function getYouTubeInfoViaCFWorker(
+  videoId: string,
+  maxHeightOverride: number = 0,
+): Promise<PipedVideoInfo> {
   const cfWorkerUrl = getCfWorkerUrl();
   if (!cfWorkerUrl) throw new Error('CF_WORKER_URL not configured');
-  const maxHeight = getCfWorkerMaxHeight();
+  // Override maxHeight for SD fallback mode (forceMaxHeight=360 → request 360p from CF Worker).
+  // This bypasses HD entirely and gets 360p combined stream which is more likely
+  // to succeed when bot detection blocks 720p adaptiveFormats.
+  const defaultMaxHeight = getCfWorkerMaxHeight();
+  const maxHeight = maxHeightOverride > 0
+    ? Math.min(maxHeightOverride, defaultMaxHeight)
+    : defaultMaxHeight;
 
   const u = new URL(cfWorkerUrl);
   u.pathname = `${u.pathname.replace(/\/$/, '')}/resolve`;
@@ -1893,7 +1908,7 @@ async function analyzeBilibiliVideo(videoUrl: string, workDir: string): Promise<
 // ── Video download ─────────────────────────────────────────────────────────────
 async function downloadSourceVideo(
   videoUrl: string,
-  options?: { forceRefresh?: boolean },
+  options?: { forceRefresh?: boolean; forceMaxHeight?: number },
 ): Promise<PreparedSource> {
   const normalizedUrl = await normalizeVideoUrl(videoUrl);
   if (normalizedUrl.startsWith('http://127.0.0.1') || normalizedUrl.startsWith('http://localhost')) {
@@ -1903,28 +1918,37 @@ async function downloadSourceVideo(
   const sourceDir = path.join(CACHE_DIR, sourceId(normalizedUrl));
   await mkdir(sourceDir, { recursive: true });
 
+  // forceMaxHeight: caller-requested SD fallback (e.g. 360 when HD fails).
+  // Included in cache key so SD sources don't shadow HD cache and vice versa.
+  const forceH = options?.forceMaxHeight && Number.isFinite(options.forceMaxHeight)
+    ? Math.max(144, Math.min(1080, Math.floor(options.forceMaxHeight)))
+    : 0;
+  const cacheSuffix = forceH ? `_h${forceH}` : '';
+  const sourceDirForced = forceH ? path.join(CACHE_DIR, `${sourceId(normalizedUrl)}${cacheSuffix}`) : sourceDir;
+  if (forceH) await mkdir(sourceDirForced, { recursive: true });
+
   if (options?.forceRefresh) {
-    const files = await readdir(sourceDir).catch(() => []);
+    const files = await readdir(sourceDirForced).catch(() => []);
     await Promise.all(
       files
         .filter(f => /\.(mp4|mkv|webm|mov)$/i.test(f))
-        .map(f => unlink(path.join(sourceDir, f)).catch(() => {})),
+        .map(f => unlink(path.join(sourceDirForced, f)).catch(() => {})),
     );
   } else {
-    const cachedFile = await findFirstFile(sourceDir, ['.mp4', '.mkv', '.webm', '.mov']);
+    const cachedFile = await findFirstFile(sourceDirForced, ['.mp4', '.mkv', '.webm', '.mov']);
     if (cachedFile) {
       console.log(`Using cached video: ${cachedFile}`);
-      return { inputPath: path.join(sourceDir, cachedFile) };
+      return { inputPath: path.join(sourceDirForced, cachedFile) };
     }
   }
 
-  const outputTemplate = path.join(sourceDir, 'source.%(ext)s');
+  const outputTemplate = path.join(sourceDirForced, 'source.%(ext)s');
   const hasCookies = await hasChromeCookies();
 
   if (isBilibiliUrl(normalizedUrl)) {
     return { inputPath: await downloadBilibiliVideo(normalizedUrl, outputTemplate, hasCookies) };
   }
-  return downloadYouTubeOrGenericVideo(normalizedUrl, outputTemplate, hasCookies);
+  return downloadYouTubeOrGenericVideo(normalizedUrl, outputTemplate, hasCookies, forceH);
 }
 
 async function downloadBilibiliVideo(
@@ -2016,7 +2040,10 @@ async function downloadBilibiliVideo(
 // Used directly on Vercel (skips yt-dlp) and as fallback after yt-dlp fails.
 // On Vercel: Invidious/Piped first (support HD video-only + audio via adaptiveFormats),
 // then cobalt (combined stream), then EdgeFunction/CF Worker (InnerTube, often blocked).
-async function getYouTubeStreamUrlWithFallbacks(videoId: string): Promise<{ streamUrl: string; audioUrl?: string }> {
+async function getYouTubeStreamUrlWithFallbacks(
+  videoId: string,
+  maxHeightOverride: number = 0,
+): Promise<{ streamUrl: string; audioUrl?: string }> {
   const allowCobalt = true;
   const startedAt = Date.now();
   const budgetMs = IS_VERCEL ? 120_000 : 180_000;
@@ -2027,11 +2054,11 @@ async function getYouTubeStreamUrlWithFallbacks(videoId: string): Promise<{ stre
         // Putting Invidious/Piped first wasted 60-84s on failed instances
         // (most public Invidious/Piped instances now return 403/401 for YouTube)
         // and exhausted the 120s budget before CF Worker could even start.
-        ...(getCfWorkerUrl() ? [{ name: 'CF Worker', fn: () => getYouTubeInfoViaCFWorker(videoId) }] : []),
+        ...(getCfWorkerUrl() ? [{ name: 'CF Worker', fn: () => getYouTubeInfoViaCFWorker(videoId, maxHeightOverride) }] : []),
         // Invidious & Piped as fallback — they support HD video-only + separate audio
         // via adaptiveFormats, but most public instances are now blocked.
-        { name: 'Invidious', fn: () => getYouTubeInfoViaInvidious(videoId) },
-        { name: 'Piped', fn: () => getYouTubeInfoViaPiped(videoId) },
+        { name: 'Invidious', fn: () => getYouTubeInfoViaInvidious(videoId, maxHeightOverride) },
+        { name: 'Piped', fn: () => getYouTubeInfoViaPiped(videoId, maxHeightOverride) },
         ...(allowCobalt ? [{ name: 'cobalt', fn: () => getYouTubeInfoViaCobalt(videoId) }] : []),
         ...(getAppBaseUrl()
           ? [{ name: 'EdgeFunction', fn: () => getYouTubeInfoViaEdgeFunction(videoId) }]
@@ -2360,7 +2387,12 @@ async function preflightStream(url: string): Promise<boolean> {
 // forwards to Vercel. If the URL is already a /stream proxy URL (from
 // getYouTubeInfoViaCFWorker) or CF Worker is not configured, returns as-is.
 // isAudio=true adds &audio=1 param so /stream fetches resolved.audioUrl.
-function wrapInStreamProxyIfNeeded(streamUrl: string, videoId: string, isAudio = false): string {
+function wrapInStreamProxyIfNeeded(
+  streamUrl: string,
+  videoId: string,
+  isAudio = false,
+  maxHeightOverride: number = 0,
+): string {
   const cfWorkerUrl = getCfWorkerUrl();
   if (!cfWorkerUrl) return streamUrl;
 
@@ -2380,7 +2412,10 @@ function wrapInStreamProxyIfNeeded(streamUrl: string, videoId: string, isAudio =
   // Passing streamUrl causes colo mismatch: /resolve and /stream may hit
   // different CF colos, and the streamUrl's ip= param is bound to /resolve's
   // colo IP. /stream does fresh tryClient on its own colo instead.
-  const maxHeight = getCfWorkerMaxHeight();
+  const defaultMaxHeight = getCfWorkerMaxHeight();
+  const maxHeight = maxHeightOverride > 0
+    ? Math.min(maxHeightOverride, defaultMaxHeight)
+    : defaultMaxHeight;
   const endpoint = new URL(cfWorkerUrl);
   endpoint.pathname = `${endpoint.pathname.replace(/\/$/, '')}/stream`;
   endpoint.searchParams.set('videoId', videoId);
@@ -2391,6 +2426,7 @@ function wrapInStreamProxyIfNeeded(streamUrl: string, videoId: string, isAudio =
 
 async function downloadYouTubeOrGenericVideo(
   videoUrl: string, outputTemplate: string, hasCookies: boolean,
+  forceMaxHeight: number = 0,
 ): Promise<PreparedSource> {
   // On Vercel, yt-dlp cannot solve YouTube's JS signature challenges.
   // More critically: each yt-dlp attempt makes YouTube API requests that accumulate
@@ -2400,20 +2436,28 @@ async function downloadYouTubeOrGenericVideo(
     const videoId = extractYouTubeVideoId(videoUrl);
     if (!videoId) throw new Error('Invalid YouTube URL');
 
+    // forceMaxHeight: SD fallback mode — override CF_WORKER_MAX_HEIGHT to 360
+    // when HD (720p+) fails. This is the "B-plan" for bot-detected videos.
+    const originalMaxHeight = getCfWorkerMaxHeight();
+    const effectiveMaxHeight = forceMaxHeight > 0
+      ? Math.min(forceMaxHeight, originalMaxHeight)
+      : originalMaxHeight;
+
     // ── Primary path: getYouTubeStreamUrlWithFallbacks ────────────────────────
     // Tries CF Worker first (returns /stream proxy URLs), then Invidious/Piped,
     // cobalt, EdgeFunction. EdgeFunction and Invidious/Piped return googlevideo.com
     // direct URLs which 403 for Vercel IP — wrapInStreamProxyIfNeeded routes
     // them through CF Worker /stream proxy so ffmpeg can read them.
     try {
-      console.log('Vercel environment: trying HD stream fallbacks (CF Worker first)');
-      const { streamUrl, audioUrl } = await getYouTubeStreamUrlWithFallbacks(videoId);
+      console.log(`Vercel environment: trying ${forceMaxHeight > 0 ? `SD fallback (maxHeight=${effectiveMaxHeight})` : 'HD stream fallbacks'} (CF Worker first)`);
+      const { streamUrl, audioUrl } = await getYouTubeStreamUrlWithFallbacks(videoId, effectiveMaxHeight);
 
       // Wrap googlevideo.com direct URLs in CF Worker /stream proxy.
       // CF Worker /stream fetches via Cloudflare IP (not blocked by googlevideo.com)
       // and forwards to Vercel. /stream also handles colo mismatch via HD re-resolve.
-      const wrappedStreamUrl = wrapInStreamProxyIfNeeded(streamUrl, videoId, false);
-      const wrappedAudioUrl = audioUrl ? wrapInStreamProxyIfNeeded(audioUrl, videoId, true) : undefined;
+      // Pass forceMaxHeight so SD fallback wraps with the correct maxHeight param.
+      const wrappedStreamUrl = wrapInStreamProxyIfNeeded(streamUrl, videoId, false, forceMaxHeight);
+      const wrappedAudioUrl = audioUrl ? wrapInStreamProxyIfNeeded(audioUrl, videoId, true, forceMaxHeight) : undefined;
 
       const internalBaseUrl = getAppBaseUrl();
       const isProxied = wrappedStreamUrl.includes('youtube-proxy') || wrappedStreamUrl.includes('/stream');
