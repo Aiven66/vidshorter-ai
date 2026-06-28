@@ -1039,17 +1039,16 @@ async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInf
   // (tryClient with 720p+ filter on THIS colo), which gets a fresh streamUrl bound
   // to this colo's IP. This adds ~6s latency on cold cache but produces correct HD
   // output instead of silently degrading to 360p.
-  const buildStreamProxyUrl = (targetStreamUrl: string) => {
+  //
+  // NOTE: /stream proxy URLs are built WITHOUT streamUrl param. /resolve and
+  // /stream may hit different CF colos; passing streamUrl causes fast path
+  // failure (ip= mismatch) and extra API calls that trigger rate-limiting.
+  // /stream does fresh tryClient on its own colo instead.
+  const buildStreamProxyUrl = () => {
     const endpoint = new URL(cfWorkerUrl);
     endpoint.pathname = `${endpoint.pathname.replace(/\/$/, '')}/stream`;
     endpoint.searchParams.set('videoId', videoId);
     endpoint.searchParams.set('maxHeight', String(maxHeight));
-    endpoint.searchParams.set('streamUrl', targetStreamUrl);
-    if (data.userAgent) endpoint.searchParams.set('userAgent', data.userAgent);
-    if (data.visitorData) endpoint.searchParams.set('visitorData', data.visitorData);
-    if (data.xClientName) endpoint.searchParams.set('xClientName', String(data.xClientName));
-    if (data.clientVersion) endpoint.searchParams.set('clientVersion', data.clientVersion);
-    if (data.client) endpoint.searchParams.set('clientName', data.client);
     return endpoint.toString();
   };
 
@@ -1060,9 +1059,9 @@ async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInf
     return {
       title: data.title || 'YouTube Video',
       duration: data.duration || 300,
-      streamUrl: buildStreamProxyUrl(data.streamUrl),
+      streamUrl: buildStreamProxyUrl(),
       subtitleUrl: null,
-      audioUrl: buildStreamProxyUrl(data.audioUrl),
+      audioUrl: buildStreamProxyUrl(),
     };
   }
 
@@ -1072,7 +1071,7 @@ async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInf
   return {
     title: data.title || 'YouTube Video',
     duration: data.duration || 300,
-    streamUrl: buildStreamProxyUrl(data.streamUrl),
+    streamUrl: buildStreamProxyUrl(),
     subtitleUrl: null,
   };
 }
@@ -2373,12 +2372,15 @@ function wrapInStreamProxyIfNeeded(streamUrl: string, videoId: string): string {
   // Only wrap googlevideo.com direct URLs (these 403 for Vercel IP).
   if (!streamUrl.includes('googlevideo.com')) return streamUrl;
 
+  // Build /stream URL WITHOUT streamUrl param.
+  // Passing streamUrl causes colo mismatch: /resolve and /stream may hit
+  // different CF colos, and the streamUrl's ip= param is bound to /resolve's
+  // colo IP. /stream does fresh tryClient on its own colo instead.
   const maxHeight = getCfWorkerMaxHeight();
   const endpoint = new URL(cfWorkerUrl);
   endpoint.pathname = `${endpoint.pathname.replace(/\/$/, '')}/stream`;
   endpoint.searchParams.set('videoId', videoId);
   endpoint.searchParams.set('maxHeight', String(maxHeight));
-  endpoint.searchParams.set('streamUrl', streamUrl);
   return endpoint.toString();
 }
 
