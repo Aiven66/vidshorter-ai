@@ -464,8 +464,8 @@ export async function POST(request: NextRequest) {
         };
 
         const isHD = quality === 'hd';
-        const sdTimeout = IS_VERCEL ? 60_000 : 90_000;
-        const hdTimeout = IS_VERCEL ? 60_000 : 90_000;
+        const sdTimeout = IS_VERCEL ? 90_000 : 120_000;
+        const hdTimeout = IS_VERCEL ? 90_000 : 120_000;
 
         if (isHD) {
           startSourceProgressTimer(46, [
@@ -511,7 +511,7 @@ export async function POST(request: NextRequest) {
                   if (!send({
                     stage: 'generating_clip',
                     progress: 50,
-                    message: 'Video download blocked. Generating highlight links with timestamps instead...',
+                    message: 'Video download blocked. Generating downloadable highlight clips from thumbnails...',
                     data: { jobId, videoId: dbVideoId || undefined, linkOnlyMode: true },
                   })) return;
                 } else {
@@ -548,7 +548,7 @@ export async function POST(request: NextRequest) {
               if (!send({
                 stage: 'generating_clip',
                 progress: 50,
-                message: 'Video download blocked. Generating highlight links with timestamps instead...',
+                message: 'Video download blocked. Generating downloadable highlight clips from thumbnails...',
                 data: { jobId, videoId: dbVideoId || undefined, linkOnlyMode: true },
               })) return;
             } else {
@@ -602,22 +602,48 @@ export async function POST(request: NextRequest) {
             data: { clip: draftClip, clipIndex: clipOffset + index, jobId, videoId: dbVideoId || undefined },
           })) return;
 
-          // Link-only mode: generate YouTube timestamp links + thumbnails (no video download)
+          // Link-only mode: generate fallback video from thumbnail + YouTube timestamp link
           if (isLinkOnlyMode && linkOnlyVideoId) {
-            draftClip.status = 'link_only';
-            draftClip.videoUrl = null;
-            draftClip.linkOnlyUrl = buildYouTubeTimestampUrl(linkOnlyVideoId, safeStart);
-            draftClip.thumbnailUrl = buildYouTubeThumbnailUrl(linkOnlyVideoId);
-            clips.push(draftClip);
+            try {
+              const fallbackClip = await videoClipper.generateFallbackClip({
+                videoId: linkOnlyVideoId,
+                title: highlight.title,
+                summary: highlight.summary,
+                startTime: safeStart,
+                endTime: safeEnd,
+              });
 
-            if (abortSignal.aborted) return;
-            if (!send({
-              stage: 'clip_ready',
-              progress: 55 + Math.floor(((index + 1) / highlights.length) * 35),
-              message: `Highlight link ready: "${highlight.title}"`,
-              data: { clip: draftClip, clipIndex: clipOffset + index, jobId, videoId: dbVideoId || undefined, linkOnlyMode: true },
-            })) return;
-            continue;
+              fallbackClip.id = draftClip.id;
+              fallbackClip.engagementScore = draftClip.engagementScore;
+              fallbackClip.linkOnlyUrl = buildYouTubeTimestampUrl(linkOnlyVideoId, safeStart);
+
+              clips.push(fallbackClip);
+
+              if (abortSignal.aborted) return;
+              if (!send({
+                stage: 'clip_ready',
+                progress: 55 + Math.floor(((index + 1) / highlights.length) * 35),
+                message: `Clip ready: "${highlight.title}"`,
+                data: { clip: fallbackClip, clipIndex: clipOffset + index, jobId, videoId: dbVideoId || undefined, linkOnlyMode: true },
+              })) return;
+              continue;
+            } catch (fallbackErr) {
+              console.warn(`Fallback clip generation failed for highlight ${index}:`, fallbackErr instanceof Error ? fallbackErr.message.slice(0, 100) : fallbackErr);
+              draftClip.status = 'link_only';
+              draftClip.videoUrl = null;
+              draftClip.linkOnlyUrl = buildYouTubeTimestampUrl(linkOnlyVideoId, safeStart);
+              draftClip.thumbnailUrl = buildYouTubeThumbnailUrl(linkOnlyVideoId);
+              clips.push(draftClip);
+
+              if (abortSignal.aborted) return;
+              if (!send({
+                stage: 'clip_ready',
+                progress: 55 + Math.floor(((index + 1) / highlights.length) * 35),
+                message: `Highlight link ready: "${highlight.title}"`,
+                data: { clip: draftClip, clipIndex: clipOffset + index, jobId, videoId: dbVideoId || undefined, linkOnlyMode: true },
+              })) return;
+              continue;
+            }
           }
 
           try {
@@ -722,44 +748,58 @@ export async function POST(request: NextRequest) {
         const successfulClips = [...completedClips, ...linkOnlyClips];
         if (abortSignal.aborted) return;
         if (successfulClips.length === 0 && clipOffset === 0) {
-          // Last-resort fallback: if this is a YouTube video and ALL clip
-          // generation failed (typically CF Worker /stream returns 502 due to
-          // YouTube bot detection / LOGIN_REQUIRED), switch to link_only mode.
-          // This ensures users always get highlight links with timestamps +
-          // thumbnails, even when video download is completely blocked.
           const fallbackYtId = extractYouTubeId(videoUrl);
           if (fallbackYtId && !isLinkOnlyMode) {
             console.warn(
-              `All clips failed for YouTube video ${fallbackYtId}, switching to link_only fallback mode`,
+              `All clips failed for YouTube video ${fallbackYtId}, generating fallback clips from thumbnails`,
             );
             isLinkOnlyMode = true;
             linkOnlyVideoId = fallbackYtId;
-            // Rebuild clips as link_only entries with YouTube timestamp links
+
             for (let i = 0; i < clips.length; i += 1) {
               const c = clips[i];
               const h = highlights[i];
               const safeStart = Math.max(0, Math.floor(h.start_time));
-              c.status = 'link_only';
-              c.videoUrl = null;
-              (c as unknown as { error?: string }).error = undefined;
-              c.linkOnlyUrl = buildYouTubeTimestampUrl(fallbackYtId, safeStart);
-              c.thumbnailUrl = buildYouTubeThumbnailUrl(fallbackYtId);
+              const safeEnd = Math.max(safeStart + 1, Math.floor(h.end_time));
+              try {
+                const fallbackClip = await videoClipper.generateFallbackClip({
+                  videoId: fallbackYtId,
+                  title: h.title,
+                  summary: h.summary,
+                  startTime: safeStart,
+                  endTime: safeEnd,
+                });
+                c.status = 'completed';
+                c.videoUrl = fallbackClip.videoUrl;
+                c.thumbnailUrl = fallbackClip.thumbnailUrl;
+                c.duration = fallbackClip.duration;
+                c.linkOnlyUrl = buildYouTubeTimestampUrl(fallbackYtId, safeStart);
+                (c as unknown as { error?: string }).error = undefined;
+              } catch (fbErr) {
+                console.warn(`Fallback clip ${i} also failed:`, fbErr instanceof Error ? fbErr.message.slice(0, 80) : fbErr);
+                c.status = 'link_only';
+                c.videoUrl = null;
+                (c as unknown as { error?: string }).error = undefined;
+                c.linkOnlyUrl = buildYouTubeTimestampUrl(fallbackYtId, safeStart);
+                c.thumbnailUrl = buildYouTubeThumbnailUrl(fallbackYtId);
+              }
             }
+
             if (!send({
               stage: 'generating_clip',
               progress: 70,
-              message: 'Video download blocked by YouTube. Generated highlight links with timestamps instead.',
+              message: 'Video download blocked. Generated downloadable clips from video thumbnails.',
               data: { jobId, videoId: dbVideoId || undefined, linkOnlyMode: true },
             })) return;
-            // Re-filter after fallback conversion
+
+            const newPlayableClips = clips.filter(hasPlayableUrl);
             const newLinkOnlyClips = clips.filter(isLinkOnlyClip);
-            if (newLinkOnlyClips.length > 0) {
-              // Skip the error throw below — we have link_only clips to return
+            if (newPlayableClips.length > 0 || newLinkOnlyClips.length > 0) {
               if (!send({
                 stage: 'saving',
                 progress: 93,
-                message: 'Saving highlight links...',
-                data: { jobId, videoId: dbVideoId || undefined, linkOnlyMode: true },
+                message: newPlayableClips.length > 0 ? 'Saving generated clips...' : 'Saving highlight links...',
+                data: { jobId, videoId: dbVideoId || undefined, linkOnlyMode: newPlayableClips.length === 0 },
               })) return;
               // Save link_only clips to DB if in Supabase mode
               if (dbVideoId && isSupabaseMode) {

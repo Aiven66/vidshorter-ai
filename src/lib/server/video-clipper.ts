@@ -3007,8 +3007,137 @@ async function downloadYouTubeClip(params: {
   });
 }
 
+async function generateFallbackClip(params: {
+  videoId: string;
+  title: string;
+  summary?: string;
+  startTime: number;
+  endTime: number;
+}): Promise<ClipResult> {
+  await ensureDirectories();
+  const ffmpegPath = await ensureFfmpegAvailable();
+  const fileName = clipFileName(params.title);
+  const outputPath = path.join(PUBLIC_CLIP_DIR, fileName);
+  const duration = Math.max(5, Math.min(30, params.endTime - params.startTime));
+
+  const thumbnailUrls = [
+    `https://img.youtube.com/vi/${params.videoId}/maxresdefault.jpg`,
+    `https://img.youtube.com/vi/${params.videoId}/hqdefault.jpg`,
+    `https://img.youtube.com/vi/${params.videoId}/mqdefault.jpg`,
+    `https://img.youtube.com/vi/${params.videoId}/0.jpg`,
+  ];
+
+  let thumbnailBuffer: Buffer | null = null;
+  for (const url of thumbnailUrls) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (res.ok && res.body) {
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (buf.length > 2000) {
+          thumbnailBuffer = buf;
+          break;
+        }
+      }
+    } catch {
+      // try next
+    }
+  }
+
+  const workDir = path.join(TMP_DIR, `fallback-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  await mkdir(workDir, { recursive: true });
+  const imagePath = path.join(workDir, 'thumb.jpg');
+
+  if (thumbnailBuffer) {
+    await writeFile(imagePath, thumbnailBuffer);
+  } else {
+    const ffmpegPath = await ensureFfmpegAvailable();
+    await runFfmpeg(ffmpegPath, [
+      '-y',
+      '-f', 'lavfi',
+      '-i', 'color=c=0x1a1a2e:s=1280x720:d=1',
+      '-frames:v', '1',
+      '-q:v', '5',
+      imagePath,
+    ]);
+  }
+
+  const safeTitle = (params.title || 'Highlight').replace(/[\\/:*?"<>|]/g, ' ').slice(0, 60);
+  const timeLabel = `${formatTime(params.startTime)} - ${formatTime(params.endTime)}`;
+
+  const videoFilters = [
+    'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2',
+    'format=yuv420p',
+  ];
+
+  const args = [
+    '-y',
+    '-loop', '1',
+    '-i', imagePath,
+    '-t', String(duration),
+    '-vf', videoFilters.join(','),
+    '-c:v', 'libx264',
+    '-preset', 'ultrafast',
+    '-crf', '28',
+    '-profile:v', 'high',
+    '-pix_fmt', 'yuv420p',
+    '-r', '24',
+    '-an',
+    outputPath,
+  ];
+
+  await runFfmpeg(ffmpegPath, args);
+
+  let dataUrl = null;
+  try {
+    const outBuf = await readFile(outputPath);
+    dataUrl = `data:video/mp4;base64,${outBuf.toString('base64')}`;
+  } catch {
+    // ignore
+  }
+
+  let thumbnailUrl = '';
+  try {
+    const thumbPath = path.join(workDir, 'thumb_out.jpg');
+    await runFfmpeg(ffmpegPath, [
+      '-y', '-i', outputPath, '-ss', '1', '-vframes', '1', '-q:v', '5', thumbPath]);
+    const thumbBuf = await readFile(thumbPath);
+    thumbnailUrl = `data:image/jpeg;base64,${thumbBuf.toString('base64')}`;
+  } catch {
+    if (thumbnailBuffer) {
+      thumbnailUrl = `data:image/jpeg;base64,${thumbnailBuffer.toString('base64')}`;
+    }
+  }
+
+  try {
+    await rm(workDir, { recursive: true, force: true });
+  } catch {
+    // ignore
+  }
+
+  const publicUrl = getPublicClipUrl(fileName);
+
+  return {
+    id: fileName,
+    title: params.title,
+    startTime: params.startTime,
+    endTime: params.endTime,
+    duration,
+    summary: params.summary || '',
+    engagementScore: 0,
+    videoUrl: dataUrl || publicUrl,
+    thumbnailUrl,
+    status: 'completed',
+  };
+}
+
+function formatTime(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
 const videoClipper = {
-  analyzeVideo, createLocalClip, downloadSourceVideo, downloadYouTubeClip,
+  analyzeVideo, createLocalClip, downloadSourceVideo, downloadYouTubeClip, generateFallbackClip,
   isYouTubeUrl, isBilibiliUrl,
 };
 
