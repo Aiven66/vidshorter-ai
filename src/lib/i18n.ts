@@ -139,6 +139,14 @@ export const commonTranslations = {
   },
   video: {
     input: { title: 'Input Video', url: 'Video URL (YouTube/Bilibili)', upload: 'Upload Video', placeholder: 'Paste YouTube or Bilibili video link...' },
+    quality: {
+      sd: 'Standard',
+      hd: 'High Quality',
+      sdDesc: 'Fast generation, smaller file size',
+      hdDesc: 'Better quality, longer wait time',
+      hdWarning: 'HD mode may take longer to download. If it times out, it will automatically fall back to SD quality.',
+      switchToSd: 'Switch to Standard for faster results',
+    },
     process: 'Process Video',
     processing: 'Processing...',
     analyze: 'Analyze',
@@ -421,6 +429,14 @@ export const translations: Record<Locale, Record<string, string>> = {
     },
     video: {
       input: { title: '输入视频', url: '视频链接 (YouTube/B站)', upload: '上传视频', placeholder: '粘贴YouTube或B站视频链接...' },
+      quality: {
+        sd: '标清',
+        hd: '高清',
+        sdDesc: '生成速度快，文件体积小',
+        hdDesc: '画质更好，等待时间较长',
+        hdWarning: '高清模式下载时间可能较长。如超时将自动降级为标清模式。',
+        switchToSd: '切换到标清模式以获得更快的结果',
+      },
       process: '处理视频', processing: '处理中...', analyze: '分析', results: '生成的短视频', highlights: '亮点分析', download: '下载', preview: '预览',
       creditsAvailable: '积分可用',
       signInToStart: '后开始处理视频',
@@ -573,6 +589,14 @@ export const translations: Record<Locale, Record<string, string>> = {
     },
     video: {
       input: { title: '輸入影片', url: '影片連結 (YouTube/B站)', upload: '上傳影片', placeholder: '貼上YouTube或B站影片連結...' },
+      quality: {
+        sd: '標清',
+        hd: '高清',
+        sdDesc: '生成速度快，檔案體積小',
+        hdDesc: '畫質更好，等待時間較長',
+        hdWarning: '高清模式下載時間可能較長。如逾時將自動降級為標清模式。',
+        switchToSd: '切換到標清模式以獲得更快的結果',
+      },
       process: '處理影片', processing: '處理中...', analyze: '分析', results: '生成的短片', highlights: '亮點分析', download: '下載', preview: '預覽',
       creditsAvailable: '積分可用', signInToStart: '後開始處理影片', pasteUrlPlaceholder: '貼上影片連結 (MP4, MOV, AVI...)', useLocalAgent: '使用本機 Mac 用戶端（推薦用於穩定的 YouTube 處理）', uploadLocal: '上傳本機影片檔案（YouTube連結無法存取時推薦使用）', selectedFile: '已選擇', downloadMacApp: '下載 Mac 用戶端', viewPricing: '查看定價', clipsReady: '個片段就緒', playableClips: '個可播放片段', failedClips: '個失敗', aiFinished: 'AI 已完成從來源影片中篩選最精彩時刻。', openToPreview: '點擊就緒片段可線上預覽，或直接下載 MP4 檔案。', clipsBeingGenerated: '正在生成片段：', videoPreviewNotAvailable: '影片預覽不可用', clipMayStillProcessing: '該片段可能仍在處理中或生成失敗。', insufficientCredits: '積分不足，至少需要30積分。', enterVideoUrl: '請輸入影片連結或上傳本機影片檔案。', enterValidUrl: '請輸入有效的 http(s) 影片連結。',
       stage: {
@@ -645,6 +669,14 @@ export const translations: Record<Locale, Record<string, string>> = {
     },
     video: {
       input: { title: '動画入力', url: '動画URL (YouTube/Bilibili)', upload: '動画アップロード', placeholder: 'YouTubeまたはBilibiliの動画リンクを貼り付け...' },
+      quality: {
+        sd: '標準',
+        hd: '高画質',
+        sdDesc: '高速生成、ファイルサイズ小',
+        hdDesc: '高画質、待ち時間長め',
+        hdWarning: 'HDモードはダウンロードに時間がかかる場合があります。タイムアウトした場合は自動的にSDに切り替わります。',
+        switchToSd: 'より速い結果のために標準モードに切り替え',
+      },
       process: '動画を処理', processing: '処理中...', analyze: '分析', results: '生成されたショート', highlights: 'ハイライト分析', download: 'ダウンロード', preview: 'プレビュー',
       creditsAvailable: 'クレジット利用可能', signInToStart: '動画処理を開始するには', pasteUrlPlaceholder: '動画URLを貼り付け (MP4, MOV, AVI...)', useLocalAgent: 'ローカルMacエージェントを使用（安定したYouTube処理に推奨）', uploadLocal: 'ローカル動画ファイルをアップロード（YouTubeリンクがブロックされている場合に推奨）', selectedFile: '選択済み', downloadMacApp: 'Macアプリをダウンロード', viewPricing: '料金を見る', clipsReady: 'クリップ準備完了', playableClips: '再生可能なクリップ', failedClips: '失敗', aiFinished: 'AIがソース動画から最も強力な瞬間の選択を完了しました。', openToPreview: '準備完了のクリップを開いてプレビューするか、MP4を直接ダウンロードしてください。', clipsBeingGenerated: 'クリップ生成中:', videoPreviewNotAvailable: '動画プレビューは利用できません', clipMayStillProcessing: 'クリップはまだ処理中か、生成に失敗した可能性があります。', insufficientCredits: 'クレジット不足です。最低30クレジットが必要です。', enterVideoUrl: '動画URLを入力するか、ローカル動画ファイルをアップロードしてください。', enterValidUrl: '有効な公開http(s)動画URLを入力してください。',
       stage: {

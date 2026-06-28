@@ -180,6 +180,7 @@ export default function VideoProcessor() {
   const { balance, refreshCredits, deductCredits } = useCredits();
 
   const [useAgent, setUseAgent] = useState(false);
+  const [quality, setQuality] = useState<'sd' | 'hd'>('sd');
   const [videoUrl, setVideoUrl] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -508,6 +509,7 @@ export default function VideoProcessor() {
         userId: user.id,
         sourceType: selectedFile ? 'upload' : 'url',
         aiConfig: getAdminAiConfig(),
+        quality,
       });
 
       if (error) return;
@@ -525,6 +527,7 @@ export default function VideoProcessor() {
           clipLimit: batchLimit,
           jobId,
           videoId,
+          quality,
         });
         if (error) break;
       }
@@ -663,6 +666,53 @@ export default function VideoProcessor() {
             />
             {t('video.useLocalAgent')}
           </label>
+
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+              <Zap className="h-3.5 w-3.5" />
+              <span>{quality === 'sd' ? t('video.quality.sd') : t('video.quality.hd')} Mode</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setQuality('sd')}
+                disabled={isProcessing || isUploading}
+                className={`relative flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-all ${
+                  quality === 'sd'
+                    ? 'border-primary bg-primary/10 text-primary shadow-sm'
+                    : 'border-border bg-background hover:border-primary/30 text-muted-foreground hover:text-foreground'
+                } ${isProcessing || isUploading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+              >
+                <div className="flex items-center gap-2">
+                  <Zap className="h-4 w-4" />
+                  <span className="text-sm font-semibold">{t('video.quality.sd')}</span>
+                </div>
+                <p className="text-xs opacity-80">{t('video.quality.sdDesc')}</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setQuality('hd')}
+                disabled={isProcessing || isUploading}
+                className={`relative flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-all ${
+                  quality === 'hd'
+                    ? 'border-primary bg-primary/10 text-primary shadow-sm'
+                    : 'border-border bg-background hover:border-primary/30 text-muted-foreground hover:text-foreground'
+                } ${isProcessing || isUploading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+              >
+                <div className="flex items-center gap-2">
+                  <Sparkles className="h-4 w-4" />
+                  <span className="text-sm font-semibold">{t('video.quality.hd')}</span>
+                </div>
+                <p className="text-xs opacity-80">{t('video.quality.hdDesc')}</p>
+              </button>
+            </div>
+            {quality === 'hd' && (
+              <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400">
+                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                <p>{t('video.quality.hdWarning')}</p>
+              </div>
+            )}
+          </div>
 
           <div
             className="border-2 border-dashed border-border rounded-lg p-3 text-center cursor-pointer hover:border-primary/50 transition-colors"

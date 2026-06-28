@@ -7,6 +7,8 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
+const IS_VERCEL = !!process.env.VERCEL;
+
 interface ProcessVideoRequest {
   videoUrl?: string;
   userId?: string;
@@ -19,6 +21,7 @@ interface ProcessVideoRequest {
   clipLimit?: number;
   jobId?: string;
   videoId?: string;
+  quality?: 'sd' | 'hd';
 }
 
 interface Highlight {
@@ -150,6 +153,7 @@ export async function POST(request: NextRequest) {
   const suppliedDuration = clampInt(body.duration, 0, 100_000, 0);
   const suppliedTitle = typeof body.title === 'string' ? body.title.trim().slice(0, 120) : '';
   const suppliedVideoId = typeof body.videoId === 'string' ? body.videoId.trim() : '';
+  const quality = body.quality === 'hd' ? 'hd' : 'sd';
   const abortSignal = request.signal;
   const authHeader = request.headers.get('authorization') || '';
   const bearerToken = authHeader.toLowerCase().startsWith('bearer ') ? authHeader.slice(7).trim() : '';
@@ -459,53 +463,97 @@ export async function POST(request: NextRequest) {
           }
         };
 
-        startSourceProgressTimer(46, [
-          { p: 47, m: isBilibili ? 'Connecting to Bilibili video stream...' : 'Connecting to video stream...' },
-          { p: 48, m: 'Downloading video to local cache...' },
-          { p: 49, m: 'Finalizing video source...' },
-        ], 12000);
+        const isHD = quality === 'hd';
+        const sdTimeout = IS_VERCEL ? 60_000 : 90_000;
+        const hdTimeout = IS_VERCEL ? 60_000 : 90_000;
 
-        try {
-          source = await promiseWithTimeout(
-            videoClipper.downloadSourceVideo(videoUrl),
-            150_000,
-            'Failed to prepare source video within time limit. This YouTube video may require login or be blocked. Please retry or try another video.',
-          );
-        } catch (error) {
-          const errorMsg = error instanceof Error ? error.message : 'Failed to prepare source video.';
-          const ytId = extractYouTubeId(videoUrl);
+        if (isHD) {
+          startSourceProgressTimer(46, [
+            { p: 47, m: isBilibili ? 'Connecting to Bilibili video stream (HD)...' : 'Connecting to video stream (HD)...' },
+            { p: 48, m: 'Downloading HD video to local cache...' },
+            { p: 49, m: 'Finalizing HD video source...' },
+          ], 10000);
 
-          if (ytId && !isLinkOnlyMode) {
-            console.warn(`HD source preparation failed, trying SD fallback (360p) for ${ytId}:`, errorMsg.slice(0, 150));
-            startSourceProgressTimer(48, [
-              { p: 48, m: 'HD download failed, trying SD quality...' },
-              { p: 49, m: 'Downloading SD video...' },
-              { p: 49.5, m: 'Finalizing SD source...' },
-            ], 10000);
-            try {
-              source = await promiseWithTimeout(
-                videoClipper.downloadSourceVideo(videoUrl, { forceRefresh: true, forceMaxHeight: 360 }),
-                90_000,
-                'SD fallback also failed. Video may be fully blocked by YouTube bot detection.',
-              );
-              console.log('SD fallback succeeded — will generate SD clips instead of link_only');
+          try {
+            source = await promiseWithTimeout(
+              videoClipper.downloadSourceVideo(videoUrl),
+              hdTimeout,
+              'HD download timed out. Falling back to SD quality for faster results...',
+            );
+            stopSourceProgressTimer();
+          } catch (hdError) {
+            const hdMsg = hdError instanceof Error ? hdError.message : 'HD download failed.';
+            const ytId = extractYouTubeId(videoUrl);
+            console.warn(`HD source preparation failed, falling back to SD for ${ytId || videoUrl.slice(0, 50)}:`, hdMsg.slice(0, 120));
+
+            if (ytId || !isLinkOnlyMode) {
+              startSourceProgressTimer(48, [
+                { p: 48, m: 'HD download timed out, switching to SD quality for faster results...' },
+                { p: 49, m: 'Downloading SD video...' },
+                { p: 49.5, m: 'Finalizing SD source...' },
+              ], 8000);
+              try {
+                source = await promiseWithTimeout(
+                  videoClipper.downloadSourceVideo(videoUrl, { forceRefresh: true, forceMaxHeight: 360 }),
+                  sdTimeout,
+                  'SD download also failed. Video may be blocked.',
+                );
+                console.log('SD fallback succeeded after HD timeout');
+                stopSourceProgressTimer();
+              } catch (sdError) {
+                const sdMsg = sdError instanceof Error ? sdError.message : 'SD fallback failed.';
+                console.warn(`SD fallback also failed:`, sdMsg.slice(0, 120));
+                stopSourceProgressTimer();
+                const ytIdForLink = extractYouTubeId(videoUrl);
+                if (ytIdForLink) {
+                  isLinkOnlyMode = true;
+                  linkOnlyVideoId = ytIdForLink;
+                  if (!send({
+                    stage: 'generating_clip',
+                    progress: 50,
+                    message: 'Video download blocked. Generating highlight links with timestamps instead...',
+                    data: { jobId, videoId: dbVideoId || undefined, linkOnlyMode: true },
+                  })) return;
+                } else {
+                  throw new Error(`Failed to prepare source video: ${sdMsg}`);
+                }
+              }
+            } else {
               stopSourceProgressTimer();
-            } catch (sdError) {
-              const sdMsg = sdError instanceof Error ? sdError.message : 'SD fallback failed.';
-              console.warn(`SD fallback also failed for ${ytId}:`, sdMsg.slice(0, 150));
-              stopSourceProgressTimer();
+              throw new Error(`Failed to prepare source video: ${hdMsg}`);
+            }
+          }
+        } else {
+          startSourceProgressTimer(46, [
+            { p: 47, m: isBilibili ? 'Connecting to Bilibili video stream...' : 'Connecting to video stream...' },
+            { p: 48, m: 'Downloading video to local cache...' },
+            { p: 49, m: 'Finalizing video source...' },
+          ], 8000);
+
+          try {
+            source = await promiseWithTimeout(
+              videoClipper.downloadSourceVideo(videoUrl, { forceMaxHeight: 360 }),
+              sdTimeout,
+              'Failed to prepare source video within time limit. This video may require login or be blocked. Please retry or try another video.',
+            );
+            stopSourceProgressTimer();
+          } catch (error) {
+            const errorMsg = error instanceof Error ? error.message : 'Failed to prepare source video.';
+            const ytId = extractYouTubeId(videoUrl);
+            stopSourceProgressTimer();
+
+            if (ytId && !isLinkOnlyMode) {
               isLinkOnlyMode = true;
               linkOnlyVideoId = ytId;
               if (!send({
                 stage: 'generating_clip',
                 progress: 50,
-                message: 'Video download blocked by YouTube. Generating highlight links with timestamps instead...',
+                message: 'Video download blocked. Generating highlight links with timestamps instead...',
                 data: { jobId, videoId: dbVideoId || undefined, linkOnlyMode: true },
               })) return;
+            } else {
+              throw new Error(`Failed to prepare source video: ${errorMsg}`);
             }
-          } else {
-            stopSourceProgressTimer();
-            throw new Error(`Failed to prepare source video: ${errorMsg}`);
           }
         }
 
