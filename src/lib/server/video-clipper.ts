@@ -1044,11 +1044,14 @@ async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInf
   // /stream may hit different CF colos; passing streamUrl causes fast path
   // failure (ip= mismatch) and extra API calls that trigger rate-limiting.
   // /stream does fresh tryClient on its own colo instead.
-  const buildStreamProxyUrl = () => {
+  // audio=1 parameter tells /stream to fetch resolved.audioUrl (separate audio
+  // stream from adaptiveFormats) instead of resolved.streamUrl (video-only).
+  const buildStreamProxyUrl = (isAudio = false) => {
     const endpoint = new URL(cfWorkerUrl);
     endpoint.pathname = `${endpoint.pathname.replace(/\/$/, '')}/stream`;
     endpoint.searchParams.set('videoId', videoId);
     endpoint.searchParams.set('maxHeight', String(maxHeight));
+    if (isAudio) endpoint.searchParams.set('audio', '1');
     return endpoint.toString();
   };
 
@@ -1059,9 +1062,9 @@ async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInf
     return {
       title: data.title || 'YouTube Video',
       duration: data.duration || 300,
-      streamUrl: buildStreamProxyUrl(),
+      streamUrl: buildStreamProxyUrl(false),
       subtitleUrl: null,
-      audioUrl: buildStreamProxyUrl(),
+      audioUrl: buildStreamProxyUrl(true),
     };
   }
 
@@ -1071,7 +1074,7 @@ async function getYouTubeInfoViaCFWorker(videoId: string): Promise<PipedVideoInf
   return {
     title: data.title || 'YouTube Video',
     duration: data.duration || 300,
-    streamUrl: buildStreamProxyUrl(),
+    streamUrl: buildStreamProxyUrl(false),
     subtitleUrl: null,
   };
 }
@@ -2356,7 +2359,8 @@ async function preflightStream(url: string): Promise<boolean> {
 // resolved the stream). CF Worker /stream fetches via Cloudflare IP and
 // forwards to Vercel. If the URL is already a /stream proxy URL (from
 // getYouTubeInfoViaCFWorker) or CF Worker is not configured, returns as-is.
-function wrapInStreamProxyIfNeeded(streamUrl: string, videoId: string): string {
+// isAudio=true adds &audio=1 param so /stream fetches resolved.audioUrl.
+function wrapInStreamProxyIfNeeded(streamUrl: string, videoId: string, isAudio = false): string {
   const cfWorkerUrl = getCfWorkerUrl();
   if (!cfWorkerUrl) return streamUrl;
 
@@ -2381,6 +2385,7 @@ function wrapInStreamProxyIfNeeded(streamUrl: string, videoId: string): string {
   endpoint.pathname = `${endpoint.pathname.replace(/\/$/, '')}/stream`;
   endpoint.searchParams.set('videoId', videoId);
   endpoint.searchParams.set('maxHeight', String(maxHeight));
+  if (isAudio) endpoint.searchParams.set('audio', '1');
   return endpoint.toString();
 }
 
@@ -2407,8 +2412,8 @@ async function downloadYouTubeOrGenericVideo(
       // Wrap googlevideo.com direct URLs in CF Worker /stream proxy.
       // CF Worker /stream fetches via Cloudflare IP (not blocked by googlevideo.com)
       // and forwards to Vercel. /stream also handles colo mismatch via HD re-resolve.
-      const wrappedStreamUrl = wrapInStreamProxyIfNeeded(streamUrl, videoId);
-      const wrappedAudioUrl = audioUrl ? wrapInStreamProxyIfNeeded(audioUrl, videoId) : undefined;
+      const wrappedStreamUrl = wrapInStreamProxyIfNeeded(streamUrl, videoId, false);
+      const wrappedAudioUrl = audioUrl ? wrapInStreamProxyIfNeeded(audioUrl, videoId, true) : undefined;
 
       const internalBaseUrl = getAppBaseUrl();
       const isProxied = wrappedStreamUrl.includes('youtube-proxy') || wrappedStreamUrl.includes('/stream');

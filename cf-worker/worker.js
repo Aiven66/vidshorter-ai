@@ -132,6 +132,30 @@ const COBALT_INSTANCES = [
   'https://cobalt.api.timelessnesses.me/',
 ];
 
+// Invidious & Piped instances — fallback when InnerTube API is rate-limited.
+// These return googlevideo.com direct URLs which CF Workers can fetch directly
+// (CF IPs are not blocked by googlevideo.com, unlike Vercel/AWS IPs).
+const INVIDIOUS_INSTANCES = [
+  'https://inv.nadeko.net',
+  'https://invidious.nerdvpn.de',
+  'https://yewtu.be',
+  'https://iv.datura.network',
+  'https://invidious.lunar.icu',
+  'https://invidious.privacyredirect.com',
+  'https://yt.artemislena.eu',
+];
+
+const PIPED_INSTANCES = [
+  'https://pipedapi.kavin.rocks',
+  'https://piped-api.garudalinux.org',
+  'https://api.piped.yt',
+  'https://pipedapi.tokhmi.xyz',
+  'https://pipedapi.mha.fi',
+  'https://watchapi.whatever.social',
+  'https://api.piped.projectsegfau.lt',
+  'https://piped-api.privacy.com.de',
+];
+
 function resolveCacheRequest(videoId, maxHeight) {
   const u = new URL('https://cache.youtube-proxy.local/resolve');
   u.searchParams.set('videoId', videoId);
@@ -191,10 +215,16 @@ export default {
         // Skip tryClient/HD re-resolve. Used by Vercel preflight to quickly
         // detect colo-mismatch failures before committing to ffmpeg input.
         const quickCheck = url.searchParams.get('quickCheck') === '1';
+        // audio=1: fetch resolved.audioUrl instead of resolved.streamUrl.
+        // Used when /resolve returns adaptiveFormats (video-only + audio) and
+        // Vercel's ffmpeg needs separate audio input.
+        const wantAudio = url.searchParams.get('audio') === '1';
 
         const doFetch = (resolved) => {
           const isCobalt = resolved?.client === 'cobalt';
-          return fetch(resolved.streamUrl, {
+          // When audio=1, fetch audioUrl (falls back to streamUrl if no audioUrl)
+          const fetchUrl = (wantAudio && resolved.audioUrl) ? resolved.audioUrl : resolved.streamUrl;
+          return fetch(fetchUrl, {
             headers: {
               Range: range,
               'User-Agent': resolved.userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
@@ -247,86 +277,13 @@ export default {
           // /stream hit different CF colos — the streamUrl's ip= param is bound
           // to the /resolve colo's IP, not the /stream colo's IP).
           //
-          // Do NOT fall through to the full heights loop below — it accepts the
-          // first success regardless of quality, which returns 360p combined
-          // (itag 18) and produces blurry clips. Instead, re-resolve HD only
-          // (720p+). If HD is unavailable, return 502 so Vercel's
-          // getYouTubeStreamUrlWithFallbacks advances to the next getter
-          // (Invidious/Piped/cobalt) instead of silently degrading to 360p.
-          const directAudioUrl = url.searchParams.get('audioUrl');
-          if (directAudioUrl) {
-            // Try the audioUrl too — if video failed but audio works, the video
-            // URL might be stale while audio is still valid (different CDN node).
-            const audioResolved = { ...directResolved, streamUrl: directAudioUrl };
-            const audioUpstream = await doFetch(audioResolved);
-            // Don't return audio-only; just log for diagnostics.
-            errors.push(`directAudio: HTTP ${audioUpstream.status}`);
-            audioUpstream.body?.cancel?.();
-          }
-
-          const hdOnlyHeights = Array.from(
-            new Set([effectiveMaxHeight, 720, 1080].filter((h) => h >= 480 && h <= MAX_HEIGHT)),
-          ).sort((a, b) => b - a);
-
-          for (const h of hdOnlyHeights) {
-            const cacheKey = `${videoId}|${String(h)}`;
-
-            // Try cache first — /resolve may have populated it on this colo.
-            const cachedResolved = await cacheGetResolved(videoId, h);
-            if (cachedResolved?.streamUrl) {
-              const cachedUpstream = await doFetch(cachedResolved);
-              if (cachedUpstream.status === 200 || cachedUpstream.status === 206) {
-                if (!cache.get(cacheKey)) {
-                  cache.set(cacheKey, { value: cachedResolved, expiresAt: Date.now() + 10 * 60 * 1000 });
-                }
-                return passthroughStream(cachedUpstream);
-              }
-              const cachedBody = await cachedUpstream.text().catch(() => '');
-              errors.push(`cachedHD@${h}: HTTP ${cachedUpstream.status} ${cachedBody.slice(0, 80)}`);
-            }
-
-            // Try each client — accept SD-or-better results (audioUrl or quality ≥ 480p).
-            // 360p is rejected to avoid the blurry output bug. 480p is accepted as
-            // fallback when YouTube rate-limits 720p+ (common after repeated requests).
-            for (const client of CLIENTS) {
-              try {
-                const info = await tryClient(videoId, client, h, cookieHeader);
-                const infoHeight = parseQuality(info.quality);
-                const isHd = !!info.audioUrl || infoHeight >= 480;
-                if (!isHd) {
-                  errors.push(`${client.name}@${h}: non-HD (${info.quality || '?'})`);
-                  continue;
-                }
-                const resolved = {
-                  streamUrl: info.streamUrl,
-                  userAgent: info.userAgent,
-                  visitorData: info.visitorData,
-                  xClientName: info.xClientName,
-                  clientVersion: info.clientVersion,
-                  title: info.title,
-                  duration: info.duration,
-                  quality: info.quality,
-                  client: client.name,
-                  ...(info.audioUrl ? { audioUrl: info.audioUrl } : {}),
-                };
-                const hdUpstream = await doFetch(resolved);
-                if (hdUpstream.status === 200 || hdUpstream.status === 206) {
-                  cache.set(cacheKey, { value: resolved, expiresAt: Date.now() + 10 * 60 * 1000 });
-                  await cachePutResolved(videoId, h, resolved);
-                  return passthroughStream(hdUpstream);
-                }
-                const hdBody = await hdUpstream.text().catch(() => '');
-                errors.push(`${client.name}@${h}: HTTP ${hdUpstream.status} ${hdBody.slice(0, 80)}`);
-              } catch (e) {
-                errors.push(`${client.name}@${h}: ${(e instanceof Error ? e.message : String(e)).slice(0, 80)}`);
-              }
-            }
-          }
-
-          // HD re-resolve failed — fall through to the full heights loop below
-          // which accepts any quality (including 360p). 360p is better than
-          // failing entirely and producing no clip at all.
-          // The heights loop will try cache + tryClient + cobalt for all heights.
+          // Fall through directly to the heights loop below. The heights loop
+          // tries HD heights first (1080, 720), then SD (480, 360, etc.).
+          // It checks cache first (warm if /resolve ran on this colo), then
+          // tryClient. This avoids the previous HD re-resolve block which made
+          // 14+ InnerTube API calls and triggered YouTube rate-limiting, causing
+          // ALL subsequent tryClient calls to fail (even in the heights loop).
+          // The heights loop stops at the first success, minimizing API calls.
         }
 
         const heights = Array.from(new Set([effectiveMaxHeight, 720, 480, 360, 240, 144].filter(Boolean)));
@@ -409,7 +366,45 @@ export default {
           }
         }
 
-        return json({ error: 'All clients failed to stream', details: errors.slice(0, 12).join(' | ') }, 502);
+        // ── Last-resort fallback: Invidious & Piped ──────────────────────────
+        // Reached when ALL tryClient + cobalt attempts fail across ALL heights.
+        // This typically happens when YouTube rate-limits InnerTube API on the
+        // current CF colo. Invidious/Piped are independent services that return
+        // googlevideo.com direct URLs — CF Workers can fetch these directly
+        // (CF IPs are not blocked by googlevideo.com, unlike Vercel/AWS IPs).
+        for (const fallback of [
+          { name: 'Invidious', fn: () => getYouTubeStreamViaInvidious(videoId, effectiveMaxHeight) },
+          { name: 'Piped', fn: () => getYouTubeStreamViaPiped(videoId, effectiveMaxHeight) },
+        ]) {
+          try {
+            const result = await fallback.fn();
+            const resolved = {
+              streamUrl: result.url,
+              userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+              visitorData: '',
+              xClientName: '1',
+              clientVersion: '2.20240101.00.00',
+              title: 'YouTube Video',
+              duration: 300,
+              quality: result.quality,
+              client: result.source,
+              ...(result.audioUrl ? { audioUrl: result.audioUrl } : {}),
+            };
+            const upstream = await doFetch(resolved);
+            if (upstream.status === 200 || upstream.status === 206) {
+              const cacheKey2 = `${videoId}|${effectiveMaxHeight}`;
+              cache.set(cacheKey2, { value: resolved, expiresAt: Date.now() + 10 * 60 * 1000 });
+              await cachePutResolved(videoId, effectiveMaxHeight, resolved);
+              return passthroughStream(upstream);
+            }
+            const body = await upstream.text().catch(() => '');
+            errors.push(`${fallback.name}@${effectiveMaxHeight}: HTTP ${upstream.status} ${body.slice(0, 120)}`);
+          } catch (e) {
+            errors.push(`${fallback.name}@${effectiveMaxHeight}: ${(e instanceof Error ? e.message : String(e)).slice(0, 120)}`);
+          }
+        }
+
+        return json({ error: 'All clients failed to stream', colo: request.cf?.colo || '?', details: errors.slice(0, 12).join(' | ') }, 502);
 
       } catch (e) {
         return json({ error: e instanceof Error ? e.message : String(e) }, 502);
@@ -445,7 +440,7 @@ export default {
           const result = await tryClient(videoId, client, h, cookieHeader);
           if (result) {
             await cachePutResolved(videoId, h, { ...result, client: client.name });
-            return json({ ...result, client: client.name });
+            return json({ ...result, client: client.name, colo: request.cf?.colo || '?' });
           }
           errors.push(`${client.name}@${h}: no stream URL`);
         } catch (e) {
@@ -472,6 +467,36 @@ export default {
       } catch (e) {
         const msg = (e instanceof Error ? e.message : String(e)).slice(0, 150);
         errors.push(`cobalt@${h}: ${msg}`);
+      }
+    }
+
+    // ── Last-resort fallback: Invidious & Piped ────────────────────────────
+    // Reached when ALL tryClient + cobalt attempts fail across ALL heights.
+    // Invidious/Piped return googlevideo.com direct URLs that CF Workers can
+    // fetch directly (CF IPs are not blocked by googlevideo.com).
+    for (const fallback of [
+      { name: 'Invidious', fn: () => getYouTubeStreamViaInvidious(videoId, requestedMaxHeight) },
+      { name: 'Piped', fn: () => getYouTubeStreamViaPiped(videoId, requestedMaxHeight) },
+    ]) {
+      try {
+        const result = await fallback.fn();
+        const resolved = {
+          title: 'YouTube Video',
+          duration: 300,
+          streamUrl: result.url,
+          quality: result.quality,
+          userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+          visitorData: '',
+          xClientName: '1',
+          clientVersion: '2.20240101.00.00',
+          client: result.source,
+          ...(result.audioUrl ? { audioUrl: result.audioUrl } : {}),
+        };
+        await cachePutResolved(videoId, requestedMaxHeight, resolved);
+        return json({ ...resolved, colo: request.cf?.colo || '?' });
+      } catch (e) {
+        const msg = (e instanceof Error ? e.message : String(e)).slice(0, 150);
+        errors.push(`${fallback.name}@${requestedMaxHeight}: ${msg}`);
       }
     }
 
@@ -819,4 +844,123 @@ async function getYouTubeStreamViaCobalt(videoId, maxHeight) {
     }
   }
   throw new Error(`All cobalt instances failed. Last: ${lastError}`);
+}
+
+// Invidious fallback — returns googlevideo.com direct URLs.
+// CF Workers can fetch these directly (CF IPs are not blocked by googlevideo.com).
+// Used when InnerTube API (tryClient) is rate-limited on the current colo.
+// Prefers adaptiveFormats (video-only + audio) for HD quality, since
+// formatStreams (combined/muxed) typically max out at 360p (itag 18).
+async function getYouTubeStreamViaInvidious(videoId, maxHeight) {
+  const maxH = Math.min(parseInt(String(maxHeight || 720), 10) || 720, 1080);
+  let lastError = 'no instances tried';
+  for (const instance of INVIDIOUS_INSTANCES) {
+    try {
+      const res = await fetch(`${instance}/api/v1/videos/${videoId}`, {
+        headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (!res.ok) { lastError = `${instance}: HTTP ${res.status}`; continue; }
+      const data = await res.json();
+      if (!data?.formatStreams?.length && !data?.adaptiveFormats?.length) {
+        lastError = `${instance}: no streams`;
+        continue;
+      }
+
+      // adaptiveFormats — pick best video-only mp4 under maxH + best audio mp4
+      const videoOnly = (data.adaptiveFormats || [])
+        .filter((s) => s?.url && s?.type?.includes('video/mp4'))
+        .map((s) => {
+          const m = /(\d+)p/.exec(s.qualityLabel || s.resolution || '');
+          return { url: s.url, h: m ? parseInt(m[1], 10) : 0 };
+        })
+        .filter((s) => s.h > 0 && s.h <= maxH)
+        .sort((a, b) => b.h - a.h);
+      const audioOnly = (data.adaptiveFormats || [])
+        .filter((s) => s?.url && s?.type?.includes('audio/mp4'))
+        .sort((a, b) => parseInt(b.bitrate || '0', 10) - parseInt(a.bitrate || '0', 10));
+
+      if (videoOnly.length > 0) {
+        return {
+          url: videoOnly[0].url,
+          audioUrl: audioOnly.length > 0 ? audioOnly[0].url : null,
+          quality: `${videoOnly[0].h}p`,
+          source: 'invidious',
+        };
+      }
+
+      // Fallback: combined (muxed) stream — typically 360p only
+      const combined = (data.formatStreams || [])
+        .filter((s) => s?.url && s?.type?.includes('video/mp4'))
+        .map((s) => {
+          const m = /(\d+)p/.exec(s.qualityLabel || s.resolution || '');
+          return { url: s.url, h: m ? parseInt(m[1], 10) : 0 };
+        })
+        .filter((s) => s.h > 0 && s.h <= maxH)
+        .sort((a, b) => b.h - a.h);
+      if (combined.length > 0) {
+        return { url: combined[0].url, audioUrl: null, quality: `${combined[0].h}p`, source: 'invidious' };
+      }
+      lastError = `${instance}: no suitable stream`;
+    } catch (e) {
+      lastError = `${instance}: ${(e instanceof Error ? e.message : String(e)).slice(0, 120)}`;
+    }
+  }
+  throw new Error(`All Invidious instances failed. Last: ${lastError}`);
+}
+
+// Piped fallback — returns googlevideo.com direct URLs (often ciphered, but
+// Piped handles deciphering server-side and returns usable URLs).
+async function getYouTubeStreamViaPiped(videoId, maxHeight) {
+  const maxH = Math.min(parseInt(String(maxHeight || 720), 10) || 720, 1080);
+  let lastError = 'no instances tried';
+  for (const instance of PIPED_INSTANCES) {
+    try {
+      const res = await fetch(`${instance}/streams/${videoId}`, {
+        headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (!res.ok) { lastError = `${instance}: HTTP ${res.status}`; continue; }
+      const data = await res.json();
+      if (!data?.videoStreams?.length && !data?.audioStreams?.length) {
+        lastError = `${instance}: no streams`;
+        continue;
+      }
+      // videoStreams: pick best video-only mp4 under maxH
+      const videoOnly = (data.videoStreams || [])
+        .filter((s) => s?.url && s?.mimeType?.includes('video/mp4') && s.videoOnly === true)
+        .map((s) => ({ url: s.url, h: parseInt(s.quality, 10) || 0 }))
+        .filter((s) => s.h > 0 && s.h <= maxH)
+        .sort((a, b) => b.h - a.h);
+      // combined (muxed) streams
+      const combined = (data.videoStreams || [])
+        .filter((s) => s?.url && s?.mimeType?.includes('video/mp4') && s.videoOnly === false)
+        .map((s) => ({ url: s.url, h: parseInt(s.quality, 10) || 0 }))
+        .filter((s) => s.h > 0 && s.h <= maxH)
+        .sort((a, b) => b.h - a.h);
+      const audioOnly = (data.audioStreams || [])
+        .filter((s) => s?.url && s?.mimeType?.includes('audio/mp4'))
+        .sort((a, b) => parseInt(b.quality, 10) - parseInt(a.quality, 10));
+      if (videoOnly.length > 0) {
+        return {
+          url: videoOnly[0].url,
+          audioUrl: audioOnly.length > 0 ? audioOnly[0].url : null,
+          quality: `${videoOnly[0].h}p`,
+          source: 'piped',
+        };
+      }
+      if (combined.length > 0) {
+        return {
+          url: combined[0].url,
+          audioUrl: null,
+          quality: `${combined[0].h}p`,
+          source: 'piped',
+        };
+      }
+      lastError = `${instance}: no suitable stream`;
+    } catch (e) {
+      lastError = `${instance}: ${(e instanceof Error ? e.message : String(e)).slice(0, 120)}`;
+    }
+  }
+  throw new Error(`All Piped instances failed. Last: ${lastError}`);
 }
