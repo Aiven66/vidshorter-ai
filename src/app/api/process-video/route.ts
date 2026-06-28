@@ -428,27 +428,42 @@ export async function POST(request: NextRequest) {
         }
 
         let lastSourceProgress = 46;
-        const sourceStartAt = Date.now();
-        const sourceProgressInterval = setInterval(() => {
-          const stages = [
-            { p: 47, m: isBilibili ? 'Connecting to Bilibili video stream...' : 'Connecting to video stream...' },
-            { p: 48, m: 'Downloading video to local cache...' },
-            { p: 49, m: 'Finalizing video source...' },
-          ];
-          const now = Date.now();
-          const elapsed = now - sourceStartAt;
-          const stageIndex = Math.min(stages.length - 1, Math.floor(elapsed / 15000));
-          const stage = stages[stageIndex];
-          if (lastSourceProgress !== stage.p) {
-            lastSourceProgress = stage.p;
-            send({
-              stage: 'generating_clip',
-              progress: stage.p,
-              message: stage.m,
-              data: { jobId, videoId: dbVideoId || undefined },
-            });
+        let sourceStartAt = Date.now();
+        let sourceProgressInterval: NodeJS.Timeout | null = null;
+
+        const startSourceProgressTimer = (startProgress: number, stages: { p: number; m: string }[], stepMs: number) => {
+          if (sourceProgressInterval) clearInterval(sourceProgressInterval);
+          lastSourceProgress = startProgress;
+          sourceStartAt = Date.now();
+          sourceProgressInterval = setInterval(() => {
+            const now = Date.now();
+            const elapsed = now - sourceStartAt;
+            const stageIndex = Math.min(stages.length - 1, Math.floor(elapsed / stepMs));
+            const stage = stages[stageIndex];
+            if (lastSourceProgress !== stage.p) {
+              lastSourceProgress = stage.p;
+              send({
+                stage: 'generating_clip',
+                progress: stage.p,
+                message: stage.m,
+                data: { jobId, videoId: dbVideoId || undefined },
+              });
+            }
+          }, 3000);
+        };
+
+        const stopSourceProgressTimer = () => {
+          if (sourceProgressInterval) {
+            clearInterval(sourceProgressInterval);
+            sourceProgressInterval = null;
           }
-        }, 5000);
+        };
+
+        startSourceProgressTimer(46, [
+          { p: 47, m: isBilibili ? 'Connecting to Bilibili video stream...' : 'Connecting to video stream...' },
+          { p: 48, m: 'Downloading video to local cache...' },
+          { p: 49, m: 'Finalizing video source...' },
+        ], 12000);
 
         try {
           source = await promiseWithTimeout(
@@ -462,28 +477,25 @@ export async function POST(request: NextRequest) {
 
           if (ytId && !isLinkOnlyMode) {
             console.warn(`HD source preparation failed, trying SD fallback (360p) for ${ytId}:`, errorMsg.slice(0, 150));
-            if (!send({
-              stage: 'generating_clip',
-              progress: 48,
-              message: 'HD download failed, trying SD quality...',
-              data: { jobId, videoId: dbVideoId || undefined },
-            })) {
-              clearInterval(sourceProgressInterval);
-              return;
-            }
+            startSourceProgressTimer(48, [
+              { p: 48, m: 'HD download failed, trying SD quality...' },
+              { p: 49, m: 'Downloading SD video...' },
+              { p: 49.5, m: 'Finalizing SD source...' },
+            ], 10000);
             try {
               source = await promiseWithTimeout(
                 videoClipper.downloadSourceVideo(videoUrl, { forceRefresh: true, forceMaxHeight: 360 }),
-                150_000,
+                90_000,
                 'SD fallback also failed. Video may be fully blocked by YouTube bot detection.',
               );
               console.log('SD fallback succeeded — will generate SD clips instead of link_only');
+              stopSourceProgressTimer();
             } catch (sdError) {
               const sdMsg = sdError instanceof Error ? sdError.message : 'SD fallback failed.';
               console.warn(`SD fallback also failed for ${ytId}:`, sdMsg.slice(0, 150));
+              stopSourceProgressTimer();
               isLinkOnlyMode = true;
               linkOnlyVideoId = ytId;
-              clearInterval(sourceProgressInterval);
               if (!send({
                 stage: 'generating_clip',
                 progress: 50,
@@ -492,12 +504,12 @@ export async function POST(request: NextRequest) {
               })) return;
             }
           } else {
-            clearInterval(sourceProgressInterval);
+            stopSourceProgressTimer();
             throw new Error(`Failed to prepare source video: ${errorMsg}`);
           }
         }
 
-        clearInterval(sourceProgressInterval);
+        stopSourceProgressTimer();
 
         if (!isLinkOnlyMode && !source?.inputPath) {
           throw new Error('Failed to prepare source video: no file path returned.');

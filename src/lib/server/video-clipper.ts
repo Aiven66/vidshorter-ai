@@ -2115,7 +2115,7 @@ async function getYouTubeStreamUrlWithFallbacks(
 // (not faststart). When ffmpeg uses a remote HTTP URL as -i, it must download
 // the ENTIRE video before it can seek to any timestamp, causing 60-120s delays.
 // Solution: fetch the stream to /tmp first (~1-10s), then ffmpeg seeks instantly.
-async function downloadStreamToLocalFile(url: string, outputPath: string): Promise<boolean> {
+async function downloadStreamToLocalFile(url: string, outputPath: string, options?: { maxBudgetMs?: number }): Promise<boolean> {
   const maxBytes = 400 * 1024 * 1024; // 400 MB — stay under Vercel /tmp 512 MB limit
   try {
     await access(outputPath, fsConstants.R_OK);
@@ -2141,7 +2141,7 @@ async function downloadStreamToLocalFile(url: string, outputPath: string): Promi
     let offset = 0;
     let total: number | null = null;
     const startedAt = Date.now();
-    const budgetMs = IS_VERCEL ? 150_000 : 300_000;
+    const budgetMs = options?.maxBudgetMs || (IS_VERCEL ? 150_000 : 300_000);
     const youtubeHeaderHint = (() => {
       try {
         const u = new URL(url);
@@ -2262,7 +2262,7 @@ async function downloadStreamToLocalFile(url: string, outputPath: string): Promi
           'Accept': '*/*',
           'Accept-Encoding': 'identity',
         },
-        signal: AbortSignal.timeout(240_000),
+        signal: AbortSignal.timeout(options?.maxBudgetMs || 240_000),
       });
       if (!res.ok) {
         console.warn(`Stream fetch HTTP ${res.status}`);
@@ -2484,13 +2484,16 @@ async function downloadYouTubeOrGenericVideo(
         : undefined;
 
       try {
-        const videoDownloaded = await downloadStreamToLocalFile(wrappedStreamUrl, localPath);
+        const downloadBudgetMs = forceMaxHeight > 0
+          ? (IS_VERCEL ? 90_000 : 120_000)
+          : (IS_VERCEL ? 150_000 : 300_000);
+        const videoDownloaded = await downloadStreamToLocalFile(wrappedStreamUrl, localPath, { maxBudgetMs: downloadBudgetMs });
         if (!videoDownloaded) throw new Error('Video stream download failed');
 
         let audioDownloaded = true;
         if (wrappedAudioUrl && audioLocalPath) {
           try {
-            audioDownloaded = await downloadStreamToLocalFile(wrappedAudioUrl, audioLocalPath);
+            audioDownloaded = await downloadStreamToLocalFile(wrappedAudioUrl, audioLocalPath, { maxBudgetMs: downloadBudgetMs });
           } catch (audioErr) {
             console.warn('Audio stream download failed, will try video-only:', audioErr instanceof Error ? audioErr.message.slice(0, 100) : audioErr);
             audioDownloaded = false;
