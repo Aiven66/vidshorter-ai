@@ -94,6 +94,35 @@ const CLIENTS = [
     extra: { androidSdkVersion: 30 },
     extraHeaders: {},
   },
+  // MWEB — mobile web client, sometimes bypasses bot detection that blocks
+  // desktop WEB client. Lower priority but worth trying as extra fallback.
+  {
+    name: 'MWEB',
+    clientName: 'MWEB',
+    clientVersion: '2.20250623.01.00',
+    userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Mobile Safari/537.36',
+    xClientName: '4',
+    extra: {},
+    extraHeaders: {
+      'Referer': 'https://m.youtube.com/',
+      'Origin': 'https://m.youtube.com',
+    },
+  },
+  // WEB (regular) — desktop web client with cookies. Often triggers bot detection
+  // on datacenter IPs but CF Worker IPs are residential-like, so it may work.
+  // Last resort before giving up.
+  {
+    name: 'WEB',
+    clientName: 'WEB',
+    clientVersion: '2.20250623.00.00',
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
+    xClientName: '1',
+    extra: {},
+    extraHeaders: {
+      'Referer': 'https://www.youtube.com/',
+      'Origin': 'https://www.youtube.com',
+    },
+  },
 ];
 
 function netscapeCookiesToHeader(text) {
@@ -126,7 +155,7 @@ const MAX_HEIGHT = 1080;
 const MIN_HD_HEIGHT = 720;
 const cache = new Map();
 let playerCache = { jsUrl: '', expiresAt: 0, decipher: null };
-const BUILD_ID = '2026-06-28-hd-pref-sd-fb';
+const BUILD_ID = '2026-06-28-watch-page-scrape';
 
 const COBALT_INSTANCES = [
   'https://cobalt-api.meowing.de/',
@@ -441,6 +470,39 @@ export default {
           } catch (e) {
             errors.push(`${fallback.name}@${effectiveMaxHeight}: ${(e instanceof Error ? e.message : String(e)).slice(0, 120)}`);
           }
+        }
+
+        // ── Ultimate fallback: scrape YouTube watch page ─────────────────────
+        // When InnerTube API is rate-limited (LOGIN_REQUIRED) AND Invidious/Piped
+        // are down, try parsing ytInitialPlayerResponse directly from the watch
+        // page HTML. This is yt-dlp's approach and sometimes works because the
+        // watch page endpoint has different rate-limiting than the player API.
+        try {
+          const scrapeResult = await getStreamViaWatchPage(videoId, effectiveMaxHeight, cookieHeader);
+          if (scrapeResult?.url) {
+            const resolved = {
+              streamUrl: scrapeResult.url,
+              userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
+              visitorData: '',
+              xClientName: '1',
+              clientVersion: '2.20240101.00.00',
+              title: scrapeResult.title || 'YouTube Video',
+              duration: scrapeResult.duration || 300,
+              quality: scrapeResult.quality || 'unknown',
+              client: 'watch_page',
+              ...(scrapeResult.audioUrl ? { audioUrl: scrapeResult.audioUrl } : {}),
+            };
+            const upstream = await doFetch(resolved);
+            if (upstream.status === 200 || upstream.status === 206) {
+              cache.set(`${videoId}|${effectiveMaxHeight}`, { value: resolved, expiresAt: Date.now() + 10 * 60 * 1000 });
+              await cachePutResolved(videoId, effectiveMaxHeight, resolved);
+              return passthroughStream(upstream);
+            }
+            const body = await upstream.text().catch(() => '');
+            errors.push(`watch_page@${effectiveMaxHeight}: HTTP ${upstream.status} ${body.slice(0, 120)}`);
+          }
+        } catch (e) {
+          errors.push(`watch_page@${effectiveMaxHeight}: ${(e instanceof Error ? e.message : String(e)).slice(0, 120)}`);
         }
 
         return json({ error: 'All clients failed to stream', colo: request.cf?.colo || '?', details: errors.slice(0, 12).join(' | ') }, 502);
@@ -868,6 +930,123 @@ function passthroughStream(upstream) {
     if (v) headers.set(key, v);
   }
   return new Response(upstream.body, { status: upstream.status, headers });
+}
+
+// ── YouTube watch page scraper ─────────────────────────────────────────────
+// Parses ytInitialPlayerResponse from the watch page HTML.
+// This is yt-dlp's approach and sometimes works when InnerTube API is
+// rate-limited, because the watch page endpoint has different rate-limiting.
+async function getStreamViaWatchPage(videoId, maxHeight, cookieHeader) {
+  const maxH = Math.min(parseInt(String(maxHeight || 720), 10) || 720, 1080);
+  const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const res = await fetch(watchUrl, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+      ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+    },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`watch page HTTP ${res.status}`);
+  const html = await res.text();
+
+  // Extract ytInitialPlayerResponse JSON from the page
+  const marker = 'ytInitialPlayerResponse';
+  const idx = html.indexOf(marker);
+  if (idx < 0) throw new Error('ytInitialPlayerResponse not found');
+  // Find the JSON object after the marker
+  let start = -1;
+  for (let i = idx + marker.length; i < html.length; i += 1) {
+    if (html[i] === '{') { start = i; break; }
+  }
+  if (start < 0) throw new Error('player response JSON not found');
+
+  // Find matching closing brace
+  let depth = 0;
+  let end = -1;
+  for (let i = start; i < html.length; i += 1) {
+    if (html[i] === '{') depth += 1;
+    else if (html[i] === '}') {
+      depth -= 1;
+      if (depth === 0) { end = i + 1; break; }
+    }
+  }
+  if (end < 0) throw new Error('player response JSON incomplete');
+
+  let data;
+  try {
+    data = JSON.parse(html.slice(start, end));
+  } catch (e) {
+    throw new Error(`player response JSON parse: ${e.message}`);
+  }
+
+  const ps = data?.playabilityStatus?.status;
+  if (ps && ps !== 'OK') {
+    throw new Error(`${ps}: ${data.playabilityStatus?.reason ?? ''}`);
+  }
+
+  const formats = [
+    ...(data?.streamingData?.formats ?? []),
+    ...(data?.streamingData?.adaptiveFormats ?? []),
+  ];
+  if (!formats.length) throw new Error('no formats in watch page response');
+
+  // Parse quality label (e.g. "720p" → 720)
+  const parseQ = (label) => {
+    const m = /(\d{3,4})/.exec(label || '');
+    return m ? parseInt(m[1], 10) : 0;
+  };
+
+  // Prefer combined mp4 (video+audio) under maxH
+  const combined = formats
+    .filter((f) => f?.url && f?.mimeType?.includes('video/mp4') && (f.audioQuality || f.audioChannels))
+    .map((f) => ({ f, q: parseQ(f.qualityLabel || f.quality) }))
+    .filter((x) => x.q > 0 && x.q <= maxH)
+    .sort((a, b) => b.q - a.q);
+
+  if (combined.length > 0) {
+    return {
+      url: combined[0].f.url,
+      quality: combined[0].f.qualityLabel || combined[0].f.quality || `${combined[0].q}p`,
+      title: data?.videoDetails?.title,
+      duration: parseInt(data?.videoDetails?.lengthSeconds || '300', 10) || 300,
+    };
+  }
+
+  // Fallback: adaptiveFormats video-only + audio
+  const videoOnly = formats
+    .filter((f) => f?.url && f?.mimeType?.includes('video/mp4') && !(f.audioQuality || f.audioChannels))
+    .map((f) => ({ f, q: parseQ(f.qualityLabel || f.quality) }))
+    .filter((x) => x.q > 0 && x.q <= maxH)
+    .sort((a, b) => b.q - a.q);
+
+  const audioOnly = formats
+    .filter((f) => f?.url && (f?.mimeType?.includes('audio/mp4') || f?.mimeType?.includes('audio/')))
+    .sort((a, b) => parseInt(b.bitrate || '0', 10) - parseInt(a.bitrate || '0', 10));
+
+  if (videoOnly.length > 0) {
+    return {
+      url: videoOnly[0].f.url,
+      audioUrl: audioOnly.length > 0 ? audioOnly[0].url : null,
+      quality: videoOnly[0].f.qualityLabel || videoOnly[0].f.quality || `${videoOnly[0].q}p`,
+      title: data?.videoDetails?.title,
+      duration: parseInt(data?.videoDetails?.lengthSeconds || '300', 10) || 300,
+    };
+  }
+
+  // Last resort: any format with a URL
+  const any = formats.find((f) => f?.url);
+  if (any) {
+    return {
+      url: any.url,
+      quality: any.qualityLabel || any.quality || 'unknown',
+      title: data?.videoDetails?.title,
+      duration: parseInt(data?.videoDetails?.lengthSeconds || '300', 10) || 300,
+    };
+  }
+
+  throw new Error('no streamable formats in watch page response');
 }
 
 async function getYouTubeStreamViaCobalt(videoId, maxHeight) {
