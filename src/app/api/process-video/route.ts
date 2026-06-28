@@ -128,9 +128,13 @@ function buildYouTubeThumbnailUrl(videoId: string): string {
   return `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
 }
 
+// Number of clips to generate per batch. On Vercel, 3 clips per batch balances
+// quality (multiple highlights) with the 300s function timeout (~60-90s per HD clip).
+// Was 1 (only 1 clip per batch — users had to click "generate more" repeatedly).
+// Override via PROCESS_VIDEO_BATCH_SIZE env var (1-10).
 const DEFAULT_BATCH_SIZE =
   clampInt(process.env.PROCESS_VIDEO_BATCH_SIZE, 1, 10, 0) ||
-  (process.env.VERCEL ? 1 : 10);
+  (process.env.VERCEL ? 3 : 10);
 
 export async function POST(request: NextRequest) {
   const body = (await request.json()) as ProcessVideoRequest;
