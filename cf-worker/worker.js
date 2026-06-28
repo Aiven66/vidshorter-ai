@@ -13,6 +13,23 @@
  */
 
 const CLIENTS = [
+  // IOS v20.10 — returns direct un-ciphered stream URLs for most videos.
+  // First priority: no signature decryption needed, fastest HD path, works on most CF colos.
+  {
+    name: 'IOS_v20',
+    clientName: 'IOS',
+    clientVersion: '20.10.4',
+    userAgent: 'com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_5_0 like Mac OS X;)',
+    xClientName: '5',
+    extra: {
+      deviceMake: 'Apple',
+      deviceModel: 'iPhone16,2',
+      osName: 'iPhone',
+      osVersion: '18.5.0.22F75',
+      clientFormFactor: 'SMALL_FORM_FACTOR',
+    },
+    extraHeaders: {},
+  },
   // TVHTML5 — Cobalt/TV client, often bypasses bot detection on residential/CF IPs
   {
     name: 'TV',
@@ -42,22 +59,6 @@ const CLIENTS = [
     userAgent: 'com.google.android.apps.youtube.vr.oculus/1.57.29 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
     xClientName: '28',
     extra: { androidSdkVersion: 32 },
-    extraHeaders: {},
-  },
-  // IOS v20.10 — returns direct un-ciphered stream URLs for most videos
-  {
-    name: 'IOS_v20',
-    clientName: 'IOS',
-    clientVersion: '20.10.4',
-    userAgent: 'com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_5_0 like Mac OS X;)',
-    xClientName: '5',
-    extra: {
-      deviceMake: 'Apple',
-      deviceModel: 'iPhone16,2',
-      osName: 'iPhone',
-      osVersion: '18.5.0.22F75',
-      clientFormFactor: 'SMALL_FORM_FACTOR',
-    },
     extraHeaders: {},
   },
   // ANDROID v20.10 — broad compatibility
@@ -116,9 +117,15 @@ const CORS_HEADERS = {
 };
 
 const MAX_HEIGHT = 1080;
+// Minimum HD height enforced by tryClient — reject anything below 720p so the
+// heights loop doesn't silently accept 360p combined streams when the HD path
+// (adaptiveFormats video-only + audio) fails. This was the root cause of
+// blurry clip output: tryClient fell back to 360p combined, doFetch succeeded,
+// and the heights loop returned it instead of trying other clients/colos.
+const MIN_HD_HEIGHT = 720;
 const cache = new Map();
 let playerCache = { jsUrl: '', expiresAt: 0, decipher: null };
-const BUILD_ID = '2026-04-29-worker-1';
+const BUILD_ID = '2026-06-28-hd-enforce';
 
 const COBALT_INSTANCES = [
   'https://cobalt-api.meowing.de/',
@@ -220,26 +227,49 @@ export default {
         // Vercel's ffmpeg needs separate audio input.
         const wantAudio = url.searchParams.get('audio') === '1';
 
-        const doFetch = (resolved) => {
+        const doFetch = async (resolved) => {
           const isCobalt = resolved?.client === 'cobalt';
           // When audio=1, fetch audioUrl (falls back to streamUrl if no audioUrl)
           const fetchUrl = (wantAudio && resolved.audioUrl) ? resolved.audioUrl : resolved.streamUrl;
-          return fetch(fetchUrl, {
-            headers: {
-              Range: range,
-              'User-Agent': resolved.userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
-              'Accept': '*/*',
-              'Accept-Encoding': 'identity',
-              ...(!isCobalt ? {
-                'Origin': 'https://www.youtube.com',
-                'Referer': 'https://www.youtube.com/',
-                ...(resolved.visitorData ? { 'X-Goog-Visitor-Id': resolved.visitorData } : {}),
-                'X-Youtube-Client-Name': resolved.xClientName,
-                'X-Youtube-Client-Version': resolved.clientVersion,
-                ...(cookieHeader ? { Cookie: cookieHeader } : {}),
-              } : {}),
-            },
-          });
+          const headers = {
+            Range: range,
+            'User-Agent': resolved.userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+            'Accept': '*/*',
+            'Accept-Encoding': 'identity',
+            ...(!isCobalt ? {
+              'Origin': 'https://www.youtube.com',
+              'Referer': 'https://www.youtube.com/',
+              ...(resolved.visitorData ? { 'X-Goog-Visitor-Id': resolved.visitorData } : {}),
+              'X-Youtube-Client-Name': resolved.xClientName,
+              'X-Youtube-Client-Version': resolved.clientVersion,
+              ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+            } : {}),
+          };
+
+          let upstream = await fetch(fetchUrl, { headers });
+          if (upstream.status === 200 || upstream.status === 206) return upstream;
+
+          // IP-binding bypass: googlevideo.com URLs contain an `ip=` param bound
+          // to the IP that called InnerTube (tryClient). When /resolve and /stream
+          // hit different CF colos, or when the Worker's egress IP rotates within
+          // a colo, the streamUrl's ip= won't match the doFetch egress IP and
+          // googlevideo.com returns 403. Stripping `ip=` and setting `ipbits=0`
+          // tells YouTube to skip IP validation — the signature/HMAC is NOT
+          // affected because ip/ipbits are not part of the signed parameters.
+          if ((upstream.status === 403 || upstream.status === 402) &&
+              fetchUrl.includes('googlevideo.com') && fetchUrl.includes('ip=')) {
+            try {
+              const u = new URL(fetchUrl);
+              u.searchParams.delete('ip');
+              u.searchParams.set('ipbits', '0');
+              const strippedUrl = u.toString();
+              const retryResp = await fetch(strippedUrl, { headers });
+              if (retryResp.status === 200 || retryResp.status === 206) return retryResp;
+              upstream = retryResp;
+            } catch {}
+          }
+
+          return upstream;
         };
 
         // Fast path: if caller provides a pre-resolved streamUrl (from /resolve),
@@ -278,15 +308,17 @@ export default {
           // to the /resolve colo's IP, not the /stream colo's IP).
           //
           // Fall through directly to the heights loop below. The heights loop
-          // tries HD heights first (1080, 720), then SD (480, 360, etc.).
-          // It checks cache first (warm if /resolve ran on this colo), then
-          // tryClient. This avoids the previous HD re-resolve block which made
-          // 14+ InnerTube API calls and triggered YouTube rate-limiting, causing
-          // ALL subsequent tryClient calls to fail (even in the heights loop).
-          // The heights loop stops at the first success, minimizing API calls.
+          // tries HD heights first (1080, 720). It no longer degrades to SD
+          // (480/360/240/144) because that produced blurry clips — the root
+          // cause was tryClient silently falling back to 360p combined streams
+          // when the HD adaptiveFormats path failed. Now tryClient enforces
+          // MIN_HD_HEIGHT=720 and throws if it can't get HD, so the loop tries
+          // other clients/colos instead of accepting low quality.
         }
 
-        const heights = Array.from(new Set([effectiveMaxHeight, 720, 480, 360, 240, 144].filter(Boolean)));
+        // Only try HD heights — no SD degradation. If 720p fails on all clients,
+        // return 502 so Vercel's retry logic can hit a different CF colo.
+        const heights = Array.from(new Set([effectiveMaxHeight, MIN_HD_HEIGHT].filter((h) => h >= MIN_HD_HEIGHT)));
 
         for (const h of heights) {
           const cacheKey = `${videoId}|${String(h)}`;
@@ -413,7 +445,9 @@ export default {
 
     const errors = [];
     const requestedMaxHeight = maxHeight || MAX_HEIGHT;
-    const heights = Array.from(new Set([requestedMaxHeight, 720, 480, 360, 240, 144].filter(Boolean)));
+    // /resolve also enforces HD-only — cached entries feed /stream's cache hits.
+    // If we cached 360p here, /stream would return it and produce blurry clips.
+    const heights = Array.from(new Set([requestedMaxHeight, MIN_HD_HEIGHT].filter((h) => h >= MIN_HD_HEIGHT)));
 
     for (const h of heights) {
       const cached = await cacheGetResolved(videoId, h);
@@ -630,6 +664,22 @@ async function tryClient(videoId, client, maxHeight, cookieHeader) {
   if (!resolvedUrl) {
     const hasCipher = formats.some((f) => f.signatureCipher || f.cipher);
     throw new Error(`No direct URL${hasCipher ? ' (cipher)' : ''}`);
+  }
+
+  // HD enforcement: reject anything below MIN_HD_HEIGHT (720p).
+  // Previously, when the HD adaptiveFormats path failed (no audio URL, cipher
+  // decryption failure, etc.), tryClient silently fell back to the 360p
+  // combined stream. The heights loop then accepted it because doFetch
+  // succeeded — producing blurry 360p clips. Now we throw so the heights loop
+  // tries the next client, and ultimately returns 502 if no client can do HD.
+  const chosenHeight = formatHeight(chosen);
+  if (chosenHeight > 0 && chosenHeight < MIN_HD_HEIGHT) {
+    throw new Error(
+      `Below HD: got ${chosenHeight}p, need >=${MIN_HD_HEIGHT}p ` +
+      `(combined=${debug.combinedHeight}p, videoOnly=${debug.videoOnlyCount}, ` +
+      `audio=${debug.audioOnlyWithUrl}, videoResolved=${debug.videoResolvedOk}, ` +
+      `audioResolved=${debug.audioResolvedOk})`,
+    );
   }
 
   return {
