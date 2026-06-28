@@ -17,7 +17,7 @@
 import { promisify } from 'node:util';
 import { execFile as execFileCallback } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { access, mkdir, readFile, readdir, writeFile, chmod, unlink, rename } from 'node:fs/promises';
+import { access, mkdir, readFile, readdir, writeFile, chmod, unlink, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { constants as fsConstants, createWriteStream } from 'node:fs';
 import { once } from 'node:events';
@@ -3050,15 +3050,14 @@ async function generateFallbackClip(params: {
   if (thumbnailBuffer) {
     await writeFile(imagePath, thumbnailBuffer);
   } else {
-    const ffmpegPath = await ensureFfmpegAvailable();
-    await runFfmpeg(ffmpegPath, [
+    await execFile(ffmpegPath, [
       '-y',
       '-f', 'lavfi',
       '-i', 'color=c=0x1a1a2e:s=1280x720:d=1',
       '-frames:v', '1',
       '-q:v', '5',
       imagePath,
-    ]);
+    ], { cwd: CACHE_DIR, timeout: 30_000, maxBuffer: 10 * 1024 * 1024 });
   }
 
   const safeTitle = (params.title || 'Highlight').replace(/[\\/:*?"<>|]/g, ' ').slice(0, 60);
@@ -3085,7 +3084,7 @@ async function generateFallbackClip(params: {
     outputPath,
   ];
 
-  await runFfmpeg(ffmpegPath, args);
+  await execFile(ffmpegPath, args, { cwd: CACHE_DIR, timeout: 60_000, maxBuffer: 20 * 1024 * 1024 });
 
   let dataUrl = null;
   try {
@@ -3098,8 +3097,9 @@ async function generateFallbackClip(params: {
   let thumbnailUrl = '';
   try {
     const thumbPath = path.join(workDir, 'thumb_out.jpg');
-    await runFfmpeg(ffmpegPath, [
-      '-y', '-i', outputPath, '-ss', '1', '-vframes', '1', '-q:v', '5', thumbPath]);
+    await execFile(ffmpegPath, [
+      '-y', '-i', outputPath, '-ss', '1', '-vframes', '1', '-q:v', '5', thumbPath,
+    ], { cwd: CACHE_DIR, timeout: 30_000, maxBuffer: 10 * 1024 * 1024 });
     const thumbBuf = await readFile(thumbPath);
     thumbnailUrl = `data:image/jpeg;base64,${thumbBuf.toString('base64')}`;
   } catch {
@@ -3114,7 +3114,8 @@ async function generateFallbackClip(params: {
     // ignore
   }
 
-  const publicUrl = getPublicClipUrl(fileName);
+  const localBase = getLocalMediaBaseUrl();
+  const publicUrl = localBase ? `${localBase}/api/serve-clip/${fileName}` : `/api/serve-clip/${fileName}`;
 
   return {
     id: fileName,
