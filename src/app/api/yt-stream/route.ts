@@ -92,29 +92,6 @@ const CLIENTS = [
     extra: { androidSdkVersion: 34, clientFormFactor: 'SMALL_FORM_FACTOR' },
     extraHeaders: {},
   },
-  // WEB_EMBEDDED_PLAYER — bypass age restrictions via embed context
-  {
-    name: 'WEB_EMBEDDED',
-    clientName: 'WEB_EMBEDDED_PLAYER',
-    clientVersion: '2.20250623.00.00',
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
-    xClientName: '56',
-    extra: { clientScreen: 'EMBED' },
-    extraHeaders: {
-      'Referer': 'https://www.youtube.com/',
-      'Origin': 'https://www.youtube.com',
-    },
-  },
-  // ANDROID_TESTSUITE — minimal client, sometimes avoids bot detection
-  {
-    name: 'ANDROID_TESTSUITE',
-    clientName: 'ANDROID_TESTSUITE',
-    clientVersion: '1.9',
-    userAgent: 'com.google.android.youtube/1.9 (Linux; U; Android 11) gzip',
-    xClientName: '30',
-    extra: { androidSdkVersion: 30 },
-    extraHeaders: {},
-  },
 ] as const;
 
 type Client = (typeof CLIENTS)[number];
@@ -181,7 +158,7 @@ async function tryClient(videoId: string, client: Client, debug = false): Promis
       ...(process.env.YOUTUBE_COOKIES ? { Cookie: netscapeCookiesToHeader(process.env.YOUTUBE_COOKIES) } : {}),
     },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(12_000), // 12s per client × 6 clients = 72s max
+    signal: AbortSignal.timeout(8_000), // 8s per client — keeps total under 25s for analysis
   });
 
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -469,7 +446,7 @@ export async function GET(request: Request) {
             'Cookie': cookieHeader,
           },
           body: JSON.stringify(body),
-          signal: AbortSignal.timeout(12_000),
+          signal: AbortSignal.timeout(8_000),
         });
         if (res.ok) {
           const data = await res.json() as InnerTubeResponse;

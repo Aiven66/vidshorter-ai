@@ -648,9 +648,9 @@ async function getYouTubeInfoViaPiped(
 ): Promise<PipedVideoInfo> {
   let lastError = 'No Piped instance reachable';
   // Same rationale as Invidious: most public Piped instances are now blocked.
-  // Cap at first 3 instances and 5s timeout on Vercel so fallback completes quickly.
-  const instancesToTry = IS_VERCEL ? PIPED_INSTANCES.slice(0, 3) : PIPED_INSTANCES;
-  const perInstanceTimeout = IS_VERCEL ? 5000 : 12000;
+  // Cap at first 2 instances and 3s timeout on Vercel so fallback completes quickly.
+  const instancesToTry = IS_VERCEL ? PIPED_INSTANCES.slice(0, 2) : PIPED_INSTANCES;
+  const perInstanceTimeout = IS_VERCEL ? 3000 : 12000;
   for (const instance of instancesToTry) {
     try {
       const res = await fetch(`${instance}/streams/${videoId}`, {
@@ -746,10 +746,10 @@ async function getYouTubeInfoViaInvidious(
 ): Promise<PipedVideoInfo> {
   let lastError = 'No instance tried';
   // Most public Invidious instances now block YouTube (403/401) or are down.
-  // Reduce per-instance timeout from 12s → 5s and cap at first 3 instances
-  // so the fallback path completes in <15s instead of 60-84s.
-  const instancesToTry = IS_VERCEL ? INVIDIOUS_INSTANCES.slice(0, 3) : INVIDIOUS_INSTANCES;
-  const perInstanceTimeout = IS_VERCEL ? 5000 : 12000;
+  // Reduce per-instance timeout and cap at first 2 instances on Vercel
+  // so the fallback path completes in <6s instead of 15-84s.
+  const instancesToTry = IS_VERCEL ? INVIDIOUS_INSTANCES.slice(0, 2) : INVIDIOUS_INSTANCES;
+  const perInstanceTimeout = IS_VERCEL ? 3000 : 12000;
   for (const instance of instancesToTry) {
     try {
       const res = await fetch(
@@ -1106,7 +1106,7 @@ async function getYouTubeInfoViaEdgeFunction(videoId: string): Promise<PipedVide
   const endpoint = `${baseUrl}/api/yt-stream?videoId=${encodeURIComponent(videoId)}`;
   const res = await fetch(endpoint, {
     headers: { Accept: 'application/json', ...getVercelProtectionBypassHeaders() },
-    signal: AbortSignal.timeout(25_000),
+    signal: AbortSignal.timeout(20_000),
   });
 
   if (!res.ok) throw new Error(`Edge function HTTP ${res.status}`);
@@ -1552,14 +1552,16 @@ async function fetchYouTubeTranscriptCues(videoId: string): Promise<CaptionCue[]
       fn(),
       new Promise<T>((_, reject) => setTimeout(() => reject(new Error('timeout')), ms)),
     ]);
-    // Try several languages
-    for (const lang of ['en', 'en-US', 'zh-Hans', 'zh', '']) {
+    // Try fewer languages with shorter timeout to avoid analysis timeout
+    const langs = IS_VERCEL ? ['en', ''] : ['en', 'en-US', 'zh-Hans', 'zh', ''];
+    const langTimeout = IS_VERCEL ? 8_000 : 12_000;
+    for (const lang of langs) {
       try {
         const transcript = await withTimeout(
           () => (lang
             ? YoutubeTranscript.fetchTranscript(videoId, { lang })
             : YoutubeTranscript.fetchTranscript(videoId)),
-          12_000,
+          langTimeout,
         );
         if (transcript.length > 0) {
           return transcript.map(item => ({
