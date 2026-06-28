@@ -418,7 +418,7 @@ function buildFallbackHighlights(duration: number) {
   const safeDuration = Math.max(duration, 60);
   const cfg = clipDurations(safeDuration);
   const maxClips = Math.min(MAX_HIGHLIGHTS, Math.floor(safeDuration / (cfg.min + 8)));
-  const clipCount = Math.max(3, Math.min(MAX_HIGHLIGHTS, maxClips));
+  const clipCount = Math.max(6, Math.min(MAX_HIGHLIGHTS, Math.min(maxClips, Math.round(safeDuration / 120) + 5)));
   const spacing = Math.floor(safeDuration / (clipCount + 1));
   return normalizeHighlights(
     Array.from({ length: clipCount }, (_, i) => {
@@ -463,7 +463,7 @@ function buildHeuristicHighlights(cues: CaptionCue[], duration: number) {
     windows.push({ title: title.slice(0, 80), start_time: start, end_time: end, summary: text.slice(0, 140), engagement_score: Math.min(10, score) });
   }
   windows.sort((a, b) => b.engagement_score - a.engagement_score);
-  const targetCount = Math.min(MAX_HIGHLIGHTS, Math.max(3, Math.min(10, Math.round(duration / 600) + 3)));
+  const targetCount = Math.min(MAX_HIGHLIGHTS, Math.max(6, Math.min(10, Math.round(duration / 120) + 5)));
   const selected: Highlight[] = [];
   for (const c of windows) {
     if (!selected.some(
@@ -3018,7 +3018,7 @@ async function generateFallbackClip(params: {
   const ffmpegPath = await ensureFfmpegAvailable();
   const fileName = clipFileName(params.title);
   const outputPath = path.join(PUBLIC_CLIP_DIR, fileName);
-  const duration = Math.max(5, Math.min(30, params.endTime - params.startTime));
+  const duration = Math.max(30, Math.min(60, params.endTime - params.startTime));
 
   const thumbnailUrls = [
     `https://img.youtube.com/vi/${params.videoId}/maxresdefault.jpg`,
@@ -3065,6 +3065,7 @@ async function generateFallbackClip(params: {
 
   const videoFilters = [
     'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2',
+    `zoompan=z='min(zoom+0.001,1.5)':d=${duration * 24}:s=1280x720:fps=24`,
     'format=yuv420p',
   ];
 
@@ -3077,19 +3078,23 @@ async function generateFallbackClip(params: {
     '-c:v', 'libx264',
     '-preset', 'ultrafast',
     '-crf', '28',
-    '-profile:v', 'high',
+    '-profile:v', 'baseline',
+    '-level', '3.0',
     '-pix_fmt', 'yuv420p',
     '-r', '24',
+    '-movflags', '+faststart',
     '-an',
     outputPath,
   ];
 
-  await execFile(ffmpegPath, args, { cwd: CACHE_DIR, timeout: 60_000, maxBuffer: 20 * 1024 * 1024 });
+  await execFile(ffmpegPath, args, { cwd: CACHE_DIR, timeout: 120_000, maxBuffer: 20 * 1024 * 1024 });
 
-  let dataUrl = null;
+  let dataUrl = '';
   try {
     const outBuf = await readFile(outputPath);
-    dataUrl = `data:video/mp4;base64,${outBuf.toString('base64')}`;
+    if (outBuf.length <= 45 * 1024 * 1024) {
+      dataUrl = `data:video/mp4;base64,${outBuf.toString('base64')}`;
+    }
   } catch {
     // ignore
   }
