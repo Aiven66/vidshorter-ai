@@ -2393,35 +2393,44 @@ function wrapInStreamProxyIfNeeded(
   isAudio = false,
   maxHeightOverride: number = 0,
 ): string {
-  const cfWorkerUrl = getCfWorkerUrl();
-  if (!cfWorkerUrl) return streamUrl;
-
-  // Already a CF Worker /stream proxy URL — no wrapping needed.
-  if (streamUrl.includes('/stream') && streamUrl.includes(cfWorkerUrl.replace(/^https?:\/\//, ''))) {
+  // Already an internal proxy URL — no wrapping needed.
+  const baseUrl = getAppBaseUrl();
+  if (baseUrl && (streamUrl.startsWith(baseUrl) || streamUrl.includes('/api/yt-proxy-edge'))) {
     return streamUrl;
   }
-
-  // Already an internal proxy URL (e.g. /api/yt-proxy) — no wrapping needed.
-  const baseUrl = getAppBaseUrl();
-  if (baseUrl && streamUrl.startsWith(baseUrl)) return streamUrl;
 
   // Only wrap googlevideo.com direct URLs (these 403 for Vercel IP).
   if (!streamUrl.includes('googlevideo.com')) return streamUrl;
 
-  // Build /stream URL WITHOUT streamUrl param.
-  // Passing streamUrl causes colo mismatch: /resolve and /stream may hit
-  // different CF colos, and the streamUrl's ip= param is bound to /resolve's
-  // colo IP. /stream does fresh tryClient on its own colo instead.
-  const defaultMaxHeight = getCfWorkerMaxHeight();
-  const maxHeight = maxHeightOverride > 0
-    ? Math.min(maxHeightOverride, defaultMaxHeight)
-    : defaultMaxHeight;
-  const endpoint = new URL(cfWorkerUrl);
-  endpoint.pathname = `${endpoint.pathname.replace(/\/$/, '')}/stream`;
-  endpoint.searchParams.set('videoId', videoId);
-  endpoint.searchParams.set('maxHeight', String(maxHeight));
-  if (isAudio) endpoint.searchParams.set('audio', '1');
-  return endpoint.toString();
+  const cfWorkerUrl = getCfWorkerUrl();
+
+  // CF Worker available — use it as proxy (preferred, most reliable)
+  if (cfWorkerUrl) {
+    if (streamUrl.includes('/stream') && streamUrl.includes(cfWorkerUrl.replace(/^https?:\/\//, ''))) {
+      return streamUrl;
+    }
+
+    const defaultMaxHeight = getCfWorkerMaxHeight();
+    const maxHeight = maxHeightOverride > 0
+      ? Math.min(maxHeightOverride, defaultMaxHeight)
+      : defaultMaxHeight;
+    const endpoint = new URL(cfWorkerUrl);
+    endpoint.pathname = `${endpoint.pathname.replace(/\/$/, '')}/stream`;
+    endpoint.searchParams.set('videoId', videoId);
+    endpoint.searchParams.set('maxHeight', String(maxHeight));
+    if (isAudio) endpoint.searchParams.set('audio', '1');
+    return endpoint.toString();
+  }
+
+  // No CF Worker — use Vercel Edge Runtime proxy as fallback
+  // Edge Runtime runs on Vercel Edge Network (different IPs, not blocked by googlevideo.com)
+  if (baseUrl) {
+    const maxHeight = maxHeightOverride > 0 ? maxHeightOverride : 360;
+    const audioParam = isAudio ? '&audio=1' : '';
+    return `${baseUrl}/api/yt-proxy-edge?videoId=${encodeURIComponent(videoId)}&maxHeight=${maxHeight}${audioParam}`;
+  }
+
+  return streamUrl;
 }
 
 async function downloadYouTubeOrGenericVideo(
@@ -3165,19 +3174,38 @@ async function createClipFromYouTubeStream(params: {
     streamUrl = result.streamUrl;
     audioUrl = result.audioUrl;
   } catch (err) {
-    console.warn(`createClipFromYouTubeStream: stream URL fetch failed:`,
+    console.warn(`createClipFromYouTubeStream: getYouTubeStreamUrlWithFallbacks failed, trying Edge Function directly:`,
       err instanceof Error ? err.message.slice(0, 120) : err);
-    return null;
+    // If all stream getters failed, try the Edge Function directly
+    // The Edge Function runs on Vercel Edge Network (different IPs, not blocked)
+    const baseUrl = getAppBaseUrl();
+    if (baseUrl) {
+      try {
+        const edgeRes = await fetch(`${baseUrl}/api/yt-stream?videoId=${encodeURIComponent(videoId)}`, {
+          headers: { Accept: 'application/json', ...getVercelProtectionBypassHeaders() },
+          signal: AbortSignal.timeout(25_000),
+        });
+        if (edgeRes.ok) {
+          const edgeData = await edgeRes.json() as { streamUrl?: string; audioUrl?: string };
+          streamUrl = edgeData.streamUrl || '';
+          audioUrl = edgeData.audioUrl;
+        }
+      } catch (edgeErr) {
+        console.warn(`createClipFromYouTubeStream: Edge Function also failed:`,
+          edgeErr instanceof Error ? edgeErr.message.slice(0, 100) : edgeErr);
+      }
+    }
+    if (!streamUrl) return null;
   }
 
   if (!streamUrl) return null;
 
-  // Wrap googlevideo.com direct URLs in CF Worker /stream proxy
+  // Wrap googlevideo.com direct URLs in proxy (CF Worker or Edge proxy)
   const wrappedStreamUrl = wrapInStreamProxyIfNeeded(streamUrl, videoId, false, 360);
   const wrappedAudioUrl = audioUrl ? wrapInStreamProxyIfNeeded(audioUrl, videoId, true, 360) : undefined;
 
   const internalBaseUrl = getAppBaseUrl();
-  const isProxied = wrappedStreamUrl.includes('youtube-proxy') || wrappedStreamUrl.includes('/stream');
+  const isProxied = wrappedStreamUrl.includes('youtube-proxy') || wrappedStreamUrl.includes('/stream') || wrappedStreamUrl.includes('/api/yt-proxy-edge');
   const ffmpegHeaders =
     `${internalBaseUrl && wrappedStreamUrl.startsWith(internalBaseUrl) ? getBypassFfmpegHeaderString() : ''}` +
     (isProxied
