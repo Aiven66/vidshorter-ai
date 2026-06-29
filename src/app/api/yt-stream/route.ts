@@ -708,7 +708,7 @@ export async function GET(request: Request) {
 
   for (const client of CLIENTS) {
     try {
-      const result = await tryClient(videoId, client, debug, maxHeightOverride);
+      const result = await tryClient(videoId, client, debug, maxHeight);
       if (result) {
         return Response.json(
           { ...result, client: client.name },
