@@ -2795,10 +2795,19 @@ async function createLocalClip(params: {
   const duration = Math.max(1, params.endTime - params.startTime);
 
   const isRemoteInput = params.inputPath.startsWith('http');
+  const internalBaseUrl = getAppBaseUrl();
   const isWorkerStream = isRemoteInput && (() => {
     try {
       const u = new URL(params.inputPath);
-      return u.pathname.includes('/stream') && (u.hostname.endsWith('.workers.dev') || u.hostname.includes('youtube-proxy'));
+      // CF Worker /stream proxy URLs
+      if (u.pathname.includes('/stream') && (u.hostname.endsWith('.workers.dev') || u.hostname.includes('youtube-proxy'))) {
+        return true;
+      }
+      // Internal Edge proxy URLs (/api/yt-stream?proxy=1) — support Range, use fast seek
+      if (internalBaseUrl && u.toString().startsWith(internalBaseUrl) && u.pathname.includes('/yt-stream') && u.searchParams.get('proxy') === '1') {
+        return true;
+      }
+      return false;
     } catch {
       return false;
     }
@@ -3188,66 +3197,138 @@ async function createClipFromYouTubeStream(params: {
 }): Promise<ClipResult | null> {
   const { videoId, title, summary, startTime, endTime } = params;
   const duration = Math.max(1, endTime - startTime);
+  const internalBaseUrl = getAppBaseUrl();
 
-  // Try to get a stream URL via CF Worker / Invidious / Piped / cobalt
-  let streamUrl = '';
-  let audioUrl: string | undefined;
-  try {
-    const result = await getYouTubeStreamUrlWithFallbacks(videoId, 360);
-    streamUrl = result.streamUrl;
-    audioUrl = result.audioUrl;
-  } catch (err) {
-    console.warn(`createClipFromYouTubeStream: getYouTubeStreamUrlWithFallbacks failed, trying Edge Function directly:`,
-      err instanceof Error ? err.message.slice(0, 120) : err);
-    // If all stream getters failed, try the Edge Function directly
-    // The Edge Function runs on Vercel Edge Network (different IPs, not blocked)
-    const baseUrl = getAppBaseUrl();
-    if (baseUrl) {
-      try {
-        const edgeRes = await fetch(`${baseUrl}/api/yt-stream?videoId=${encodeURIComponent(videoId)}`, {
-          headers: { Accept: 'application/json', ...getVercelProtectionBypassHeaders() },
-          signal: AbortSignal.timeout(25_000),
-        });
-        if (edgeRes.ok) {
-          const edgeData = await edgeRes.json() as { streamUrl?: string; audioUrl?: string };
-          streamUrl = edgeData.streamUrl || '';
-          audioUrl = edgeData.audioUrl;
-        }
-      } catch (edgeErr) {
-        console.warn(`createClipFromYouTubeStream: Edge Function also failed:`,
-          edgeErr instanceof Error ? edgeErr.message.slice(0, 100) : edgeErr);
-      }
-    }
-    if (!streamUrl) return null;
+  // ── Step 1: Build the Edge proxy URL ───────────────────────────────────────
+  // The Edge proxy (/api/yt-stream?proxy=1) resolves the stream URL AND proxies
+  // the video bytes in the same request (same Edge colo = same IP = no 403).
+  // This avoids the IP-binding issue that causes downloadSourceVideo to fail
+  // in the Node.js runtime.
+  if (!internalBaseUrl) {
+    console.warn('createClipFromYouTubeStream: no internal base URL, cannot use Edge proxy');
+    return null;
   }
 
-  if (!streamUrl) return null;
+  const edgeProxyUrl = `${internalBaseUrl}/api/yt-stream?videoId=${encodeURIComponent(videoId)}&proxy=1&maxHeight=360`;
+  console.log(`createClipFromYouTubeStream: using Edge proxy: ${edgeProxyUrl.slice(0, 80)}...`);
 
-  // Wrap googlevideo.com direct URLs in proxy (CF Worker or Edge proxy)
-  const wrappedStreamUrl = wrapInStreamProxyIfNeeded(streamUrl, videoId, false, 360);
-  const wrappedAudioUrl = audioUrl ? wrapInStreamProxyIfNeeded(audioUrl, videoId, true, 360) : undefined;
-
-  const internalBaseUrl = getAppBaseUrl();
-  const isProxied = wrappedStreamUrl.includes('youtube-proxy') || wrappedStreamUrl.includes('/stream') || wrappedStreamUrl.includes('/api/yt-proxy-edge');
-  const ffmpegHeaders =
-    `${internalBaseUrl && wrappedStreamUrl.startsWith(internalBaseUrl) ? getBypassFfmpegHeaderString() : ''}` +
-    (isProxied
-      ? 'Accept: */*\r\nAccept-Encoding: identity\r\n'
-      : 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36\r\n' +
-        'Referer: https://www.youtube.com/\r\n' +
-        'Origin: https://www.youtube.com\r\n' +
-        'Accept: */*\r\n' +
-        'Accept-Encoding: identity\r\n');
+  // ── Step 2: Download the FULL video to a local file ───────────────────────
+  // This mirrors the desktop client approach: download first, then clip locally.
+  // Local files allow instant seeking (fast seek), avoiding the Edge Function
+  // 60s timeout that kills slow-seek remote ffmpeg reads.
+  //
+  // We use a single streaming download (NOT chunked) because each Range request
+  // to /api/yt-stream?proxy=1 would re-resolve the stream URL via InnerTube API,
+  // adding 2-5s per chunk. A single fetch lets the Edge Function resolve once
+  // and stream the entire video.
+  await ensureDirectories();
+  const workDir = path.join(TMP_DIR, `clip-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  await mkdir(workDir, { recursive: true });
+  const localVideoPath = path.join(workDir, 'source.mp4');
 
   try {
+    const maxBytes = 200 * 1024 * 1024; // 200MB cap
+    const downloadRes = await fetch(edgeProxyUrl, {
+      headers: {
+        ...getVercelProtectionBypassHeaders(),
+        'Accept': '*/*',
+        'Accept-Encoding': 'identity',
+      },
+      signal: AbortSignal.timeout(IS_VERCEL ? 120_000 : 180_000),
+    });
+
+    if (!downloadRes.ok && downloadRes.status !== 206) {
+      console.warn(`createClipFromYouTubeStream: Edge proxy returned HTTP ${downloadRes.status}`);
+      // Fallback: try remote ffmpeg with fast seek
+      const ffmpegHeaders =
+        `${getBypassFfmpegHeaderString()}` +
+        'Accept: */*\r\nAccept-Encoding: identity\r\n';
+      try {
+        const result = await createLocalClip({
+          inputPath: edgeProxyUrl,
+          inputHeaders: ffmpegHeaders,
+          startTime,
+          endTime,
+          title,
+        });
+        return {
+          id: result.outputPath ? path.basename(result.outputPath) : clipFileName(title),
+          title,
+          startTime,
+          endTime,
+          duration,
+          summary: summary || '',
+          engagementScore: 0,
+          videoUrl: result.dataUrl || result.publicUrl,
+          thumbnailUrl: result.thumbnailUrl || '',
+          status: 'completed',
+        };
+      } catch (remoteErr) {
+        console.warn(`createClipFromYouTubeStream: remote ffmpeg fallback also failed:`,
+          remoteErr instanceof Error ? remoteErr.message.slice(0, 120) : remoteErr);
+        return null;
+      }
+    }
+
+    if (!downloadRes.body) {
+      console.warn('createClipFromYouTubeStream: Edge proxy returned empty body');
+      return null;
+    }
+
+    // Stream the response body to a local file
+    const fileStream = createWriteStream(localVideoPath);
+    const readable = Readable.fromWeb(downloadRes.body as never);
+    let downloadedBytes = 0;
+    const startedAt = Date.now();
+    const budgetMs = IS_VERCEL ? 120_000 : 180_000;
+
+    try {
+      for await (const chunk of readable) {
+        downloadedBytes += chunk.length;
+        if (downloadedBytes > maxBytes) {
+          readable.destroy();
+          break;
+        }
+        if (Date.now() - startedAt > budgetMs) {
+          readable.destroy();
+          throw new Error('Download timed out');
+        }
+        if (!fileStream.write(chunk)) {
+          await once(fileStream, 'drain');
+        }
+      }
+      await new Promise<void>((resolve, reject) => {
+        fileStream.end((err?: Error | null) => err ? reject(err) : resolve());
+      });
+    } catch (streamErr) {
+      fileStream.destroy();
+      throw streamErr;
+    }
+
+    console.log(`createClipFromYouTubeStream: downloaded ${downloadedBytes} bytes to ${localVideoPath}`);
+
+    // Verify the file has enough content to be a real video
+    if (downloadedBytes < 10000) {
+      console.warn(`createClipFromYouTubeStream: downloaded file too small (${downloadedBytes} bytes), likely an error response`);
+      try { await rm(workDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      return null;
+    }
+
+    // ── Step 3: Clip locally (fast seek, instant, no network) ───────────────
     const result = await createLocalClip({
-      inputPath: wrappedStreamUrl,
-      audioInputPath: wrappedAudioUrl,
-      inputHeaders: ffmpegHeaders,
+      inputPath: localVideoPath,
       startTime,
       endTime,
       title,
     });
+
+    // Clean up the downloaded source file
+    try {
+      await rm(workDir, { recursive: true, force: true });
+    } catch {
+      // ignore cleanup errors
+    }
+
     return {
       id: result.outputPath ? path.basename(result.outputPath) : clipFileName(title),
       title,
@@ -3261,8 +3342,13 @@ async function createClipFromYouTubeStream(params: {
       status: 'completed',
     };
   } catch (err) {
-    console.warn(`createClipFromYouTubeStream: ffmpeg remote clip failed:`,
+    console.warn(`createClipFromYouTubeStream: failed:`,
       err instanceof Error ? err.message.slice(0, 120) : err);
+    try {
+      await rm(workDir, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
     return null;
   }
 }
