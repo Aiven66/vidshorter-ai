@@ -2127,10 +2127,21 @@ async function downloadStreamToLocalFile(url: string, outputPath: string, option
   }
 
   const tempPath = `${outputPath}.part`;
+  const internalBaseUrl = getAppBaseUrl();
   const isWorkerStreamUrl = (() => {
     try {
       const u = new URL(url);
-      return u.pathname.includes('/stream') && (u.hostname.endsWith('.workers.dev') || u.hostname.includes('youtube-proxy'));
+      // CF Worker /stream proxy URLs
+      if (u.pathname.includes('/stream') && (u.hostname.endsWith('.workers.dev') || u.hostname.includes('youtube-proxy'))) {
+        return true;
+      }
+      // Internal Edge proxy URLs (/api/yt-stream?proxy=1)
+      // These support Range requests and should use chunked download
+      // to avoid the 60s single-request timeout on Edge Functions.
+      if (internalBaseUrl && u.toString().startsWith(internalBaseUrl) && u.pathname.includes('/yt-stream') && u.searchParams.get('proxy') === '1') {
+        return true;
+      }
+      return false;
     } catch {
       return false;
     }
@@ -2590,26 +2601,34 @@ async function downloadYouTubeOrGenericVideo(
       }
     }
 
-    // ── Last resort: yt-proxy ─────────────────────────────────────────────────
+    // ── Last resort: Edge proxy (/api/yt-stream?proxy=1) ─────────────────────
     const baseUrl = getAppBaseUrl();
     if (baseUrl) {
-      const proxyUrl = `${baseUrl}/api/yt-proxy?videoId=${encodeURIComponent(videoId)}`;
+      const edgeProxyUrl = `${baseUrl}/api/yt-stream?videoId=${encodeURIComponent(videoId)}&proxy=1&maxHeight=360`;
       try {
-        const res = await fetch(proxyUrl, {
+        const res = await fetch(edgeProxyUrl, {
           headers: { Range: 'bytes=0-1', ...getVercelProtectionBypassHeaders() },
-          signal: AbortSignal.timeout(10_000),
+          signal: AbortSignal.timeout(20_000),
         });
         if (res.status === 200 || res.status === 206) {
-          console.log('Vercel environment: using /api/yt-proxy as ffmpeg input (last resort)');
+          console.log('Vercel environment: Edge proxy preflight OK, downloading to local file…');
+          const localPath = path.join(path.dirname(outputTemplate), 'source.mp4');
+          const downloaded = await downloadStreamToLocalFile(edgeProxyUrl, localPath, { maxBudgetMs: 120_000 });
+          if (downloaded) {
+            console.log('Vercel environment: downloaded video via Edge proxy (last resort)');
+            return { inputPath: localPath };
+          }
+          // If download fails, fall back to remote ffmpeg
+          console.log('Vercel environment: Edge proxy local download failed, using remote ffmpeg input');
           const ffmpegHeaders =
             `${getBypassFfmpegHeaderString()}` +
             'Accept: */*\r\n' +
             'Accept-Encoding: identity\r\n';
-          return { inputPath: proxyUrl, ffmpegHeaders };
+          return { inputPath: edgeProxyUrl, ffmpegHeaders };
         }
       } catch (e) {
         console.warn(
-          'yt-proxy fallback failed:',
+          'Edge proxy fallback failed:',
           e instanceof Error ? e.message.slice(0, 120) : e,
         );
       }

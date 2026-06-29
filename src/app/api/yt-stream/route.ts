@@ -559,7 +559,7 @@ export async function GET(request: Request) {
     try {
       const streamRes = await fetch(streamUrl, {
         headers: fetchHeaders,
-        signal: AbortSignal.timeout(30_000),
+        signal: AbortSignal.timeout(60_000),
       });
 
       if (!streamRes.ok && streamRes.status !== 206) {
