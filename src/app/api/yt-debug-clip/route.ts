@@ -189,6 +189,49 @@ export async function GET(request: NextRequest) {
     pushStep({ step: '5. createClipFromYouTubeStream', ok: false, error: String(err).slice(0, 500), durationMs: Date.now() - t4 });
   }
 
+  // Step 6: Directly test createLocalClip with the /stream proxy URL.
+  // This bypasses getYouTubeStreamUrlWithFallbacks and tests ffmpeg directly,
+  // capturing the exact ffmpeg error message.
+  if (streamProxyUrl) {
+    const t5 = Date.now();
+    try {
+      const videoClipper = (await import('@/lib/server/video-clipper')).default as unknown as {
+        createLocalClip: (params: {
+          inputPath: string;
+          inputHeaders?: string;
+          startTime: number;
+          endTime: number;
+          title: string;
+        }) => Promise<{ outputPath?: string; publicUrl?: string; dataUrl?: string; thumbnailUrl?: string }>;
+      };
+      const result = await videoClipper.createLocalClip({
+        inputPath: streamProxyUrl,
+        inputHeaders: 'Accept: */*\r\nAccept-Encoding: identity\r\n',
+        startTime,
+        endTime,
+        title: 'Debug Direct Clip',
+      });
+      const isJpeg = result.dataUrl?.startsWith('data:image/jpeg');
+      pushStep({
+        step: '6. createLocalClip-direct',
+        ok: !!result && (!!result.dataUrl || !!result.publicUrl) && !isJpeg,
+        error: !result ? 'no result' : (isJpeg ? 'got JPEG (not a real video)' : (!result.dataUrl && !result.publicUrl ? 'no output URL' : undefined)),
+        durationMs: Date.now() - t5,
+        data: {
+          hasOutputPath: !!result.outputPath,
+          hasPublicUrl: !!result.publicUrl,
+          hasDataUrl: !!result.dataUrl,
+          dataUrlPrefix: result.dataUrl?.slice(0, 60),
+          dataUrlLength: result.dataUrl?.length,
+          hasThumbnail: !!result.thumbnailUrl,
+        },
+      });
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      pushStep({ step: '6. createLocalClip-direct', ok: false, error: errMsg.slice(0, 1500), durationMs: Date.now() - t5 });
+    }
+  }
+
   return NextResponse.json({
     videoId,
     startTime,
