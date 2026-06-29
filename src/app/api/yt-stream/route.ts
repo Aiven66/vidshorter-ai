@@ -33,11 +33,31 @@ function parseQuality(value?: string) {
 // IP-based (datacenter IPs get LOGIN_REQUIRED), so client version alone won't fix Vercel
 // Edge blocks — but newer versions improve compatibility and reduce false positives.
 const CLIENTS = [
+  // MWEB — mobile web client, used by yt-dlp as first choice, less likely to be blocked
+  {
+    name: 'MWEB',
+    clientName: 'MWEB',
+    clientVersion: '2.20260620.01.00',
+    userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36',
+    xClientName: '2',
+    extra: {},
+    extraHeaders: {},
+  },
+  // WEB — standard web client
+  {
+    name: 'WEB',
+    clientName: 'WEB',
+    clientVersion: '2.20260620.01.00',
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+    xClientName: '1',
+    extra: {},
+    extraHeaders: {},
+  },
   // TVHTML5 — Cobalt/TV client, often bypasses bot detection on residential IPs
   {
     name: 'TV',
     clientName: 'TVHTML5',
-    clientVersion: '7.20250623.16.00',
+    clientVersion: '7.20260620.16.00',
     userAgent: 'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/24.0.0',
     xClientName: '7',
     extra: { clientScreen: 'TV' },
@@ -47,7 +67,7 @@ const CLIENTS = [
   {
     name: 'TV_EMBEDDED',
     clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
-    clientVersion: '2.20250623.00.00',
+    clientVersion: '2.20260620.00.00',
     userAgent: 'Mozilla/5.0 (SMART-TV; LINUX; Tizen 7.0) AppleWebKit/538.1 (KHTML, like Gecko) Version/7.0 TV Safari/538.1',
     xClientName: '85',
     extra: {},
