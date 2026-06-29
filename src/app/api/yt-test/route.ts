@@ -164,8 +164,37 @@ async function testYtDlpGetUrl(videoId: string): Promise<TestResult> {
 }
 
 export async function GET(request: NextRequest) {
-  const videoId = new URL(request.url).searchParams.get('videoId') || 'dQw4w9WgXcQ';
+  const reqUrl = new URL(request.url);
+  const videoId = reqUrl.searchParams.get('videoId') || 'dQw4w9WgXcQ';
+  const debug = reqUrl.searchParams.get('debug') === '1';
   const cfWorkerUrl = String(process.env['CF_WORKER_URL'] || process.env.CF_WORKER_URL || '').trim();
+
+  // Debug: expose CF Worker hostname (not full URL — may contain secret key) and
+  // do a quick HEAD request with short timeout to diagnose connectivity.
+  let cfDebug: { configured: boolean; host?: string; protocol?: string; hasKey: boolean; quickStatus?: string; quickError?: string } | undefined;
+  if (debug) {
+    cfDebug = { configured: !!cfWorkerUrl, hasKey: cfWorkerUrl.includes('key=') };
+    if (cfWorkerUrl) {
+      try {
+        const u = new URL(cfWorkerUrl);
+        cfDebug.host = u.host;
+        cfDebug.protocol = u.protocol;
+        // Quick HEAD with 5s timeout — if this fails, the Worker is unreachable.
+        try {
+          const r = await fetch(`${u.protocol}//${u.host}/`, {
+            method: 'GET',
+            signal: AbortSignal.timeout(5_000),
+            redirect: 'manual',
+          });
+          cfDebug.quickStatus = `HTTP ${r.status}`;
+        } catch (e) {
+          cfDebug.quickError = String(e).slice(0, 200);
+        }
+      } catch (e) {
+        cfDebug.quickError = `URL parse: ${String(e).slice(0, 120)}`;
+      }
+    }
+  }
 
   const [innerTubeResults, ytdlpResult, cfWorkerResults] = await Promise.allSettled([
     testInnerTubeClients(videoId),
@@ -245,6 +274,7 @@ export async function GET(request: NextRequest) {
     videoId,
     region: process.env.VERCEL_REGION ?? 'unknown',
     cfWorkerConfigured: !!cfWorkerUrl,
+    ...(cfDebug ? { cfDebug } : {}),
     results: allResults,
     working: allResults.filter(r => r.success).map(r => r.name),
     recommendation: allResults.some(r => r.success)

@@ -28,88 +28,143 @@ function parseQuality(value?: string) {
   return m ? parseInt(m[1], 10) : 0;
 }
 
-// Client configurations — ordered by success rate and age-restriction bypass capability
-// Updated 2026-06 to latest known working versions. YouTube's bot detection is primarily
-// IP-based (datacenter IPs get LOGIN_REQUIRED), so client version alone won't fix Vercel
-// Edge blocks — but newer versions improve compatibility and reduce false positives.
+// Convert Netscape cookies.txt format to a "name=value; name2=value2" header string.
+// Format: one cookie per line, tab-separated fields:
+//   domain  flag  path  secure  expiration  name  value
+// Lines starting with # are comments.
+function netscapeCookiesToHeader(netscapeCookies: string): string {
+  return netscapeCookies
+    .split('\n')
+    .filter(l => !l.startsWith('#') && l.trim())
+    .map(l => { const p = l.split('\t'); return p.length >= 7 ? `${p[5]}=${p[6]}` : ''; })
+    .filter(Boolean)
+    .join('; ');
+}
+
+// Client configurations — ordered by PO Token requirement and bypass capability.
+// Updated 2026-01 to match yt-dlp master (https://github.com/yt-dlp/yt-dlp).
+//
+// YouTube now requires a PO Token (Proof of Origin) for most web/mobile clients
+// to return streaming URLs. Without a PO Token, these clients get LOGIN_REQUIRED.
+// The PO Token is bound to visitor_data / session and is normally fetched by
+// yt-dlp's PO Token Director plugin (a Node.js/Python helper process) — which
+// we cannot run in a Vercel Edge Function.
+//
+// Strategy: try clients that do NOT require a PO Token first, then fall back to
+// clients that may work without one on some videos.
+//
+// References:
+//   - yt-dlp/yt_dlp/extractor/youtube/_base.py (INNERTUBE_CLIENTS)
+//   - _DEFAULT_CLIENTS = ('android_vr', 'web_safari')  # unauthenticated
+//   - _DEFAULT_JSLESS_CLIENTS = ('android_vr',)         # no JS runtime
+//   - GvsPoTokenPolicy.required=False for: android_vr, tv, web_embedded
 const CLIENTS = [
-  // MWEB — mobile web client, used by yt-dlp as first choice, less likely to be blocked
+  // 1. ANDROID_VR (Quest 3) — yt-dlp's primary unauthenticated client.
+  //    Does NOT require a PO Token (GVS policy defaults to required=False).
+  //    Bypasses age restrictions and bot detection on most content.
   {
-    name: 'MWEB',
-    clientName: 'MWEB',
-    clientVersion: '2.20260620.01.00',
-    userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36',
-    xClientName: '2',
-    extra: {},
+    name: 'ANDROID_VR',
+    clientName: 'ANDROID_VR',
+    clientVersion: '1.65.10',
+    userAgent: 'com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
+    xClientName: '28',
+    extra: {
+      androidSdkVersion: 32,
+      deviceMake: 'Oculus',
+      deviceModel: 'Quest 3',
+      osName: 'Android',
+      osVersion: '12L',
+    },
     extraHeaders: {},
   },
-  // WEB — standard web client
-  {
-    name: 'WEB',
-    clientName: 'WEB',
-    clientVersion: '2.20260620.01.00',
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-    xClientName: '1',
-    extra: {},
-    extraHeaders: {},
-  },
-  // TVHTML5 — Cobalt/TV client, often bypasses bot detection on residential IPs
+  // 2. TVHTML5 (Cobalt/TV) — does NOT require a PO Token.
+  //    yt-dlp uses this as a fallback for unauthenticated requests.
+  //    Note: yt-dlp fetches https://www.youtube.com/tv to get the real ytcfg,
+  //    but we can call the API directly with the correct version + UA.
   {
     name: 'TV',
     clientName: 'TVHTML5',
-    clientVersion: '7.20260620.16.00',
-    userAgent: 'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/24.0.0',
+    clientVersion: '7.20260114.12.00',
+    userAgent: 'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/25.lts.30.1034943-gold (unlike Gecko), Unknown_TV_Unknown_0/Unknown (Unknown, Unknown)',
     xClientName: '7',
-    extra: { clientScreen: 'TV' },
+    extra: {},
     extraHeaders: {},
   },
-  // TVHTML5_SIMPLY_EMBEDDED_PLAYER — strongest age-restriction bypass via embed context
+  // 3. WEB_EMBEDDED_PLAYER — does NOT require a PO Token, supports cookies.
+  //    yt-dlp sets thirdParty.embedUrl = 'https://www.reddit.com/' for embedded clients.
   {
-    name: 'TV_EMBEDDED',
-    clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
-    clientVersion: '2.20260620.00.00',
-    userAgent: 'Mozilla/5.0 (SMART-TV; LINUX; Tizen 7.0) AppleWebKit/538.1 (KHTML, like Gecko) Version/7.0 TV Safari/538.1',
-    xClientName: '85',
+    name: 'WEB_EMBEDDED',
+    clientName: 'WEB_EMBEDDED_PLAYER',
+    clientVersion: '1.20260115.01.00',
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+    xClientName: '56',
     extra: {},
     extraHeaders: {
       'Referer': 'https://www.youtube.com/',
       'Origin': 'https://www.youtube.com',
     },
   },
-  // ANDROID_VR (Quest/Oculus) — bypasses age restrictions without auth on most content
+  // 4. WEB (Safari UA) — yt-dlp's secondary unauthenticated client.
+  //    Safari UA returns pre-merged video+audio HLS formats (144p-1080p).
+  //    May require PO Token, but Safari UA sometimes bypasses the check.
   {
-    name: 'ANDROID_VR',
-    clientName: 'ANDROID_VR',
-    clientVersion: '1.57.29',
-    userAgent: 'com.google.android.apps.youtube.vr.oculus/1.57.29 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
-    xClientName: '28',
-    extra: { androidSdkVersion: 32 },
+    name: 'WEB_SAFARI',
+    clientName: 'WEB',
+    clientVersion: '2.20260114.08.00',
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.5 Safari/605.1.15,gzip(gfe)',
+    xClientName: '1',
+    extra: {},
     extraHeaders: {},
   },
-  // IOS v20.10 — returns direct un-ciphered stream URLs for most videos
+  // 5. MWEB (iPad UA) — yt-dlp uses iPad UA which historically did not require PO Token.
+  //    Now requires PO Token (GVS policy: required=True), but may work on some videos.
   {
-    name: 'IOS_v20',
+    name: 'MWEB',
+    clientName: 'MWEB',
+    clientVersion: '2.20260115.01.00',
+    userAgent: 'Mozilla/5.0 (iPad; CPU OS 16_7_10 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1,gzip(gfe)',
+    xClientName: '2',
+    extra: {},
+    extraHeaders: {},
+  },
+  // 6. WEB (Chrome UA) — standard web client, requires PO Token.
+  {
+    name: 'WEB',
+    clientName: 'WEB',
+    clientVersion: '2.20260114.08.00',
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+    xClientName: '1',
+    extra: {},
+    extraHeaders: {},
+  },
+  // 7. IOS — returns direct un-ciphered stream URLs for most videos.
+  //    Requires PO Token (GVS policy: required=True), but worth trying as fallback.
+  {
+    name: 'IOS',
     clientName: 'IOS',
-    clientVersion: '20.10.4',
-    userAgent: 'com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_5_0 like Mac OS X;)',
+    clientVersion: '21.02.3',
+    userAgent: 'com.google.ios.youtube/21.02.3 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)',
     xClientName: '5',
     extra: {
       deviceMake: 'Apple',
       deviceModel: 'iPhone16,2',
       osName: 'iPhone',
-      osVersion: '18.5.0.22F75',
-      clientFormFactor: 'SMALL_FORM_FACTOR',
+      osVersion: '18.3.2.22D82',
     },
     extraHeaders: {},
   },
-  // ANDROID v20.10 — broad compatibility
+  // 8. ANDROID — broad compatibility, requires PO Token.
   {
-    name: 'ANDROID_v20',
+    name: 'ANDROID',
     clientName: 'ANDROID',
-    clientVersion: '20.10.4',
-    userAgent: 'com.google.android.youtube/20.10.4 (Linux; U; Android 14) gzip',
+    clientVersion: '21.02.35',
+    userAgent: 'com.google.android.youtube/21.02.35 (Linux; U; Android 11) gzip',
     xClientName: '3',
-    extra: { androidSdkVersion: 34, clientFormFactor: 'SMALL_FORM_FACTOR' },
+    extra: {
+      androidSdkVersion: 30,
+      osName: 'Android',
+      osVersion: '11',
+    },
     extraHeaders: {},
   },
 ] as const;
@@ -142,9 +197,9 @@ async function tryClient(videoId: string, client: Client, debug = false, maxHeig
   debug?: unknown;
 } | null> {
   const effectiveMaxHeight = maxHeightOverride || MAX_HEIGHT;
-  // Build the InnerTube request body. For WEB_EMBEDDED, include thirdParty to bypass age checks.
-  const isEmbedClient = client.clientName === 'TVHTML5_SIMPLY_EMBEDDED_PLAYER' ||
-                        client.clientName === 'WEB_EMBEDDED_PLAYER';
+  // Build the InnerTube request body. For embedded clients, include thirdParty.embedUrl
+  // (must be a non-YouTube URL per yt-dlp's _fix_embedded_ytcfg).
+  const isEmbedClient = client.clientName === 'WEB_EMBEDDED_PLAYER';
   const body: Record<string, unknown> = {
     videoId,
     contentCheckOk: true,
@@ -158,7 +213,7 @@ async function tryClient(videoId: string, client: Client, debug = false, maxHeig
         ...client.extra,
       },
       ...(isEmbedClient ? {
-        thirdParty: { embedUrl: 'https://www.youtube.com/' },
+        thirdParty: { embedUrl: 'https://www.reddit.com/' },
       } : {}),
     },
     playbackContext: {
@@ -417,6 +472,166 @@ export async function OPTIONS() {
   return new Response(null, { status: 204, headers: CORS });
 }
 
+// Resolve stream URL by scraping the watch page HTML.
+// YouTube's bot detection primarily targets direct InnerTube API calls
+// (/youtubei/v1/player), but the public watch page (/watch?v=...) is served
+// to every browser visitor and contains the full ytInitialPlayerResponse
+// JSON with streamingData. This is the most reliable fallback when all
+// InnerTube clients return LOGIN_REQUIRED.
+//
+// This mirrors yt-dlp's approach: it first downloads the watch page to get
+// ytcfg, then uses the embedded player response. We skip the ytcfg step and
+// use ytInitialPlayerResponse directly.
+async function resolveStreamViaWatchPage(videoId: string, maxHeightOverride?: number): Promise<{
+  title: string;
+  duration: number;
+  streamUrl: string;
+  audioUrl?: string;
+  quality: string;
+  client: string;
+} | null> {
+  const effectiveMaxHeight = maxHeightOverride || MAX_HEIGHT;
+  const cookieHeader = (process.env.YOUTUBE_COOKIES || '').trim();
+  const parsedCookieHeader = cookieHeader.includes('\t') ? netscapeCookiesToHeader(cookieHeader) : cookieHeader;
+
+  try {
+    const html = await fetchText(
+      `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}&hl=en&gl=US`,
+      parsedCookieHeader,
+    );
+
+    // Find ytInitialPlayerResponse in the HTML.
+    // The JSON object is large (~130KB for typical videos) and is assigned as:
+    //   ytInitialPlayerResponse = {...};
+    // We use indexOf to locate the start, then find the matching closing brace
+    // by counting brace depth. This is more reliable than a regex which may
+    // fail on large JSON or JSON containing regex special characters.
+    const marker = 'ytInitialPlayerResponse';
+    const markerIdx = html.indexOf(marker);
+    if (markerIdx === -1) {
+      throw new Error('ytInitialPlayerResponse not found in HTML');
+    }
+
+    // Find the opening brace after the marker
+    const assignIdx = html.indexOf('=', markerIdx);
+    if (assignIdx === -1) {
+      throw new Error('No assignment after ytInitialPlayerResponse marker');
+    }
+    const braceIdx = html.indexOf('{', assignIdx);
+    if (braceIdx === -1) {
+      throw new Error('No opening brace after ytInitialPlayerResponse =');
+    }
+
+    // Count brace depth to find the matching closing brace
+    let depth = 0;
+    let endIdx = -1;
+    let inString = false;
+    let escapeNext = false;
+    for (let i = braceIdx; i < html.length; i++) {
+      const ch = html[i];
+      if (escapeNext) { escapeNext = false; continue; }
+      if (ch === '\\') { escapeNext = true; continue; }
+      if (ch === '"') { inString = !inString; continue; }
+      if (inString) continue;
+      if (ch === '{') depth++;
+      else if (ch === '}') {
+        depth--;
+        if (depth === 0) { endIdx = i; break; }
+      }
+    }
+    if (endIdx === -1) {
+      throw new Error('Could not find matching closing brace for ytInitialPlayerResponse');
+    }
+
+    const jsonStr = html.slice(braceIdx, endIdx + 1);
+    let data: InnerTubeResponse;
+    try {
+      data = JSON.parse(jsonStr) as InnerTubeResponse;
+    } catch (e) {
+      throw new Error(`JSON parse failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
+    const ps = data.playabilityStatus?.status;
+    if (ps && ps !== 'OK') {
+      throw new Error(`WatchPage: ${ps}: ${data.playabilityStatus?.reason ?? ''}`);
+    }
+
+    const formats: Format[] = [
+      ...(data.streamingData?.formats ?? []),
+      ...(data.streamingData?.adaptiveFormats ?? []),
+    ];
+    if (!formats.length) throw new Error('WatchPage: No formats');
+
+    // Prefer combined audio+video MP4 with a direct URL
+    const combined = formats.filter(f =>
+      f.url && f.mimeType?.startsWith('video/mp4') && (f.audioQuality || f.audioChannels)
+    );
+
+    const combinedBest =
+      combined
+        .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
+        .filter(item => item.q > 0 && item.q <= effectiveMaxHeight)
+        .sort((a, b) => b.q - a.q)[0]?.f
+      || combined
+        .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
+        .sort((a, b) => b.q - a.q)[0]?.f
+      || combined[0]
+      || formats.find(f => f.url);
+
+    const combinedHeight = combinedBest ? parseQuality(combinedBest.qualityLabel ?? combinedBest.quality) : 0;
+    let format = combinedBest;
+    let audioUrl: string | undefined;
+
+    // Try adaptive formats for higher quality if combined is low
+    if (combinedHeight < 720) {
+      const videoOnly = formats.filter(f =>
+        f.url && f.mimeType?.startsWith('video/mp4') && !(f.audioQuality || f.audioChannels)
+      );
+      const audioOnly = formats.filter(f =>
+        f.url && (f.mimeType?.startsWith('audio/mp4') || f.mimeType?.includes('audio/'))
+      );
+      const bestVideo =
+        videoOnly
+          .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
+          .filter(item => item.q > 0 && item.q <= effectiveMaxHeight)
+          .sort((a, b) => b.q - a.q)[0]?.f
+        || videoOnly
+          .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
+          .sort((a, b) => b.q - a.q)[0]?.f;
+      if (bestVideo && parseQuality(bestVideo.qualityLabel ?? bestVideo.quality) > combinedHeight) {
+        format = bestVideo;
+        if (audioOnly[0]?.url) audioUrl = audioOnly[0].url;
+      }
+    }
+
+    // Try to resolve ciphered URLs via player.js decipher
+    const resolvedUrl = await resolveFormatUrl(format, videoId, parsedCookieHeader);
+    if (!resolvedUrl) {
+      throw new Error('WatchPage: No direct URL (cipher-protected and decipher failed)');
+    }
+
+    let resolvedAudioUrl: string | undefined;
+    if (audioUrl) {
+      const audioFormat = formats.find(f => f.url === audioUrl);
+      resolvedAudioUrl = audioFormat
+        ? await resolveFormatUrl(audioFormat, videoId, parsedCookieHeader)
+        : audioUrl;
+    }
+
+    return {
+      title: data.videoDetails?.title ?? 'YouTube Video',
+      duration: parseInt(data.videoDetails?.lengthSeconds ?? '300', 10) || 300,
+      streamUrl: resolvedUrl,
+      quality: format?.qualityLabel ?? format?.quality ?? 'unknown',
+      ...(resolvedAudioUrl ? { audioUrl: resolvedAudioUrl } : {}),
+      client: 'WATCH_PAGE',
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(`WatchPage: ${msg.slice(0, 150)}`);
+  }
+}
+
 async function resolveStream(videoId: string, debug: boolean, isAudio: boolean, maxHeightOverride?: number): Promise<{
   title: string;
   duration: number;
@@ -544,7 +759,26 @@ async function resolveStream(videoId: string, debug: boolean, isAudio: boolean, 
     }
   }
 
-  return null;
+  // Fallback: scrape the watch page HTML for ytInitialPlayerResponse.
+  // This bypasses InnerTube API bot detection (LOGIN_REQUIRED) because the
+  // watch page is served to every browser visitor and contains the full
+  // player response JSON with streamingData. This is the same approach
+  // yt-dlp uses as its first step (download watch page → extract ytcfg →
+  // call InnerTube API with the page's client config).
+  try {
+    const result = await resolveStreamViaWatchPage(videoId, maxHeightOverride);
+    if (result) {
+      return result;
+    }
+    errors.push('WATCH_PAGE: no stream URL');
+  } catch (e) {
+    const msg = (e instanceof Error ? e.message : String(e)).slice(0, 150);
+    errors.push(msg);
+  }
+
+  // All methods failed — throw with the collected errors so callers can
+  // return a meaningful error message to the client.
+  throw new Error(`All methods failed: ${errors.join(' | ')}`);
 }
 
 export async function GET(request: Request) {
@@ -561,7 +795,15 @@ export async function GET(request: Request) {
 
   // Proxy mode: resolve stream URL + proxy video bytes in one request (same Edge colo = no IP mismatch)
   if (proxy) {
-    const result = await resolveStream(videoId, false, isAudio, maxHeight);
+    let result;
+    try {
+      result = await resolveStream(videoId, false, isAudio, maxHeight);
+    } catch (e) {
+      return Response.json(
+        { error: e instanceof Error ? e.message.slice(0, 300) : String(e) },
+        { status: 502, headers: CORS },
+      );
+    }
     if (!result) {
       return Response.json({ error: 'Failed to resolve stream URL' }, { status: 502, headers: CORS });
     }
@@ -614,136 +856,25 @@ export async function GET(request: Request) {
     }
   }
 
-  const errors: string[] = [];
-
-  // If YOUTUBE_COOKIES is set, try a cookie-authenticated WEB client first.
-  // This reliably handles age-restricted videos and reduces bot-detection false positives.
-  // To set: Vercel Dashboard → Settings → Environment Variables → YOUTUBE_COOKIES
-  // Cookie format: Netscape/cookies.txt string exported from your browser.
-  const ytCookies = (process.env.YOUTUBE_COOKIES || '').trim();
-  if (ytCookies) {
-    // Convert Netscape cookie file format to a "Cookie: name=value; ..." header string if needed
-    let cookieHeader = ytCookies;
-    if (ytCookies.includes('\t')) {
-      // Netscape format: one cookie per line with tab-separated fields
-      cookieHeader = ytCookies
-        .split('\n')
-        .filter(l => !l.startsWith('#') && l.trim())
-        .map(l => { const p = l.split('\t'); return p.length >= 7 ? `${p[5]}=${p[6]}` : ''; })
-        .filter(Boolean)
-        .join('; ');
+  // Non-proxy mode: resolve stream URL and return it as JSON.
+  // resolveStream tries: YOUTUBE_COOKIES → CLIENTS (android_vr, tv, web_embedded, ...)
+  // → watch page HTML scrape (bypasses LOGIN_REQUIRED bot detection).
+  try {
+    const result = await resolveStream(videoId, debug, isAudio, maxHeight);
+    if (result) {
+      return Response.json(
+        result,
+        { status: 200, headers: { ...CORS, 'Cache-Control': 'no-store' } }
+      );
     }
-
-    if (cookieHeader) {
-      try {
-        const body: Record<string, unknown> = {
-          videoId,
-          context: {
-            client: { clientName: 'WEB', clientVersion: '2.20240101.00.00', hl: 'en', gl: 'US' },
-          },
-          playbackContext: { contentPlaybackContext: { html5Preference: 'HTML5_PREF_WANTS' } },
-        };
-        const res = await fetch('https://www.youtube.com/youtubei/v1/player?prettyPrint=false', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
-            'Origin': 'https://www.youtube.com',
-            'Referer': 'https://www.youtube.com/',
-            'X-Youtube-Client-Name': '1',
-            'X-Youtube-Client-Version': '2.20240101.00.00',
-            'Cookie': cookieHeader,
-          },
-          body: JSON.stringify(body),
-          signal: AbortSignal.timeout(8_000),
-        });
-        if (res.ok) {
-          const data = await res.json() as InnerTubeResponse;
-          const ps = data.playabilityStatus?.status;
-          if (ps === 'OK') {
-            const formats: Format[] = [
-              ...(data.streamingData?.formats ?? []),
-              ...(data.streamingData?.adaptiveFormats ?? []),
-            ];
-            const combined = formats.filter(f =>
-              f.url && f.mimeType?.startsWith('video/mp4') && (f.audioQuality || f.audioChannels)
-            );
-            const combinedBest =
-              combined
-                .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
-                .filter(item => item.q > 0 && item.q <= effectiveMaxHeight)
-                .sort((a, b) => b.q - a.q)[0]?.f
-              || combined
-                .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
-                .sort((a, b) => b.q - a.q)[0]?.f
-              || combined[0]
-              || formats.find(f => f.url);
-
-            // Use adaptive formats if combined is low quality
-            const combinedHeight = combinedBest ? parseQuality(combinedBest.qualityLabel ?? combinedBest.quality) : 0;
-            let format = combinedBest;
-            let audioUrl: string | undefined;
-
-            if (combinedHeight < 720) {
-              const videoOnly = formats.filter(f =>
-                f.url && f.mimeType?.startsWith('video/mp4') && !(f.audioQuality || f.audioChannels)
-              );
-              const audioOnly = formats.filter(f =>
-                f.url && (f.mimeType?.startsWith('audio/mp4') || f.mimeType?.includes('audio/'))
-              );
-              const bestVideo =
-                videoOnly
-                  .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
-                  .filter(item => item.q > 0 && item.q <= effectiveMaxHeight)
-                  .sort((a, b) => b.q - a.q)[0]?.f
-                || videoOnly
-                  .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
-                  .sort((a, b) => b.q - a.q)[0]?.f;
-              if (bestVideo && parseQuality(bestVideo.qualityLabel ?? bestVideo.quality) > combinedHeight) {
-                format = bestVideo;
-                if (audioOnly[0]?.url) audioUrl = audioOnly[0].url;
-              }
-            }
-
-            if (format?.url) {
-              return Response.json({
-                title: data.videoDetails?.title ?? 'YouTube Video',
-                duration: parseInt(data.videoDetails?.lengthSeconds ?? '300', 10) || 300,
-                streamUrl: format.url,
-                quality: format.qualityLabel ?? format.quality ?? 'unknown',
-                client: 'WEB_COOKIES',
-                ...(audioUrl ? { audioUrl } : {}),
-              }, { status: 200, headers: { ...CORS, 'Cache-Control': 'no-store' } });
-            }
-          }
-          errors.push(`WEB_COOKIES: ${ps ?? 'no stream'}: ${data.playabilityStatus?.reason ?? ''}`);
-        } else {
-          errors.push(`WEB_COOKIES: HTTP ${res.status}`);
-        }
-      } catch (e) {
-        errors.push(`WEB_COOKIES: ${e instanceof Error ? e.message.slice(0, 100) : String(e)}`);
-      }
-    }
+    return Response.json(
+      { error: 'Failed to resolve stream URL (all methods returned null)' },
+      { status: 502, headers: CORS }
+    );
+  } catch (e) {
+    return Response.json(
+      { error: e instanceof Error ? e.message.slice(0, 2000) : String(e) },
+      { status: 502, headers: CORS }
+    );
   }
-
-  for (const client of CLIENTS) {
-    try {
-      const result = await tryClient(videoId, client, debug, maxHeight);
-      if (result) {
-        return Response.json(
-          { ...result, client: client.name },
-          { status: 200, headers: { ...CORS, 'Cache-Control': 'no-store' } }
-        );
-      }
-      errors.push(`${client.name}: no stream URL`);
-    } catch (e) {
-      const msg = (e instanceof Error ? e.message : String(e)).slice(0, 150);
-      errors.push(`${client.name}: ${msg}`);
-    }
-  }
-
-  return Response.json(
-    { error: `All clients failed: ${errors.join(' | ')}` },
-    { status: 502, headers: CORS }
-  );
 }

@@ -120,3 +120,4 @@ apps/macos-agent/dist-old/
 *.dmg
 config/
 .gstack/
+.env*.local

@@ -1048,17 +1048,16 @@ async function getYouTubeInfoViaCFWorker(
   // googlevideo.com direct URLs return 403 for Vercel IP (ip= param tied to CF IP).
   // /stream proxy fetches via CF IP and forwards to Vercel.
   //
-  // Note: /resolve and /stream may hit different Cloudflare colos (caches.default
-  // is per-colo). When they do, the streamUrl's ip= param won't match the /stream
-  // colo's IP, and the fast path fails. /stream then falls back to HD re-resolve
-  // (tryClient with 720p+ filter on THIS colo), which gets a fresh streamUrl bound
-  // to this colo's IP. This adds ~6s latency on cold cache but produces correct HD
-  // output instead of silently degrading to 360p.
+  // IMPORTANT: Pass the resolved streamUrl + metadata (userAgent, visitorData, etc.)
+  // as query params so /stream uses the FAST PATH (direct fetch). Without these,
+  // /stream does its own tryClient (InnerTube API call) which is slow (60s+) and
+  // times out. The fast path fetches the googlevideo.com URL directly from CF IP.
   //
-  // NOTE: /stream proxy URLs are built WITHOUT streamUrl param. /resolve and
-  // /stream may hit different CF colos; passing streamUrl causes fast path
-  // failure (ip= mismatch) and extra API calls that trigger rate-limiting.
-  // /stream does fresh tryClient on its own colo instead.
+  // If /resolve and /stream hit different CF colos, the streamUrl's ip= param
+  // won't match /stream's colo IP and googlevideo.com returns 403. The /stream
+  // endpoint handles this via IP-binding bypass: strips ip= param and sets
+  // ipbits=0, then retries. This works because ip/ipbits are NOT part of the
+  // signed parameters.
   // audio=1 parameter tells /stream to fetch resolved.audioUrl (separate audio
   // stream from adaptiveFormats) instead of resolved.streamUrl (video-only).
   const buildStreamProxyUrl = (isAudio = false) => {
@@ -1066,6 +1065,16 @@ async function getYouTubeInfoViaCFWorker(
     endpoint.pathname = `${endpoint.pathname.replace(/\/$/, '')}/stream`;
     endpoint.searchParams.set('videoId', videoId);
     endpoint.searchParams.set('maxHeight', String(maxHeight));
+    // Pass resolved streamUrl + metadata for fast path (avoids slow re-resolve)
+    const directUrl = isAudio ? (data.audioUrl || data.streamUrl) : data.streamUrl;
+    if (directUrl) {
+      endpoint.searchParams.set('streamUrl', directUrl);
+      if (data.userAgent) endpoint.searchParams.set('userAgent', data.userAgent);
+      if (data.visitorData) endpoint.searchParams.set('visitorData', data.visitorData);
+      if (data.xClientName !== undefined) endpoint.searchParams.set('xClientName', String(data.xClientName));
+      if (data.clientVersion) endpoint.searchParams.set('clientVersion', data.clientVersion);
+      if (data.client) endpoint.searchParams.set('clientName', data.client);
+    }
     if (isAudio) endpoint.searchParams.set('audio', '1');
     return endpoint.toString();
   };
@@ -2431,6 +2440,9 @@ function wrapInStreamProxyIfNeeded(
     endpoint.pathname = `${endpoint.pathname.replace(/\/$/, '')}/stream`;
     endpoint.searchParams.set('videoId', videoId);
     endpoint.searchParams.set('maxHeight', String(maxHeight));
+    // Pass the googlevideo.com streamUrl for fast path (avoids slow re-resolve).
+    // /stream has IP-binding bypass (strips ip= param) to handle colo mismatch.
+    endpoint.searchParams.set('streamUrl', streamUrl);
     if (isAudio) endpoint.searchParams.set('audio', '1');
     return endpoint.toString();
   }
@@ -3199,52 +3211,102 @@ async function createClipFromYouTubeStream(params: {
   const duration = Math.max(1, endTime - startTime);
   const internalBaseUrl = getAppBaseUrl();
 
-  if (!internalBaseUrl) {
-    console.warn('createClipFromYouTubeStream: no internal base URL, cannot use Edge proxy');
-    return null;
+  // Collect candidate input URLs for ffmpeg fast-seek.
+  // fast-seek only downloads the needed 60-second portion (~10-30MB at 360p),
+  // not the entire video, so it can succeed even when full download fails.
+  const candidates: { url: string; headers: string; label: string }[] = [];
+
+  // Candidate 1: Edge proxy URL (resolves + proxies in same Edge colo)
+  if (internalBaseUrl) {
+    const edgeProxyUrl = `${internalBaseUrl}/api/yt-stream?videoId=${encodeURIComponent(videoId)}&proxy=1&maxHeight=360`;
+    const edgeHeaders =
+      `${getBypassFfmpegHeaderString()}` +
+      'Accept: */*\r\nAccept-Encoding: identity\r\n';
+    candidates.push({ url: edgeProxyUrl, headers: edgeHeaders, label: 'EdgeProxy' });
   }
 
-  // Build the Edge proxy URL.
-  // /api/yt-stream?proxy=1 resolves the stream URL AND proxies video bytes in
-  // the same request (same Edge colo = same IP = no 403 from googlevideo.com).
-  // maxHeight=360 ensures we get a small (360p) stream — fast to download and clip.
-  const edgeProxyUrl = `${internalBaseUrl}/api/yt-stream?videoId=${encodeURIComponent(videoId)}&proxy=1&maxHeight=360`;
-  console.log(`createClipFromYouTubeStream: using Edge proxy (fast seek): ${edgeProxyUrl.slice(0, 80)}...`);
-
-  // Use remote ffmpeg with FAST SEEK (-ss before -i).
-  // createLocalClip now recognizes /api/yt-stream?proxy=1 as a Range-supporting
-  // URL (isWorkerStream=true), so fastSeek=true. This means ffmpeg only downloads
-  // the portion from startTime to startTime+duration — typically 10-30MB for a
-  // 60-second 360p clip — instead of the entire video.
-  const ffmpegHeaders =
-    `${getBypassFfmpegHeaderString()}` +
-    'Accept: */*\r\nAccept-Encoding: identity\r\n';
-
+  // Candidate 2: Stream URLs from getYouTubeStreamUrlWithFallbacks (cobalt/Invidious/Piped)
+  // cobalt returns non-googlevideo.com URLs (not IP-bound) — can be used directly.
+  // Invidious/Piped return googlevideo.com URLs — wrap in Edge proxy for download.
   try {
-    const result = await createLocalClip({
-      inputPath: edgeProxyUrl,
-      inputHeaders: ffmpegHeaders,
-      startTime,
-      endTime,
-      title,
-    });
-    return {
-      id: result.outputPath ? path.basename(result.outputPath) : clipFileName(title),
-      title,
-      startTime,
-      endTime,
-      duration,
-      summary: summary || '',
-      engagementScore: 0,
-      videoUrl: result.dataUrl || result.publicUrl,
-      thumbnailUrl: result.thumbnailUrl || '',
-      status: 'completed',
-    };
-  } catch (err) {
-    console.warn(`createClipFromYouTubeStream: ffmpeg remote clip failed:`,
-      err instanceof Error ? err.message.slice(0, 200) : err);
+    console.log(`createClipFromYouTubeStream: calling getYouTubeStreamUrlWithFallbacks(videoId=${videoId}, maxHeight=360)...`);
+    const result = await getYouTubeStreamUrlWithFallbacks(videoId, 360);
+    console.log(`createClipFromYouTubeStream: getYouTubeStreamUrlWithFallbacks returned streamUrl=${result.streamUrl ? result.streamUrl.slice(0, 100) : 'null'}${result.audioUrl ? ' + audio' : ''}`);
+    if (result.streamUrl) {
+      const isGooglevideo = result.streamUrl.includes('googlevideo.com');
+      const wrappedUrl = isGooglevideo
+        ? wrapInStreamProxyIfNeeded(result.streamUrl, videoId, false, 360)
+        : result.streamUrl;
+      const wrappedAudio = result.audioUrl
+        ? (result.audioUrl.includes('googlevideo.com')
+            ? wrapInStreamProxyIfNeeded(result.audioUrl, videoId, true, 360)
+            : result.audioUrl)
+        : undefined;
+
+      const candidateHeaders = isGooglevideo || wrappedUrl.includes(internalBaseUrl || 'x')
+        ? `${getBypassFfmpegHeaderString()}Accept: */*\r\nAccept-Encoding: identity\r\n`
+        : 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36\r\nAccept: */*\r\nAccept-Encoding: identity\r\n';
+
+      candidates.push({
+        url: wrappedUrl,
+        headers: candidateHeaders,
+        label: `StreamFallback${wrappedAudio ? '+Audio' : ''}`,
+      });
+
+      // If we have a separate audio URL, add it as a candidate with audio
+      if (wrappedAudio) {
+        // Store audio URL for later use — we'll pass it to createLocalClip
+        (candidates[candidates.length - 1] as { url: string; headers: string; label: string; audioUrl?: string }).audioUrl = wrappedAudio;
+      }
+      console.log(`createClipFromYouTubeStream: added StreamFallback candidate, url length=${wrappedUrl.length}`);
+    } else {
+      console.warn(`createClipFromYouTubeStream: getYouTubeStreamUrlWithFallbacks returned empty streamUrl`);
+    }
+  } catch (fallbackErr) {
+    console.warn(`createClipFromYouTubeStream: getYouTubeStreamUrlWithFallbacks failed:`,
+      fallbackErr instanceof Error ? fallbackErr.message.slice(0, 200) : fallbackErr);
+  }
+
+  if (candidates.length === 0) {
+    console.warn('createClipFromYouTubeStream: no candidates available');
     return null;
   }
+
+  // Try each candidate with ffmpeg fast-seek
+  console.log(`createClipFromYouTubeStream: trying ${candidates.length} candidates: ${candidates.map(c => c.label).join(', ')}`);
+  for (const candidate of candidates) {
+    console.log(`createClipFromYouTubeStream: trying ${candidate.label}: ${candidate.url.slice(0, 80)}...`);
+    try {
+      const audioUrl = (candidate as { audioUrl?: string }).audioUrl;
+      const result = await createLocalClip({
+        inputPath: candidate.url,
+        audioInputPath: audioUrl,
+        inputHeaders: candidate.headers,
+        startTime,
+        endTime,
+        title,
+      });
+      console.log(`createClipFromYouTubeStream: ${candidate.label} succeeded!`);
+      return {
+        id: result.outputPath ? path.basename(result.outputPath) : clipFileName(title),
+        title,
+        startTime,
+        endTime,
+        duration,
+        summary: summary || '',
+        engagementScore: 0,
+        videoUrl: result.dataUrl || result.publicUrl,
+        thumbnailUrl: result.thumbnailUrl || '',
+        status: 'completed',
+      };
+    } catch (err) {
+      console.warn(`createClipFromYouTubeStream: ${candidate.label} failed:`,
+        err instanceof Error ? err.message.slice(0, 300) : err);
+    }
+  }
+
+  console.warn('createClipFromYouTubeStream: all candidates failed');
+  return null;
 }
 
 const videoClipper = {
