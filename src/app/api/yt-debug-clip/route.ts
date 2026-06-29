@@ -72,7 +72,7 @@ export async function GET(request: NextRequest) {
       resolveUrl.pathname = `${resolveUrl.pathname.replace(/\/$/, '')}/resolve`;
       resolveUrl.searchParams.set('videoId', videoId);
       resolveUrl.searchParams.set('maxHeight', '360');
-      const r = await fetch(resolveUrl.toString(), { signal: AbortSignal.timeout(20_000) });
+      const r = await fetch(resolveUrl.toString(), { signal: AbortSignal.timeout(90_000) });
       const data = await r.json() as { streamUrl?: string; title?: string; quality?: string; error?: string; client?: string; audioUrl?: string; userAgent?: string; visitorData?: string; xClientName?: number; clientVersion?: string };
       resolvedStreamUrl = data.streamUrl || null;
       resolvedMetadata = {
