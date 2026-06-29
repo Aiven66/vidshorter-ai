@@ -970,6 +970,14 @@ async function getYouTubeInfoViaCobalt(videoId: string): Promise<PipedVideoInfo>
 // ── Cloudflare Worker proxy (optional — set CF_WORKER_URL env var) ────────────
 // The CF Worker calls YouTube InnerTube API from Cloudflare's IP space,
 // which YouTube does not block. Deploy the worker from /cf-worker/.
+
+// In-memory cache for CF Worker /resolve results. Persists across invocations
+// on warm Lambda instances. YouTube rate-limits CF Worker IPs after the first
+// successful /resolve call, so caching avoids repeated calls that would fail
+// with 502. TTL is 4 minutes (YouTube stream URLs expire in 6 hours).
+const cfWorkerResolveCache = new Map<string, { result: PipedVideoInfo; expiresAt: number }>();
+const CF_WORKER_CACHE_TTL_MS = 4 * 60 * 1000;
+
 async function getYouTubeInfoViaCFWorker(
   videoId: string,
   maxHeightOverride: number = 0,
@@ -984,6 +992,15 @@ async function getYouTubeInfoViaCFWorker(
     ? Math.min(maxHeightOverride, defaultMaxHeight)
     : defaultMaxHeight;
 
+  // Check in-memory cache first — avoids hitting CF Worker repeatedly,
+  // which triggers YouTube rate-limiting (502 errors on subsequent calls).
+  const cacheKey = `${videoId}:${maxHeight}`;
+  const cached = cfWorkerResolveCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    console.log(`CF Worker cache hit for ${cacheKey} (expires in ${Math.round((cached.expiresAt - Date.now()) / 1000)}s)`);
+    return cached.result;
+  }
+
   const u = new URL(cfWorkerUrl);
   u.pathname = `${u.pathname.replace(/\/$/, '')}/resolve`;
   u.searchParams.set('videoId', videoId);
@@ -997,11 +1014,16 @@ async function getYouTubeInfoViaCFWorker(
   });
 
   let res: Response | null = null;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  // Retry up to 4 times on 429/500/502/503/504 — YouTube intermittently
+  // rate-limits CF Worker IPs, and retries with delays often succeed.
+  for (let attempt = 0; attempt < 4; attempt += 1) {
     res = await fetchResolved();
     if (res.ok) break;
     if (![429, 500, 502, 503, 504].includes(res.status)) break;
-    await new Promise<void>((r) => setTimeout(r, 600 * (attempt + 1)));
+    // Exponential backoff: 1s, 2s, 4s, 8s — gives YouTube time to un-rate-limit.
+    const delay = 1000 * Math.pow(2, attempt);
+    console.warn(`CF Worker /resolve attempt ${attempt + 1} failed (HTTP ${res.status}), retrying in ${delay}ms...`);
+    await new Promise<void>((r) => setTimeout(r, delay));
   }
   if (!res) throw new Error('CF Worker: empty response');
 
@@ -1083,24 +1105,28 @@ async function getYouTubeInfoViaCFWorker(
   // build /stream proxy URLs for both. ffmpeg merges them via -map 0:v:0 -map 1:a:0.
   if (data.audioUrl) {
     console.log(`CF Worker HD success: "${(data.title ?? '').slice(0, 50)}", client=${data.client}, quality=${data.quality} + separate audio (via /stream proxy)`);
-    return {
+    const result: PipedVideoInfo = {
       title: data.title || 'YouTube Video',
       duration: data.duration || 300,
       streamUrl: buildStreamProxyUrl(false),
       subtitleUrl: null,
       audioUrl: buildStreamProxyUrl(true),
     };
+    cfWorkerResolveCache.set(cacheKey, { result, expiresAt: Date.now() + CF_WORKER_CACHE_TTL_MS });
+    return result;
   }
 
   // Combined (muxed) stream: single /stream proxy URL.
   const dbg = data._debug ? ` debug=${JSON.stringify(data._debug)}` : '';
   console.log(`CF Worker success: "${(data.title ?? '').slice(0, 50)}", client=${data.client}, quality=${data.quality}${dbg}`);
-  return {
+  const result: PipedVideoInfo = {
     title: data.title || 'YouTube Video',
     duration: data.duration || 300,
     streamUrl: buildStreamProxyUrl(false),
     subtitleUrl: null,
   };
+  cfWorkerResolveCache.set(cacheKey, { result, expiresAt: Date.now() + CF_WORKER_CACHE_TTL_MS });
+  return result;
 }
 
 // ── Vercel Edge Function proxy (/api/yt-stream) ───────────────────────────────
