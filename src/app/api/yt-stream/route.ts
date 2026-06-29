@@ -116,11 +116,12 @@ interface InnerTubeResponse {
   };
 }
 
-async function tryClient(videoId: string, client: Client, debug = false): Promise<{
+async function tryClient(videoId: string, client: Client, debug = false, maxHeightOverride?: number): Promise<{
   title: string; duration: number; streamUrl: string; quality: string;
   audioUrl?: string;
   debug?: unknown;
 } | null> {
+  const effectiveMaxHeight = maxHeightOverride || MAX_HEIGHT;
   // Build the InnerTube request body. For WEB_EMBEDDED, include thirdParty to bypass age checks.
   const isEmbedClient = client.clientName === 'TVHTML5_SIMPLY_EMBEDDED_PLAYER' ||
                         client.clientName === 'WEB_EMBEDDED_PLAYER';
@@ -190,7 +191,7 @@ async function tryClient(videoId: string, client: Client, debug = false): Promis
   const combinedBest =
     combined
       .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
-      .filter(item => item.q > 0 && item.q <= MAX_HEIGHT)
+      .filter(item => item.q > 0 && item.q <= effectiveMaxHeight)
       .sort((a, b) => b.q - a.q)[0]?.f
     || combined
       .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
@@ -226,7 +227,7 @@ async function tryClient(videoId: string, client: Client, debug = false): Promis
     // Sort video-only streams by quality (highest first, capped at MAX_HEIGHT)
     const videoCandidates = videoOnly
       .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
-      .filter(item => item.q > 0 && item.q <= MAX_HEIGHT)
+      .filter(item => item.q > 0 && item.q <= effectiveMaxHeight)
       .sort((a, b) => b.q - a.q);
 
     // Try the best video-only stream first; if its URL cannot be resolved
@@ -396,7 +397,7 @@ export async function OPTIONS() {
   return new Response(null, { status: 204, headers: CORS });
 }
 
-async function resolveStream(videoId: string, debug: boolean, isAudio: boolean): Promise<{
+async function resolveStream(videoId: string, debug: boolean, isAudio: boolean, maxHeightOverride?: number): Promise<{
   title: string;
   duration: number;
   streamUrl: string;
@@ -405,6 +406,7 @@ async function resolveStream(videoId: string, debug: boolean, isAudio: boolean):
   client: string;
 } | null> {
   const errors: string[] = [];
+  const effectiveMaxHeight = maxHeightOverride || MAX_HEIGHT;
 
   const ytCookies = (process.env.YOUTUBE_COOKIES || '').trim();
   if (ytCookies) {
@@ -455,7 +457,7 @@ async function resolveStream(videoId: string, debug: boolean, isAudio: boolean):
             const combinedBest =
               combined
                 .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
-                .filter(item => item.q > 0 && item.q <= MAX_HEIGHT)
+                .filter(item => item.q > 0 && item.q <= effectiveMaxHeight)
                 .sort((a, b) => b.q - a.q)[0]?.f
               || combined
                 .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
@@ -477,7 +479,7 @@ async function resolveStream(videoId: string, debug: boolean, isAudio: boolean):
               const bestVideo =
                 videoOnly
                   .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
-                  .filter(item => item.q > 0 && item.q <= MAX_HEIGHT)
+                  .filter(item => item.q > 0 && item.q <= effectiveMaxHeight)
                   .sort((a, b) => b.q - a.q)[0]?.f
                 || videoOnly
                   .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
@@ -511,7 +513,7 @@ async function resolveStream(videoId: string, debug: boolean, isAudio: boolean):
 
   for (const client of CLIENTS) {
     try {
-      const result = await tryClient(videoId, client, debug);
+      const result = await tryClient(videoId, client, debug, maxHeightOverride);
       if (result) {
         return { ...result, client: client.name };
       }
@@ -539,7 +541,7 @@ export async function GET(request: Request) {
 
   // Proxy mode: resolve stream URL + proxy video bytes in one request (same Edge colo = no IP mismatch)
   if (proxy) {
-    const result = await resolveStream(videoId, false, isAudio);
+    const result = await resolveStream(videoId, false, isAudio, maxHeight);
     if (!result) {
       return Response.json({ error: 'Failed to resolve stream URL' }, { status: 502, headers: CORS });
     }
@@ -649,7 +651,7 @@ export async function GET(request: Request) {
             const combinedBest =
               combined
                 .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
-                .filter(item => item.q > 0 && item.q <= MAX_HEIGHT)
+                .filter(item => item.q > 0 && item.q <= effectiveMaxHeight)
                 .sort((a, b) => b.q - a.q)[0]?.f
               || combined
                 .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
@@ -672,7 +674,7 @@ export async function GET(request: Request) {
               const bestVideo =
                 videoOnly
                   .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
-                  .filter(item => item.q > 0 && item.q <= MAX_HEIGHT)
+                  .filter(item => item.q > 0 && item.q <= effectiveMaxHeight)
                   .sort((a, b) => b.q - a.q)[0]?.f
                 || videoOnly
                   .map(f => ({ f, q: parseQuality(f.qualityLabel ?? f.quality) }))
@@ -706,7 +708,7 @@ export async function GET(request: Request) {
 
   for (const client of CLIENTS) {
     try {
-      const result = await tryClient(videoId, client, debug);
+      const result = await tryClient(videoId, client, debug, maxHeightOverride);
       if (result) {
         return Response.json(
           { ...result, client: client.name },
