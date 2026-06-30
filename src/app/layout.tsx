@@ -52,10 +52,18 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   const isDev = process.env.COZE_PROJECT_ENV === 'DEV';
+  // Expose CF Worker URL to the browser so the frontend can pre-resolve
+  // YouTube stream URLs from the user's IP (not rate-limited by YouTube,
+  // unlike Vercel datacenter IPs). The URL may include a ?key= secret for
+  // access control; that's expected — the key is already bundled in client JS.
+  const cfWorkerUrl = String(process.env.CF_WORKER_URL || '').trim();
 
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
+        <Script id="cf-worker-config" strategy="beforeInteractive">
+          {`window.__CF_WORKER_URL__ = ${JSON.stringify(cfWorkerUrl)};`}
+        </Script>
         {/* Google tag (gtag.js) - Google Analytics */}
         <Script
           src="https://www.googletagmanager.com/gtag/js?id=G-6P1172P3PK"

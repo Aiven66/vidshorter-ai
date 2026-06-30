@@ -22,6 +22,19 @@ interface ProcessVideoRequest {
   jobId?: string;
   videoId?: string;
   quality?: 'sd' | 'hd';
+  // Pre-resolved stream URL from CF Worker /resolve (obtained by frontend).
+  // When provided, Vercel uses it directly with CF Worker /stream fast path,
+  // avoiding the need to call CF Worker /resolve from Vercel (which fails
+  // intermittently due to YouTube rate-limiting Vercel's CF colo).
+  streamUrl?: string;
+  streamMetadata?: {
+    userAgent?: string;
+    visitorData?: string;
+    xClientName?: number;
+    clientVersion?: string;
+    client?: string;
+    audioUrl?: string;
+  };
 }
 
 interface Highlight {
@@ -154,6 +167,10 @@ export async function POST(request: NextRequest) {
   const suppliedTitle = typeof body.title === 'string' ? body.title.trim().slice(0, 120) : '';
   const suppliedVideoId = typeof body.videoId === 'string' ? body.videoId.trim() : '';
   const quality = body.quality === 'hd' ? 'hd' : 'sd';
+  // Pre-resolved stream URL from frontend (CF Worker /resolve).
+  // When provided, createClipFromYouTubeStream uses it directly with /stream fast path.
+  const preResolvedStreamUrl = typeof body.streamUrl === 'string' ? body.streamUrl.trim() : '';
+  const preResolvedMetadata = body.streamMetadata && typeof body.streamMetadata === 'object' ? body.streamMetadata : undefined;
   const abortSignal = request.signal;
   const authHeader = request.headers.get('authorization') || '';
   const bearerToken = authHeader.toLowerCase().startsWith('bearer ') ? authHeader.slice(7).trim() : '';
@@ -612,6 +629,7 @@ export async function POST(request: NextRequest) {
                 summary: highlight.summary,
                 startTime: safeStart,
                 endTime: safeEnd,
+                ...(preResolvedStreamUrl ? { preResolvedStreamUrl, preResolvedMetadata } : {}),
               });
 
               if (streamClip && streamClip.videoUrl) {
@@ -803,6 +821,7 @@ export async function POST(request: NextRequest) {
                   summary: h.summary,
                   startTime: safeStart,
                   endTime: safeEnd,
+                  ...(preResolvedStreamUrl ? { preResolvedStreamUrl, preResolvedMetadata } : {}),
                 });
                 if (streamClip && streamClip.videoUrl) {
                   c.status = 'completed';

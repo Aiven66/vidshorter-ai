@@ -108,6 +108,7 @@ declare global {
       openWebLogin?: () => Promise<{ ok?: boolean }>;
       openWebRegister?: () => Promise<{ ok?: boolean }>;
     };
+    __CF_WORKER_URL__?: string;
   }
 }
 
@@ -354,6 +355,48 @@ export default function VideoProcessor() {
       const isDesktop = !!desktop?.getMediaBaseUrl;
       const shouldUseLocalProcessing = isDesktop || isLocalMediaUrl(inputUrl);
 
+      // Pre-resolve YouTube stream URL via CF Worker from the user's browser.
+      // The user's browser IP is not rate-limited by YouTube (unlike Vercel's
+      // datacenter IPs), so CF Worker /resolve succeeds reliably from here.
+      // The resolved streamUrl is passed to process-video API, which uses it
+      // with CF Worker /stream fast path (no tryClient, no rate-limiting).
+      let preResolvedStreamUrl: string | undefined;
+      let preResolvedMetadata: { userAgent?: string; visitorData?: string; xClientName?: number; clientVersion?: string; client?: string; audioUrl?: string } | undefined;
+      if (!shouldUseLocalProcessing && inputUrl) {
+        try {
+          const ytIdMatch = inputUrl.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{7,15})/);
+          if (ytIdMatch) {
+            const ytVideoId = ytIdMatch[1];
+            const cfWorkerUrl = String(window.__CF_WORKER_URL__ || '').trim();
+            if (cfWorkerUrl) {
+              const resolveUrl = new URL(cfWorkerUrl);
+              resolveUrl.pathname = `${resolveUrl.pathname.replace(/\/$/, '')}/resolve`;
+              resolveUrl.searchParams.set('videoId', ytVideoId);
+              resolveUrl.searchParams.set('maxHeight', '360');
+              console.log('[HandleProcess] Pre-resolving YouTube stream via CF Worker...');
+              const resolveRes = await fetch(resolveUrl.toString(), { signal: AbortSignal.timeout(30_000) });
+              if (resolveRes.ok) {
+                const resolveData = await resolveRes.json() as { streamUrl?: string; userAgent?: string; visitorData?: string; xClientName?: number; clientVersion?: string; client?: string; audioUrl?: string };
+                if (resolveData.streamUrl) {
+                  preResolvedStreamUrl = resolveData.streamUrl;
+                  preResolvedMetadata = {
+                    userAgent: resolveData.userAgent,
+                    visitorData: resolveData.visitorData,
+                    xClientName: resolveData.xClientName,
+                    clientVersion: resolveData.clientVersion,
+                    client: resolveData.client,
+                    audioUrl: resolveData.audioUrl,
+                  };
+                  console.log('[HandleProcess] Pre-resolved streamUrl:', preResolvedStreamUrl.slice(0, 80) + '...');
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('[HandleProcess] CF Worker pre-resolve failed (will fall back to server-side):', e);
+        }
+      }
+
       if (useAgent && inputUrl && !shouldUseLocalProcessing) {
         const res = await fetch('/api/agent/jobs', {
           method: 'POST',
@@ -510,6 +553,8 @@ export default function VideoProcessor() {
         sourceType: selectedFile ? 'upload' : 'url',
         aiConfig: getAdminAiConfig(),
         quality,
+        ...(preResolvedStreamUrl ? { streamUrl: preResolvedStreamUrl } : {}),
+        ...(preResolvedMetadata ? { streamMetadata: preResolvedMetadata } : {}),
       });
 
       if (error) return;
@@ -528,6 +573,10 @@ export default function VideoProcessor() {
           jobId,
           videoId,
           quality,
+          // Continue passing the pre-resolved stream URL for subsequent batches
+          // (same video, same streamUrl is still valid for several minutes).
+          ...(preResolvedStreamUrl ? { streamUrl: preResolvedStreamUrl } : {}),
+          ...(preResolvedMetadata ? { streamMetadata: preResolvedMetadata } : {}),
         });
         if (error) break;
       }
@@ -537,7 +586,7 @@ export default function VideoProcessor() {
         saveDemoVideoRecord(displayUrl, videoTitle, Array.from(clipMap.values()), user?.id);
 
         if (user && user.role !== 'admin') {
-          await deductCredits(30);
+          await deductCredits(60);
         }
       }
     } catch (err) {

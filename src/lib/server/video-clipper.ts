@@ -3232,8 +3232,20 @@ async function createClipFromYouTubeStream(params: {
   summary?: string;
   startTime: number;
   endTime: number;
+  // Pre-resolved stream URL from frontend (CF Worker /resolve via user's browser).
+  // When provided, used as the first candidate with /stream fast path — avoids
+  // calling CF Worker /resolve from Vercel (which fails due to YouTube rate-limiting).
+  preResolvedStreamUrl?: string;
+  preResolvedMetadata?: {
+    userAgent?: string;
+    visitorData?: string;
+    xClientName?: number;
+    clientVersion?: string;
+    client?: string;
+    audioUrl?: string;
+  };
 }): Promise<ClipResult | null> {
-  const { videoId, title, summary, startTime, endTime } = params;
+  const { videoId, title, summary, startTime, endTime, preResolvedStreamUrl, preResolvedMetadata } = params;
   const duration = Math.max(1, endTime - startTime);
   const internalBaseUrl = getAppBaseUrl();
 
@@ -3243,6 +3255,43 @@ async function createClipFromYouTubeStream(params: {
   const candidates: { url: string; headers: string; label: string }[] = [];
   const cfWorkerUrl = getCfWorkerUrl();
   const bypassHeaders = `${getBypassFfmpegHeaderString()}Accept: */*\r\nAccept-Encoding: identity\r\n`;
+
+  // Candidate 0 (highest priority): Pre-resolved stream URL from frontend.
+  // The frontend calls CF Worker /resolve from the user's browser (not rate-limited
+  // by YouTube), gets a streamUrl, and passes it here. We wrap it in CF Worker
+  // /stream fast path — this only proxies the video stream, no tryClient needed,
+  // so it never triggers YouTube rate-limiting. This is the most reliable path.
+  if (preResolvedStreamUrl && cfWorkerUrl) {
+    const endpoint = new URL(cfWorkerUrl);
+    endpoint.pathname = `${endpoint.pathname.replace(/\/$/, '')}/stream`;
+    endpoint.searchParams.set('videoId', videoId);
+    endpoint.searchParams.set('maxHeight', '360');
+    endpoint.searchParams.set('streamUrl', preResolvedStreamUrl);
+    if (preResolvedMetadata?.userAgent) endpoint.searchParams.set('userAgent', preResolvedMetadata.userAgent);
+    if (preResolvedMetadata?.visitorData) endpoint.searchParams.set('visitorData', preResolvedMetadata.visitorData);
+    if (preResolvedMetadata?.xClientName !== undefined) endpoint.searchParams.set('xClientName', String(preResolvedMetadata.xClientName));
+    if (preResolvedMetadata?.clientVersion) endpoint.searchParams.set('clientVersion', preResolvedMetadata.clientVersion);
+    if (preResolvedMetadata?.client) endpoint.searchParams.set('clientName', preResolvedMetadata.client);
+    const fastPathUrl = endpoint.toString();
+    candidates.push({ url: fastPathUrl, headers: bypassHeaders, label: 'PreResolvedFastPath' });
+    console.log(`createClipFromYouTubeStream: added PreResolvedFastPath candidate (streamUrl from frontend)`);
+
+    // If there's a separate audio URL, add it as audio input
+    if (preResolvedMetadata?.audioUrl) {
+      const audioEndpoint = new URL(cfWorkerUrl);
+      audioEndpoint.pathname = `${audioEndpoint.pathname.replace(/\/$/, '')}/stream`;
+      audioEndpoint.searchParams.set('videoId', videoId);
+      audioEndpoint.searchParams.set('maxHeight', '360');
+      audioEndpoint.searchParams.set('streamUrl', preResolvedMetadata.audioUrl);
+      audioEndpoint.searchParams.set('audio', '1');
+      if (preResolvedMetadata?.userAgent) audioEndpoint.searchParams.set('userAgent', preResolvedMetadata.userAgent);
+      if (preResolvedMetadata?.visitorData) audioEndpoint.searchParams.set('visitorData', preResolvedMetadata.visitorData);
+      if (preResolvedMetadata?.xClientName !== undefined) audioEndpoint.searchParams.set('xClientName', String(preResolvedMetadata.xClientName));
+      if (preResolvedMetadata?.clientVersion) audioEndpoint.searchParams.set('clientVersion', preResolvedMetadata.clientVersion);
+      if (preResolvedMetadata?.client) audioEndpoint.searchParams.set('clientName', preResolvedMetadata.client);
+      (candidates[candidates.length - 1] as { url: string; headers: string; label: string; audioUrl?: string }).audioUrl = audioEndpoint.toString();
+    }
+  }
 
   // Candidate 1: CF Worker /stream slow path (no streamUrl param).
   // CF Worker resolves + streams in one request. On cold cache this takes 60s+
