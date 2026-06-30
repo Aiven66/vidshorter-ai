@@ -131,7 +131,7 @@ export const commonTranslations = {
     clipsBeingGenerated: 'Clips being generated:',
     videoPreviewNotAvailable: 'Video preview not available',
     clipMayStillProcessing: 'The clip may still be processing or failed to generate.',
-    insufficientCredits: 'Insufficient credits. You need at least 30 credits.',
+    insufficientCredits: 'Insufficient credits. You need at least 60 credits.',
     enterVideoUrl: 'Please enter a video URL or upload a local video file.',
     enterValidUrl: 'Please enter a valid public http(s) video URL.',
     stage: {
@@ -156,7 +156,7 @@ export const commonTranslations = {
     faqTitle: 'Frequently Asked Questions',
     faq: {
       q1: 'What is a credit?',
-      a1: 'Each credit represents processing power. Processing a video clip costs 30 credits.',
+      a1: 'Each credit represents processing power. Processing a video clip costs 60 credits.',
       q2: 'How does daily credit reset work?',
       a2: "Credits reset to your plan's daily limit at 00:00 UTC every day. Unused credits don't carry over.",
       q3: 'Can I upgrade or downgrade my plan?',

@@ -170,7 +170,7 @@ export const commonTranslations = {
     clipsBeingGenerated: 'Clips being generated:',
     videoPreviewNotAvailable: 'Video preview not available',
     clipMayStillProcessing: 'The clip may still be processing or failed to generate.',
-    insufficientCredits: 'Insufficient credits. You need at least 30 credits.',
+    insufficientCredits: 'Insufficient credits. You need at least 60 credits.',
     enterVideoUrl: 'Please enter a video URL or upload a local video file.',
     enterValidUrl: 'Please enter a valid public http(s) video URL.',
     stage: {
@@ -195,7 +195,7 @@ export const commonTranslations = {
     faqTitle: 'Frequently Asked Questions',
     faq: {
       q1: 'What is a credit?',
-      a1: 'Each credit represents processing power. Processing a video clip costs 30 credits.',
+      a1: 'Each credit represents processing power. Processing a video clip costs 60 credits.',
       q2: 'How does daily credit reset work?',
       a2: "Credits reset to your plan's daily limit at 00:00 UTC every day. Unused credits don't carry over.",
       q3: 'Can I upgrade or downgrade my plan?',
@@ -454,7 +454,7 @@ export const translations: Record<Locale, Record<string, string>> = {
       clipsBeingGenerated: '正在生成片段：',
       videoPreviewNotAvailable: '视频预览不可用',
       clipMayStillProcessing: '该片段可能仍在处理中或生成失败。',
-      insufficientCredits: '积分不足，至少需要30积分。',
+      insufficientCredits: '积分不足，至少需要60积分。',
       enterVideoUrl: '请输入视频链接或上传本地视频文件。',
       enterValidUrl: '请输入有效的 http(s) 视频链接。',
       stage: {
@@ -478,7 +478,7 @@ export const translations: Record<Locale, Record<string, string>> = {
       faqTitle: '常见问题',
       faq: {
         q1: '什么是积分？',
-        a1: '每个积分代表处理能力。处理一个视频片段消耗30积分。',
+        a1: '每个积分代表处理能力。处理一个视频片段消耗60积分。',
         q2: '每日积分如何重置？',
         a2: '积分每天 UTC 00:00 重置为方案对应的每日额度。未使用的积分不结转。',
         q3: '可以升级或降级方案吗？',

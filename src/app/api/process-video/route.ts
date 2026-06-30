@@ -289,17 +289,17 @@ export async function POST(request: NextRequest) {
               .maybeSingle();
 
             const currentBalance = latestCredits?.balance ?? 0;
-            if (currentBalance < 30) {
+            if (currentBalance < 60) {
               throw new Error('Insufficient credits. Your credits reset to 100 at 00:00 UTC daily.');
             }
 
             await client
               .from('credits')
-              .update({ balance: currentBalance - 30 })
+              .update({ balance: currentBalance - 60 })
               .eq('user_id', userId);
             await client.from('credit_transactions').insert({
               user_id: userId,
-              amount: -30,
+              amount: -60,
               type: 'video_process',
               description: 'Video processing',
             });

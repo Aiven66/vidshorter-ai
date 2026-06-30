@@ -3241,19 +3241,26 @@ async function createClipFromYouTubeStream(params: {
   // fast-seek only downloads the needed 60-second portion (~10-30MB at 360p),
   // not the entire video, so it can succeed even when full download fails.
   const candidates: { url: string; headers: string; label: string }[] = [];
+  const cfWorkerUrl = getCfWorkerUrl();
+  const bypassHeaders = `${getBypassFfmpegHeaderString()}Accept: */*\r\nAccept-Encoding: identity\r\n`;
 
-  // Candidate 1: Edge proxy URL (resolves + proxies in same Edge colo)
-  if (internalBaseUrl) {
-    const edgeProxyUrl = `${internalBaseUrl}/api/yt-stream?videoId=${encodeURIComponent(videoId)}&proxy=1&maxHeight=360`;
-    const edgeHeaders =
-      `${getBypassFfmpegHeaderString()}` +
-      'Accept: */*\r\nAccept-Encoding: identity\r\n';
-    candidates.push({ url: edgeProxyUrl, headers: edgeHeaders, label: 'EdgeProxy' });
+  // Candidate 1: CF Worker /stream slow path (no streamUrl param).
+  // CF Worker resolves + streams in one request. On cold cache this takes 60s+
+  // (tryClient calls InnerTube), but ffmpeg waits for data. On warm cache it's
+  // <1s. This is the most reliable path because it avoids the two-step
+  // /resolve + /stream flow that fails when YouTube rate-limits /resolve.
+  // /stream has stale-while-revalidate: even if fresh resolution fails, it
+  // returns stale cached streamUrl (with IP-binding bypass).
+  if (cfWorkerUrl) {
+    const slowStreamUrl = `${cfWorkerUrl}/stream?videoId=${encodeURIComponent(videoId)}&maxHeight=360`;
+    candidates.push({ url: slowStreamUrl, headers: bypassHeaders, label: 'CFWorkerSlowPath' });
+    console.log(`createClipFromYouTubeStream: added CFWorkerSlowPath candidate`);
   }
 
-  // Candidate 2: Stream URLs from getYouTubeStreamUrlWithFallbacks (cobalt/Invidious/Piped)
-  // cobalt returns non-googlevideo.com URLs (not IP-bound) — can be used directly.
-  // Invidious/Piped return googlevideo.com URLs — wrap in Edge proxy for download.
+  // Candidate 2: Stream URLs from getYouTubeStreamUrlWithFallbacks (CF Worker /resolve + /stream fast path)
+  // This tries CF Worker /resolve first, then wraps the streamUrl in /stream fast path.
+  // If /resolve succeeds, this is faster than SlowPath (no re-resolve in /stream).
+  // If /resolve fails (YouTube rate-limiting), CF Worker returns stale cache.
   try {
     console.log(`createClipFromYouTubeStream: calling getYouTubeStreamUrlWithFallbacks(videoId=${videoId}, maxHeight=360)...`);
     const result = await getYouTubeStreamUrlWithFallbacks(videoId, 360);
@@ -3269,8 +3276,8 @@ async function createClipFromYouTubeStream(params: {
             : result.audioUrl)
         : undefined;
 
-      const candidateHeaders = isGooglevideo || wrappedUrl.includes(internalBaseUrl || 'x')
-        ? `${getBypassFfmpegHeaderString()}Accept: */*\r\nAccept-Encoding: identity\r\n`
+      const candidateHeaders = isGooglevideo || wrappedUrl.includes(internalBaseUrl || 'x') || (cfWorkerUrl && wrappedUrl.includes(cfWorkerUrl.replace(/^https?:\/\//, '')))
+        ? bypassHeaders
         : 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36\r\nAccept: */*\r\nAccept-Encoding: identity\r\n';
 
       candidates.push({

@@ -285,7 +285,7 @@ export default function VideoProcessor() {
       return;
     }
     const latestBalance = await refreshCredits();
-    if (latestBalance < 30) { setError('Insufficient credits. You need at least 30 credits.'); return; }
+    if (latestBalance < 60) { setError('Insufficient credits. You need at least 60 credits.'); return; }
 
     setIsProcessing(true);
     setProgress({ stage: 'init', progress: 0, message: 'Starting...' });

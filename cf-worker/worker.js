@@ -200,12 +200,21 @@ function resolveCacheRequest(videoId, maxHeight) {
   return new Request(u.toString(), { method: 'GET' });
 }
 
-async function cacheGetResolved(videoId, maxHeight) {
+async function cacheGetResolved(videoId, maxHeight, includeStale = false) {
   try {
     const req = resolveCacheRequest(videoId, maxHeight);
     const hit = await caches.default.match(req);
     if (!hit) return null;
-    return await hit.json();
+    const data = await hit.json();
+    // caches.default respects Cache-Control max-age. When includeStale is true,
+    // we also accept entries whose internal expiresAt has passed (up to 2 hours old).
+    // This is the stale-while-revalidate pattern: return stale data when fresh
+    // resolution fails (YouTube rate-limiting), so Vercel always gets a usable streamUrl.
+    if (includeStale && data.expiresAt) {
+      const ageMs = Date.now() - data.expiresAt;
+      if (ageMs > 2 * 60 * 60 * 1000) return null; // too stale (>2h)
+    }
+    return data;
   } catch {
     return null;
   }
@@ -214,8 +223,14 @@ async function cacheGetResolved(videoId, maxHeight) {
 async function cachePutResolved(videoId, maxHeight, resolved) {
   try {
     const req = resolveCacheRequest(videoId, maxHeight);
-    const resp = new Response(JSON.stringify(resolved), {
-      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=600' },
+    // Extend cache TTL to 30 minutes (was 10). YouTube stream URLs expire in 6 hours,
+    // but /stream has IP-binding bypass (strips ip= param), so stale streamUrls
+    // remain usable even after the original IP-bound expiry.
+    const resp = new Response(JSON.stringify({
+      ...resolved,
+      expiresAt: Date.now() + 30 * 60 * 1000, // internal expiry for stale check
+    }), {
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=1800' },
     });
     await caches.default.put(req, resp);
   } catch {}
@@ -505,6 +520,21 @@ export default {
           errors.push(`watch_page@${effectiveMaxHeight}: ${(e instanceof Error ? e.message : String(e)).slice(0, 120)}`);
         }
 
+        // ── Stale-while-revalidate for /stream: use stale cache when all fresh resolution fails ──
+        // Same logic as /resolve: return stale streamUrl and proxy it.
+        // /stream has IP-binding bypass (strips ip= param), so stale streamUrls work.
+        for (const h of heights) {
+          const stale = await cacheGetResolved(videoId, h, true);
+          if (stale?.streamUrl) {
+            try {
+              const upstream = await doFetch(stale);
+              if (upstream.status === 200 || upstream.status === 206) {
+                return passthroughStream(upstream);
+              }
+            } catch {}
+          }
+        }
+
         return json({ error: 'All clients failed to stream', colo: request.cf?.colo || '?', details: errors.slice(0, 12).join(' | ') }, 502);
 
       } catch (e) {
@@ -603,6 +633,31 @@ export default {
       } catch (e) {
         const msg = (e instanceof Error ? e.message : String(e)).slice(0, 150);
         errors.push(`${fallback.name}@${requestedMaxHeight}: ${msg}`);
+      }
+    }
+
+    // ── Stale-while-revalidate: return stale cache when all fresh resolution fails ──
+    // YouTube rate-limits CF Worker IPs after the first successful /resolve call.
+    // Subsequent calls within the rate-limit window fail with LOGIN_REQUIRED.
+    // But the stale streamUrl is still usable because /stream has IP-binding bypass
+    // (strips ip= param). Return stale cache (up to 2 hours old) instead of 502.
+    for (const h of heights) {
+      const stale = await cacheGetResolved(videoId, h, true);
+      if (stale?.streamUrl) {
+        return json({
+          title: stale.title || 'YouTube Video',
+          duration: stale.duration || 300,
+          streamUrl: stale.streamUrl,
+          quality: (stale.quality || 'cached') + ' (stale)',
+          userAgent: stale.userAgent,
+          visitorData: stale.visitorData,
+          xClientName: stale.xClientName,
+          clientVersion: stale.clientVersion,
+          client: (stale.client || 'cached') + '-stale',
+          colo: request.cf?.colo || '?',
+          stale: true,
+          ...(stale.audioUrl ? { audioUrl: stale.audioUrl } : {}),
+        });
       }
     }
 
