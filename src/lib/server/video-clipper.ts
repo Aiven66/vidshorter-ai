@@ -2888,7 +2888,8 @@ async function createLocalClip(params: {
   const crf = SHOULD_INLINE_CLIPS ? INLINE_CRF : (isRemoteInput ? '16' : '17');
   const preset = SHOULD_INLINE_CLIPS ? INLINE_PRESET : (isRemoteInput ? 'medium' : 'fast');
 
-  const fastSeek = !isRemoteInput || isWorkerStream || params.inputPath.includes('googlevideo.com');
+  const isInvidiousProxy = isRemoteInput && INVIDIOUS_INSTANCES.some(inst => params.inputPath.startsWith(inst));
+  const fastSeek = !isRemoteInput || isWorkerStream || params.inputPath.includes('googlevideo.com') || isInvidiousProxy;
   const hasAudioInput = typeof params.audioInputPath === 'string' && params.audioInputPath.length > 0;
   const audioIsRemote = hasAudioInput && params.audioInputPath!.startsWith('http');
   const audioHeaders = (audioIsRemote && inputHeaders) ? ['-headers', inputHeaders] : [];
@@ -3222,6 +3223,97 @@ function formatTime(seconds: number): string {
 }
 
 // ── Create clip from YouTube stream (for link-only mode recovery) ────────────
+// ── Invidious local proxy: returns URLs proxied through the Invidious server ──
+// When called with ?local=true, Invidious returns URLs like:
+//   https://yewtu.be/vi/VIDEO_ID/itag.mp4?local=true&host=...
+// These are served by the Invidious instance itself (not googlevideo.com),
+// so Vercel's ffmpeg can fetch them directly without IP binding issues.
+// This is the most reliable path when CF Worker /stream fails due to colo-mismatch.
+async function getInvidiousLocalProxiedStreams(videoId: string, maxHeight: number): Promise<{
+  videoUrl: string;
+  audioUrl?: string;
+  quality: string;
+  instance: string;
+} | null> {
+  const maxH = Math.min(maxHeight || 360, 720);
+  const instances = IS_VERCEL ? INVIDIOUS_INSTANCES.slice(0, 5) : INVIDIOUS_INSTANCES;
+  const perInstanceTimeout = IS_VERCEL ? 8000 : 15000;
+
+  for (const instance of instances) {
+    try {
+      const apiUrl = `${instance}/api/v1/videos/${videoId}?local=true&hl=en`;
+      const res = await fetch(apiUrl, {
+        headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0 (compatible; Clipop/1.0)' },
+        signal: AbortSignal.timeout(perInstanceTimeout),
+      });
+      if (!res.ok) {
+        console.warn(`Invidious local proxy ${instance}: HTTP ${res.status}`);
+        continue;
+      }
+      const data = await res.json() as {
+        formatStreams?: Array<{ url?: string; type?: string; qualityLabel?: string; quality?: string }>;
+        adaptiveFormats?: Array<{ url?: string; type?: string; qualityLabel?: string; quality?: string; bitrate?: string }>;
+      };
+
+      const parseQ = (label?: string) => {
+        const m = /(\d{3,4})/.exec(label || '');
+        return m ? parseInt(m[1], 10) : 0;
+      };
+
+      const isProxied = (url: string) => {
+        if (!url) return false;
+        try {
+          const u = new URL(url);
+          return u.hostname !== 'www.googlevideo.com' && !u.hostname.endsWith('.googlevideo.com');
+        } catch {
+          return false;
+        }
+      };
+
+      const combined = (data.formatStreams || [])
+        .filter(s => s.url && s.type?.includes('video/mp4') && isProxied(s.url))
+        .map(s => ({ url: s.url!, q: parseQ(s.qualityLabel || s.quality) }))
+        .filter(x => x.q > 0 && x.q <= maxH)
+        .sort((a, b) => b.q - a.q);
+
+      if (combined.length > 0) {
+        console.log(`Invidious local proxy (${instance}): combined ${combined[0].q}p`);
+        return {
+          videoUrl: combined[0].url,
+          quality: `${combined[0].q}p`,
+          instance,
+        };
+      }
+
+      const videoOnly = (data.adaptiveFormats || [])
+        .filter(s => s.url && s.type?.includes('video/mp4') && isProxied(s.url))
+        .map(s => ({ url: s.url!, q: parseQ(s.qualityLabel || s.quality) }))
+        .filter(x => x.q > 0 && x.q <= maxH)
+        .sort((a, b) => b.q - a.q);
+
+      const audioOnly = (data.adaptiveFormats || [])
+        .filter(s => s.url && s.type?.includes('audio/mp4') && isProxied(s.url))
+        .sort((a, b) => parseInt(b.bitrate || '0', 10) - parseInt(a.bitrate || '0', 10));
+
+      if (videoOnly.length > 0) {
+        console.log(`Invidious local proxy (${instance}): video-only ${videoOnly[0].q}p + audio`);
+        return {
+          videoUrl: videoOnly[0].url,
+          audioUrl: audioOnly.length > 0 ? audioOnly[0].url : undefined,
+          quality: `${videoOnly[0].q}p`,
+          instance,
+        };
+      }
+
+      console.warn(`Invidious local proxy ${instance}: no proxied streams found`);
+    } catch (err) {
+      console.warn(`Invidious local proxy ${instance} failed: ${err instanceof Error ? err.message.slice(0, 120) : err}`);
+    }
+  }
+
+  return null;
+}
+
 // When downloadSourceVideo fails entirely (all proxies/CF Worker/Invidious down),
 // route.ts enters link-only mode and calls generateFallbackClip (thumbnail video).
 // This function tries one more time to get a real video stream URL and clip it
@@ -3272,6 +3364,7 @@ async function createClipFromYouTubeStream(params: {
     if (preResolvedMetadata?.xClientName !== undefined) endpoint.searchParams.set('xClientName', String(preResolvedMetadata.xClientName));
     if (preResolvedMetadata?.clientVersion) endpoint.searchParams.set('clientVersion', preResolvedMetadata.clientVersion);
     if (preResolvedMetadata?.client) endpoint.searchParams.set('clientName', preResolvedMetadata.client);
+    endpoint.searchParams.set('quickCheck', '1');
     const fastPathUrl = endpoint.toString();
     candidates.push({ url: fastPathUrl, headers: bypassHeaders, label: 'PreResolvedFastPath' });
     console.log(`createClipFromYouTubeStream: added PreResolvedFastPath candidate (streamUrl from frontend)`);
@@ -3291,6 +3384,34 @@ async function createClipFromYouTubeStream(params: {
       if (preResolvedMetadata?.client) audioEndpoint.searchParams.set('clientName', preResolvedMetadata.client);
       (candidates[candidates.length - 1] as { url: string; headers: string; label: string; audioUrl?: string }).audioUrl = audioEndpoint.toString();
     }
+  }
+
+  // Candidate 0.5: Invidious local proxy (proxied URLs, no IP binding issues).
+  // Invidious ?local=true returns URLs proxied through the Invidious server,
+  // not googlevideo.com. Vercel's ffmpeg can fetch these directly without
+  // colo-mismatch or IP-binding problems. This is the most reliable path
+  // when CF Worker /stream fast path fails due to colo-mismatch.
+  try {
+    console.log(`createClipFromYouTubeStream: trying Invidious local proxy...`);
+    const invidiousResult = await getInvidiousLocalProxiedStreams(videoId, 360);
+    if (invidiousResult) {
+      const invidiousHeaders = 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36\r\nAccept: */*\r\nAccept-Encoding: identity\r\n';
+      const candidate: { url: string; headers: string; label: string; audioUrl?: string } = {
+        url: invidiousResult.videoUrl,
+        headers: invidiousHeaders,
+        label: `InvidiousLocalProxy(${invidiousResult.instance})`,
+      };
+      if (invidiousResult.audioUrl) {
+        candidate.audioUrl = invidiousResult.audioUrl;
+      }
+      candidates.push(candidate);
+      console.log(`createClipFromYouTubeStream: added InvidiousLocalProxy candidate (${invidiousResult.quality} from ${invidiousResult.instance})`);
+    } else {
+      console.log(`createClipFromYouTubeStream: Invidious local proxy returned null`);
+    }
+  } catch (err) {
+    console.warn(`createClipFromYouTubeStream: Invidious local proxy failed:`,
+      err instanceof Error ? err.message.slice(0, 200) : err);
   }
 
   // Candidate 1: CF Worker /stream slow path (no streamUrl param).
