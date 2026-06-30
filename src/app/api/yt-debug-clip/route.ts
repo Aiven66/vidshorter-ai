@@ -37,6 +37,11 @@ export async function GET(request: NextRequest) {
   const videoId = url.searchParams.get('videoId') || 'v1wZwxY3CMg';
   const startTime = Number(url.searchParams.get('startTime') || '60');
   const endTime = Number(url.searchParams.get('endTime') || '120');
+  // skipResolve=1: skip Step 2 (/resolve) to avoid consuming YouTube rate limit.
+  // Step 2 calls tryClient which rate-limits the CF Worker colo, causing
+  // CFWorkerSlowPath in Step 5 to fail. Skipping Step 2 simulates the real
+  // flow where Vercel doesn't call /resolve separately.
+  const skipResolve = url.searchParams.get('skipResolve') === '1';
 
   const steps: DebugStep[] = [];
   const pushStep = (s: DebugStep) => steps.push(s);
@@ -60,12 +65,14 @@ export async function GET(request: NextRequest) {
     },
   });
 
-  // Step 2: Call CF Worker /resolve directly
+  // Step 2: Call CF Worker /resolve directly (skipped when skipResolve=1)
   const t1 = Date.now();
   let resolvedStreamUrl: string | null = null;
   let resolvedMetadata: Record<string, unknown> = {};
   try {
-    if (!cfWorkerUrl) {
+    if (skipResolve) {
+      pushStep({ step: '2. cf-worker-resolve', ok: true, durationMs: 0, data: { skipped: true } });
+    } else if (!cfWorkerUrl) {
       pushStep({ step: '2. cf-worker-resolve', ok: false, error: 'CF_WORKER_URL not set', durationMs: Date.now() - t1 });
     } else {
       const resolveUrl = new URL(cfWorkerUrl);
@@ -99,11 +106,13 @@ export async function GET(request: NextRequest) {
     pushStep({ step: '2. cf-worker-resolve', ok: false, error: String(err).slice(0, 300), durationMs: Date.now() - t1 });
   }
 
-  // Step 3: Build /stream proxy URL (replicates buildStreamProxyUrl logic)
+  // Step 3: Build /stream proxy URL (skipped when skipResolve=1)
   const t2 = Date.now();
   let streamProxyUrl: string | null = null;
   try {
-    if (!cfWorkerUrl || !resolvedStreamUrl) {
+    if (skipResolve) {
+      pushStep({ step: '3. build-stream-proxy-url', ok: true, durationMs: 0, data: { skipped: true } });
+    } else if (!cfWorkerUrl || !resolvedStreamUrl) {
       pushStep({ step: '3. build-stream-proxy-url', ok: false, error: !cfWorkerUrl ? 'CF_WORKER_URL not set' : 'no resolvedStreamUrl', durationMs: Date.now() - t2 });
     } else {
       const endpoint = new URL(cfWorkerUrl);
@@ -192,7 +201,8 @@ export async function GET(request: NextRequest) {
   // Step 6: Directly test createLocalClip with the /stream proxy URL.
   // This bypasses getYouTubeStreamUrlWithFallbacks and tests ffmpeg directly,
   // capturing the exact ffmpeg error message.
-  if (streamProxyUrl) {
+  // Skipped when skipResolve=1 (no streamProxyUrl available).
+  if (streamProxyUrl && !skipResolve) {
     const t5 = Date.now();
     try {
       const videoClipper = (await import('@/lib/server/video-clipper')).default as unknown as {
