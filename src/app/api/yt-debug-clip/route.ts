@@ -187,6 +187,51 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  // Step 4.5: When preResolved streamUrl is provided (frontend pre-resolve flow),
+  // test the CF Worker /stream fast path directly from Vercel. This catches
+  // colo-mismatch issues: /resolve was made from the user's browser (CF colo A),
+  // but /stream from Vercel may route to CF colo B — different egress IP causes 403.
+  if (preResolvedStreamUrl && cfWorkerUrl) {
+    const t35 = Date.now();
+    try {
+      const endpoint = new URL(cfWorkerUrl);
+      endpoint.pathname = `${endpoint.pathname.replace(/\/$/, '')}/stream`;
+      endpoint.searchParams.set('videoId', videoId);
+      endpoint.searchParams.set('maxHeight', '360');
+      endpoint.searchParams.set('streamUrl', preResolvedStreamUrl);
+      endpoint.searchParams.set('quickCheck', '1');
+      if (preResolvedMetadata.userAgent) endpoint.searchParams.set('userAgent', preResolvedMetadata.userAgent);
+      if (preResolvedMetadata.visitorData) endpoint.searchParams.set('visitorData', preResolvedMetadata.visitorData);
+      if (preResolvedMetadata.xClientName !== undefined) endpoint.searchParams.set('xClientName', String(preResolvedMetadata.xClientName));
+      if (preResolvedMetadata.clientVersion) endpoint.searchParams.set('clientVersion', preResolvedMetadata.clientVersion);
+      if (preResolvedMetadata.client) endpoint.searchParams.set('clientName', preResolvedMetadata.client);
+      const fastPathUrl = endpoint.toString();
+      const r = await fetch(fastPathUrl, {
+        headers: { Range: 'bytes=0-1048575' },
+        signal: AbortSignal.timeout(30_000),
+      });
+      const buf = await r.arrayBuffer();
+      const cfRay = r.headers.get('cf-ray') || '';
+      const errBody = (r.status !== 200 && r.status !== 206) ? new TextDecoder().decode(buf).slice(0, 300) : '';
+      pushStep({
+        step: '4.5. pre-resolved-stream-fetch',
+        ok: r.status === 200 || r.status === 206,
+        error: r.status !== 200 && r.status !== 206 ? `HTTP ${r.status} ${errBody}` : undefined,
+        durationMs: Date.now() - t35,
+        data: {
+          httpStatus: r.status,
+          bytesReceived: buf.byteLength,
+          contentType: r.headers.get('content-type'),
+          contentRange: r.headers.get('content-range'),
+          cfRay,
+          cfColo: cfRay.split('-').pop() || '',
+        },
+      });
+    } catch (err) {
+      pushStep({ step: '4.5. pre-resolved-stream-fetch', ok: false, error: String(err).slice(0, 300), durationMs: Date.now() - t35 });
+    }
+  }
+
   // Step 5: Try createClipFromYouTubeStream (the real function)
   // When streamUrl + metadata query params are provided, they simulate the
   // frontend pre-resolve flow: the user's browser called CF Worker /resolve,
