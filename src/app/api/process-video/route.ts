@@ -533,35 +533,99 @@ export async function POST(request: NextRequest) {
             }
           }
         } else {
-          startSourceProgressTimer(46, [
-            { p: 47, m: isBilibili ? 'Connecting to Bilibili video stream...' : 'Connecting to video stream...' },
-            { p: 48, m: 'Downloading video to local cache...' },
-            { p: 49, m: 'Finalizing video source...' },
-          ], 8000);
+          const ytId = extractYouTubeId(videoUrl);
+          const useStreamFastPath = !!ytId && !isBilibili;
 
-          try {
-            source = await promiseWithTimeout(
-              videoClipper.downloadSourceVideo(videoUrl, { forceMaxHeight: 360 }),
-              sdTimeout,
-              'Failed to prepare source video within time limit. This video may require login or be blocked. Please retry or try another video.',
-            );
-            stopSourceProgressTimer();
-          } catch (error) {
-            const errorMsg = error instanceof Error ? error.message : 'Failed to prepare source video.';
-            const ytId = extractYouTubeId(videoUrl);
-            stopSourceProgressTimer();
+          if (useStreamFastPath) {
+            startSourceProgressTimer(46, [
+              { p: 47, m: 'Connecting to YouTube video stream (fast mode)...' },
+              { p: 48, m: 'Preparing fast clip generation pipeline...' },
+              { p: 49, m: 'Starting highlight clip generation...' },
+            ], 5000);
 
-            if (ytId && !isLinkOnlyMode) {
-              isLinkOnlyMode = true;
-              linkOnlyVideoId = ytId;
-              if (!send({
-                stage: 'generating_clip',
-                progress: 50,
-                message: 'Video download blocked. Generating downloadable highlight clips from thumbnails...',
-                data: { jobId, videoId: dbVideoId || undefined, linkOnlyMode: true },
-              })) return;
-            } else {
-              throw new Error(`Failed to prepare source video: ${errorMsg}`);
+            try {
+              const testStream = await videoClipper.createClipFromYouTubeStream({
+                videoId: ytId,
+                title: 'stream-test',
+                startTime: 0,
+                endTime: 5,
+                fastCopy: true,
+                ...(preResolvedStreamUrl ? { preResolvedStreamUrl, preResolvedMetadata } : {}),
+              });
+              stopSourceProgressTimer();
+
+              if (testStream && testStream.videoUrl) {
+                console.log('SD fast path: stream clipping works, using per-clip stream mode');
+                source = { inputPath: '__stream_fast_path__', ffmpegHeaders: '' };
+              } else {
+                throw new Error('Stream fast path test failed');
+              }
+            } catch (streamErr) {
+              console.warn('SD fast path test failed, falling back to full download:',
+                streamErr instanceof Error ? streamErr.message.slice(0, 100) : streamErr);
+              stopSourceProgressTimer();
+
+              startSourceProgressTimer(48, [
+                { p: 48, m: 'Fast mode unavailable, downloading SD video...' },
+                { p: 49, m: 'Finalizing SD source...' },
+              ], 8000);
+
+              try {
+                source = await promiseWithTimeout(
+                  videoClipper.downloadSourceVideo(videoUrl, { forceMaxHeight: 360 }),
+                  sdTimeout,
+                  'Failed to prepare source video within time limit. This video may require login or be blocked. Please retry or try another video.',
+                );
+                stopSourceProgressTimer();
+              } catch (error) {
+                const errorMsg = error instanceof Error ? error.message : 'Failed to prepare source video.';
+                stopSourceProgressTimer();
+
+                if (ytId && !isLinkOnlyMode) {
+                  isLinkOnlyMode = true;
+                  linkOnlyVideoId = ytId;
+                  if (!send({
+                    stage: 'generating_clip',
+                    progress: 50,
+                    message: 'Video download blocked. Generating downloadable highlight clips from thumbnails...',
+                    data: { jobId, videoId: dbVideoId || undefined, linkOnlyMode: true },
+                  })) return;
+                } else {
+                  throw new Error(`Failed to prepare source video: ${errorMsg}`);
+                }
+              }
+            }
+          } else {
+            startSourceProgressTimer(46, [
+              { p: 47, m: isBilibili ? 'Connecting to Bilibili video stream...' : 'Connecting to video stream...' },
+              { p: 48, m: 'Downloading video to local cache...' },
+              { p: 49, m: 'Finalizing video source...' },
+            ], 8000);
+
+            try {
+              source = await promiseWithTimeout(
+                videoClipper.downloadSourceVideo(videoUrl, { forceMaxHeight: 360 }),
+                sdTimeout,
+                'Failed to prepare source video within time limit. This video may require login or be blocked. Please retry or try another video.',
+              );
+              stopSourceProgressTimer();
+            } catch (error) {
+              const errorMsg = error instanceof Error ? error.message : 'Failed to prepare source video.';
+              const ytIdFallback = extractYouTubeId(videoUrl);
+              stopSourceProgressTimer();
+
+              if (ytIdFallback && !isLinkOnlyMode) {
+                isLinkOnlyMode = true;
+                linkOnlyVideoId = ytIdFallback;
+                if (!send({
+                  stage: 'generating_clip',
+                  progress: 50,
+                  message: 'Video download blocked. Generating downloadable highlight clips from thumbnails...',
+                  data: { jobId, videoId: dbVideoId || undefined, linkOnlyMode: true },
+                })) return;
+              } else {
+                throw new Error(`Failed to prepare source video: ${errorMsg}`);
+              }
             }
           }
         }
@@ -688,16 +752,59 @@ export async function POST(request: NextRequest) {
             }
           }
 
+          // Stream fast path mode: use createClipFromYouTubeStream with fastCopy
+          // No full video download needed — each clip is fetched directly from stream
+          const isStreamFastPath = source?.inputPath === '__stream_fast_path__';
+          const ytIdForFastPath = extractYouTubeId(videoUrl);
+
+          if (isStreamFastPath && ytIdForFastPath && !isLinkOnlyMode) {
+            try {
+              const streamClip = await videoClipper.createClipFromYouTubeStream({
+                videoId: ytIdForFastPath,
+                title: highlight.title,
+                summary: highlight.summary,
+                startTime: safeStart,
+                endTime: safeEnd,
+                fastCopy: true,
+                ...(preResolvedStreamUrl ? { preResolvedStreamUrl, preResolvedMetadata } : {}),
+              });
+
+              if (streamClip && streamClip.videoUrl) {
+                streamClip.id = draftClip.id;
+                streamClip.engagementScore = draftClip.engagementScore;
+                streamClip.status = 'completed';
+                clips.push(streamClip as unknown as ClipResult);
+
+                if (abortSignal.aborted) return;
+                if (!send({
+                  stage: 'clip_ready',
+                  progress: 50 + Math.floor(((index + 1) / highlights.length) * 45),
+                  message: `Clip ready: "${highlight.title}"`,
+                  data: { clip: streamClip as unknown as ClipResult, clipIndex: clipOffset + index, jobId, videoId: dbVideoId || undefined },
+                })) return;
+                continue;
+              }
+              throw new Error('Stream fast path returned empty clip');
+            } catch (streamErr) {
+              console.warn(`Stream fast path failed for highlight ${index}, falling back to local clip:`,
+                streamErr instanceof Error ? streamErr.message.slice(0, 100) : streamErr);
+            }
+          }
+
           try {
             const baseProgress = 50 + Math.floor((index / highlights.length) * 35);
-            const attemptMessages = [
-              'Generating clip...',
-              'Retrying with fresh source...',
-              'Trying SD quality fallback...',
-            ];
+            const isSD = !isHD || quality === 'sd';
+            const maxAttempts = isSD ? 1 : 3;
+            const attemptMessages = isSD
+              ? ['Generating clip (fast mode)...']
+              : [
+                  'Generating clip...',
+                  'Retrying with fresh source...',
+                  'Trying SD quality fallback...',
+                ];
             let clipSucceeded = false;
 
-            for (let attempt = 0; attempt < 3; attempt += 1) {
+            for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
               if (abortSignal.aborted) return;
               if (attempt > 0) {
                 send({
@@ -733,6 +840,7 @@ export async function POST(request: NextRequest) {
               }
 
               try {
+                const useFastCopy = isSD && !currentSource?.audioInputPath;
                 const result = await promiseWithTimeout(
                   videoClipper.createLocalClip({
                     inputPath: currentSource.inputPath,
@@ -741,8 +849,9 @@ export async function POST(request: NextRequest) {
                     startTime: safeStart,
                     endTime: safeEnd,
                     title: highlight.title,
+                    fastCopy: useFastCopy,
                   }),
-                  120_000,
+                  useFastCopy ? 60_000 : 120_000,
                   'Clip generation timed out. This may be due to slow video decoding. Trying lower quality...',
                 );
 
@@ -755,7 +864,7 @@ export async function POST(request: NextRequest) {
                 clipSucceeded = true;
                 break;
               } catch (err) {
-                if (attempt === 2) throw err;
+                if (attempt === maxAttempts - 1) throw err;
                 console.warn(`Clip ${clipOffset + index + 1} attempt ${attempt + 1} failed:`,
                   err instanceof Error ? err.message.slice(0, 100) : err);
               }

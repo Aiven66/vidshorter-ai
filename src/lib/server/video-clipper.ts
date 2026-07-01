@@ -2828,6 +2828,9 @@ async function createLocalClip(params: {
   // 当上传的文件是拼接的 [moov] + [fragment] 时，sidx 字节偏移不匹配。
   // 需要使用慢速 seek（-ss 在 -i 之后）并启用错误容忍模式。
   forceSlowSeek?: boolean;
+  // 快速模式：使用 -c copy 流复制，速度极快但只能在关键帧处切割
+  // 适合 SD 模式下快速生成高光片段
+  fastCopy?: boolean;
 }): Promise<ClipResult> {
   await ensureDirectories();
   const ffmpegPath = await ensureFfmpegAvailable();
@@ -2917,13 +2920,9 @@ async function createLocalClip(params: {
         ];
   })();
 
-  const args = [
-    '-y',
-    // 当 forceSlowSeek 为 true 时（拼接的 moov+fragment 文件），
-    // 添加错误容忍标志，因为 sidx 字节偏移不匹配
-    ...(params.forceSlowSeek ? ['-err_detect', 'ignore_err', '-fflags', '+discardcorrupt'] : []),
-    ...httpInputFlags,
-    ...seekArgs,
+  const useFastCopy = !!params.fastCopy && !params.forceSlowSeek && !hasAudioInput;
+
+  const buildEncodingArgs = () => [
     '-map', '0:v:0',
     ...(hasAudioInput ? ['-map', '1:a:0?'] : ['-map', '0:a:0?']),
     '-c:v', 'libx264',
@@ -2940,18 +2939,58 @@ async function createLocalClip(params: {
     outputPath,
   ];
 
+  const buildCopyArgs = () => [
+    '-map', '0:v:0',
+    '-map', '0:a:0?',
+    '-c', 'copy',
+    '-movflags', '+faststart',
+    outputPath,
+  ];
+
+  const args = [
+    '-y',
+    ...(params.forceSlowSeek ? ['-err_detect', 'ignore_err', '-fflags', '+discardcorrupt'] : []),
+    ...httpInputFlags,
+    ...seekArgs,
+    ...(useFastCopy ? buildCopyArgs() : buildEncodingArgs()),
+  ];
+
   try {
     await execFile(ffmpegPath, args, {
       cwd: CACHE_DIR,
       maxBuffer: 20 * 1024 * 1024,
-      timeout: 5 * 60 * 1000,
+      timeout: useFastCopy ? 60 * 1000 : 5 * 60 * 1000,
     });
   } catch (error) {
-    const errStderr = error && typeof error === 'object' && 'stderr' in error ? String(error.stderr) : '';
-    const errStdout = error && typeof error === 'object' && 'stdout' in error ? String(error.stdout) : '';
-    const combined = `${errStderr}\n${errStdout}`.trim();
-    const tail = combined.length > 6000 ? combined.slice(-6000) : combined;
-    throw new Error(tail || 'ffmpeg failed to generate the clip.');
+    if (useFastCopy) {
+      console.warn('fastCopy mode failed, falling back to re-encoding...');
+      const fallbackArgs = [
+        '-y',
+        ...(params.forceSlowSeek ? ['-err_detect', 'ignore_err', '-fflags', '+discardcorrupt'] : []),
+        ...httpInputFlags,
+        ...seekArgs,
+        ...buildEncodingArgs(),
+      ];
+      try {
+        await execFile(ffmpegPath, fallbackArgs, {
+          cwd: CACHE_DIR,
+          maxBuffer: 20 * 1024 * 1024,
+          timeout: 5 * 60 * 1000,
+        });
+      } catch (fallbackError) {
+        const errStderr = fallbackError && typeof fallbackError === 'object' && 'stderr' in fallbackError ? String(fallbackError.stderr) : '';
+        const errStdout = fallbackError && typeof fallbackError === 'object' && 'stdout' in fallbackError ? String(fallbackError.stdout) : '';
+        const combined = `${errStderr}\n${errStdout}`.trim();
+        const tail = combined.length > 6000 ? combined.slice(-6000) : combined;
+        throw new Error(tail || 'ffmpeg failed to generate the clip (both fastCopy and re-encode failed).');
+      }
+    } else {
+      const errStderr = error && typeof error === 'object' && 'stderr' in error ? String(error.stderr) : '';
+      const errStdout = error && typeof error === 'object' && 'stdout' in error ? String(error.stdout) : '';
+      const combined = `${errStderr}\n${errStdout}`.trim();
+      const tail = combined.length > 6000 ? combined.slice(-6000) : combined;
+      throw new Error(tail || 'ffmpeg failed to generate the clip.');
+    }
   }
 
   const thumbnailUrl = await generateThumbnail(outputPath, duration);
@@ -3346,6 +3385,10 @@ async function createClipFromYouTubeStream(params: {
     client?: string;
     audioUrl?: string;
   };
+  // Fast copy mode: use -c copy stream copy instead of re-encoding.
+  // Much faster (5-10x) but can only cut at keyframes.
+  // Ideal for SD mode where speed is prioritized over frame-accurate cuts.
+  fastCopy?: boolean;
 }): Promise<ClipResult | null> {
   const { videoId, title, summary, startTime, endTime, preResolvedStreamUrl, preResolvedMetadata } = params;
   const duration = Math.max(1, endTime - startTime);
@@ -3524,6 +3567,7 @@ async function createClipFromYouTubeStream(params: {
         startTime,
         endTime,
         title,
+        fastCopy: params.fastCopy && !audioUrl,
       });
       console.log(`createClipFromYouTubeStream: ${candidate.label} succeeded!`);
       return {
