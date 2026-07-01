@@ -10,7 +10,7 @@ import { Progress } from '@/components/ui/progress';
 import { useLocale } from '@/lib/locale-context';
 import { useAuth } from '@/lib/auth-context';
 import { useCredits } from '@/lib/credits-context';
-import { getSupabaseClient } from '@/storage/database/supabase-client';
+import { getSupabaseClient, isSupabaseConfigured } from '@/storage/database/supabase-client';
 import {
   Video, Upload, Link2, Sparkles, Download, Play,
   Film, Scissors, Zap, ArrowRight, CheckCircle,
@@ -858,7 +858,12 @@ export default function VideoProcessor() {
         saveDemoVideoRecord(displayUrl, videoTitle, Array.from(clipMap.values()), user?.id);
 
         if (user && user.role !== 'admin') {
-          await deductCredits(60);
+          const isDemoMode = !isSupabaseConfigured() || user.id.startsWith('demo-') || user.id.startsWith('google-demo-');
+          if (isDemoMode) {
+            await deductCredits(60);
+          } else {
+            await refreshCredits();
+          }
         }
       }
     } catch (err) {

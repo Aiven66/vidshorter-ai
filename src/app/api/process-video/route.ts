@@ -312,17 +312,6 @@ export async function POST(request: NextRequest) {
             if (currentBalance < 60) {
               throw new Error('Insufficient credits. Your credits reset to 100 at 00:00 UTC daily.');
             }
-
-            await client
-              .from('credits')
-              .update({ balance: currentBalance - 60 })
-              .eq('user_id', userId);
-            await client.from('credit_transactions').insert({
-              user_id: userId,
-              amount: -60,
-              type: 'video_process',
-              description: 'Video processing',
-            });
           }
         } else if (!userId) {
           send({
@@ -989,6 +978,35 @@ export async function POST(request: NextRequest) {
               .eq('id', dbVideoId);
           } catch {}
         }
+
+        // Deduct credits only after successful processing
+        if (isSupabaseMode && !isContinuation && clipOffset === 0 && userRole !== 'admin' && userId) {
+          try {
+            const { getSupabaseClient } = await import('@/storage/database/supabase-client');
+            const client = getSupabaseClient(bearerToken);
+            const { data: latestCredits } = await client
+              .from('credits')
+              .select('balance')
+              .eq('user_id', userId)
+              .maybeSingle();
+            const currentBalance = latestCredits?.balance ?? 0;
+            if (currentBalance >= 60) {
+              await client
+                .from('credits')
+                .update({ balance: currentBalance - 60 })
+                .eq('user_id', userId);
+              await client.from('credit_transactions').insert({
+                user_id: userId,
+                amount: -60,
+                type: 'video_process',
+                description: 'Video processing',
+              });
+            }
+          } catch (deductErr) {
+            console.error('Failed to deduct credits:', deductErr);
+          }
+        }
+
         const completionMessage = isLinkOnlyMode
           ? `Generated ${linkOnlyClips.length} highlight links with YouTube timestamps (video download blocked).`
           : `Generated ${completedClips.length} playable highlight clips.`;
