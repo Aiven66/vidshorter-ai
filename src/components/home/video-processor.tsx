@@ -192,7 +192,7 @@ async function regenerateThumbnailClips(params: {
   clips: VideoClip[];
   ytVideoId: string;
   existingStreamUrl?: string;
-  existingMetadata?: { userAgent?: string; visitorData?: string; xClientName?: number; clientVersion?: string; client?: string; audioUrl?: string };
+  existingMetadata?: { userAgent?: string; visitorData?: string; xClientName?: number; clientVersion?: string; client?: string; audioUrl?: string; duration?: number };
   onClipUpdated: (clip: VideoClip) => void;
   onProgress?: (message: string) => void;
 }): Promise<void> {
@@ -235,6 +235,7 @@ async function regenerateThumbnailClips(params: {
         const resolveData = await resolveRes.json() as {
           streamUrl?: string; userAgent?: string; visitorData?: string;
           xClientName?: number; clientVersion?: string; client?: string;
+          duration?: number;
         };
         if (resolveData.streamUrl) {
           streamUrl = resolveData.streamUrl;
@@ -244,6 +245,7 @@ async function regenerateThumbnailClips(params: {
             xClientName: resolveData.xClientName,
             clientVersion: resolveData.clientVersion,
             client: resolveData.client,
+            duration: resolveData.duration,
           };
           console.log('[Regenerate] Got streamUrl from /resolve');
         }
@@ -297,27 +299,100 @@ async function regenerateThumbnailClips(params: {
       // Vercel Serverless Functions 请求体限制是 4.5 MB。
       // 720p 视频码率约 1 Mbps = 0.125 MB/s，4 MB 约覆盖 32 秒。
       // 对于高光时刻在前 30 秒内的视频，4 MB 足够。
-      // 对于高光时刻在后面的视频，需要分多次下载（每次截取不同时间段）。
-      // 当前方案：下载前 4 MB，ffmpeg 截取 0-30s 的片段。
-      // 如果高光时刻超出下载范围，回退到缩略图。
+      // 对于高光时刻在后面的视频（如 v1wZwxY3CMg 的 468s），
+      // 使用 HTTP Range 请求从 clip.startTime 对应的字节位置开始下载。
+      // 这样无论高光时刻在视频的哪个位置，都能下载到相关的视频片段。
       const maxDownloadBytes = 4 * 1024 * 1024;
 
-      console.log(`[Regenerate] Downloading clip ${i + 1}/${thumbnailClips.length} "${clip.title}" (startTime=${clip.startTime}s, duration=${clipDuration}s)...`);
+      // 解析 streamUrl 中的 clen（内容长度）和 dur（时长）参数
+      // googlevideo.com 的 URL 通常包含这两个参数
+      const videoInfo = (() => {
+        try {
+          const u = new URL(streamUrl);
+          const clen = parseInt(u.searchParams.get('clen') || '0', 10);
+          const dur = parseFloat(u.searchParams.get('dur') || '0');
+          return { clen, dur };
+        } catch {
+          return { clen: 0, dur: 0 };
+        }
+      })();
 
-      const downloadResponse = await fetch(streamEndpoint.toString(), {
-        headers: {
-          // Range 请求：只下载前 4 MB（Vercel 请求体限制内）
-          // 注意：浏览器会自动设置 User-Agent，不能手动设置（forbidden header）
-          'Range': `bytes=0-${maxDownloadBytes - 1}`,
-        },
-        signal: AbortSignal.timeout(120_000),
-      });
+      // 视频时长：优先使用 URL 中的 dur，其次使用 metadata 中的 duration
+      const videoDuration = videoInfo.dur || metadata?.duration || 0;
+      const videoSize = videoInfo.clen || 0;
 
-      if (!downloadResponse.ok && downloadResponse.status !== 206) {
-        throw new Error(`Download failed: HTTP ${downloadResponse.status}`);
+      // 计算字节偏移量：从 clip.startTime 前 2 秒开始（留出关键帧对齐的缓冲）
+      // 这样下载的 4MB 数据中包含高光时刻的完整片段
+      const bufferSec = 2;
+      const startTimeWithBuffer = Math.max(0, clip.startTime - bufferSec);
+
+      let startByte = 0;
+      let relativeStartTime = clip.startTime;
+      let relativeEndTime = clip.endTime;
+
+      if (videoSize > 0 && videoDuration > 0) {
+        const bytesPerSec = videoSize / videoDuration;
+        startByte = Math.floor(startTimeWithBuffer * bytesPerSec);
+        // 相对时间：下载的数据从 startTimeWithBuffer 秒开始
+        // 所以高光时刻在下载的数据中的位置是 (clip.startTime - startTimeWithBuffer)
+        relativeStartTime = clip.startTime - startTimeWithBuffer;
+        relativeEndTime = relativeStartTime + (clip.endTime - clip.startTime);
+        console.log(`[Regenerate] Byte offset: ${startByte} (startTime=${clip.startTime}s, videoSize=${videoSize}, duration=${videoDuration}s, bytesPerSec=${bytesPerSec.toFixed(0)})`);
+      } else if (clip.startTime > 30) {
+        // 无法计算字节偏移，且高光时刻超出前 32 秒范围
+        console.warn(`[Regenerate] Cannot calculate byte offset (no clen/dur), clip startTime=${clip.startTime}s exceeds 32s coverage, skipping`);
+        throw new Error(`Cannot calculate byte offset and clip startTime ${clip.startTime}s exceeds 32s coverage`);
       }
 
-      const blob = await downloadResponse.blob();
+      console.log(`[Regenerate] Downloading clip ${i + 1}/${thumbnailClips.length} "${clip.title}" (startTime=${clip.startTime}s, duration=${clipDuration}s, byteRange=${startByte}-${startByte + maxDownloadBytes - 1})...`);
+
+      // 下载策略：
+      // - 如果 startByte == 0（高光在视频开头）：下载前 4MB（包含 moov 原子）
+      // - 如果 startByte > 0（高光在视频中/后部）：下载 moov 原子（前 256KB）+ 3.75MB 片段数据
+      //   分离的 MP4 (fMP4) 中，moov 包含 codec/track 信息，moof+mdat 片段可独立解码。
+      //   拼接 [moov] + [moof+mdat] 后，ffmpeg 能识别 codec 并扫描 moof 盒子解码片段。
+      const moovSize = 256 * 1024; // 256KB for moov atom
+      let blob: Blob;
+
+      if (startByte === 0) {
+        // 高光在视频开头：直接下载前 4MB（包含 moov 原子）
+        const downloadResponse = await fetch(streamEndpoint.toString(), {
+          headers: {
+            'Range': `bytes=0-${maxDownloadBytes - 1}`,
+          },
+          signal: AbortSignal.timeout(120_000),
+        });
+
+        if (!downloadResponse.ok && downloadResponse.status !== 206) {
+          throw new Error(`Download failed: HTTP ${downloadResponse.status}`);
+        }
+
+        blob = await downloadResponse.blob();
+      } else {
+        // 高光在视频中/后部：并行下载 moov + 片段数据
+        const fragmentSize = maxDownloadBytes - moovSize;
+        const [moovResponse, fragmentResponse] = await Promise.all([
+          fetch(streamEndpoint.toString(), {
+            headers: { 'Range': `bytes=0-${moovSize - 1}` },
+            signal: AbortSignal.timeout(30_000),
+          }),
+          fetch(streamEndpoint.toString(), {
+            headers: { 'Range': `bytes=${startByte}-${startByte + fragmentSize - 1}` },
+            signal: AbortSignal.timeout(120_000),
+          }),
+        ]);
+
+        if ((!moovResponse.ok && moovResponse.status !== 206) ||
+            (!fragmentResponse.ok && fragmentResponse.status !== 206)) {
+          throw new Error(`Download failed: moov HTTP ${moovResponse.status}, fragment HTTP ${fragmentResponse.status}`);
+        }
+
+        const moovBlob = await moovResponse.blob();
+        const fragmentBlob = await fragmentResponse.blob();
+        // 拼接 moov + fragment：[ftyp+moov] + [moof+mdat]
+        blob = new Blob([moovBlob, fragmentBlob], { type: 'video/mp4' });
+      }
+
       console.log(`[Regenerate] Downloaded ${blob.size} bytes for clip "${clip.title}"`);
 
       // 检查下载的文件是否足够大（至少 100KB）
@@ -326,13 +401,16 @@ async function regenerateThumbnailClips(params: {
       }
 
       // 检查下载的数据是否覆盖高光时刻的时间范围
-      // 720p 码率约 1 Mbps = 0.125 MB/s
-      // 4 MB / 0.125 MB/s = 32 秒
-      // 如果 startTime + duration > 30，跳过此片段（数据不够）
-      const estimatedCoverageSec = blob.size / (0.125 * 1024 * 1024);
-      if (clip.endTime > estimatedCoverageSec) {
-        console.warn(`[Regenerate] Clip "${clip.title}" endTime=${clip.endTime}s exceeds estimated download coverage=${estimatedCoverageSec.toFixed(1)}s, skipping`);
-        throw new Error(`Clip endTime ${clip.endTime}s exceeds download coverage ${estimatedCoverageSec.toFixed(1)}s`);
+      // 使用实际的 bytesPerSec（如果有 clen/dur），否则用 720p 默认估算
+      const actualBytesPerSec = (videoSize > 0 && videoDuration > 0)
+        ? (videoSize / videoDuration)
+        : (0.125 * 1024 * 1024);
+      // 对于拼接的 moov+fragment，片段部分的覆盖率
+      const fragmentBytes = (startByte > 0) ? Math.max(0, blob.size - moovSize) : blob.size;
+      const downloadedCoverageSec = fragmentBytes / actualBytesPerSec;
+      if (relativeEndTime > downloadedCoverageSec) {
+        console.warn(`[Regenerate] Clip "${clip.title}" relativeEndTime=${relativeEndTime}s exceeds estimated download coverage=${downloadedCoverageSec.toFixed(1)}s, skipping`);
+        throw new Error(`Clip relativeEndTime ${relativeEndTime}s exceeds download coverage ${downloadedCoverageSec.toFixed(1)}s`);
       }
 
       // 上传到 /api/regenerate-clip
@@ -340,10 +418,14 @@ async function regenerateThumbnailClips(params: {
 
       const formData = new FormData();
       formData.append('file', blob, 'clip.mp4');
-      formData.append('startTime', String(clip.startTime));
-      formData.append('endTime', String(clip.endTime));
+      // 传递相对时间（相对于下载的数据块的起始位置）
+      // ffmpeg 会用这些时间从上传的文件中截取片段
+      formData.append('startTime', String(relativeStartTime));
+      formData.append('endTime', String(relativeEndTime));
       formData.append('title', clip.title);
       formData.append('summary', clip.summary);
+      // 告知 API 文件是否为拼接的 [moov]+[fragment]，以便启用慢速 seek
+      formData.append('concatenated', String(startByte > 0));
 
       const uploadResponse = await fetch('/api/regenerate-clip', {
         method: 'POST',
@@ -567,7 +649,7 @@ export default function VideoProcessor() {
       // The resolved streamUrl is passed to process-video API, which uses it
       // with CF Worker /stream fast path (no tryClient, no rate-limiting).
       let preResolvedStreamUrl: string | undefined;
-      let preResolvedMetadata: { userAgent?: string; visitorData?: string; xClientName?: number; clientVersion?: string; client?: string; audioUrl?: string } | undefined;
+      let preResolvedMetadata: { userAgent?: string; visitorData?: string; xClientName?: number; clientVersion?: string; client?: string; audioUrl?: string; duration?: number } | undefined;
       if (!shouldUseLocalProcessing && inputUrl) {
         try {
           const ytIdMatch = inputUrl.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{7,15})/);
@@ -582,7 +664,7 @@ export default function VideoProcessor() {
               console.log('[HandleProcess] Pre-resolving YouTube stream via CF Worker...');
               const resolveRes = await fetch(resolveUrl.toString(), { signal: AbortSignal.timeout(30_000) });
               if (resolveRes.ok) {
-                const resolveData = await resolveRes.json() as { streamUrl?: string; userAgent?: string; visitorData?: string; xClientName?: number; clientVersion?: string; client?: string; audioUrl?: string };
+                const resolveData = await resolveRes.json() as { streamUrl?: string; userAgent?: string; visitorData?: string; xClientName?: number; clientVersion?: string; client?: string; audioUrl?: string; duration?: number };
                 if (resolveData.streamUrl) {
                   preResolvedStreamUrl = resolveData.streamUrl;
                   preResolvedMetadata = {
@@ -592,6 +674,7 @@ export default function VideoProcessor() {
                     clientVersion: resolveData.clientVersion,
                     client: resolveData.client,
                     audioUrl: resolveData.audioUrl,
+                    duration: resolveData.duration,
                   };
                   console.log('[HandleProcess] Pre-resolved streamUrl:', preResolvedStreamUrl.slice(0, 80) + '...');
                 }

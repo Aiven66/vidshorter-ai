@@ -2825,6 +2825,9 @@ async function createLocalClip(params: {
   startTime: number;
   endTime: number;
   title: string;
+  // 当上传的文件是拼接的 [moov] + [fragment] 时，sidx 字节偏移不匹配。
+  // 需要使用慢速 seek（-ss 在 -i 之后）并启用错误容忍模式。
+  forceSlowSeek?: boolean;
 }): Promise<ClipResult> {
   await ensureDirectories();
   const ffmpegPath = await ensureFfmpegAvailable();
@@ -2889,7 +2892,7 @@ async function createLocalClip(params: {
   const preset = SHOULD_INLINE_CLIPS ? INLINE_PRESET : (isRemoteInput ? 'medium' : 'fast');
 
   const isInvidiousProxy = isRemoteInput && INVIDIOUS_INSTANCES.some(inst => params.inputPath.startsWith(inst));
-  const fastSeek = !isRemoteInput || isWorkerStream || params.inputPath.includes('googlevideo.com') || isInvidiousProxy;
+  const fastSeek = !params.forceSlowSeek && (!isRemoteInput || isWorkerStream || params.inputPath.includes('googlevideo.com') || isInvidiousProxy);
   const hasAudioInput = typeof params.audioInputPath === 'string' && params.audioInputPath.length > 0;
   const audioIsRemote = hasAudioInput && params.audioInputPath!.startsWith('http');
   const audioHeaders = (audioIsRemote && inputHeaders) ? ['-headers', inputHeaders] : [];
@@ -2916,6 +2919,9 @@ async function createLocalClip(params: {
 
   const args = [
     '-y',
+    // 当 forceSlowSeek 为 true 时（拼接的 moov+fragment 文件），
+    // 添加错误容忍标志，因为 sidx 字节偏移不匹配
+    ...(params.forceSlowSeek ? ['-err_detect', 'ignore_err', '-fflags', '+discardcorrupt'] : []),
     ...httpInputFlags,
     ...seekArgs,
     '-map', '0:v:0',

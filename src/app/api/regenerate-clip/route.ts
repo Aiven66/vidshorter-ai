@@ -37,6 +37,9 @@ export async function POST(request: NextRequest) {
     const originalEndTime = Number(formData.get('endTime') || '60');
     const title = String(formData.get('title') || 'Regenerated Clip');
     const summary = String(formData.get('summary') || '');
+    // concatenated=true 表示上传的文件是拼接的 [moov] + [fragment]，
+    // ffmpeg 需要使用慢速 seek 和错误容忍模式
+    const concatenated = formData.get('concatenated') === 'true';
 
     if (!file) {
       return NextResponse.json({ error: 'No file uploaded' }, { status: 400 });
@@ -51,7 +54,7 @@ export async function POST(request: NextRequest) {
       }, { status: 413 });
     }
 
-    console.log(`[regenerate-clip] Received file: ${file.size} bytes, title="${title}", originalRange=[${originalStartTime}-${originalEndTime}]`);
+    console.log(`[regenerate-clip] Received file: ${file.size} bytes, title="${title}", relativeRange=[${originalStartTime}-${originalEndTime}], concatenated=${concatenated}`);
 
     // 保存上传的文件到 /tmp
     const tmpDir = os.tmpdir();
@@ -61,15 +64,18 @@ export async function POST(request: NextRequest) {
     await writeFile(tmpInputPath, buffer);
     console.log(`[regenerate-clip] Saved to ${tmpInputPath} (${buffer.length} bytes)`);
 
-    // 前端下载的是从 0 开始的视频（&begin= 参数只影响播放位置，不影响下载数据）。
-    // 所以 ffmpeg 需要 -ss originalStartTime -t (originalEndTime - originalStartTime) 来截取。
-    // createLocalClip 的 startTime/endTime 是相对于输入视频的，所以直接传入原始值。
+    // startTime/endTime 是相对于上传文件的时间（不是原始视频的时间）。
+    // 对于从开头下载的文件（startByte==0）：relativeStart == clip.startTime
+    // 对于拼接的 [moov]+[fragment] 文件（startByte>0）：relativeStart == 2 (buffer)
+    // ffmpeg 用这些相对时间从上传的文件中截取片段。
     const videoClipper = (await import('@/lib/server/video-clipper')).default;
     const result = await videoClipper.createLocalClip({
       inputPath: tmpInputPath,
-      startTime: originalStartTime,  // 从原始视频的 startTime 位置开始截取
-      endTime: originalEndTime,      // 截取到原始视频的 endTime 位置
+      startTime: originalStartTime,
+      endTime: originalEndTime,
       title,
+      // 拼接文件需要慢速 seek 和错误容忍
+      forceSlowSeek: concatenated,
     });
 
     console.log(`[regenerate-clip] createLocalClip result:`, {
