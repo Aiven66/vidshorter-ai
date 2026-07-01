@@ -3219,6 +3219,10 @@ async function generateFallbackClip(params: {
     videoUrl: dataUrl || publicUrl,
     thumbnailUrl,
     status: 'completed',
+    // 标记此 clip 是 zoompan fallback 伪视频（静态缩略图 + zoompan 缩放效果），
+    // 不是真实视频内容。前端识别此标记后会触发 regenerateThumbnailClips
+    // 通过浏览器 IP 下载真实视频片段并重新生成。
+    isFallback: true,
   };
 }
 

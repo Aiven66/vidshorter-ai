@@ -45,6 +45,8 @@ interface VideoClip {
   videoUrl: string | null;
   status: 'processing' | 'completed' | 'failed' | 'link_only';
   linkOnlyUrl?: string;
+  // 后端 fallback clip 标记（zoompan 伪视频，非真实视频）
+  isFallback?: boolean;
 }
 
 interface SSEData {
@@ -176,17 +178,19 @@ function mergeClips(prev: VideoClip[], next: VideoClip[]) {
 }
 
 /**
- * 重新生成缩略图视频：当 Vercel 因 YouTube colo-mismatch/IP 限制无法通过
- * CF Worker 下载视频时，会生成缩略图视频（data:image/jpeg 开头）。
- * 前端浏览器 IP 不受限，可以直接通过 CF Worker /stream 下载视频片段，
- * 然后上传到 /api/regenerate-clip，Vercel 用 ffmpeg 生成真实短视频。
+ * 重新生成 fallback zoompan 伪视频：当 Vercel 因 YouTube colo-mismatch/IP 限制无法
+ * 通过 CF Worker 下载视频时，后端会用静态缩略图 + zoompan 滤镜生成"伪视频"，
+ * 并在 ClipResult 中标记 isFallback: true。前端浏览器 IP 不受限，可以通过
+ * CF Worker /stream 下载真实视频片段，然后上传到 /api/regenerate-clip，
+ * Vercel 用 ffmpeg 生成真实短视频。
  *
  * 流程：
- * 1. 找出所有缩略图视频（videoUrl 以 data:image/jpeg 开头）
- * 2. 对每个缩略图视频：
+ * 1. 找出所有 fallback zoompan 伪视频（isFallback === true）
+ * 2. 对每个 fallback clip：
  *    a. 通过 CF Worker /stream 下载从 startTime 开始的视频片段（同 colo，IP 匹配）
+ *       使用 YouTube begin 参数（毫秒）从指定时间位置返回完整可解码的 MP4
  *    b. 用 multipart/form-data 上传到 /api/regenerate-clip
- *    c. 用返回的 data URL 替换缩略图视频
+ *    c. 用返回的真实视频 data URL 替换 fallback 伪视频，清除 isFallback 标记
  */
 async function regenerateThumbnailClips(params: {
   clips: VideoClip[];
@@ -198,12 +202,15 @@ async function regenerateThumbnailClips(params: {
 }): Promise<void> {
   const { clips, ytVideoId, existingStreamUrl, existingMetadata, onClipUpdated, onProgress } = params;
 
-  // 找出所有缩略图视频
+  // 找出所有 fallback zoompan 伪视频（由后端 generateFallbackClip 生成）
+  // 后端在 YouTube 下载受限时会用静态缩略图 + zoompan 滤镜生成"伪视频"，
+  // 并标记 isFallback: true。这里通过此标记识别需要重新生成的 clip。
+  // 旧的 data:image/jpeg 判据已废弃（generateFallbackClip 返回的是 data:video/mp4）。
   const thumbnailClips = clips.filter(c =>
-    c.videoUrl && c.videoUrl.startsWith('data:image/jpeg')
+    c.isFallback === true && c.videoUrl
   );
   if (thumbnailClips.length === 0) {
-    console.log('[Regenerate] No thumbnail clips to regenerate');
+    console.log('[Regenerate] No fallback clips to regenerate');
     return;
   }
 
@@ -391,6 +398,7 @@ async function regenerateThumbnailClips(params: {
         thumbnailUrl: result.thumbnailUrl || clip.thumbnailUrl,
         duration: result.duration || clip.duration,
         status: 'completed',
+        isFallback: false,  // 清除 fallback 标记，避免重复处理
       };
 
       onClipUpdated(updatedClip);
@@ -567,6 +575,10 @@ export default function VideoProcessor() {
       let analysisTitle: string | null = null;
       let jobId: string | null = null;
       let videoId: string | null = null;
+      // 从输入 URL 提取的 YouTube videoId（用于 regenerateThumbnailClips）。
+      // 即使后端 SSE 没有返回 videoId（非 Supabase 模式或 DB 写入失败），
+      // 也能用这个 ytVideoId 触发前端重新生成。
+      let ytVideoIdFromUrl: string | null = null;
       let nextOffset = 0;
       let done = false;
       let batchLimit = 3;
@@ -595,6 +607,7 @@ export default function VideoProcessor() {
           const ytIdMatch = inputUrl.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{7,15})/);
           if (ytIdMatch) {
             const ytVideoId = ytIdMatch[1];
+            ytVideoIdFromUrl = ytVideoId;  // 保存到外层，供后续 regenerateThumbnailClips 使用
             const cfWorkerUrl = String(window.__CF_WORKER_URL__ || '').trim();
             if (cfWorkerUrl) {
               const resolveUrl = new URL(cfWorkerUrl);
@@ -811,15 +824,19 @@ export default function VideoProcessor() {
       }
 
       if (done && !error) {
-        // 重新生成缩略图视频：当 Vercel 因 YouTube colo-mismatch/IP 限制无法
-        // 通过 CF Worker 下载视频时，会生成缩略图视频（data:image/jpeg）。
-        // 前端浏览器 IP 不受限，可以直接通过 CF Worker /stream 下载视频片段，
-        // 然后上传到 /api/regenerate-clip，Vercel 用 ffmpeg 生成真实短视频。
-        if (!shouldUseLocalProcessing && videoId) {
+        // 重新生成 fallback zoompan 伪视频：当 Vercel 因 YouTube colo-mismatch/IP 限制
+        // 无法通过 CF Worker 下载视频时，后端会用静态缩略图 + zoompan 滤镜生成"伪视频"，
+        // 并标记 isFallback: true。前端浏览器 IP 不受限，可以通过 CF Worker /stream
+        // 下载真实视频片段，上传到 /api/regenerate-clip 用 ffmpeg 生成真实短视频。
+        //
+        // 关键：使用从输入 URL 提取的 ytVideoIdFromUrl，而不是 SSE 返回的 videoId
+        // （后者是数据库 video ID，在非 Supabase 模式或 DB 写入失败时为 null，
+        // 会导致 regenerateThumbnailClips 永远不被触发）。
+        if (!shouldUseLocalProcessing && ytVideoIdFromUrl) {
           try {
             await regenerateThumbnailClips({
               clips: Array.from(clipMap.values()),
-              ytVideoId: videoId,
+              ytVideoId: ytVideoIdFromUrl,
               existingStreamUrl: preResolvedStreamUrl,
               existingMetadata: preResolvedMetadata,
               onClipUpdated: (updatedClip) => {

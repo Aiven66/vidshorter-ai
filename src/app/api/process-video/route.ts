@@ -57,6 +57,9 @@ interface ClipResult {
   videoUrl: string | null;   // data URL (preferred) or serve-clip URL
   status: 'processing' | 'completed' | 'failed' | 'link_only';
   linkOnlyUrl?: string;      // YouTube timestamp link (when video download is blocked)
+  // 标记此 clip 是 fallback zoompan 视频（由静态缩略图 + zoompan 滤镜生成），
+  // 不是真实视频。前端可以通过这个标记识别需要重新生成的 clip。
+  isFallback?: boolean;
 }
 
 interface SSEMessage {
@@ -852,6 +855,8 @@ export async function POST(request: NextRequest) {
                   c.thumbnailUrl = fallbackClip.thumbnailUrl;
                   c.duration = fallbackClip.duration;
                   c.linkOnlyUrl = buildYouTubeTimestampUrl(fallbackYtId, safeStart);
+                  // 标记为 fallback zoompan 伪视频，前端识别此标记后会触发重新生成
+                  c.isFallback = true;
                   (c as unknown as { error?: string }).error = undefined;
                 } catch (fbErr) {
                   console.warn(`Fallback clip ${i} also failed:`, fbErr instanceof Error ? fbErr.message.slice(0, 80) : fbErr);
