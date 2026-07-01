@@ -175,6 +175,192 @@ function mergeClips(prev: VideoClip[], next: VideoClip[]) {
   return Array.from(map.values());
 }
 
+/**
+ * 重新生成缩略图视频：当 Vercel 因 YouTube colo-mismatch/IP 限制无法通过
+ * CF Worker 下载视频时，会生成缩略图视频（data:image/jpeg 开头）。
+ * 前端浏览器 IP 不受限，可以直接通过 CF Worker /stream 下载视频片段，
+ * 然后上传到 /api/regenerate-clip，Vercel 用 ffmpeg 生成真实短视频。
+ *
+ * 流程：
+ * 1. 找出所有缩略图视频（videoUrl 以 data:image/jpeg 开头）
+ * 2. 对每个缩略图视频：
+ *    a. 通过 CF Worker /stream 下载从 startTime 开始的视频片段（同 colo，IP 匹配）
+ *    b. 用 multipart/form-data 上传到 /api/regenerate-clip
+ *    c. 用返回的 data URL 替换缩略图视频
+ */
+async function regenerateThumbnailClips(params: {
+  clips: VideoClip[];
+  ytVideoId: string;
+  existingStreamUrl?: string;
+  existingMetadata?: { userAgent?: string; visitorData?: string; xClientName?: number; clientVersion?: string; client?: string; audioUrl?: string };
+  onClipUpdated: (clip: VideoClip) => void;
+  onProgress?: (message: string) => void;
+}): Promise<void> {
+  const { clips, ytVideoId, existingStreamUrl, existingMetadata, onClipUpdated, onProgress } = params;
+
+  // 找出所有缩略图视频
+  const thumbnailClips = clips.filter(c =>
+    c.videoUrl && c.videoUrl.startsWith('data:image/jpeg')
+  );
+  if (thumbnailClips.length === 0) {
+    console.log('[Regenerate] No thumbnail clips to regenerate');
+    return;
+  }
+
+  console.log(`[Regenerate] Found ${thumbnailClips.length} thumbnail clips to regenerate`);
+  onProgress?.(`Regenerating ${thumbnailClips.length} clip(s) from real video...`);
+
+  const cfWorkerUrl = String(window.__CF_WORKER_URL__ || '').trim();
+  if (!cfWorkerUrl) {
+    console.warn('[Regenerate] No CF_WORKER_URL available, skipping regeneration');
+    return;
+  }
+
+  // 如果没有现成的 streamUrl，重新调用 /resolve 获取
+  let streamUrl = existingStreamUrl;
+  let metadata = existingMetadata;
+
+  if (!streamUrl) {
+    console.log('[Regenerate] No existing streamUrl, calling /resolve...');
+    onProgress?.('Resolving YouTube stream URL...');
+    try {
+      const resolveUrl = new URL(cfWorkerUrl);
+      resolveUrl.pathname = `${resolveUrl.pathname.replace(/\/$/, '')}/resolve`;
+      resolveUrl.searchParams.set('videoId', ytVideoId);
+      resolveUrl.searchParams.set('maxHeight', '360');
+      const resolveRes = await fetch(resolveUrl.toString(), {
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (resolveRes.ok) {
+        const resolveData = await resolveRes.json() as {
+          streamUrl?: string; userAgent?: string; visitorData?: string;
+          xClientName?: number; clientVersion?: string; client?: string;
+        };
+        if (resolveData.streamUrl) {
+          streamUrl = resolveData.streamUrl;
+          metadata = {
+            userAgent: resolveData.userAgent,
+            visitorData: resolveData.visitorData,
+            xClientName: resolveData.xClientName,
+            clientVersion: resolveData.clientVersion,
+            client: resolveData.client,
+          };
+          console.log('[Regenerate] Got streamUrl from /resolve');
+        }
+      }
+    } catch (e) {
+      console.warn('[Regenerate] /resolve failed:', e);
+    }
+  }
+
+  if (!streamUrl) {
+    console.warn('[Regenerate] No streamUrl available, skipping regeneration');
+    return;
+  }
+
+  // 对每个缩略图视频，下载片段并上传重新生成
+  for (let i = 0; i < thumbnailClips.length; i += 1) {
+    const clip = thumbnailClips[i];
+    const clipDuration = clip.endTime - clip.startTime;
+    // 下载比片段多 5s 的缓冲，避免 ffmpeg 截断
+    const downloadDuration = clipDuration + 5;
+
+    onProgress?.(`Downloading video for clip ${i + 1}/${thumbnailClips.length}: "${clip.title}"`);
+
+    try {
+      // 修改 streamUrl 设置 &begin=startTime，让 googlevideo.com 从 startTime 开始发送数据
+      // 这样前端只需要下载从 startTime 开始的视频片段，不需要下载整个视频
+      const beginUrl = new URL(streamUrl);
+      beginUrl.searchParams.set('begin', String(Math.floor(clip.startTime)));
+      const modifiedStreamUrl = beginUrl.toString();
+
+      // 构建 CF Worker /stream URL（fast path，同 colo，IP 匹配）
+      const streamEndpoint = new URL(cfWorkerUrl);
+      streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
+      streamEndpoint.searchParams.set('videoId', ytVideoId);
+      streamEndpoint.searchParams.set('maxHeight', '360');
+      streamEndpoint.searchParams.set('streamUrl', modifiedStreamUrl);
+      if (metadata?.userAgent) streamEndpoint.searchParams.set('userAgent', metadata.userAgent);
+      if (metadata?.visitorData) streamEndpoint.searchParams.set('visitorData', metadata.visitorData);
+      if (metadata?.xClientName !== undefined) streamEndpoint.searchParams.set('xClientName', String(metadata.xClientName));
+      if (metadata?.clientVersion) streamEndpoint.searchParams.set('clientVersion', metadata.clientVersion);
+      if (metadata?.client) streamEndpoint.searchParams.set('clientName', metadata.client);
+
+      // 估算下载大小：
+      // 360p 视频码率约 0.5-1 Mbps = 0.0625-0.125 MB/s
+      // 60s 视频约 4-7 MB，120s 约 8-15 MB
+      // 下载 30 MB 应该足够覆盖 120s 的 360p 视频
+      const maxDownloadBytes = 30 * 1024 * 1024;
+
+      console.log(`[Regenerate] Downloading clip ${i + 1}/${thumbnailClips.length} "${clip.title}" from ${clip.startTime}s for ${clipDuration}s...`);
+
+      const downloadResponse = await fetch(streamEndpoint.toString(), {
+        headers: {
+          // Range 请求：只下载前 30 MB
+          // 注意：浏览器会自动设置 User-Agent，不能手动设置（forbidden header）
+          'Range': `bytes=0-${maxDownloadBytes - 1}`,
+        },
+        signal: AbortSignal.timeout(120_000),
+      });
+
+      if (!downloadResponse.ok && downloadResponse.status !== 206) {
+        throw new Error(`Download failed: HTTP ${downloadResponse.status}`);
+      }
+
+      const blob = await downloadResponse.blob();
+      console.log(`[Regenerate] Downloaded ${blob.size} bytes for clip "${clip.title}"`);
+
+      // 检查下载的文件是否足够大（至少 100KB）
+      if (blob.size < 100_000) {
+        throw new Error(`Downloaded file too small: ${blob.size} bytes`);
+      }
+
+      // 上传到 /api/regenerate-clip
+      onProgress?.(`Generating real video for clip ${i + 1}/${thumbnailClips.length}: "${clip.title}"`);
+
+      const formData = new FormData();
+      formData.append('file', blob, 'clip.mp4');
+      formData.append('startTime', String(clip.startTime));
+      formData.append('endTime', String(clip.endTime));
+      formData.append('title', clip.title);
+      formData.append('summary', clip.summary);
+
+      const uploadResponse = await fetch('/api/regenerate-clip', {
+        method: 'POST',
+        body: formData,
+        signal: AbortSignal.timeout(180_000),
+      });
+
+      if (!uploadResponse.ok) {
+        const errorText = await uploadResponse.text().catch(() => '');
+        throw new Error(`Upload failed: HTTP ${uploadResponse.status} ${errorText.slice(0, 200)}`);
+      }
+
+      const result = await uploadResponse.json() as { videoUrl: string; thumbnailUrl: string; duration?: number };
+
+      if (!result.videoUrl || result.videoUrl.startsWith('data:image/jpeg')) {
+        throw new Error('Regeneration returned thumbnail or empty videoUrl');
+      }
+
+      // 替换缩略图视频
+      const updatedClip: VideoClip = {
+        ...clip,
+        videoUrl: result.videoUrl,
+        thumbnailUrl: result.thumbnailUrl || clip.thumbnailUrl,
+        duration: result.duration || clip.duration,
+        status: 'completed',
+      };
+
+      onClipUpdated(updatedClip);
+      console.log(`[Regenerate] Successfully regenerated clip ${i + 1}/${thumbnailClips.length}: "${clip.title}" (videoUrl length: ${result.videoUrl.length})`);
+    } catch (err) {
+      console.error(`[Regenerate] Failed to regenerate clip ${i + 1}/${thumbnailClips.length} "${clip.title}":`, err);
+    }
+  }
+
+  onProgress?.('Thumbnail regeneration complete');
+}
+
 export default function VideoProcessor() {
   const { t } = useLocale();
   const { user, accessToken } = useAuth();
@@ -582,6 +768,30 @@ export default function VideoProcessor() {
       }
 
       if (done && !error) {
+        // 重新生成缩略图视频：当 Vercel 因 YouTube colo-mismatch/IP 限制无法
+        // 通过 CF Worker 下载视频时，会生成缩略图视频（data:image/jpeg）。
+        // 前端浏览器 IP 不受限，可以直接通过 CF Worker /stream 下载视频片段，
+        // 然后上传到 /api/regenerate-clip，Vercel 用 ffmpeg 生成真实短视频。
+        if (!shouldUseLocalProcessing && videoId) {
+          try {
+            await regenerateThumbnailClips({
+              clips: Array.from(clipMap.values()),
+              ytVideoId: videoId,
+              existingStreamUrl: preResolvedStreamUrl,
+              existingMetadata: preResolvedMetadata,
+              onClipUpdated: (updatedClip) => {
+                clipMap.set(updatedClip.id, updatedClip);
+                setClips(prev => mergeClips(prev, [updatedClip]));
+              },
+              onProgress: (msg) => {
+                setProgress({ stage: 'generating_clip', progress: 90, message: msg, data: {} });
+              },
+            });
+          } catch (regenErr) {
+            console.warn('[HandleProcess] Thumbnail regeneration failed:', regenErr);
+          }
+        }
+
         const videoTitle = analysisTitle || null;
         saveDemoVideoRecord(displayUrl, videoTitle, Array.from(clipMap.values()), user?.id);
 
