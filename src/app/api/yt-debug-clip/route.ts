@@ -42,6 +42,26 @@ export async function GET(request: NextRequest) {
   // CFWorkerSlowPath in Step 5 to fail. Skipping Step 2 simulates the real
   // flow where Vercel doesn't call /resolve separately.
   const skipResolve = url.searchParams.get('skipResolve') === '1';
+  // streamUrl + streamMetadata: simulate the frontend pre-resolve flow.
+  // The frontend calls CF Worker /resolve from the user's browser (not rate-limited
+  // by YouTube), gets a streamUrl, and sends it to /api/process-video. This debug
+  // endpoint accepts the same params to test createClipFromYouTubeStream with a
+  // real pre-resolved streamUrl without going through the frontend.
+  const preResolvedStreamUrl = (url.searchParams.get('streamUrl') || '').trim();
+  const preResolvedMetadata: {
+    userAgent?: string; visitorData?: string; xClientName?: number;
+    clientVersion?: string; client?: string; audioUrl?: string;
+  } = {};
+  if (url.searchParams.get('userAgent')) preResolvedMetadata.userAgent = url.searchParams.get('userAgent')!;
+  if (url.searchParams.get('visitorData')) preResolvedMetadata.visitorData = url.searchParams.get('visitorData')!;
+  const xClientNameRaw = url.searchParams.get('xClientName');
+  if (xClientNameRaw !== null) {
+    const n = Number(xClientNameRaw);
+    if (!Number.isNaN(n)) preResolvedMetadata.xClientName = n;
+  }
+  if (url.searchParams.get('clientVersion')) preResolvedMetadata.clientVersion = url.searchParams.get('clientVersion')!;
+  if (url.searchParams.get('clientName')) preResolvedMetadata.client = url.searchParams.get('clientName')!;
+  if (url.searchParams.get('audioUrl')) preResolvedMetadata.audioUrl = url.searchParams.get('audioUrl')!;
 
   const steps: DebugStep[] = [];
   const pushStep = (s: DebugStep) => steps.push(s);
@@ -168,15 +188,21 @@ export async function GET(request: NextRequest) {
   }
 
   // Step 5: Try createClipFromYouTubeStream (the real function)
+  // When streamUrl + metadata query params are provided, they simulate the
+  // frontend pre-resolve flow: the user's browser called CF Worker /resolve,
+  // got a streamUrl, and sent it to /api/process-video. We pass it through to
+  // test the PreResolvedFastPath candidate.
   const t4 = Date.now();
   try {
     const videoClipper = (await import('@/lib/server/video-clipper')).default;
+    const hasPreResolved = !!preResolvedStreamUrl;
     const clip = await videoClipper.createClipFromYouTubeStream({
       videoId,
       title: 'Debug Test Clip',
       summary: 'Diagnostic test',
       startTime,
       endTime,
+      ...(hasPreResolved ? { preResolvedStreamUrl, preResolvedMetadata } : {}),
     });
     const isJpegThumbnail = clip?.videoUrl?.startsWith('data:image/jpeg');
     pushStep({
@@ -192,7 +218,8 @@ export async function GET(request: NextRequest) {
         videoUrlLength: clip.videoUrl?.length,
         thumbnailUrlPrefix: clip.thumbnailUrl?.slice(0, 40),
         isDataUrl: clip.videoUrl?.startsWith('data:'),
-      } : null,
+        usedPreResolved: hasPreResolved,
+      } : { usedPreResolved: hasPreResolved },
     });
   } catch (err) {
     pushStep({ step: '5. createClipFromYouTubeStream', ok: false, error: String(err).slice(0, 500), durationMs: Date.now() - t4 });
