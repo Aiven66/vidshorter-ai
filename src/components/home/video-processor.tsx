@@ -266,14 +266,28 @@ async function regenerateThumbnailClips(params: {
     onProgress?.(`Downloading video for clip ${i + 1}/${thumbnailClips.length}: "${clip.title}"`);
 
     try {
-      // 构建 CF Worker /stream URL（fast path，同 colo，IP 匹配）
-      // 注意：&begin= 参数只影响播放位置，不影响下载数据，所以不设置
-      // 前端下载从 0 开始的视频，Vercel 用 ffmpeg -ss startTime -t duration 截取
+      // 构建 CF Worker /stream URL（fast path）
+      // 关键：在传入 streamUrl 之前剥离 ip= 参数并设置 ipbits=0。
+      // googlevideo.com 的 streamUrl 绑定到 /resolve 时的 CF Worker 出口 IP。
+      // 但 CF Worker /stream 的出口 IP 可能不同（同一 colo 内 IP 会变化），
+      // 导致 YouTube 返回 403。剥离 ip= + ipbits=0 让 YouTube 跳过 IP 验证。
+      // 测试确认：在传入前剥离比让 CF Worker 内部重试更可靠。
+      const strippedStreamUrl = (() => {
+        try {
+          const u = new URL(streamUrl);
+          u.searchParams.delete('ip');
+          u.searchParams.set('ipbits', '0');
+          return u.toString();
+        } catch {
+          return streamUrl;
+        }
+      })();
+
       const streamEndpoint = new URL(cfWorkerUrl);
       streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
       streamEndpoint.searchParams.set('videoId', ytVideoId);
       streamEndpoint.searchParams.set('maxHeight', '360');
-      streamEndpoint.searchParams.set('streamUrl', streamUrl);
+      streamEndpoint.searchParams.set('streamUrl', strippedStreamUrl);
       if (metadata?.userAgent) streamEndpoint.searchParams.set('userAgent', metadata.userAgent);
       if (metadata?.visitorData) streamEndpoint.searchParams.set('visitorData', metadata.visitorData);
       if (metadata?.xClientName !== undefined) streamEndpoint.searchParams.set('xClientName', String(metadata.xClientName));
