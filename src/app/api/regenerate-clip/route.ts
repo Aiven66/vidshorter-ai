@@ -60,16 +60,14 @@ export async function POST(request: NextRequest) {
     await writeFile(tmpInputPath, buffer);
     console.log(`[regenerate-clip] Saved to ${tmpInputPath} (${buffer.length} bytes)`);
 
-    // 上传的视频片段从 originalStartTime 开始，所以 ffmpeg 从 0 开始截取
-    // clipDuration = originalEndTime - originalStartTime
-    const clipDuration = Math.max(1, originalEndTime - originalStartTime);
-
-    // 用 createLocalClip 生成短视频
+    // 前端下载的是从 0 开始的视频（&begin= 参数只影响播放位置，不影响下载数据）。
+    // 所以 ffmpeg 需要 -ss originalStartTime -t (originalEndTime - originalStartTime) 来截取。
+    // createLocalClip 的 startTime/endTime 是相对于输入视频的，所以直接传入原始值。
     const videoClipper = (await import('@/lib/server/video-clipper')).default;
     const result = await videoClipper.createLocalClip({
       inputPath: tmpInputPath,
-      startTime: 0, // 上传的文件从 originalStartTime 开始
-      endTime: clipDuration,
+      startTime: originalStartTime,  // 从原始视频的 startTime 位置开始截取
+      endTime: originalEndTime,      // 截取到原始视频的 endTime 位置
       title,
     });
 
@@ -82,6 +80,7 @@ export async function POST(request: NextRequest) {
     });
 
     // 优先返回 data URL（跨 Lambda 可靠）
+    const clipDuration = Math.max(1, originalEndTime - originalStartTime);
     if (result.dataUrl) {
       return NextResponse.json({
         videoUrl: result.dataUrl,

@@ -262,24 +262,18 @@ async function regenerateThumbnailClips(params: {
   for (let i = 0; i < thumbnailClips.length; i += 1) {
     const clip = thumbnailClips[i];
     const clipDuration = clip.endTime - clip.startTime;
-    // 下载比片段多 5s 的缓冲，避免 ffmpeg 截断
-    const downloadDuration = clipDuration + 5;
 
     onProgress?.(`Downloading video for clip ${i + 1}/${thumbnailClips.length}: "${clip.title}"`);
 
     try {
-      // 修改 streamUrl 设置 &begin=startTime，让 googlevideo.com 从 startTime 开始发送数据
-      // 这样前端只需要下载从 startTime 开始的视频片段，不需要下载整个视频
-      const beginUrl = new URL(streamUrl);
-      beginUrl.searchParams.set('begin', String(Math.floor(clip.startTime)));
-      const modifiedStreamUrl = beginUrl.toString();
-
       // 构建 CF Worker /stream URL（fast path，同 colo，IP 匹配）
+      // 注意：&begin= 参数只影响播放位置，不影响下载数据，所以不设置
+      // 前端下载从 0 开始的视频，Vercel 用 ffmpeg -ss startTime -t duration 截取
       const streamEndpoint = new URL(cfWorkerUrl);
       streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
       streamEndpoint.searchParams.set('videoId', ytVideoId);
       streamEndpoint.searchParams.set('maxHeight', '360');
-      streamEndpoint.searchParams.set('streamUrl', modifiedStreamUrl);
+      streamEndpoint.searchParams.set('streamUrl', streamUrl);
       if (metadata?.userAgent) streamEndpoint.searchParams.set('userAgent', metadata.userAgent);
       if (metadata?.visitorData) streamEndpoint.searchParams.set('visitorData', metadata.visitorData);
       if (metadata?.xClientName !== undefined) streamEndpoint.searchParams.set('xClientName', String(metadata.xClientName));
@@ -288,19 +282,19 @@ async function regenerateThumbnailClips(params: {
 
       // 估算下载大小：
       // 360p 视频码率约 0.5-1 Mbps = 0.0625-0.125 MB/s
-      // 60s 视频约 4-7 MB，120s 约 8-15 MB
-      // 下载 30 MB 应该足够覆盖 120s 的 360p 视频
-      const maxDownloadBytes = 30 * 1024 * 1024;
+      // 48 MB 约 384-768s 的视频，应该足够覆盖大多数高光时刻的 startTime
+      // Vercel Pro 请求体限制是 50 MB，48 MB 是安全限制
+      const maxDownloadBytes = 48 * 1024 * 1024;
 
-      console.log(`[Regenerate] Downloading clip ${i + 1}/${thumbnailClips.length} "${clip.title}" from ${clip.startTime}s for ${clipDuration}s...`);
+      console.log(`[Regenerate] Downloading clip ${i + 1}/${thumbnailClips.length} "${clip.title}" (startTime=${clip.startTime}s, duration=${clipDuration}s)...`);
 
       const downloadResponse = await fetch(streamEndpoint.toString(), {
         headers: {
-          // Range 请求：只下载前 30 MB
+          // Range 请求：只下载前 48 MB
           // 注意：浏览器会自动设置 User-Agent，不能手动设置（forbidden header）
           'Range': `bytes=0-${maxDownloadBytes - 1}`,
         },
-        signal: AbortSignal.timeout(120_000),
+        signal: AbortSignal.timeout(180_000),
       });
 
       if (!downloadResponse.ok && downloadResponse.status !== 206) {
