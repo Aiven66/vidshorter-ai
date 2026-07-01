@@ -294,21 +294,23 @@ async function regenerateThumbnailClips(params: {
       if (metadata?.clientVersion) streamEndpoint.searchParams.set('clientVersion', metadata.clientVersion);
       if (metadata?.client) streamEndpoint.searchParams.set('clientName', metadata.client);
 
-      // 估算下载大小：
-      // 360p 视频码率约 0.5-1 Mbps = 0.0625-0.125 MB/s
-      // 48 MB 约 384-768s 的视频，应该足够覆盖大多数高光时刻的 startTime
-      // Vercel Pro 请求体限制是 50 MB，48 MB 是安全限制
-      const maxDownloadBytes = 48 * 1024 * 1024;
+      // Vercel Serverless Functions 请求体限制是 4.5 MB。
+      // 720p 视频码率约 1 Mbps = 0.125 MB/s，4 MB 约覆盖 32 秒。
+      // 对于高光时刻在前 30 秒内的视频，4 MB 足够。
+      // 对于高光时刻在后面的视频，需要分多次下载（每次截取不同时间段）。
+      // 当前方案：下载前 4 MB，ffmpeg 截取 0-30s 的片段。
+      // 如果高光时刻超出下载范围，回退到缩略图。
+      const maxDownloadBytes = 4 * 1024 * 1024;
 
       console.log(`[Regenerate] Downloading clip ${i + 1}/${thumbnailClips.length} "${clip.title}" (startTime=${clip.startTime}s, duration=${clipDuration}s)...`);
 
       const downloadResponse = await fetch(streamEndpoint.toString(), {
         headers: {
-          // Range 请求：只下载前 48 MB
+          // Range 请求：只下载前 4 MB（Vercel 请求体限制内）
           // 注意：浏览器会自动设置 User-Agent，不能手动设置（forbidden header）
           'Range': `bytes=0-${maxDownloadBytes - 1}`,
         },
-        signal: AbortSignal.timeout(180_000),
+        signal: AbortSignal.timeout(120_000),
       });
 
       if (!downloadResponse.ok && downloadResponse.status !== 206) {
@@ -321,6 +323,16 @@ async function regenerateThumbnailClips(params: {
       // 检查下载的文件是否足够大（至少 100KB）
       if (blob.size < 100_000) {
         throw new Error(`Downloaded file too small: ${blob.size} bytes`);
+      }
+
+      // 检查下载的数据是否覆盖高光时刻的时间范围
+      // 720p 码率约 1 Mbps = 0.125 MB/s
+      // 4 MB / 0.125 MB/s = 32 秒
+      // 如果 startTime + duration > 30，跳过此片段（数据不够）
+      const estimatedCoverageSec = blob.size / (0.125 * 1024 * 1024);
+      if (clip.endTime > estimatedCoverageSec) {
+        console.warn(`[Regenerate] Clip "${clip.title}" endTime=${clip.endTime}s exceeds estimated download coverage=${estimatedCoverageSec.toFixed(1)}s, skipping`);
+        throw new Error(`Clip endTime ${clip.endTime}s exceeds download coverage ${estimatedCoverageSec.toFixed(1)}s`);
       }
 
       // 上传到 /api/regenerate-clip

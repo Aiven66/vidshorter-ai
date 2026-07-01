@@ -42,8 +42,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No file uploaded' }, { status: 400 });
     }
 
-    // 限制文件大小 50MB（Vercel Pro 请求体限制）
-    const MAX_FILE_SIZE = 50 * 1024 * 1024;
+    // Vercel Serverless Functions 请求体限制是 4.5 MB。
+    // 前端会限制下载为 4 MB 以内。
+    const MAX_FILE_SIZE = 4.5 * 1024 * 1024;
     if (file.size > MAX_FILE_SIZE) {
       return NextResponse.json({
         error: `File too large: ${file.size} bytes (max ${MAX_FILE_SIZE})`,
