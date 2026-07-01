@@ -575,6 +575,7 @@ export default function VideoProcessor() {
       let analysisTitle: string | null = null;
       let jobId: string | null = null;
       let videoId: string | null = null;
+      let hasError = false;
       // 从输入 URL 提取的 YouTube videoId（用于 regenerateThumbnailClips）。
       // 即使后端 SSE 没有返回 videoId（非 Supabase 模式或 DB 写入失败），
       // 也能用这个 ytVideoId 触发前端重新生成。
@@ -749,6 +750,7 @@ export default function VideoProcessor() {
               }
               if (d.data?.error) {
                 setError(d.message);
+                hasError = true;
                 done = true;
               }
             } catch (e) {
@@ -799,9 +801,9 @@ export default function VideoProcessor() {
         ...(preResolvedMetadata ? { streamMetadata: preResolvedMetadata } : {}),
       });
 
-      if (error) return;
+      if (hasError) return;
 
-      while (!done && allHighlights && allHighlights.length > 0 && nextOffset < allHighlights.length) {
+      while (!done && !hasError && allHighlights && allHighlights.length > 0 && nextOffset < allHighlights.length) {
         await runBatch({
           videoUrl: inputUrl,
           userId: user.id,
@@ -820,10 +822,10 @@ export default function VideoProcessor() {
           ...(preResolvedStreamUrl ? { streamUrl: preResolvedStreamUrl } : {}),
           ...(preResolvedMetadata ? { streamMetadata: preResolvedMetadata } : {}),
         });
-        if (error) break;
+        if (hasError) break;
       }
 
-      if (done && !error) {
+      if (done && !hasError) {
         // 重新生成 fallback zoompan 伪视频：当 Vercel 因 YouTube colo-mismatch/IP 限制
         // 无法通过 CF Worker 下载视频时，后端会用静态缩略图 + zoompan 滤镜生成"伪视频"，
         // 并标记 isFallback: true。前端浏览器 IP 不受限，可以通过 CF Worker /stream
