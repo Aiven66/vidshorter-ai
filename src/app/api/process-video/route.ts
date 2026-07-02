@@ -351,7 +351,7 @@ export async function POST(request: NextRequest) {
             }
           : await promiseWithTimeout(
               videoClipper.analyzeVideo(videoUrl),
-              180_000,
+              240_000,
               'AI analysis timed out. Please retry or try another video.',
             );
         if (abortSignal.aborted) return;

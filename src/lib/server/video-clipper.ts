@@ -1006,23 +1006,26 @@ async function getYouTubeInfoViaCFWorker(
   u.searchParams.set('videoId', videoId);
   u.searchParams.set('maxHeight', String(maxHeight));
   const endpoint = u.toString();
-  // CF Worker resolve may need 60s+ on cold cache (tryClient calls InnerTube,
-  // downloads player.js, deciphers signatures). Use 90s timeout to accommodate.
+  // CF Worker resolve may need 60s+ on cold cache. Shorten timeout for analysis
+  // to avoid hitting the 180s overall analysis timeout. The clip generation
+  // phase has its own, longer timeout.
+  const fetchTimeout = IS_VERCEL ? 30_000 : 60_000;
   const fetchResolved = async () => fetch(endpoint, {
     headers: { 'Accept': 'application/json' },
-    signal: AbortSignal.timeout(90_000),
+    signal: AbortSignal.timeout(fetchTimeout),
   });
 
   let res: Response | null = null;
-  // Retry up to 4 times on 429/500/502/503/504 — YouTube intermittently
-  // rate-limits CF Worker IPs, and retries with delays often succeed.
-  for (let attempt = 0; attempt < 4; attempt += 1) {
+  // Retry fewer times during analysis — we want to fail fast and fall back
+  // to the next method rather than burn all our time on retries.
+  // Clip generation has its own retry logic with more attempts.
+  const maxAttempts = IS_VERCEL ? 2 : 3;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     res = await fetchResolved();
     if (res.ok) break;
     if (![429, 500, 502, 503, 504].includes(res.status)) break;
-    // Exponential backoff: 1s, 2s, 4s, 8s — gives YouTube time to un-rate-limit.
     const delay = 1000 * Math.pow(2, attempt);
-    console.warn(`CF Worker /resolve attempt ${attempt + 1} failed (HTTP ${res.status}), retrying in ${delay}ms...`);
+    console.warn(`CF Worker /resolve attempt ${attempt + 1}/${maxAttempts} failed (HTTP ${res.status}), retrying in ${delay}ms...`);
     await new Promise<void>((r) => setTimeout(r, delay));
   }
   if (!res) throw new Error('CF Worker: empty response');
@@ -1622,6 +1625,22 @@ async function analyzeYouTubeViaPipedAndTranscript(videoUrl: string): Promise<Vi
   let duration = 300;
   let cues: CaptionCue[] = [];
 
+  // Overall deadline: leave plenty of headroom under the 180s outer timeout.
+  // 120s for metadata + subtitle fetch + highlight detection.
+  const deadline = Date.now() + 120_000;
+  const timeLeft = () => Math.max(1_000, deadline - Date.now());
+
+  // Wrap each getter with its own timeout so slow methods don't block the rest.
+  const withDeadline = async <T>(fn: () => Promise<T>, label: string): Promise<T> => {
+    const ms = timeLeft();
+    return Promise.race([
+      fn(),
+      new Promise<T>((_, reject) =>
+        setTimeout(() => reject(new Error(`${label} timed out (${ms}ms)`)), ms),
+      ),
+    ]);
+  };
+
   // Try each proxy in order for title/duration/subtitles.
   // On Vercel we avoid DirectInnerTube / YouTube.js because datacenter IPs often
   // trigger LOGIN_REQUIRED and poison subsequent attempts. Prefer CF Worker / Edge.
@@ -1629,21 +1648,25 @@ async function analyzeYouTubeViaPipedAndTranscript(videoUrl: string): Promise<Vi
   // Priority (non-Vercel): CF Worker > Edge Function > DirectInnerTube > YouTube.js > Invidious > Piped
   const metaGetters = IS_VERCEL
     ? [
-        ...(getCfWorkerUrl() ? [() => getYouTubeInfoViaCFWorker(videoId)] : []),
-        ...(getAppBaseUrl() ? [() => getYouTubeInfoViaEdgeFunction(videoId)] : []),
-        () => getYouTubeInfoViaInvidious(videoId),
-        () => getYouTubeInfoViaPiped(videoId),
+        ...(getCfWorkerUrl() ? [() => withDeadline(() => getYouTubeInfoViaCFWorker(videoId), 'CFWorker')] : []),
+        ...(getAppBaseUrl() ? [() => withDeadline(() => getYouTubeInfoViaEdgeFunction(videoId), 'EdgeFn')] : []),
+        () => withDeadline(() => getYouTubeInfoViaInvidious(videoId), 'Invidious'),
+        () => withDeadline(() => getYouTubeInfoViaPiped(videoId), 'Piped'),
       ]
     : [
-        ...(getCfWorkerUrl() ? [() => getYouTubeInfoViaCFWorker(videoId)] : []),
-        ...(getAppBaseUrl() ? [() => getYouTubeInfoViaEdgeFunction(videoId)] : []),
-        () => getYouTubeInfoViaDirectInnerTube(videoId),
-        () => getYouTubeInfoViaYouTubeJs(videoId),
-        () => getYouTubeInfoViaInvidious(videoId),
-        () => getYouTubeInfoViaPiped(videoId),
+        ...(getCfWorkerUrl() ? [() => withDeadline(() => getYouTubeInfoViaCFWorker(videoId), 'CFWorker')] : []),
+        ...(getAppBaseUrl() ? [() => withDeadline(() => getYouTubeInfoViaEdgeFunction(videoId), 'EdgeFn')] : []),
+        () => withDeadline(() => getYouTubeInfoViaDirectInnerTube(videoId), 'InnerTube'),
+        () => withDeadline(() => getYouTubeInfoViaYouTubeJs(videoId), 'YouTubeJs'),
+        () => withDeadline(() => getYouTubeInfoViaInvidious(videoId), 'Invidious'),
+        () => withDeadline(() => getYouTubeInfoViaPiped(videoId), 'Piped'),
       ];
 
   for (const getter of metaGetters) {
+    if (timeLeft() < 5_000) {
+      console.warn('Analysis deadline near, skipping remaining metadata getters');
+      break;
+    }
     try {
       const info = await getter();
       title = info.title;
@@ -1658,10 +1681,14 @@ async function analyzeYouTubeViaPipedAndTranscript(videoUrl: string): Promise<Vi
     }
   }
 
-  // Fallback: youtube-transcript for cues
-  if (cues.length === 0) {
-    cues = await fetchYouTubeTranscriptCues(videoId);
-    console.log(`youtube-transcript: ${cues.length} cues`);
+  // Fallback: youtube-transcript for cues (skip if not much time left)
+  if (cues.length === 0 && timeLeft() > 15_000) {
+    try {
+      cues = await withDeadline(() => fetchYouTubeTranscriptCues(videoId), 'Transcript');
+      console.log(`youtube-transcript: ${cues.length} cues`);
+    } catch {
+      // ignore
+    }
   }
 
   // Estimate duration from cues if proxies gave nothing
@@ -1669,7 +1696,7 @@ async function analyzeYouTubeViaPipedAndTranscript(videoUrl: string): Promise<Vi
     duration = Math.ceil(cues[cues.length - 1].end) + 30;
   }
 
-  // oEmbed for title as last resort
+  // oEmbed for title as last resort (fast, <5s)
   if (title === 'YouTube video') {
     try {
       const r = await fetch(
