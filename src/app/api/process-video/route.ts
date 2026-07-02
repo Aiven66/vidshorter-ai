@@ -289,7 +289,7 @@ export async function POST(request: NextRequest) {
                 balance: dailyCredits,
                 last_reset_at: resetAt,
               });
-            } else if (shouldResetUtc(creditsRow.last_reset_at)) {
+            } else {
               await client
                 .from('credits')
                 .update({ balance: dailyCredits, last_reset_at: resetAt })
@@ -310,7 +310,7 @@ export async function POST(request: NextRequest) {
 
             const currentBalance = latestCredits?.balance ?? 0;
             if (currentBalance < 60) {
-              throw new Error('Insufficient credits. Your credits reset to 100 at 00:00 UTC daily.');
+              throw new Error('Insufficient credits. You need at least 60 credits.');
             }
           }
         } else if (!userId) {
