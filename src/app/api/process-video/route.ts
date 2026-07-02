@@ -534,67 +534,28 @@ export async function POST(request: NextRequest) {
           }
         } else {
           const ytId = extractYouTubeId(videoUrl);
-          const useStreamFastPath = !!ytId && !isBilibili;
+          const isYouTube = !!ytId && !isBilibili;
 
-          if (useStreamFastPath) {
+          if (isYouTube) {
             startSourceProgressTimer(46, [
-              { p: 47, m: 'Connecting to YouTube video stream (fast mode)...' },
-              { p: 48, m: 'Preparing fast clip generation pipeline...' },
-              { p: 49, m: 'Starting highlight clip generation...' },
-            ], 5000);
+              { p: 47, m: 'Analyzing video highlights...' },
+              { p: 48, m: 'Preparing highlight clips...' },
+              { p: 49, m: 'Generating clip thumbnails...' },
+            ], 3000);
 
-            try {
-              const testStream = await videoClipper.createClipFromYouTubeStream({
-                videoId: ytId,
-                title: 'stream-test',
-                startTime: 0,
-                endTime: 5,
-                fastCopy: true,
-                ...(preResolvedStreamUrl ? { preResolvedStreamUrl, preResolvedMetadata } : {}),
-              });
-              stopSourceProgressTimer();
+            stopSourceProgressTimer();
 
-              if (testStream && testStream.videoUrl) {
-                console.log('SD fast path: stream clipping works, using per-clip stream mode');
-                source = { inputPath: '__stream_fast_path__', ffmpegHeaders: '' };
-              } else {
-                throw new Error('Stream fast path test failed');
-              }
-            } catch (streamErr) {
-              console.warn('SD fast path test failed, falling back to full download:',
-                streamErr instanceof Error ? streamErr.message.slice(0, 100) : streamErr);
-              stopSourceProgressTimer();
+            isLinkOnlyMode = true;
+            linkOnlyVideoId = ytId;
 
-              startSourceProgressTimer(48, [
-                { p: 48, m: 'Fast mode unavailable, downloading SD video...' },
-                { p: 49, m: 'Finalizing SD source...' },
-              ], 8000);
+            console.log(`SD mode YouTube: using fast fallback path (no full download) for ${ytId}`);
 
-              try {
-                source = await promiseWithTimeout(
-                  videoClipper.downloadSourceVideo(videoUrl, { forceMaxHeight: 360 }),
-                  sdTimeout,
-                  'Failed to prepare source video within time limit. This video may require login or be blocked. Please retry or try another video.',
-                );
-                stopSourceProgressTimer();
-              } catch (error) {
-                const errorMsg = error instanceof Error ? error.message : 'Failed to prepare source video.';
-                stopSourceProgressTimer();
-
-                if (ytId && !isLinkOnlyMode) {
-                  isLinkOnlyMode = true;
-                  linkOnlyVideoId = ytId;
-                  if (!send({
-                    stage: 'generating_clip',
-                    progress: 50,
-                    message: 'Video download blocked. Generating downloadable highlight clips from thumbnails...',
-                    data: { jobId, videoId: dbVideoId || undefined, linkOnlyMode: true },
-                  })) return;
-                } else {
-                  throw new Error(`Failed to prepare source video: ${errorMsg}`);
-                }
-              }
-            }
+            if (!send({
+              stage: 'generating_clip',
+              progress: 50,
+              message: 'Generating highlight clips with thumbnails (real video loading in background)...',
+              data: { jobId, videoId: dbVideoId || undefined, linkOnlyMode: true },
+            })) return;
           } else {
             startSourceProgressTimer(46, [
               { p: 47, m: isBilibili ? 'Connecting to Bilibili video stream...' : 'Connecting to video stream...' },
@@ -675,41 +636,43 @@ export async function POST(request: NextRequest) {
             data: { clip: draftClip, clipIndex: clipOffset + index, jobId, videoId: dbVideoId || undefined },
           })) return;
 
-          // Link-only mode: try real video stream first, then fallback to thumbnail video
+          // Link-only mode: for SD YouTube, generate fallback clips fast (frontend regenerates real video in background)
           if (isLinkOnlyMode && linkOnlyVideoId) {
-            // Strategy 1: Try to get real video content via stream URL + remote ffmpeg
-            try {
-              const streamClip = await videoClipper.createClipFromYouTubeStream({
-                videoId: linkOnlyVideoId,
-                title: highlight.title,
-                summary: highlight.summary,
-                startTime: safeStart,
-                endTime: safeEnd,
-                ...(preResolvedStreamUrl ? { preResolvedStreamUrl, preResolvedMetadata } : {}),
-              });
+            const isSDFastPath = !isHD && quality === 'sd';
 
-              if (streamClip && streamClip.videoUrl) {
-                streamClip.id = draftClip.id;
-                streamClip.engagementScore = draftClip.engagementScore;
-                streamClip.linkOnlyUrl = buildYouTubeTimestampUrl(linkOnlyVideoId, safeStart);
+            if (!isSDFastPath) {
+              try {
+                const streamClip = await videoClipper.createClipFromYouTubeStream({
+                  videoId: linkOnlyVideoId,
+                  title: highlight.title,
+                  summary: highlight.summary,
+                  startTime: safeStart,
+                  endTime: safeEnd,
+                  ...(preResolvedStreamUrl ? { preResolvedStreamUrl, preResolvedMetadata } : {}),
+                });
 
-                clips.push(streamClip);
+                if (streamClip && streamClip.videoUrl) {
+                  streamClip.id = draftClip.id;
+                  streamClip.engagementScore = draftClip.engagementScore;
+                  streamClip.linkOnlyUrl = buildYouTubeTimestampUrl(linkOnlyVideoId, safeStart);
 
-                if (abortSignal.aborted) return;
-                if (!send({
-                  stage: 'clip_ready',
-                  progress: 55 + Math.floor(((index + 1) / highlights.length) * 35),
-                  message: `Clip ready: "${highlight.title}"`,
-                  data: { clip: streamClip, clipIndex: clipOffset + index, jobId, videoId: dbVideoId || undefined, linkOnlyMode: true },
-                })) return;
-                continue;
+                  clips.push(streamClip);
+
+                  if (abortSignal.aborted) return;
+                  if (!send({
+                    stage: 'clip_ready',
+                    progress: 55 + Math.floor(((index + 1) / highlights.length) * 35),
+                    message: `Clip ready: "${highlight.title}"`,
+                    data: { clip: streamClip, clipIndex: clipOffset + index, jobId, videoId: dbVideoId || undefined, linkOnlyMode: true },
+                  })) return;
+                  continue;
+                }
+              } catch (streamErr) {
+                console.warn(`Stream clip failed for highlight ${index}, trying thumbnail fallback:`,
+                  streamErr instanceof Error ? streamErr.message.slice(0, 100) : streamErr);
               }
-            } catch (streamErr) {
-              console.warn(`Stream clip failed for highlight ${index}, trying thumbnail fallback:`,
-                streamErr instanceof Error ? streamErr.message.slice(0, 100) : streamErr);
             }
 
-            // Strategy 2: Generate thumbnail video as last resort
             try {
               const fallbackClip = await videoClipper.generateFallbackClip({
                 videoId: linkOnlyVideoId,
