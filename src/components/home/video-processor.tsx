@@ -202,10 +202,6 @@ async function regenerateThumbnailClips(params: {
 }): Promise<void> {
   const { clips, ytVideoId, existingStreamUrl, existingMetadata, onClipUpdated, onProgress } = params;
 
-  // 找出所有 fallback zoompan 伪视频（由后端 generateFallbackClip 生成）
-  // 后端在 YouTube 下载受限时会用静态缩略图 + zoompan 滤镜生成"伪视频"，
-  // 并标记 isFallback: true。这里通过此标记识别需要重新生成的 clip。
-  // 旧的 data:image/jpeg 判据已废弃（generateFallbackClip 返回的是 data:video/mp4）。
   const thumbnailClips = clips.filter(c =>
     c.isFallback === true && c.videoUrl
   );
@@ -217,57 +213,63 @@ async function regenerateThumbnailClips(params: {
   console.log(`[Regenerate] Found ${thumbnailClips.length} thumbnail clips to regenerate`);
   onProgress?.(`Regenerating ${thumbnailClips.length} clip(s) from real video...`);
 
-  const cfWorkerUrl = String(window.__CF_WORKER_URL__ || '').trim();
-  if (!cfWorkerUrl) {
-    console.warn('[Regenerate] No CF_WORKER_URL available, skipping regeneration');
-    return;
-  }
-
-  // 如果没有现成的 streamUrl，重新调用 /resolve 获取
   let streamUrl = existingStreamUrl;
   let metadata = existingMetadata;
 
+  const cfWorkerUrl = String(window.__CF_WORKER_URL__ || '').trim();
+
   if (!streamUrl) {
-    console.log('[Regenerate] No existing streamUrl, calling /resolve...');
-    onProgress?.('Resolving YouTube stream URL...');
-    try {
-      const resolveUrl = new URL(cfWorkerUrl);
-      resolveUrl.pathname = `${resolveUrl.pathname.replace(/\/$/, '')}/resolve`;
-      resolveUrl.searchParams.set('videoId', ytVideoId);
-      resolveUrl.searchParams.set('maxHeight', '360');
-      const resolveRes = await fetch(resolveUrl.toString(), {
-        signal: AbortSignal.timeout(30_000),
-      });
-      if (resolveRes.ok) {
-        const resolveData = await resolveRes.json() as {
-          streamUrl?: string; userAgent?: string; visitorData?: string;
-          xClientName?: number; clientVersion?: string; client?: string;
-          duration?: number;
-        };
-        if (resolveData.streamUrl) {
-          streamUrl = resolveData.streamUrl;
-          metadata = {
-            userAgent: resolveData.userAgent,
-            visitorData: resolveData.visitorData,
-            xClientName: resolveData.xClientName,
-            clientVersion: resolveData.clientVersion,
-            client: resolveData.client,
-            duration: resolveData.duration,
+    if (cfWorkerUrl) {
+      console.log('[Regenerate] No existing streamUrl, calling /resolve via CF Worker...');
+      onProgress?.('Resolving YouTube stream URL...');
+      try {
+        const resolveUrl = new URL(cfWorkerUrl);
+        resolveUrl.pathname = `${resolveUrl.pathname.replace(/\/$/, '')}/resolve`;
+        resolveUrl.searchParams.set('videoId', ytVideoId);
+        resolveUrl.searchParams.set('maxHeight', '360');
+        const resolveRes = await fetch(resolveUrl.toString(), {
+          signal: AbortSignal.timeout(30_000),
+        });
+        if (resolveRes.ok) {
+          const resolveData = await resolveRes.json() as {
+            streamUrl?: string; userAgent?: string; visitorData?: string;
+            xClientName?: number; clientVersion?: string; client?: string;
+            duration?: number;
           };
-          console.log('[Regenerate] Got streamUrl from /resolve');
+          if (resolveData.streamUrl) {
+            streamUrl = resolveData.streamUrl;
+            metadata = {
+              userAgent: resolveData.userAgent,
+              visitorData: resolveData.visitorData,
+              xClientName: resolveData.xClientName,
+              clientVersion: resolveData.clientVersion,
+              client: resolveData.client,
+              duration: resolveData.duration,
+            };
+            console.log('[Regenerate] Got streamUrl from /resolve');
+          }
         }
+      } catch (e) {
+        console.warn('[Regenerate] /resolve via CF Worker failed:', e);
       }
-    } catch (e) {
-      console.warn('[Regenerate] /resolve failed:', e);
+    } else {
+      console.log('[Regenerate] No CF_WORKER_URL, trying yt-stream API...');
+      try {
+        const ytStreamUrl = `/api/yt-stream?videoId=${encodeURIComponent(ytVideoId)}&maxHeight=360`;
+        const ytStreamRes = await fetch(ytStreamUrl, { signal: AbortSignal.timeout(30_000) });
+        if (ytStreamRes.ok) {
+          const ytStreamData = await ytStreamRes.json() as { streamUrl?: string; audioUrl?: string };
+          if (ytStreamData.streamUrl) {
+            streamUrl = ytStreamData.streamUrl;
+            console.log('[Regenerate] Got streamUrl from yt-stream API');
+          }
+        }
+      } catch (e) {
+        console.warn('[Regenerate] yt-stream API failed:', e);
+      }
     }
   }
 
-  if (!streamUrl) {
-    console.warn('[Regenerate] No streamUrl available, skipping regeneration');
-    return;
-  }
-
-  // 对每个缩略图视频，下载片段并上传重新生成
   for (let i = 0; i < thumbnailClips.length; i += 1) {
     const clip = thumbnailClips[i];
     const clipDuration = clip.endTime - clip.startTime;
@@ -275,70 +277,65 @@ async function regenerateThumbnailClips(params: {
     onProgress?.(`Downloading video for clip ${i + 1}/${thumbnailClips.length}: "${clip.title}"`);
 
     try {
-      // 在 clip.startTime 前 2 秒开始下载（留出关键帧对齐的缓冲）
       const bufferSec = 2;
       const startTimeWithBuffer = Math.max(0, clip.startTime - bufferSec);
 
-      // 构建 CF Worker /stream URL（fast path）
-      // 关键 1：在传入 streamUrl 之前剥离 ip= 参数并设置 ipbits=0。
-      // googlevideo.com 的 streamUrl 绑定到 /resolve 时的 CF Worker 出口 IP。
-      // 但 CF Worker /stream 的出口 IP 可能不同（同一 colo 内 IP 会变化），
-      // 导致 YouTube 返回 403。剥离 ip= + ipbits=0 让 YouTube 跳过 IP 验证。
-      // 测试确认：在传入前剥离比让 CF Worker 内部重试更可靠。
-      //
-      // 关键 2：添加 begin 参数（毫秒），让 YouTube 从指定时间位置开始返回数据。
-      // 这使得无论高光时刻在视频的哪个位置（如 v1wZwxY3CMg 的 468s），
-      // 都能下载到包含该高光时刻的视频片段。返回的数据以 ftyp 开头，
-      // 是完整的、可独立解码的 MP4 文件。
-      // 测试确认：begin=466000 + Range bytes=0-4194303 → HTTP 206, 4MB, 有效 MP4
-      const strippedStreamUrl = (() => {
-        try {
-          const u = new URL(streamUrl);
-          u.searchParams.delete('ip');
-          u.searchParams.set('ipbits', '0');
-          u.searchParams.set('begin', String(startTimeWithBuffer * 1000));
-          return u.toString();
-        } catch {
-          return streamUrl;
-        }
-      })();
+      let downloadUrl: string;
+      let downloadHeaders: Record<string, string> = {};
 
-      const streamEndpoint = new URL(cfWorkerUrl);
-      streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
-      streamEndpoint.searchParams.set('videoId', ytVideoId);
-      streamEndpoint.searchParams.set('maxHeight', '360');
-      streamEndpoint.searchParams.set('streamUrl', strippedStreamUrl);
-      if (metadata?.userAgent) streamEndpoint.searchParams.set('userAgent', metadata.userAgent);
-      if (metadata?.visitorData) streamEndpoint.searchParams.set('visitorData', metadata.visitorData);
-      if (metadata?.xClientName !== undefined) streamEndpoint.searchParams.set('xClientName', String(metadata.xClientName));
-      if (metadata?.clientVersion) streamEndpoint.searchParams.set('clientVersion', metadata.clientVersion);
-      if (metadata?.client) streamEndpoint.searchParams.set('clientName', metadata.client);
+      if (cfWorkerUrl && streamUrl) {
+        const strippedStreamUrl = (() => {
+          try {
+            const u = new URL(streamUrl);
+            u.searchParams.delete('ip');
+            u.searchParams.set('ipbits', '0');
+            u.searchParams.set('begin', String(startTimeWithBuffer * 1000));
+            return u.toString();
+          } catch {
+            return streamUrl;
+          }
+        })();
 
-      // Vercel Serverless Functions 请求体限制是 4.5 MB。
-      // 720p 视频码率约 1 Mbps = 0.125 MB/s，4 MB 约覆盖 32 秒。
-      //
-      // 关键发现（2026-07-01）：YouTube googlevideo.com 的 streamUrl 支持 `begin`
-      // 参数（毫秒）。设置 begin=466000 时，YouTube 从视频的 466s 位置开始返回数据，
-      // 且返回的数据以 `ftyp` 开头，是一个完整的、可独立解码的 MP4 文件。
-      // 这使得无论高光时刻在视频的哪个位置（如 v1wZwxY3CMg 的 468s），
-      // 都能下载到相关的视频片段，而不需要从字节偏移量下载（字节偏移在 ~5MB 后失败）。
-      //
-      // 测试确认：begin=466000 + Range bytes=0-4194303 → HTTP 206, 4MB, 有效 MP4
-      // 上传到 API → 真实视频 (5.6MB data URL)
-      const maxDownloadBytes = 4 * 1024 * 1024;
+        const streamEndpoint = new URL(cfWorkerUrl);
+        streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
+        streamEndpoint.searchParams.set('videoId', ytVideoId);
+        streamEndpoint.searchParams.set('maxHeight', '360');
+        streamEndpoint.searchParams.set('streamUrl', strippedStreamUrl);
+        if (metadata?.userAgent) streamEndpoint.searchParams.set('userAgent', metadata.userAgent);
+        if (metadata?.visitorData) streamEndpoint.searchParams.set('visitorData', metadata.visitorData);
+        if (metadata?.xClientName !== undefined) streamEndpoint.searchParams.set('xClientName', String(metadata.xClientName));
+        if (metadata?.clientVersion) streamEndpoint.searchParams.set('clientVersion', metadata.clientVersion);
+        if (metadata?.client) streamEndpoint.searchParams.set('clientName', metadata.client);
 
-      // 相对时间：下载的数据从 startTimeWithBuffer 秒开始（已在上方计算）
-      // 所以高光时刻在下载的数据中的位置是 (clip.startTime - startTimeWithBuffer) = bufferSec
+        downloadUrl = streamEndpoint.toString();
+        downloadHeaders = { 'Range': `bytes=0-${4 * 1024 * 1024 - 1}` };
+      } else if (streamUrl) {
+        const directUrl = (() => {
+          try {
+            const u = new URL(streamUrl);
+            u.searchParams.delete('ip');
+            u.searchParams.set('ipbits', '0');
+            u.searchParams.set('begin', String(startTimeWithBuffer * 1000));
+            return u.toString();
+          } catch {
+            return streamUrl;
+          }
+        })();
+        downloadUrl = `/api/video-proxy?url=${encodeURIComponent(directUrl)}`;
+        downloadHeaders = { 'Range': `bytes=0-${4 * 1024 * 1024 - 1}` };
+      } else {
+        const ytStreamProxyUrl = `/api/yt-stream?videoId=${encodeURIComponent(ytVideoId)}&maxHeight=360&proxy=1`;
+        downloadUrl = ytStreamProxyUrl;
+        downloadHeaders = {};
+      }
+
       const relativeStartTime = clip.startTime - startTimeWithBuffer;
       const relativeEndTime = relativeStartTime + (clip.endTime - clip.startTime);
 
-      console.log(`[Regenerate] Downloading clip ${i + 1}/${thumbnailClips.length} "${clip.title}" (startTime=${clip.startTime}s, begin=${startTimeWithBuffer * 1000}ms, duration=${clipDuration}s)...`);
+      console.log(`[Regenerate] Downloading clip ${i + 1}/${thumbnailClips.length} "${clip.title}" (startTime=${clip.startTime}s, begin=${startTimeWithBuffer * 1000}ms)...`);
 
-      const downloadResponse = await fetch(streamEndpoint.toString(), {
-        headers: {
-          // 下载前 4MB（从 begin 参数指定的位置开始）
-          'Range': `bytes=0-${maxDownloadBytes - 1}`,
-        },
+      const downloadResponse = await fetch(downloadUrl, {
+        headers: downloadHeaders,
         signal: AbortSignal.timeout(120_000),
       });
 
@@ -349,26 +346,14 @@ async function regenerateThumbnailClips(params: {
       const blob = await downloadResponse.blob();
       console.log(`[Regenerate] Downloaded ${blob.size} bytes for clip "${clip.title}"`);
 
-      // 检查下载的文件是否足够大（至少 100KB）
       if (blob.size < 100_000) {
         throw new Error(`Downloaded file too small: ${blob.size} bytes`);
       }
 
-      // 检查下载的数据是否覆盖高光时刻的时间范围
-      // 720p 码率约 0.125 MB/s，4 MB 约覆盖 32 秒
-      const estimatedCoverageSec = blob.size / (0.125 * 1024 * 1024);
-      if (relativeEndTime > estimatedCoverageSec) {
-        console.warn(`[Regenerate] Clip "${clip.title}" relativeEndTime=${relativeEndTime}s exceeds estimated download coverage=${estimatedCoverageSec.toFixed(1)}s, skipping`);
-        throw new Error(`Clip relativeEndTime ${relativeEndTime}s exceeds download coverage ${estimatedCoverageSec.toFixed(1)}s`);
-      }
-
-      // 上传到 /api/regenerate-clip
       onProgress?.(`Generating real video for clip ${i + 1}/${thumbnailClips.length}: "${clip.title}"`);
 
       const formData = new FormData();
       formData.append('file', blob, 'clip.mp4');
-      // 传递相对时间（相对于下载的数据块的起始位置）
-      // 下载的数据从 startTimeWithBuffer 秒开始，所以高光时刻在 bufferSec 位置
       formData.append('startTime', String(relativeStartTime));
       formData.append('endTime', String(relativeEndTime));
       formData.append('title', clip.title);
@@ -391,18 +376,17 @@ async function regenerateThumbnailClips(params: {
         throw new Error('Regeneration returned thumbnail or empty videoUrl');
       }
 
-      // 替换缩略图视频
       const updatedClip: VideoClip = {
         ...clip,
         videoUrl: result.videoUrl,
         thumbnailUrl: result.thumbnailUrl || clip.thumbnailUrl,
         duration: result.duration || clip.duration,
         status: 'completed',
-        isFallback: false,  // 清除 fallback 标记，避免重复处理
+        isFallback: false,
       };
 
       onClipUpdated(updatedClip);
-      console.log(`[Regenerate] Successfully regenerated clip ${i + 1}/${thumbnailClips.length}: "${clip.title}" (videoUrl length: ${result.videoUrl.length})`);
+      console.log(`[Regenerate] Successfully regenerated clip ${i + 1}/${thumbnailClips.length}: "${clip.title}"`);
     } catch (err) {
       console.error(`[Regenerate] Failed to regenerate clip ${i + 1}/${thumbnailClips.length} "${clip.title}":`, err);
     }

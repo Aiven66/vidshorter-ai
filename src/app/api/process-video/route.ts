@@ -636,11 +636,11 @@ export async function POST(request: NextRequest) {
             data: { clip: draftClip, clipIndex: clipOffset + index, jobId, videoId: dbVideoId || undefined },
           })) return;
 
-          // Link-only mode: for SD YouTube, generate fallback clips fast (frontend regenerates real video in background)
+          // Link-only mode: try real video generation first (Invidious proxy, CF Worker), then fallback
           if (isLinkOnlyMode && linkOnlyVideoId) {
             const isSDFastPath = !isHD && quality === 'sd';
 
-            if (!isSDFastPath) {
+            if (!isSDFastPath || true) {
               try {
                 const streamClip = await videoClipper.createClipFromYouTubeStream({
                   videoId: linkOnlyVideoId,
@@ -648,6 +648,7 @@ export async function POST(request: NextRequest) {
                   summary: highlight.summary,
                   startTime: safeStart,
                   endTime: safeEnd,
+                  fastCopy: isSDFastPath,
                   ...(preResolvedStreamUrl ? { preResolvedStreamUrl, preResolvedMetadata } : {}),
                 });
 
@@ -655,6 +656,7 @@ export async function POST(request: NextRequest) {
                   streamClip.id = draftClip.id;
                   streamClip.engagementScore = draftClip.engagementScore;
                   streamClip.linkOnlyUrl = buildYouTubeTimestampUrl(linkOnlyVideoId, safeStart);
+                  streamClip.isFallback = false;
 
                   clips.push(streamClip);
 
