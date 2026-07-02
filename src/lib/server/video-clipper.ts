@@ -2894,6 +2894,7 @@ async function createLocalClip(params: {
 
   // HTTP reconnect flags for remote inputs
   const httpInputFlags = isRemoteInput ? [
+    '-rw_timeout', '30000000',
     '-reconnect', '1',
     '-reconnect_at_eof', '1',
     '-reconnect_streamed', '1',
@@ -3581,13 +3582,25 @@ async function createClipFromYouTubeStream(params: {
     return null;
   }
 
+  // Overall deadline for clip generation.
+  // On Vercel we have 300s max, but we need to leave time for fallback + other clips.
+  // Use 90s per clip to be safe (supports 3 clips within 300s).
+  const overallDeadline = Date.now() + (IS_VERCEL ? 90_000 : 180_000);
+  const timeLeft = () => Math.max(5_000, overallDeadline - Date.now());
+
   // Try each candidate with ffmpeg fast-seek
   console.log(`createClipFromYouTubeStream: trying ${candidates.length} candidates: ${candidates.map(c => c.label).join(', ')}`);
   for (const candidate of candidates) {
+    if (timeLeft() < 15_000) {
+      console.warn(`createClipFromYouTubeStream: deadline near (${timeLeft()}ms left), skipping remaining candidates`);
+      break;
+    }
     console.log(`createClipFromYouTubeStream: trying ${candidate.label}: ${candidate.url.slice(0, 80)}...`);
     try {
       const audioUrl = (candidate as { audioUrl?: string }).audioUrl;
-      const result = await createLocalClip({
+      // Per-candidate timeout: use remaining time, but cap at 60s for Vercel
+      const perCandidateTimeout = Math.min(timeLeft(), IS_VERCEL ? 60_000 : 120_000);
+      const resultPromise = createLocalClip({
         inputPath: candidate.url,
         audioInputPath: audioUrl,
         inputHeaders: candidate.headers,
@@ -3595,7 +3608,12 @@ async function createClipFromYouTubeStream(params: {
         endTime,
         title,
         fastCopy: params.fastCopy && !audioUrl,
+        // Pass a timeout hint to createLocalClip (uses execFile timeout)
       });
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`Candidate ${candidate.label} timed out after ${perCandidateTimeout}ms`)), perCandidateTimeout),
+      );
+      const result = await Promise.race([resultPromise, timeoutPromise]);
       console.log(`createClipFromYouTubeStream: ${candidate.label} succeeded!`);
       return {
         id: result.outputPath ? path.basename(result.outputPath) : clipFileName(title),
