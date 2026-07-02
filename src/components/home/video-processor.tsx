@@ -324,9 +324,9 @@ async function regenerateThumbnailClips(params: {
         downloadUrl = `/api/video-proxy?url=${encodeURIComponent(directUrl)}`;
         downloadHeaders = { 'Range': `bytes=0-${4 * 1024 * 1024 - 1}` };
       } else {
-        const ytStreamProxyUrl = `/api/yt-stream?videoId=${encodeURIComponent(ytVideoId)}&maxHeight=360&proxy=1`;
+        const ytStreamProxyUrl = `/api/yt-stream?videoId=${encodeURIComponent(ytVideoId)}&maxHeight=360&proxy=1&begin=${startTimeWithBuffer * 1000}`;
         downloadUrl = ytStreamProxyUrl;
-        downloadHeaders = {};
+        downloadHeaders = { 'Range': `bytes=0-${4 * 1024 * 1024 - 1}` };
       }
 
       const relativeStartTime = clip.startTime - startTimeWithBuffer;

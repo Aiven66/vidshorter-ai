@@ -808,7 +808,24 @@ export async function GET(request: Request) {
       return Response.json({ error: 'Failed to resolve stream URL' }, { status: 502, headers: CORS });
     }
 
-    const streamUrl = isAudio && result.audioUrl ? result.audioUrl : result.streamUrl;
+    let streamUrl = isAudio && result.audioUrl ? result.audioUrl : result.streamUrl;
+
+    // Support begin parameter (milliseconds) — start streaming from a specific timestamp.
+    // YouTube's googlevideo.com stream URLs support `begin` parameter which returns
+    // a complete, independently decodable MP4 starting from the specified time.
+    // This is critical for clip generation: without it, every clip starts from 0:00.
+    const beginMs = url.searchParams.get('begin');
+    if (beginMs && !isAudio) {
+      try {
+        const u = new URL(streamUrl);
+        u.searchParams.delete('ip');
+        u.searchParams.set('ipbits', '0');
+        u.searchParams.set('begin', beginMs);
+        streamUrl = u.toString();
+      } catch {
+        // ignore parse errors, use original URL
+      }
+    }
 
     const rangeHeader = request.headers.get('Range');
     const fetchHeaders: Record<string, string> = {
