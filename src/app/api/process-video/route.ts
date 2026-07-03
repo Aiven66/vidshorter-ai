@@ -968,7 +968,14 @@ export async function POST(request: NextRequest) {
                   console.warn('Database save failed (link_only fallback):', dbError);
                 }
               }
-              // Send completion with link_only clips
+              // Send completion with ALL clips (playable + link_only).
+              // CRITICAL: newPlayableClips includes fallback zoompan clips marked
+              // with isFallback: true. The frontend uses this flag to trigger
+              // regenerateThumbnailClips, which re-downloads real video segments
+              // via CF Worker /stream + captureStream + MediaRecorder.
+              // Previously only newLinkOnlyClips was sent, so isFallback clips
+              // never reached the frontend and regeneration never triggered.
+              const allFinalClips = [...newPlayableClips, ...newLinkOnlyClips];
               const nextOffset = clipOffset + highlights.length;
               const done = nextOffset >= allHighlights.length;
               if (dbVideoId && isSupabaseMode) {
@@ -982,10 +989,12 @@ export async function POST(request: NextRequest) {
               if (!send({
                 stage: 'clips_complete',
                 progress: 100,
-                message: `Generated ${newLinkOnlyClips.length} highlight links with YouTube timestamps (video download blocked).`,
+                message: newPlayableClips.length > 0
+                  ? `Generated ${newPlayableClips.length} clips${newLinkOnlyClips.length > 0 ? ` and ${newLinkOnlyClips.length} highlight links` : ''} (video download blocked, regenerating real clips in browser).`
+                  : `Generated ${newLinkOnlyClips.length} highlight links with YouTube timestamps (video download blocked).`,
                 data: {
                   jobId,
-                  clips: newLinkOnlyClips,
+                  clips: allFinalClips,
                   highlights,
                   estimatedDuration: suppliedDuration || 0,
                   title: suppliedTitle,
@@ -994,7 +1003,7 @@ export async function POST(request: NextRequest) {
                   totalHighlights: allHighlights.length,
                   nextOffset,
                   done,
-                  linkOnlyMode: true,
+                  linkOnlyMode: newPlayableClips.length === 0,
                 },
               })) return;
               clearInterval(heartbeat);
