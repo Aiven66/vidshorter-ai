@@ -80,16 +80,23 @@ export async function captureVideoClip(params: {
       video.addEventListener('error', onError, { once: true });
     });
 
-    onProgress?.(`Seeking to ${Math.round(startTime)}s...`);
+    // Seek to start time (skip if 0 — the video already starts at 0, and
+    // setting currentTime=0 may not fire a 'seeked' event, causing a hang).
+    if (startTime > 0.1) {
+      onProgress?.(`Seeking to ${Math.round(startTime)}s...`);
+      video.currentTime = Math.max(0, startTime);
 
-    // Seek to start time
-    video.currentTime = Math.max(0, startTime);
-
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('Seek timeout (15s)')), 15_000);
-      const onSeeked = () => { clearTimeout(timeout); resolve(); };
-      video.addEventListener('seeked', onSeeked, { once: true });
-    });
+      await new Promise<void>((resolve) => {
+        // Use resolve (not reject) on timeout: if seeked never fires, proceed
+        // anyway — the video may already be at or near the right position.
+        const timeout = setTimeout(() => {
+          console.warn('[captureVideoClip] Seek timeout, proceeding anyway');
+          resolve();
+        }, 5_000);
+        const onSeeked = () => { clearTimeout(timeout); resolve(); };
+        video.addEventListener('seeked', onSeeked, { once: true });
+      });
+    }
 
     // Get the video dimensions for canvas thumbnail
     const videoWidth = video.videoWidth || 640;

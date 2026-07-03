@@ -277,7 +277,15 @@ async function regenerateThumbnailClips(params: {
 
     onProgress?.(`Processing clip ${i + 1}/${thumbnailClips.length}: "${clip.title}"`);
 
-    // Build the video URL for the <video> element (CF Worker /stream, no begin param)
+    // Use begin parameter so each clip loads a video stream starting from its
+    // own startTime. This avoids relying on video.currentTime seeking (which is
+    // unreliable for streaming MP4s) and ensures each clip gets DIFFERENT content.
+    // Buffer of 1 second to avoid missing the first frame.
+    const bufferSec = 1;
+    const beginMs = Math.max(0, (clip.startTime - bufferSec) * 1000);
+    const relativeStartTime = clip.startTime > 0 ? bufferSec : 0;
+    const relativeEndTime = relativeStartTime + clipDuration;
+
     let videoSrcUrl: string | null = null;
 
     if (cfWorkerUrl && streamUrl) {
@@ -286,6 +294,7 @@ async function regenerateThumbnailClips(params: {
           const u = new URL(streamUrl);
           u.searchParams.delete('ip');
           u.searchParams.set('ipbits', '0');
+          u.searchParams.set('begin', String(beginMs));
           return u.toString();
         } catch {
           return streamUrl;
@@ -308,6 +317,7 @@ async function regenerateThumbnailClips(params: {
           const u = new URL(streamUrl);
           u.searchParams.delete('ip');
           u.searchParams.set('ipbits', '0');
+          u.searchParams.set('begin', String(beginMs));
           return u.toString();
         } catch {
           return streamUrl;
@@ -315,24 +325,24 @@ async function regenerateThumbnailClips(params: {
       })();
       videoSrcUrl = `/api/video-proxy?url=${encodeURIComponent(directUrl)}`;
     } else {
-      videoSrcUrl = `/api/yt-stream?videoId=${encodeURIComponent(ytVideoId)}&maxHeight=360&proxy=1`;
+      videoSrcUrl = `/api/yt-stream?videoId=${encodeURIComponent(ytVideoId)}&maxHeight=360&proxy=1&begin=${beginMs}`;
     }
 
     let finalVideoUrl: string | null = null;
     let finalThumbUrl: string | null = null;
 
     // ── Primary: captureVideoClip (plays video + records via MediaRecorder) ──
-    // This is the most reliable approach: no ffmpeg.wasm, no file download,
-    // no upload to server. The <video> element plays the YouTube stream
-    // (proxied via CF Worker with CORS), and MediaRecorder captures it.
+    // Uses begin parameter on the URL so the video stream starts from the clip's
+    // startTime. We pass relative start/end times (within the new stream) so
+    // captureVideoClip seeks to the buffer position and records the right segment.
     try {
       const { captureVideoClip, blobToDataUrl } = await import('@/lib/ffmpeg-client');
-      console.log(`[Regenerate] Using captureVideoClip for clip "${clip.title}" (startTime=${clip.startTime}s, duration=${clipDuration}s)`);
+      console.log(`[Regenerate] Using captureVideoClip for clip "${clip.title}" (startTime=${clip.startTime}s, begin=${beginMs}ms, relativeStart=${relativeStartTime}s, duration=${clipDuration}s)`);
 
       const { videoBlob, thumbnailBlob } = await captureVideoClip({
         videoUrl: videoSrcUrl,
-        startTime: clip.startTime,
-        endTime: clip.endTime,
+        startTime: relativeStartTime,
+        endTime: relativeEndTime,
         onProgress: (msg) => onProgress?.(`Clip ${i + 1}/${thumbnailClips.length}: ${msg}`),
       });
 
