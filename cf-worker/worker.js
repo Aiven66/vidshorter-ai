@@ -280,7 +280,24 @@ export default {
         const doFetch = async (resolved) => {
           const isCobalt = resolved?.client === 'cobalt';
           // When audio=1, fetch audioUrl (falls back to streamUrl if no audioUrl)
-          const fetchUrl = (wantAudio && resolved.audioUrl) ? resolved.audioUrl : resolved.streamUrl;
+          let fetchUrl = (wantAudio && resolved.audioUrl) ? resolved.audioUrl : resolved.streamUrl;
+
+          // begin parameter: YouTube googlevideo.com URLs support a `begin` query
+          // param (in MILLISECONDS). Setting begin=60000 makes YouTube return a
+          // byte stream starting from video position 60s. The returned data starts
+          // with `ftyp` box (valid MP4 header) — it's a COMPLETE, SELF-DECODABLE
+          // MP4 file, NOT a continuation fragment.
+          // This lets /stream serve clips at arbitrary positions without needing
+          // to download the entire video from the start.
+          const beginMs = url.searchParams.get('begin');
+          if (beginMs && fetchUrl.includes('googlevideo.com')) {
+            try {
+              const u = new URL(fetchUrl);
+              u.searchParams.set('begin', String(beginMs));
+              fetchUrl = u.toString();
+            } catch {}
+          }
+
           const headers = {
             Range: range,
             'User-Agent': resolved.userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
@@ -312,6 +329,8 @@ export default {
               const u = new URL(fetchUrl);
               u.searchParams.delete('ip');
               u.searchParams.set('ipbits', '0');
+              // Re-apply begin parameter after stripping ip
+              if (beginMs) u.searchParams.set('begin', String(beginMs));
               const strippedUrl = u.toString();
               const retryResp = await fetch(strippedUrl, { headers });
               if (retryResp.status === 200 || retryResp.status === 206) return retryResp;

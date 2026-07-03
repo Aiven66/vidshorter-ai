@@ -448,8 +448,9 @@ export default function VideoProcessor() {
   const trimmedVideoUrl = videoUrl.trim();
   const canStart = (!!trimmedVideoUrl && isHttpVideoUrl(trimmedVideoUrl)) || !!selectedFile;
   const completedClips = clips.filter(clip =>
-    (clip.status === 'completed' && clip.videoUrl) ||
-    (clip.status === 'link_only' && clip.linkOnlyUrl)
+    (clip.status === 'completed' && clip.videoUrl && clip.isFallback !== true) ||
+    (clip.status === 'link_only' && clip.linkOnlyUrl) ||
+    (clip.isFallback === true && clip.linkOnlyUrl)
   );
 
   useEffect(() => {
@@ -1182,22 +1183,26 @@ export default function VideoProcessor() {
                       <p className="text-sm text-muted-foreground">{t('video.openToPreview')}</p>
                     </div>
                     <div className="flex items-center gap-3 text-sm">
-                      <Badge variant="outline">{completedClips.filter(c => c.status === 'completed').length} {t('video.playableClips')}</Badge>
-                      {completedClips.some(c => c.status === 'link_only') && (
-                        <Badge variant="outline">{completedClips.filter(c => c.status === 'link_only').length} YouTube links</Badge>
+                      <Badge variant="outline">{completedClips.filter(c => c.status === 'completed' && c.isFallback !== true).length} {t('video.playableClips')}</Badge>
+                      {(completedClips.some(c => c.status === 'link_only') || completedClips.some(c => c.isFallback === true)) && (
+                        <Badge variant="outline">{completedClips.filter(c => c.status === 'link_only' || c.isFallback === true).length} YouTube</Badge>
                       )}
                       <Badge variant="outline">{clips.filter(clip => clip.status === 'failed').length} {t('video.failedClips')}</Badge>
                     </div>
                   </CardContent>
                 </Card>
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {clips.map(clip => (
+                  {clips.map(clip => {
+                    // isFallback clips have a fake zoompan videoUrl; treat them like link_only for UI
+                    const isPlayableEmbed = clip.isFallback === true && !!clip.linkOnlyUrl;
+                    const isRealMp4 = clip.status === 'completed' && !!clip.videoUrl && clip.isFallback !== true;
+                    return (
                     <Card key={clip.id} className="overflow-hidden group">
                       <div
                         className="relative aspect-video bg-muted cursor-pointer"
                         onClick={() => {
-                          if (clip.status === 'completed') setPreviewClip(clip);
-                          else if (clip.status === 'link_only' && clip.linkOnlyUrl) window.open(clip.linkOnlyUrl, '_blank');
+                          if (isRealMp4 || isPlayableEmbed) setPreviewClip(clip);
+                          else if (clip.status === 'link_only' && clip.linkOnlyUrl) setPreviewClip(clip);
                         }}
                       >
                         {clip.thumbnailUrl ? (
@@ -1207,31 +1212,31 @@ export default function VideoProcessor() {
                             <Film className="h-10 w-10 text-muted-foreground/40" />
                           </div>
                         )}
-                        {clip.status === 'completed' && (
+                        {isRealMp4 && (
                           <div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity">
                             <div className="h-14 w-14 rounded-full bg-white/90 flex items-center justify-center">
                               <Play className="h-7 w-7 text-primary ml-1" />
                             </div>
                           </div>
                         )}
-                        {clip.status === 'link_only' && (
+                        {(isPlayableEmbed || clip.status === 'link_only') && (
                           <div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity">
                             <div className="h-14 w-14 rounded-full bg-red-600/90 flex items-center justify-center">
-                              <ExternalLink className="h-7 w-7 text-white" />
+                              <Play className="h-7 w-7 text-white ml-1" />
                             </div>
                           </div>
                         )}
                         <Badge className="absolute bottom-2 right-2 text-xs">
                           <Clock className="h-3 w-3 mr-1" />{fmt(clip.duration)}
                         </Badge>
-                        {clip.status === 'completed' && (
+                        {isRealMp4 && (
                           <Badge className="absolute top-2 left-2 bg-green-500 text-xs">
                             <CheckCircle className="h-3 w-3 mr-1" />{t('common.ready')}
                           </Badge>
                         )}
-                        {clip.status === 'link_only' && (
-                          <Badge className="absolute top-2 left-2 bg-blue-500 text-xs">
-                            <ExternalLink className="h-3 w-3 mr-1" />YouTube
+                        {(isPlayableEmbed || clip.status === 'link_only') && (
+                          <Badge className="absolute top-2 left-2 bg-red-600 text-xs">
+                            <Play className="h-3 w-3 mr-1" />YouTube
                           </Badge>
                         )}
                         {clip.status === 'failed' && (
@@ -1253,22 +1258,13 @@ export default function VideoProcessor() {
                           </Badge>
                         </div>
                         <div className="flex gap-2 pt-1">
-                          {clip.status === 'link_only' ? (
-                            <Button
-                              size="sm"
-                              className="flex-1 gap-1.5"
-                              onClick={() => clip.linkOnlyUrl && window.open(clip.linkOnlyUrl, '_blank')}
-                            >
-                              <ExternalLink className="h-4 w-4" />Watch on YouTube
-                            </Button>
-                          ) : (
+                          {isRealMp4 ? (
                             <>
                               <Button
                                 variant="outline"
                                 size="sm"
                                 className="flex-1 gap-1.5"
-                                onClick={() => clip.status === 'completed' && setPreviewClip(clip)}
-                                disabled={clip.status !== 'completed'}
+                                onClick={() => setPreviewClip(clip)}
                               >
                                 <Eye className="h-4 w-4" />{t('video.preview')}
                               </Button>
@@ -1276,7 +1272,7 @@ export default function VideoProcessor() {
                                 size="sm"
                                 className="flex-1 gap-1.5"
                                 onClick={() => handleDownload(clip)}
-                                disabled={clip.status !== 'completed' || downloadingId === clip.id}
+                                disabled={downloadingId === clip.id}
                               >
                                 {downloadingId === clip.id ? (
                                   <><Loader2 className="h-4 w-4 animate-pulse" />{t('common.saving')}</>
@@ -1285,11 +1281,38 @@ export default function VideoProcessor() {
                                 )}
                               </Button>
                             </>
+                          ) : (isPlayableEmbed || clip.status === 'link_only') ? (
+                            <>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="flex-1 gap-1.5"
+                                onClick={() => setPreviewClip(clip)}
+                              >
+                                <Play className="h-4 w-4" />{t('video.preview')}
+                              </Button>
+                              <Button
+                                size="sm"
+                                className="flex-1 gap-1.5"
+                                onClick={() => clip.linkOnlyUrl && window.open(clip.linkOnlyUrl, '_blank')}
+                              >
+                                <ExternalLink className="h-4 w-4" />YouTube
+                              </Button>
+                            </>
+                          ) : (
+                            <Button
+                              size="sm"
+                              className="flex-1 gap-1.5"
+                              disabled
+                            >
+                              <AlertCircle className="h-4 w-4" />{t('common.failed')}
+                            </Button>
                           )}
                         </div>
                       </CardContent>
                     </Card>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -1304,6 +1327,10 @@ export default function VideoProcessor() {
           onOpenChange={() => setPreviewClip(null)}
           proxyUrl={proxyUrl}
           onDownload={handleDownload}
+          onClipUpdated={(updatedClip) => {
+            setClips(prev => prev.map(c => c.id === updatedClip.id ? updatedClip : c));
+            setPreviewClip(updatedClip);
+          }}
           downloadingId={downloadingId}
           fmt={fmt}
         />
