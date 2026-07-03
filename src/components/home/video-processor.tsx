@@ -184,13 +184,14 @@ function mergeClips(prev: VideoClip[], next: VideoClip[]) {
  * CF Worker /stream 下载真实视频片段，然后上传到 /api/regenerate-clip，
  * Vercel 用 ffmpeg 生成真实短视频。
  *
- * 流程：
- * 1. 找出所有 fallback zoompan 伪视频（isFallback === true）
- * 2. 对每个 fallback clip：
- *    a. 通过 CF Worker /stream 下载从 startTime 开始的视频片段（同 colo，IP 匹配）
- *       使用 YouTube begin 参数（毫秒）从指定时间位置返回完整可解码的 MP4
- *    b. 用 multipart/form-data 上传到 /api/regenerate-clip
- *    c. 用返回的真实视频 data URL 替换 fallback 伪视频，清除 isFallback 标记
+ * 方案（唯一，已验证可靠）：download + upload
+ *   1. 通过 CF Worker /stream 下载从 startTime 开始的视频片段（begin 参数）
+ *   2. 用 multipart/form-data 上传到 /api/regenerate-clip
+ *   3. Vercel 用 ffmpeg 生成真实短视频 + 缩略图
+ *
+ * 注意：不使用 captureStream/MediaRecorder 方案，因为浏览器对跨域视频的
+ * captureStream 支持不可靠（CORS tainted stream 导致空视频或失败）。
+ * download+upload 方案用 server-side ffmpeg，不依赖浏览器 API，更可靠。
  */
 async function regenerateThumbnailClips(params: {
   clips: VideoClip[];
@@ -217,7 +218,9 @@ async function regenerateThumbnailClips(params: {
   let metadata = existingMetadata;
 
   const cfWorkerUrl = String(window.__CF_WORKER_URL__ || '').trim();
+  console.log(`[Regenerate] cfWorkerUrl=${cfWorkerUrl ? '(set)' : '(not set)'}, existingStreamUrl=${existingStreamUrl ? '(set)' : '(not set)'}`);
 
+  // 如果没有 streamUrl，尝试通过 CF Worker /resolve 或 yt-stream API 获取
   if (!streamUrl) {
     if (cfWorkerUrl) {
       console.log('[Regenerate] No existing streamUrl, calling /resolve via CF Worker...');
@@ -247,13 +250,19 @@ async function regenerateThumbnailClips(params: {
               duration: resolveData.duration,
             };
             console.log('[Regenerate] Got streamUrl from /resolve');
+          } else {
+            console.warn('[Regenerate] /resolve returned no streamUrl:', JSON.stringify(resolveData).slice(0, 200));
           }
+        } else {
+          console.warn(`[Regenerate] /resolve returned HTTP ${resolveRes.status}`);
         }
       } catch (e) {
         console.warn('[Regenerate] /resolve via CF Worker failed:', e);
       }
-    } else {
-      console.log('[Regenerate] No CF_WORKER_URL, trying yt-stream API...');
+    }
+
+    if (!streamUrl) {
+      console.log('[Regenerate] No streamUrl from CF Worker, trying yt-stream API...');
       try {
         const ytStreamUrl = `/api/yt-stream?videoId=${encodeURIComponent(ytVideoId)}&maxHeight=360`;
         const ytStreamRes = await fetch(ytStreamUrl, { signal: AbortSignal.timeout(30_000) });
@@ -270,199 +279,121 @@ async function regenerateThumbnailClips(params: {
     }
   }
 
+  if (!streamUrl) {
+    console.error('[Regenerate] No streamUrl available, cannot regenerate clips');
+    onProgress?.('Failed to resolve video stream URL. Keeping fallback clips.');
+    return;
+  }
+
+  console.log(`[Regenerate] streamUrl available, processing ${thumbnailClips.length} clips`);
+
   for (let i = 0; i < thumbnailClips.length; i += 1) {
-   try {
-    const clip = thumbnailClips[i];
-    const clipDuration = clip.endTime - clip.startTime;
-
-    onProgress?.(`Processing clip ${i + 1}/${thumbnailClips.length}: "${clip.title}"`);
-
-    // Use begin parameter so each clip loads a video stream starting from its
-    // own startTime. This avoids relying on video.currentTime seeking (which is
-    // unreliable for streaming MP4s) and ensures each clip gets DIFFERENT content.
-    // Buffer of 1 second to avoid missing the first frame.
-    const bufferSec = 1;
-    const beginMs = Math.max(0, (clip.startTime - bufferSec) * 1000);
-    const relativeStartTime = clip.startTime > 0 ? bufferSec : 0;
-    const relativeEndTime = relativeStartTime + clipDuration;
-
-    let videoSrcUrl: string | null = null;
-
-    if (cfWorkerUrl && streamUrl) {
-      const strippedStreamUrl = (() => {
-        try {
-          const u = new URL(streamUrl);
-          u.searchParams.delete('ip');
-          u.searchParams.set('ipbits', '0');
-          u.searchParams.set('begin', String(beginMs));
-          return u.toString();
-        } catch {
-          return streamUrl;
-        }
-      })();
-      const streamEndpoint = new URL(cfWorkerUrl);
-      streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
-      streamEndpoint.searchParams.set('videoId', ytVideoId);
-      streamEndpoint.searchParams.set('maxHeight', '360');
-      streamEndpoint.searchParams.set('streamUrl', strippedStreamUrl);
-      if (metadata?.userAgent) streamEndpoint.searchParams.set('userAgent', metadata.userAgent);
-      if (metadata?.visitorData) streamEndpoint.searchParams.set('visitorData', metadata.visitorData);
-      if (metadata?.xClientName !== undefined) streamEndpoint.searchParams.set('xClientName', String(metadata.xClientName));
-      if (metadata?.clientVersion) streamEndpoint.searchParams.set('clientVersion', metadata.clientVersion);
-      if (metadata?.client) streamEndpoint.searchParams.set('clientName', metadata.client);
-      videoSrcUrl = streamEndpoint.toString();
-    } else if (streamUrl) {
-      const directUrl = (() => {
-        try {
-          const u = new URL(streamUrl);
-          u.searchParams.delete('ip');
-          u.searchParams.set('ipbits', '0');
-          u.searchParams.set('begin', String(beginMs));
-          return u.toString();
-        } catch {
-          return streamUrl;
-        }
-      })();
-      videoSrcUrl = `/api/video-proxy?url=${encodeURIComponent(directUrl)}`;
-    } else {
-      videoSrcUrl = `/api/yt-stream?videoId=${encodeURIComponent(ytVideoId)}&maxHeight=360&proxy=1&begin=${beginMs}`;
-    }
-
-    let finalVideoUrl: string | null = null;
-    let finalThumbUrl: string | null = null;
-
-    // ── Primary: captureVideoClip (plays video + records via MediaRecorder) ──
-    // Uses begin parameter on the URL so the video stream starts from the clip's
-    // startTime. We pass relative start/end times (within the new stream) so
-    // captureVideoClip seeks to the buffer position and records the right segment.
     try {
-      const { captureVideoClip, blobToDataUrl } = await import('@/lib/ffmpeg-client');
-      console.log(`[Regenerate] Using captureVideoClip for clip "${clip.title}" (startTime=${clip.startTime}s, begin=${beginMs}ms, relativeStart=${relativeStartTime}s, duration=${clipDuration}s)`);
+      const clip = thumbnailClips[i];
+      const clipDuration = clip.endTime - clip.startTime;
 
-      const { videoBlob, thumbnailBlob } = await captureVideoClip({
-        videoUrl: videoSrcUrl,
-        startTime: relativeStartTime,
-        endTime: relativeEndTime,
-        onProgress: (msg) => onProgress?.(`Clip ${i + 1}/${thumbnailClips.length}: ${msg}`),
+      onProgress?.(`Clip ${i + 1}/${thumbnailClips.length}: "${clip.title}" — downloading...`);
+      console.log(`[Regenerate] Processing clip ${i + 1}/${thumbnailClips.length}: "${clip.title}" (startTime=${clip.startTime}s, endTime=${clip.endTime}s, duration=${clipDuration}s)`);
+
+      // 使用 begin 参数（毫秒）从 clip.startTime 开始下载视频片段
+      // bufferSec=2 提供前 2 秒缓冲，避免丢失第一帧
+      const bufferSec = 2;
+      const startTimeWithBuffer = Math.max(0, clip.startTime - bufferSec);
+      const beginMs = startTimeWithBuffer * 1000;
+      const relativeStartTime = clip.startTime - startTimeWithBuffer;
+      const relativeEndTime = relativeStartTime + clipDuration;
+
+      // 构建 download URL（CF Worker /stream + begin 参数）
+      let downloadUrl: string;
+      const downloadHeaders: Record<string, string> = {};
+
+      if (cfWorkerUrl) {
+        const strippedStreamUrl = (() => {
+          try {
+            const u = new URL(streamUrl);
+            u.searchParams.delete('ip');
+            u.searchParams.set('ipbits', '0');
+            u.searchParams.set('begin', String(beginMs));
+            return u.toString();
+          } catch {
+            return streamUrl;
+          }
+        })();
+        const streamEndpoint = new URL(cfWorkerUrl);
+        streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
+        streamEndpoint.searchParams.set('videoId', ytVideoId);
+        streamEndpoint.searchParams.set('maxHeight', '360');
+        streamEndpoint.searchParams.set('streamUrl', strippedStreamUrl);
+        if (metadata?.userAgent) streamEndpoint.searchParams.set('userAgent', metadata.userAgent);
+        if (metadata?.visitorData) streamEndpoint.searchParams.set('visitorData', metadata.visitorData);
+        if (metadata?.xClientName !== undefined) streamEndpoint.searchParams.set('xClientName', String(metadata.xClientName));
+        if (metadata?.clientVersion) streamEndpoint.searchParams.set('clientVersion', metadata.clientVersion);
+        if (metadata?.client) streamEndpoint.searchParams.set('clientName', metadata.client);
+        downloadUrl = streamEndpoint.toString();
+      } else {
+        downloadUrl = `/api/yt-stream?videoId=${encodeURIComponent(ytVideoId)}&maxHeight=360&proxy=1&begin=${beginMs}`;
+      }
+      // 下载 3.5MB（Vercel 4.5MB 请求体限制，留余量给 multipart 开销）
+      downloadHeaders['Range'] = `bytes=0-${3.5 * 1024 * 1024 - 1}`;
+
+      console.log(`[Regenerate] Downloading from: ${downloadUrl.slice(0, 120)}...`);
+      const downloadResponse = await fetch(downloadUrl, {
+        headers: downloadHeaders,
+        signal: AbortSignal.timeout(120_000),
       });
 
-      if (videoBlob.size < 10_000) {
-        throw new Error(`Recording too small: ${videoBlob.size} bytes`);
+      if (!downloadResponse.ok && downloadResponse.status !== 206) {
+        throw new Error(`Download failed: HTTP ${downloadResponse.status}`);
       }
 
-      finalVideoUrl = await blobToDataUrl(videoBlob);
-      if (thumbnailBlob) {
-        finalThumbUrl = await blobToDataUrl(thumbnailBlob);
+      const blob = await downloadResponse.blob();
+      console.log(`[Regenerate] Downloaded ${blob.size} bytes for clip "${clip.title}"`);
+
+      if (blob.size < 100_000) {
+        throw new Error(`Downloaded file too small: ${blob.size} bytes`);
       }
 
-      console.log(`[Regenerate] captureVideoClip succeeded: ${videoBlob.size} bytes for "${clip.title}"`);
-    } catch (captureErr) {
-      console.warn(`[Regenerate] captureVideoClip failed for "${clip.title}", falling back to download+upload:`, captureErr);
+      // 上传到 /api/regenerate-clip，用 server-side ffmpeg 生成真实视频
+      onProgress?.(`Clip ${i + 1}/${thumbnailClips.length}: "${clip.title}" — processing...`);
+      const formData = new FormData();
+      formData.append('file', blob, 'clip.mp4');
+      formData.append('startTime', String(relativeStartTime));
+      formData.append('endTime', String(relativeEndTime));
+      formData.append('title', clip.title);
+      formData.append('summary', clip.summary);
 
-      // ── Fallback: download fragment + upload to server for ffmpeg processing ──
-      try {
-        const bufferSec = 2;
-        const startTimeWithBuffer = Math.max(0, clip.startTime - bufferSec);
-        const relativeStartTime = clip.startTime - startTimeWithBuffer;
-        const relativeEndTime = relativeStartTime + (clip.endTime - clip.startTime);
+      const uploadResponse = await fetch('/api/regenerate-clip', {
+        method: 'POST',
+        body: formData,
+        signal: AbortSignal.timeout(180_000),
+      });
 
-        // Build download URL with begin parameter (for partial download)
-        let downloadUrl: string;
-        const downloadHeaders: Record<string, string> = {};
-
-        if (cfWorkerUrl && streamUrl) {
-          const strippedStreamUrl = (() => {
-            try {
-              const u = new URL(streamUrl);
-              u.searchParams.delete('ip');
-              u.searchParams.set('ipbits', '0');
-              u.searchParams.set('begin', String(startTimeWithBuffer * 1000));
-              return u.toString();
-            } catch {
-              return streamUrl;
-            }
-          })();
-          const streamEndpoint = new URL(cfWorkerUrl);
-          streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
-          streamEndpoint.searchParams.set('videoId', ytVideoId);
-          streamEndpoint.searchParams.set('maxHeight', '360');
-          streamEndpoint.searchParams.set('streamUrl', strippedStreamUrl);
-          if (metadata?.userAgent) streamEndpoint.searchParams.set('userAgent', metadata.userAgent);
-          if (metadata?.visitorData) streamEndpoint.searchParams.set('visitorData', metadata.visitorData);
-          if (metadata?.xClientName !== undefined) streamEndpoint.searchParams.set('xClientName', String(metadata.xClientName));
-          if (metadata?.clientVersion) streamEndpoint.searchParams.set('clientVersion', metadata.clientVersion);
-          if (metadata?.client) streamEndpoint.searchParams.set('clientName', metadata.client);
-          downloadUrl = streamEndpoint.toString();
-        } else {
-          downloadUrl = `/api/yt-stream?videoId=${encodeURIComponent(ytVideoId)}&maxHeight=360&proxy=1&begin=${startTimeWithBuffer * 1000}`;
-        }
-        downloadHeaders['Range'] = `bytes=0-${4 * 1024 * 1024 - 1}`;
-
-        onProgress?.(`Downloading fragment for clip ${i + 1}/${thumbnailClips.length}...`);
-        const downloadResponse = await fetch(downloadUrl, {
-          headers: downloadHeaders,
-          signal: AbortSignal.timeout(120_000),
-        });
-
-        if (!downloadResponse.ok && downloadResponse.status !== 206) {
-          throw new Error(`Download failed: HTTP ${downloadResponse.status}`);
-        }
-
-        const blob = await downloadResponse.blob();
-        if (blob.size < 100_000) {
-          throw new Error(`Downloaded file too small: ${blob.size} bytes`);
-        }
-
-        onProgress?.(`Server-processing clip ${i + 1}/${thumbnailClips.length}...`);
-        const formData = new FormData();
-        formData.append('file', blob, 'clip.mp4');
-        formData.append('startTime', String(relativeStartTime));
-        formData.append('endTime', String(relativeEndTime));
-        formData.append('title', clip.title);
-        formData.append('summary', clip.summary);
-
-        const uploadResponse = await fetch('/api/regenerate-clip', {
-          method: 'POST',
-          body: formData,
-          signal: AbortSignal.timeout(180_000),
-        });
-
-        if (!uploadResponse.ok) {
-          const errorText = await uploadResponse.text().catch(() => '');
-          throw new Error(`Upload failed: HTTP ${uploadResponse.status} ${errorText.slice(0, 200)}`);
-        }
-
-        const result = await uploadResponse.json() as { videoUrl: string; thumbnailUrl: string; duration?: number };
-
-        if (!result.videoUrl || result.videoUrl.startsWith('data:image/jpeg')) {
-          throw new Error('Regeneration returned thumbnail or empty videoUrl');
-        }
-
-        finalVideoUrl = result.videoUrl;
-        finalThumbUrl = result.thumbnailUrl || null;
-      } catch (fallbackErr) {
-        console.error(`[Regenerate] Fallback also failed for "${clip.title}":`, fallbackErr);
+      if (!uploadResponse.ok) {
+        const errorText = await uploadResponse.text().catch(() => '');
+        throw new Error(`Upload failed: HTTP ${uploadResponse.status} ${errorText.slice(0, 200)}`);
       }
-    }
 
-    if (!finalVideoUrl) {
-      console.error(`[Regenerate] All methods failed for clip "${clip.title}", keeping fallback`);
-      continue;
-    }
+      const result = await uploadResponse.json() as { videoUrl: string; thumbnailUrl: string; duration?: number };
+
+      if (!result.videoUrl || result.videoUrl.startsWith('data:image/jpeg')) {
+        throw new Error('Regeneration returned thumbnail or empty videoUrl');
+      }
+
+      console.log(`[Regenerate] Successfully regenerated clip "${clip.title}": videoUrl=${result.videoUrl.slice(0, 50)}..., thumbnailUrl=${result.thumbnailUrl ? '(set)' : '(not set)'}`);
 
       const updatedClip: VideoClip = {
         ...clip,
-        videoUrl: finalVideoUrl,
-        thumbnailUrl: finalThumbUrl || clip.thumbnailUrl,
-        duration: clip.duration,
+        videoUrl: result.videoUrl,
+        thumbnailUrl: result.thumbnailUrl || clip.thumbnailUrl,
+        duration: result.duration || clip.duration,
         status: 'completed',
         isFallback: false,
       };
 
       onClipUpdated(updatedClip);
-      console.log(`[Regenerate] Successfully regenerated clip ${i + 1}/${thumbnailClips.length}: "${clip.title}"`);
+      console.log(`[Regenerate] Updated clip ${i + 1}/${thumbnailClips.length}: "${clip.title}"`);
     } catch (err) {
-      console.error(`[Regenerate] Failed to regenerate clip ${i + 1}/${thumbnailClips.length} "${clip.title}":`, err);
+      console.error(`[Regenerate] Failed to regenerate clip ${i + 1}/${thumbnailClips.length} "${thumbnailClips[i].title}":`, err);
     }
   }
 
