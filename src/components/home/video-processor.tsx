@@ -271,116 +271,139 @@ async function regenerateThumbnailClips(params: {
   }
 
   for (let i = 0; i < thumbnailClips.length; i += 1) {
+   try {
     const clip = thumbnailClips[i];
     const clipDuration = clip.endTime - clip.startTime;
 
-    onProgress?.(`Downloading video for clip ${i + 1}/${thumbnailClips.length}: "${clip.title}"`);
+    onProgress?.(`Processing clip ${i + 1}/${thumbnailClips.length}: "${clip.title}"`);
 
+    // Build the video URL for the <video> element (CF Worker /stream, no begin param)
+    let videoSrcUrl: string | null = null;
+
+    if (cfWorkerUrl && streamUrl) {
+      const strippedStreamUrl = (() => {
+        try {
+          const u = new URL(streamUrl);
+          u.searchParams.delete('ip');
+          u.searchParams.set('ipbits', '0');
+          return u.toString();
+        } catch {
+          return streamUrl;
+        }
+      })();
+      const streamEndpoint = new URL(cfWorkerUrl);
+      streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
+      streamEndpoint.searchParams.set('videoId', ytVideoId);
+      streamEndpoint.searchParams.set('maxHeight', '360');
+      streamEndpoint.searchParams.set('streamUrl', strippedStreamUrl);
+      if (metadata?.userAgent) streamEndpoint.searchParams.set('userAgent', metadata.userAgent);
+      if (metadata?.visitorData) streamEndpoint.searchParams.set('visitorData', metadata.visitorData);
+      if (metadata?.xClientName !== undefined) streamEndpoint.searchParams.set('xClientName', String(metadata.xClientName));
+      if (metadata?.clientVersion) streamEndpoint.searchParams.set('clientVersion', metadata.clientVersion);
+      if (metadata?.client) streamEndpoint.searchParams.set('clientName', metadata.client);
+      videoSrcUrl = streamEndpoint.toString();
+    } else if (streamUrl) {
+      const directUrl = (() => {
+        try {
+          const u = new URL(streamUrl);
+          u.searchParams.delete('ip');
+          u.searchParams.set('ipbits', '0');
+          return u.toString();
+        } catch {
+          return streamUrl;
+        }
+      })();
+      videoSrcUrl = `/api/video-proxy?url=${encodeURIComponent(directUrl)}`;
+    } else {
+      videoSrcUrl = `/api/yt-stream?videoId=${encodeURIComponent(ytVideoId)}&maxHeight=360&proxy=1`;
+    }
+
+    let finalVideoUrl: string | null = null;
+    let finalThumbUrl: string | null = null;
+
+    // ── Primary: captureVideoClip (plays video + records via MediaRecorder) ──
+    // This is the most reliable approach: no ffmpeg.wasm, no file download,
+    // no upload to server. The <video> element plays the YouTube stream
+    // (proxied via CF Worker with CORS), and MediaRecorder captures it.
     try {
-      const bufferSec = 2;
-      const startTimeWithBuffer = Math.max(0, clip.startTime - bufferSec);
+      const { captureVideoClip, blobToDataUrl } = await import('@/lib/ffmpeg-client');
+      console.log(`[Regenerate] Using captureVideoClip for clip "${clip.title}" (startTime=${clip.startTime}s, duration=${clipDuration}s)`);
 
-      let downloadUrl: string;
-      let downloadHeaders: Record<string, string> = {};
-
-      if (cfWorkerUrl && streamUrl) {
-        const strippedStreamUrl = (() => {
-          try {
-            const u = new URL(streamUrl);
-            u.searchParams.delete('ip');
-            u.searchParams.set('ipbits', '0');
-            u.searchParams.set('begin', String(startTimeWithBuffer * 1000));
-            return u.toString();
-          } catch {
-            return streamUrl;
-          }
-        })();
-
-        const streamEndpoint = new URL(cfWorkerUrl);
-        streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
-        streamEndpoint.searchParams.set('videoId', ytVideoId);
-        streamEndpoint.searchParams.set('maxHeight', '360');
-        streamEndpoint.searchParams.set('streamUrl', strippedStreamUrl);
-        if (metadata?.userAgent) streamEndpoint.searchParams.set('userAgent', metadata.userAgent);
-        if (metadata?.visitorData) streamEndpoint.searchParams.set('visitorData', metadata.visitorData);
-        if (metadata?.xClientName !== undefined) streamEndpoint.searchParams.set('xClientName', String(metadata.xClientName));
-        if (metadata?.clientVersion) streamEndpoint.searchParams.set('clientVersion', metadata.clientVersion);
-        if (metadata?.client) streamEndpoint.searchParams.set('clientName', metadata.client);
-
-        downloadUrl = streamEndpoint.toString();
-        downloadHeaders = { 'Range': `bytes=0-${4 * 1024 * 1024 - 1}` };
-      } else if (streamUrl) {
-        const directUrl = (() => {
-          try {
-            const u = new URL(streamUrl);
-            u.searchParams.delete('ip');
-            u.searchParams.set('ipbits', '0');
-            u.searchParams.set('begin', String(startTimeWithBuffer * 1000));
-            return u.toString();
-          } catch {
-            return streamUrl;
-          }
-        })();
-        downloadUrl = `/api/video-proxy?url=${encodeURIComponent(directUrl)}`;
-        downloadHeaders = { 'Range': `bytes=0-${4 * 1024 * 1024 - 1}` };
-      } else {
-        const ytStreamProxyUrl = `/api/yt-stream?videoId=${encodeURIComponent(ytVideoId)}&maxHeight=360&proxy=1&begin=${startTimeWithBuffer * 1000}`;
-        downloadUrl = ytStreamProxyUrl;
-        downloadHeaders = { 'Range': `bytes=0-${4 * 1024 * 1024 - 1}` };
-      }
-
-      const relativeStartTime = clip.startTime - startTimeWithBuffer;
-      const relativeEndTime = relativeStartTime + (clip.endTime - clip.startTime);
-
-      console.log(`[Regenerate] Downloading clip ${i + 1}/${thumbnailClips.length} "${clip.title}" (startTime=${clip.startTime}s, begin=${startTimeWithBuffer * 1000}ms)...`);
-
-      const downloadResponse = await fetch(downloadUrl, {
-        headers: downloadHeaders,
-        signal: AbortSignal.timeout(120_000),
+      const { videoBlob, thumbnailBlob } = await captureVideoClip({
+        videoUrl: videoSrcUrl,
+        startTime: clip.startTime,
+        endTime: clip.endTime,
+        onProgress: (msg) => onProgress?.(`Clip ${i + 1}/${thumbnailClips.length}: ${msg}`),
       });
 
-      if (!downloadResponse.ok && downloadResponse.status !== 206) {
-        throw new Error(`Download failed: HTTP ${downloadResponse.status}`);
+      if (videoBlob.size < 10_000) {
+        throw new Error(`Recording too small: ${videoBlob.size} bytes`);
       }
 
-      const blob = await downloadResponse.blob();
-      console.log(`[Regenerate] Downloaded ${blob.size} bytes for clip "${clip.title}"`);
-
-      if (blob.size < 100_000) {
-        throw new Error(`Downloaded file too small: ${blob.size} bytes`);
+      finalVideoUrl = await blobToDataUrl(videoBlob);
+      if (thumbnailBlob) {
+        finalThumbUrl = await blobToDataUrl(thumbnailBlob);
       }
 
-      onProgress?.(`Generating real video for clip ${i + 1}/${thumbnailClips.length}: "${clip.title}"`);
+      console.log(`[Regenerate] captureVideoClip succeeded: ${videoBlob.size} bytes for "${clip.title}"`);
+    } catch (captureErr) {
+      console.warn(`[Regenerate] captureVideoClip failed for "${clip.title}", falling back to download+upload:`, captureErr);
 
-      // Try browser-side ffmpeg.wasm first (most reliable — no Vercel limits)
-      let finalVideoUrl: string | null = null;
-      let finalThumbUrl: string | null = null;
-
+      // ── Fallback: download fragment + upload to server for ffmpeg processing ──
       try {
-        const { clipVideoInBrowser, blobToDataUrl } = await import('@/lib/ffmpeg-client');
-        console.log(`[Regenerate] Using browser-side ffmpeg.wasm for clip "${clip.title}"`);
+        const bufferSec = 2;
+        const startTimeWithBuffer = Math.max(0, clip.startTime - bufferSec);
+        const relativeStartTime = clip.startTime - startTimeWithBuffer;
+        const relativeEndTime = relativeStartTime + (clip.endTime - clip.startTime);
 
-        const { videoBlob, thumbnailBlob } = await clipVideoInBrowser({
-          videoBlob: blob,
-          startTime: relativeStartTime,
-          endTime: relativeEndTime,
-          fastCopy: true,
+        // Build download URL with begin parameter (for partial download)
+        let downloadUrl: string;
+        const downloadHeaders: Record<string, string> = {};
+
+        if (cfWorkerUrl && streamUrl) {
+          const strippedStreamUrl = (() => {
+            try {
+              const u = new URL(streamUrl);
+              u.searchParams.delete('ip');
+              u.searchParams.set('ipbits', '0');
+              u.searchParams.set('begin', String(startTimeWithBuffer * 1000));
+              return u.toString();
+            } catch {
+              return streamUrl;
+            }
+          })();
+          const streamEndpoint = new URL(cfWorkerUrl);
+          streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
+          streamEndpoint.searchParams.set('videoId', ytVideoId);
+          streamEndpoint.searchParams.set('maxHeight', '360');
+          streamEndpoint.searchParams.set('streamUrl', strippedStreamUrl);
+          if (metadata?.userAgent) streamEndpoint.searchParams.set('userAgent', metadata.userAgent);
+          if (metadata?.visitorData) streamEndpoint.searchParams.set('visitorData', metadata.visitorData);
+          if (metadata?.xClientName !== undefined) streamEndpoint.searchParams.set('xClientName', String(metadata.xClientName));
+          if (metadata?.clientVersion) streamEndpoint.searchParams.set('clientVersion', metadata.clientVersion);
+          if (metadata?.client) streamEndpoint.searchParams.set('clientName', metadata.client);
+          downloadUrl = streamEndpoint.toString();
+        } else {
+          downloadUrl = `/api/yt-stream?videoId=${encodeURIComponent(ytVideoId)}&maxHeight=360&proxy=1&begin=${startTimeWithBuffer * 1000}`;
+        }
+        downloadHeaders['Range'] = `bytes=0-${4 * 1024 * 1024 - 1}`;
+
+        onProgress?.(`Downloading fragment for clip ${i + 1}/${thumbnailClips.length}...`);
+        const downloadResponse = await fetch(downloadUrl, {
+          headers: downloadHeaders,
+          signal: AbortSignal.timeout(120_000),
         });
 
-        if (videoBlob.size < 10_000) {
-          throw new Error(`ffmpeg.wasm output too small: ${videoBlob.size} bytes`);
+        if (!downloadResponse.ok && downloadResponse.status !== 206) {
+          throw new Error(`Download failed: HTTP ${downloadResponse.status}`);
         }
 
-        finalVideoUrl = await blobToDataUrl(videoBlob);
-        if (thumbnailBlob) {
-          finalThumbUrl = await blobToDataUrl(thumbnailBlob);
+        const blob = await downloadResponse.blob();
+        if (blob.size < 100_000) {
+          throw new Error(`Downloaded file too small: ${blob.size} bytes`);
         }
 
-        console.log(`[Regenerate] ffmpeg.wasm succeeded: ${videoBlob.size} bytes for "${clip.title}"`);
-      } catch (ffmpegErr) {
-        console.warn(`[Regenerate] ffmpeg.wasm failed for "${clip.title}", falling back to server:`, ffmpegErr);
-
-        // Fallback: upload to server for ffmpeg processing
+        onProgress?.(`Server-processing clip ${i + 1}/${thumbnailClips.length}...`);
         const formData = new FormData();
         formData.append('file', blob, 'clip.mp4');
         formData.append('startTime', String(relativeStartTime));
@@ -407,11 +430,15 @@ async function regenerateThumbnailClips(params: {
 
         finalVideoUrl = result.videoUrl;
         finalThumbUrl = result.thumbnailUrl || null;
+      } catch (fallbackErr) {
+        console.error(`[Regenerate] Fallback also failed for "${clip.title}":`, fallbackErr);
       }
+    }
 
-      if (!finalVideoUrl) {
-        throw new Error('No video output from regeneration');
-      }
+    if (!finalVideoUrl) {
+      console.error(`[Regenerate] All methods failed for clip "${clip.title}", keeping fallback`);
+      continue;
+    }
 
       const updatedClip: VideoClip = {
         ...clip,
