@@ -155,27 +155,37 @@ export async function GET(req: NextRequest) {
 
     // 获取总数（无分页限制）
     let allData: any[] | null = null;
-    let countError: any = null;
+    let queryError: any = null;
     try {
       const result = await query
         .order('created_at', { ascending: false })
         .limit(1000); // 限制最大数量防止性能问题
       allData = result.data;
-      countError = result.error;
+      queryError = result.error;
     } catch (err) {
-      // 如果 .is('parent_id', null) 导致查询失败，重试不带 parent_id 过滤
-      const retryResult = await client
+      queryError = err;
+    }
+
+    // 如果第一次查询失败（可能是 parent_id 列不存在），重试不带 parent_id 过滤
+    if (queryError) {
+      parentIdColumnExists = false;
+      const retryQuery = client
         .from('blogs')
-        .select('*')
-        .eq('is_published', !isAdmin ? true : undefined as any)
+        .select('*');
+      if (!isAdmin) {
+        retryQuery.eq('is_published', true);
+      }
+      const retryResult = await retryQuery
         .order('created_at', { ascending: false })
         .limit(1000);
       allData = retryResult.data;
-      countError = retryResult.error;
-      parentIdColumnExists = false;
+      queryError = retryResult.error;
     }
 
-    if (countError) throw countError;
+    if (queryError) {
+      const msg = (queryError as any)?.message || 'Failed to list posts.';
+      return NextResponse.json({ error: msg }, { status: 500 });
+    }
 
     // 如果 parent_id 列不存在，在前端过滤：只保留 locale 为 en 或没有 locale 的文章
     if (!parentIdColumnExists && allData) {
@@ -190,7 +200,8 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ posts: paginatedData || [], total, isAdmin });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Failed to list posts.';
+    const msg = (err instanceof Error ? err.message : null) ||
+      (err as any)?.message || 'Failed to list posts.';
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
