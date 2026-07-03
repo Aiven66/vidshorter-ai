@@ -21,7 +21,11 @@ function decodeJwtPayload(token: string) {
   }
 }
 
-async function getAdminUser(client: ReturnType<typeof createClient>, token: string) {
+async function getAdminUser(
+  client: ReturnType<typeof createClient>,
+  token: string,
+  url: string
+) {
   const demoPayload = decodeJwtPayload(token);
   const adminEmails = ['admin@126.com', 'admin@vidshorter.ai', 'admin@clipop.ai'];
   if (
@@ -37,24 +41,39 @@ async function getAdminUser(client: ReturnType<typeof createClient>, token: stri
     };
   }
 
-  const { data: authData, error: authError } = await client.auth.getUser(token);
-  if (authError || !authData.user?.email) return null;
+  try {
+    // 用 anon key 创建 auth client 来验证用户 token
+    // service role client 不能验证用户 token（auth.getUser 会失败）
+    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+      process.env.COZE_SUPABASE_ANON_KEY || '';
+    if (!anonKey) return null;
 
-  const { data: userRow } = await client
-    .from('users')
-    .select('id,email,name,role')
-    .eq('id', authData.user.id)
-    .maybeSingle();
+    const authClient = createClient(url, anonKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
 
-  const role = userRow?.role || (adminEmails.includes(authData.user.email) ? 'admin' : 'user');
-  if (role !== 'admin') return null;
+    const { data: authData, error: authError } = await authClient.auth.getUser(token);
+    if (authError || !authData.user?.email) return null;
 
-  return {
-    id: userRow?.id || authData.user.id,
-    email: authData.user.email,
-    name: userRow?.name || authData.user.user_metadata?.name || 'Admin',
-    role,
-  };
+    const { data: userRow } = await client
+      .from('users')
+      .select('id,email,name,role')
+      .eq('id', authData.user.id)
+      .maybeSingle();
+
+    const email = authData.user.email.toLowerCase();
+    const role = userRow?.role || (adminEmails.includes(email) ? 'admin' : 'user');
+    if (role !== 'admin') return null;
+
+    return {
+      id: userRow?.id || authData.user.id,
+      email: authData.user.email,
+      name: userRow?.name || authData.user.user_metadata?.name || 'Admin',
+      role,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function DELETE(
@@ -90,7 +109,7 @@ export async function DELETE(
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
-  const adminUser = await getAdminUser(client, token);
+  const adminUser = await getAdminUser(client, token, url);
   if (!adminUser) {
     return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
   }

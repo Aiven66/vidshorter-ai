@@ -32,7 +32,8 @@ function decodeJwtPayload(token: string): Record<string, unknown> | null {
 
 async function getAdminUser(
   client: ReturnType<typeof createClient>,
-  token: string
+  token: string,
+  url: string
 ) {
   const demoPayload = decodeJwtPayload(token);
   if (
@@ -49,7 +50,17 @@ async function getAdminUser(
   }
 
   try {
-    const { data: authData, error: authError } = await client.auth.getUser(token);
+    // 用 anon key 创建 auth client 来验证用户 token
+    // service role client 不能验证用户 token（auth.getUser 会失败）
+    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+      process.env.COZE_SUPABASE_ANON_KEY || '';
+    if (!anonKey) return null;
+
+    const authClient = createClient(url, anonKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+
+    const { data: authData, error: authError } = await authClient.auth.getUser(token);
     if (authError || !authData.user?.email) return null;
 
     const { data: userRow } = await client
@@ -422,7 +433,7 @@ export async function POST(req: NextRequest) {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
-  const adminUser = await getAdminUser(client, token);
+  const adminUser = await getAdminUser(client, token, url);
   if (!adminUser) {
     return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
   }
