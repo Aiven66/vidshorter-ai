@@ -352,35 +352,72 @@ async function regenerateThumbnailClips(params: {
 
       onProgress?.(`Generating real video for clip ${i + 1}/${thumbnailClips.length}: "${clip.title}"`);
 
-      const formData = new FormData();
-      formData.append('file', blob, 'clip.mp4');
-      formData.append('startTime', String(relativeStartTime));
-      formData.append('endTime', String(relativeEndTime));
-      formData.append('title', clip.title);
-      formData.append('summary', clip.summary);
+      // Try browser-side ffmpeg.wasm first (most reliable — no Vercel limits)
+      let finalVideoUrl: string | null = null;
+      let finalThumbUrl: string | null = null;
 
-      const uploadResponse = await fetch('/api/regenerate-clip', {
-        method: 'POST',
-        body: formData,
-        signal: AbortSignal.timeout(180_000),
-      });
+      try {
+        const { clipVideoInBrowser, blobToDataUrl } = await import('@/lib/ffmpeg-client');
+        console.log(`[Regenerate] Using browser-side ffmpeg.wasm for clip "${clip.title}"`);
 
-      if (!uploadResponse.ok) {
-        const errorText = await uploadResponse.text().catch(() => '');
-        throw new Error(`Upload failed: HTTP ${uploadResponse.status} ${errorText.slice(0, 200)}`);
+        const { videoBlob, thumbnailBlob } = await clipVideoInBrowser({
+          videoBlob: blob,
+          startTime: relativeStartTime,
+          endTime: relativeEndTime,
+          fastCopy: true,
+        });
+
+        if (videoBlob.size < 10_000) {
+          throw new Error(`ffmpeg.wasm output too small: ${videoBlob.size} bytes`);
+        }
+
+        finalVideoUrl = await blobToDataUrl(videoBlob);
+        if (thumbnailBlob) {
+          finalThumbUrl = await blobToDataUrl(thumbnailBlob);
+        }
+
+        console.log(`[Regenerate] ffmpeg.wasm succeeded: ${videoBlob.size} bytes for "${clip.title}"`);
+      } catch (ffmpegErr) {
+        console.warn(`[Regenerate] ffmpeg.wasm failed for "${clip.title}", falling back to server:`, ffmpegErr);
+
+        // Fallback: upload to server for ffmpeg processing
+        const formData = new FormData();
+        formData.append('file', blob, 'clip.mp4');
+        formData.append('startTime', String(relativeStartTime));
+        formData.append('endTime', String(relativeEndTime));
+        formData.append('title', clip.title);
+        formData.append('summary', clip.summary);
+
+        const uploadResponse = await fetch('/api/regenerate-clip', {
+          method: 'POST',
+          body: formData,
+          signal: AbortSignal.timeout(180_000),
+        });
+
+        if (!uploadResponse.ok) {
+          const errorText = await uploadResponse.text().catch(() => '');
+          throw new Error(`Upload failed: HTTP ${uploadResponse.status} ${errorText.slice(0, 200)}`);
+        }
+
+        const result = await uploadResponse.json() as { videoUrl: string; thumbnailUrl: string; duration?: number };
+
+        if (!result.videoUrl || result.videoUrl.startsWith('data:image/jpeg')) {
+          throw new Error('Regeneration returned thumbnail or empty videoUrl');
+        }
+
+        finalVideoUrl = result.videoUrl;
+        finalThumbUrl = result.thumbnailUrl || null;
       }
 
-      const result = await uploadResponse.json() as { videoUrl: string; thumbnailUrl: string; duration?: number };
-
-      if (!result.videoUrl || result.videoUrl.startsWith('data:image/jpeg')) {
-        throw new Error('Regeneration returned thumbnail or empty videoUrl');
+      if (!finalVideoUrl) {
+        throw new Error('No video output from regeneration');
       }
 
       const updatedClip: VideoClip = {
         ...clip,
-        videoUrl: result.videoUrl,
-        thumbnailUrl: result.thumbnailUrl || clip.thumbnailUrl,
-        duration: result.duration || clip.duration,
+        videoUrl: finalVideoUrl,
+        thumbnailUrl: finalThumbUrl || clip.thumbnailUrl,
+        duration: clip.duration,
         status: 'completed',
         isFallback: false,
       };
