@@ -1625,9 +1625,9 @@ async function analyzeYouTubeViaPipedAndTranscript(videoUrl: string): Promise<Vi
   let duration = 300;
   let cues: CaptionCue[] = [];
 
-  // Overall deadline: leave plenty of headroom under the 180s outer timeout.
-  // 120s for metadata + subtitle fetch + highlight detection.
-  const deadline = Date.now() + 120_000;
+  // Overall deadline: leave headroom under the 180s outer timeout.
+  // 150s for metadata + subtitle fetch + highlight detection.
+  const deadline = Date.now() + 150_000;
   const timeLeft = () => Math.max(1_000, deadline - Date.now());
 
   // Wrap each getter with its own timeout so slow methods don't block the rest.

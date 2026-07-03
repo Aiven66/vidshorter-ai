@@ -714,19 +714,50 @@ export default function VideoProcessor() {
             processUrl = `${new URL(inputUrl).origin}/api/process-video`;
           }
         }
-        const res = await fetch(processUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(!shouldUseLocalProcessing && accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-          },
-          body: JSON.stringify(payload),
-        });
-        console.log('[runBatch] Response status:', res.status, 'ok:', res.ok);
-        if (!res.ok) {
-          const text = await res.text().catch(() => '');
-          console.error('[runBatch] HTTP error response:', text);
-          throw new Error(`Server error: ${res.status}${text ? ' - ' + text.slice(0, 100) : ''}`);
+
+        // 重试机制：第一次调用可能因 Vercel 冷启动或 CF Worker /resolve
+        // 速率限制（502）导致网络错误或超时。自动重试最多 2 次。
+        let res: Response | null = null;
+        let lastErr: unknown = null;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          if (attempt > 0) {
+            console.log(`[runBatch] Retry attempt ${attempt + 1}/3 after 2s delay...`);
+            await new Promise<void>((r) => setTimeout(r, 2000));
+          }
+          try {
+            res = await fetch(processUrl, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                ...(!shouldUseLocalProcessing && accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+              },
+              body: JSON.stringify(payload),
+            });
+            console.log(`[runBatch] Attempt ${attempt + 1}: status=${res.status}, ok=${res.ok}`);
+            if (res.ok || (res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429)) {
+              // 成功或客户端错误（非超时/限流）→ 不重试
+              break;
+            }
+            // 5xx / 408 / 429 → 重试
+            if (!res.ok) {
+              const text = await res.text().catch(() => '');
+              console.warn(`[runBatch] HTTP ${res.status}, will retry: ${text.slice(0, 100)}`);
+              lastErr = new Error(`Server error: ${res.status}${text ? ' - ' + text.slice(0, 100) : ''}`);
+              res = null;
+            }
+          } catch (err) {
+            // fetch 抛出（网络错误、连接断开、Vercel 函数超时）
+            console.warn(`[runBatch] Attempt ${attempt + 1} fetch error:`, err);
+            lastErr = err;
+            res = null;
+          }
+        }
+        if (!res || !res.ok) {
+          const msg = lastErr instanceof Error ? lastErr.message : 'Network error';
+          console.error('[runBatch] All attempts failed:', msg);
+          throw new Error(msg === 'Failed to fetch' || msg === 'network error'
+            ? 'Network error after retries. The server may be cold-starting or rate-limited. Please try again in a few seconds.'
+            : msg);
         }
 
         const reader = res.body?.getReader();
