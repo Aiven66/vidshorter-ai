@@ -30,7 +30,7 @@ async function getAdminUser(
   url: string
 ) {
   const demoPayload = decodeJwtPayload(token);
-  const adminEmails = ['admin@126.com', 'admin@vidshorter.ai'];
+  const adminEmails = ['admin@126.com', 'admin@vidshorter.ai', 'admin@clipop.ai'];
   if (
     demoPayload?.email &&
     adminEmails.includes(demoPayload.email as string) &&

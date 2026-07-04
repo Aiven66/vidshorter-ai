@@ -23,7 +23,7 @@ import {
   Code2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
 interface RichTextEditorProps {
   content: string;
@@ -33,6 +33,11 @@ interface RichTextEditorProps {
 }
 
 export function RichTextEditor({ content, onChange, placeholder, locale = 'en' }: RichTextEditorProps) {
+  // 跟踪是否是用户正在输入（避免 useEffect 重置编辑器内容和光标位置）
+  const isUserTypingRef = useRef(false);
+  // 跟踪上次通过 onChange 发送的内容，避免循环更新
+  const lastEmittedRef = useRef('');
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -60,7 +65,15 @@ export function RichTextEditor({ content, onChange, placeholder, locale = 'en' }
     ],
     content: content || '',
     onUpdate: ({ editor }) => {
-      onChange(editor.getHTML());
+      const html = editor.getHTML();
+      lastEmittedRef.current = html;
+      onChange(html);
+    },
+    onFocus: () => {
+      isUserTypingRef.current = true;
+    },
+    onBlur: () => {
+      isUserTypingRef.current = false;
     },
     editorProps: {
       attributes: {
@@ -69,8 +82,16 @@ export function RichTextEditor({ content, onChange, placeholder, locale = 'en' }
     },
   });
 
+  // 只在非用户输入时（如外部加载内容）同步 content 到编辑器
+  // 用户输入时不重置，避免光标跳回开头
   useEffect(() => {
-    if (editor && content !== editor.getHTML()) {
+    if (!editor) return;
+    // 用户正在输入时，不要从外部重置内容
+    if (isUserTypingRef.current) return;
+    // 如果是刚刚通过 onUpdate 发出的内容，不需要重置
+    if (content === lastEmittedRef.current) return;
+    // 内容确实不同时才更新
+    if (content !== editor.getHTML()) {
       editor.commands.setContent(content || '');
     }
   }, [editor, content]);

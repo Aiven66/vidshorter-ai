@@ -71,15 +71,38 @@ function FileDropZone({
 }: FileDropZoneProps) {
   const dragCountRef = useRef(0);
   const [isDragOver, setIsDragOver] = useState(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const onFilesRef = useRef(onFiles);
   onFilesRef.current = onFiles;
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      onFilesRef.current(Array.from(e.target.files));
-      e.target.value = '';
-    }
-  };
+  // 使用原生 addEventListener 监听 change 事件，比 React 合成事件更可靠
+  // 解决某些场景下 React onChange 不触发导致文件上传状态不更新的问题
+  useEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+
+    const handleChange = (e: Event) => {
+      const target = e.target as HTMLInputElement;
+      if (target.files && target.files.length > 0) {
+        const files = Array.from(target.files);
+        onFilesRef.current(files);
+        // 延迟重置 value，确保所有同步操作（包括 setState）先完成
+        // 重置 value 是为了让用户能再次选择同一个文件
+        setTimeout(() => {
+          try {
+            target.value = '';
+          } catch {
+            // 忽略重置错误
+          }
+        }, 0);
+      }
+    };
+
+    input.addEventListener('change', handleChange);
+    return () => {
+      input.removeEventListener('change', handleChange);
+    };
+  }, []);
 
   const handleDragEnter = (e: React.DragEvent) => {
     e.preventDefault();
@@ -110,6 +133,14 @@ function FileDropZone({
     if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
       const files = Array.from(e.dataTransfer.files);
       onFilesRef.current(files);
+      // 拖拽后也重置 input value
+      if (inputRef.current) {
+        try {
+          inputRef.current.value = '';
+        } catch {
+          // 忽略
+        }
+      }
     }
   };
 
@@ -119,11 +150,11 @@ function FileDropZone({
     >
       {/* 透明 input 覆盖整个区域，直接接收点击和拖拽事件 */}
       <input
+        ref={inputRef}
         id={inputId}
         type="file"
         accept={accept}
         multiple={multiple}
-        onChange={handleInputChange}
         onDragEnter={handleDragEnter}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}

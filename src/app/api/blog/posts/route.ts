@@ -28,8 +28,8 @@ async function getAdminUser(
   url: string
 ) {
   const demoPayload = decodeJwtPayload(token);
-  // 支持 admin@126.com 和 admin@vidshorter.ai 两个管理员邮箱
-  const adminEmails = ['admin@126.com', 'admin@vidshorter.ai'];
+  // 支持的管理员邮箱列表
+  const adminEmails = ['admin@126.com', 'admin@vidshorter.ai', 'admin@clipop.ai'];
   if (
     demoPayload?.email &&
     adminEmails.includes(demoPayload.email as string) &&

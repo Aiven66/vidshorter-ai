@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
 
   // 验证管理员
   const demoPayload = decodeJwtPayload(token);
-  const adminEmails = ['admin@126.com', 'admin@vidshorter.ai'];
+  const adminEmails = ['admin@126.com', 'admin@vidshorter.ai', 'admin@clipop.ai'];
   if (
     !(demoPayload?.email && adminEmails.includes(demoPayload.email as string) &&
       (demoPayload?.role === 'admin' || demoPayload?.iss === 'clipop-demo'))
