@@ -29,10 +29,15 @@ jobs:
       - name: Find correct Vercel project ID
         id: find-project
         run: |
+          set -e
           # Find the "clipopai" project ID via Vercel API
           echo "Finding 'clipopai' project ID..."
           PROJECTS_JSON=$(curl -s -H "Authorization: Bearer ${{ secrets.VERCEL_TOKEN }}" \
             "https://api.vercel.com/v9/projects?teamId=${{ secrets.VERCEL_ORG_ID }}&limit=100")
+
+          echo "API Response (first 500 chars):"
+          echo "$PROJECTS_JSON" | head -c 500
+          echo ""
 
           # Try to find project named "clipopai"
           CLIPOPAI_PROJECT_ID=$(echo "$PROJECTS_JSON" | python3 -c "
@@ -42,7 +47,7 @@ jobs:
               if project.get('name') == 'clipopai':
                   print(project.get('id'))
                   break
-          " 2>/dev/null)
+          " 2>/dev/null || true)
 
           if [ -z "$CLIPOPAI_PROJECT_ID" ]; then
             echo "WARNING: 'clipopai' project not found in team. Listing all projects:"
@@ -62,16 +67,15 @@ jobs:
 
           # Export the correct project ID for the deploy step
           echo "CLIPOPAI_PROJECT_ID=$CLIPOPAI_PROJECT_ID" >> $GITHUB_ENV
+          echo "Final CLIPOPAI_PROJECT_ID: $CLIPOPAI_PROJECT_ID"
 
       - name: Deploy to Vercel
         run: |
+          set -e
           npm install -g vercel@latest
-          # Update .vercel/project.json with the correct project ID
-          mkdir -p .vercel
-          echo "{\"projectId\":\"$CLIPOPAI_PROJECT_ID\",\"orgId\":\"${{ secrets.VERCEL_ORG_ID }}\",\"projectName\":\"clipopai\"}" > .vercel/project.json
-          echo "Updated .vercel/project.json:"
-          cat .vercel/project.json
-          # Deploy - vercel will use .vercel/project.json since we don't set VERCEL_PROJECT_ID env
-          vercel --prod --token=${{ secrets.VERCEL_TOKEN }} --yes
+          # Use the correct project ID directly via env var
+          echo "Deploying with project ID: $CLIPOPAI_PROJECT_ID"
+          vercel --prod --token=${{ secrets.VERCEL_TOKEN }} --yes --debug 2>&1 | tee deploy.log
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ env.CLIPOPAI_PROJECT_ID }}
