@@ -265,25 +265,51 @@ async function regenerateThumbnailClips(params: {
       // 下载前 4MB（360p 约 30-40 秒），上传到 /api/regenerate-clip，
       // Vercel 用 ffmpeg 从相对位置 0 截取 clipDuration 秒。
       // 不依赖浏览器 captureStream API（CORS tainted stream 不可靠）。
+      //
+      // 重试机制：YouTube 可能临时限制 CF Worker colo（502 错误），
+      // 重试 3 次，每次间隔 2 秒，通常第二次会路由到不同 colo 或限制重置。
       try {
         const downloadHeaders: Record<string, string> = {
           'Range': `bytes=0-${4 * 1024 * 1024 - 1}`,
         };
 
-        const downloadResponse = await fetch(videoStreamUrl, {
-          headers: downloadHeaders,
-          signal: AbortSignal.timeout(120_000),
-        });
+        let blob: Blob | null = null;
+        let downloadErr: unknown = null;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          if (attempt > 0) {
+            console.log(`[Regenerate] Download retry ${attempt + 1}/3 for "${clip.title}" after 2s...`);
+            await new Promise<void>((r) => setTimeout(r, 2000));
+          }
+          try {
+            onProgress?.(`Clip ${i + 1}/${thumbnailClips.length}: "${clip.title}" — downloading segment (attempt ${attempt + 1}/3)...`);
+            const downloadResponse = await fetch(videoStreamUrl, {
+              headers: downloadHeaders,
+              signal: AbortSignal.timeout(120_000),
+            });
 
-        if (!downloadResponse.ok && downloadResponse.status !== 206) {
-          throw new Error(`Download failed: HTTP ${downloadResponse.status}`);
+            if (!downloadResponse.ok && downloadResponse.status !== 206) {
+              throw new Error(`Download failed: HTTP ${downloadResponse.status}`);
+            }
+
+            const candidateBlob = await downloadResponse.blob();
+            if (candidateBlob.size < 50_000) {
+              throw new Error(`Downloaded file too small: ${candidateBlob.size} bytes`);
+            }
+
+            blob = candidateBlob;
+            console.log(`[Regenerate] Downloaded ${blob.size} bytes for clip "${clip.title}" (begin=${beginMs}ms, attempt ${attempt + 1})`);
+            downloadErr = null;
+            break;
+          } catch (err) {
+            console.warn(`[Regenerate] Download attempt ${attempt + 1} failed for "${clip.title}":`, err);
+            downloadErr = err;
+          }
         }
 
-        const blob = await downloadResponse.blob();
-        console.log(`[Regenerate] Downloaded ${blob.size} bytes for clip "${clip.title}" (begin=${beginMs}ms)`);
-
-        if (blob.size < 50_000) {
-          throw new Error(`Downloaded file too small: ${blob.size} bytes`);
+        if (!blob || downloadErr) {
+          throw downloadErr instanceof Error
+            ? downloadErr
+            : new Error('All download attempts failed');
         }
 
         // 上传到 /api/regenerate-clip，用 server-side ffmpeg 裁剪
