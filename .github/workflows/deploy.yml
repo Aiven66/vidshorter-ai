@@ -30,7 +30,7 @@ jobs:
         id: find-project
         run: |
           set -e
-          echo "Finding 'clipopai' project ID..."
+          echo "Finding production project ID..."
           PROJECTS_JSON=$(curl -s -H "Authorization: Bearer ${{ secrets.VERCEL_TOKEN }}" \
             "https://api.vercel.com/v9/projects?teamId=${{ secrets.VERCEL_ORG_ID }}&limit=100")
 
@@ -61,53 +61,45 @@ jobs:
               print(f\"  - {project.get('name')}: {project.get('id')}\")
           "
 
-          # Find project named "clipopai"
-          CLIPOPAI_PROJECT_ID=$(echo "$PROJECTS_JSON" | python3 -c "
+          # Find project named "projects" (the production project bound to www.clipopai.com)
+          PRODUCTION_PROJECT_ID=$(echo "$PROJECTS_JSON" | python3 -c "
           import json, sys
           data = json.load(sys.stdin)
           for project in data.get('projects', []):
-              if project.get('name') == 'clipopai':
+              if project.get('name') == 'projects':
                   print(project.get('id'))
                   break
           ")
 
-          if [ -z "$CLIPOPAI_PROJECT_ID" ]; then
-            echo "ERROR: 'clipopai' project not found in team!"
-            echo "The deployment CANNOT proceed because the 'clipopai' project was not found."
-            echo "Please check the Vercel dashboard to verify the project exists and is in the correct team."
+          if [ -z "$PRODUCTION_PROJECT_ID" ]; then
+            echo "ERROR: 'projects' project not found in team!"
             exit 1
           fi
 
-          echo "SUCCESS: Found 'clipopai' project with ID: $CLIPOPAI_PROJECT_ID"
-          echo "CLIPOPAI_PROJECT_ID=$CLIPOPAI_PROJECT_ID" >> $GITHUB_ENV
+          echo "SUCCESS: Found 'projects' project with ID: $PRODUCTION_PROJECT_ID"
+          echo "PRODUCTION_PROJECT_ID=$PRODUCTION_PROJECT_ID" >> $GITHUB_ENV
 
       - name: Deploy to Vercel
         run: |
           set -e
           npm install -g vercel@latest
-          echo "Deploying with project ID: $CLIPOPAI_PROJECT_ID"
-          # Deploy with --force to disable build cache and ensure fresh build
+          echo "Deploying with project ID: $PRODUCTION_PROJECT_ID"
+          # Deploy with --force to ensure fresh deployment
           vercel deploy --prod --force --token=${{ secrets.VERCEL_TOKEN }} --yes 2>&1 | tee deploy.log
 
           # Extract the production URL from the output
           PROD_URL=$(grep -oE 'https://[a-z0-9-]+\.vercel\.app' deploy.log | head -1 || true)
           echo "Production URL: $PROD_URL"
           echo "PROD_URL=$PROD_URL" >> $GITHUB_ENV
-
-          # Verify the deployment is NOT the 'projects' project
-          if echo "$PROD_URL" | grep -q "projects-"; then
-            echo "ERROR: Deployed to the wrong project (projects-)! Expected clipopai."
-            exit 1
-          fi
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ env.CLIPOPAI_PROJECT_ID }}
+          VERCEL_PROJECT_ID: ${{ env.PRODUCTION_PROJECT_ID }}
 
       - name: Verify deployment
         run: |
           set -e
-          echo "Waiting 10s for deployment to propagate..."
-          sleep 10
+          echo "Waiting 15s for deployment to propagate..."
+          sleep 15
 
           echo "Checking production URL for version marker..."
           HTML=$(curl -s "https://www.clipopai.com/?_=$(date +%s)")
