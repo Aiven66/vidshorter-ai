@@ -30,16 +30,38 @@ jobs:
         id: find-project
         run: |
           set -e
-          # Find the "clipopai" project ID via Vercel API
           echo "Finding 'clipopai' project ID..."
           PROJECTS_JSON=$(curl -s -H "Authorization: Bearer ${{ secrets.VERCEL_TOKEN }}" \
             "https://api.vercel.com/v9/projects?teamId=${{ secrets.VERCEL_ORG_ID }}&limit=100")
 
-          echo "API Response (first 500 chars):"
-          echo "$PROJECTS_JSON" | head -c 500
-          echo ""
+          # Check for API errors
+          API_ERROR=$(echo "$PROJECTS_JSON" | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          if 'error' in data:
+              print(f\"API Error: {data.get('error', {}).get('message', 'unknown')}\")
+          elif 'projects' not in data:
+              print(f\"Unexpected response: {str(data)[:200]}\")
+          " 2>&1 || echo "Failed to parse response")
 
-          # Try to find project named "clipopai"
+          if [ -n "$API_ERROR" ]; then
+            echo "ERROR: Vercel API returned an error:"
+            echo "$API_ERROR"
+            echo ""
+            echo "Full API response:"
+            echo "$PROJECTS_JSON" | head -c 1000
+            exit 1
+          fi
+
+          echo "All projects in team:"
+          echo "$PROJECTS_JSON" | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          for project in data.get('projects', []):
+              print(f\"  - {project.get('name')}: {project.get('id')}\")
+          "
+
+          # Find project named "clipopai"
           CLIPOPAI_PROJECT_ID=$(echo "$PROJECTS_JSON" | python3 -c "
           import json, sys
           data = json.load(sys.stdin)
@@ -47,35 +69,60 @@ jobs:
               if project.get('name') == 'clipopai':
                   print(project.get('id'))
                   break
-          " 2>/dev/null || true)
+          ")
 
           if [ -z "$CLIPOPAI_PROJECT_ID" ]; then
-            echo "WARNING: 'clipopai' project not found in team. Listing all projects:"
-            echo "$PROJECTS_JSON" | python3 -c "
-          import json, sys
-          data = json.load(sys.stdin)
-          for project in data.get('projects', []):
-              print(f\"  - {project.get('name')}: {project.get('id')}\")
-          " 2>/dev/null || echo "Failed to parse projects JSON"
-
-            # Fall back to the configured VERCEL_PROJECT_ID
-            echo "Falling back to VERCEL_PROJECT_ID from secrets"
-            CLIPOPAI_PROJECT_ID="${{ secrets.VERCEL_PROJECT_ID }}"
-          else
-            echo "SUCCESS: Found 'clipopai' project with ID: $CLIPOPAI_PROJECT_ID"
+            echo "ERROR: 'clipopai' project not found in team!"
+            echo "The deployment CANNOT proceed because the 'clipopai' project was not found."
+            echo "Please check the Vercel dashboard to verify the project exists and is in the correct team."
+            exit 1
           fi
 
-          # Export the correct project ID for the deploy step
+          echo "SUCCESS: Found 'clipopai' project with ID: $CLIPOPAI_PROJECT_ID"
           echo "CLIPOPAI_PROJECT_ID=$CLIPOPAI_PROJECT_ID" >> $GITHUB_ENV
-          echo "Final CLIPOPAI_PROJECT_ID: $CLIPOPAI_PROJECT_ID"
 
       - name: Deploy to Vercel
         run: |
           set -e
           npm install -g vercel@latest
-          # Use the correct project ID directly via env var
           echo "Deploying with project ID: $CLIPOPAI_PROJECT_ID"
-          vercel --prod --token=${{ secrets.VERCEL_TOKEN }} --yes --debug 2>&1 | tee deploy.log
+          # Deploy with --force to disable build cache and ensure fresh build
+          vercel deploy --prod --force --token=${{ secrets.VERCEL_TOKEN }} --yes 2>&1 | tee deploy.log
+
+          # Extract the production URL from the output
+          PROD_URL=$(grep -oE 'https://[a-z0-9-]+\.vercel\.app' deploy.log | head -1 || true)
+          echo "Production URL: $PROD_URL"
+          echo "PROD_URL=$PROD_URL" >> $GITHUB_ENV
+
+          # Verify the deployment is NOT the 'projects' project
+          if echo "$PROD_URL" | grep -q "projects-"; then
+            echo "ERROR: Deployed to the wrong project (projects-)! Expected clipopai."
+            exit 1
+          fi
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ env.CLIPOPAI_PROJECT_ID }}
+
+      - name: Verify deployment
+        run: |
+          set -e
+          echo "Waiting 10s for deployment to propagate..."
+          sleep 10
+
+          echo "Checking production URL for version marker..."
+          HTML=$(curl -s "https://www.clipopai.com/?_=$(date +%s)")
+          if echo "$HTML" | grep -q "data-build-version"; then
+            VERSION=$(echo "$HTML" | grep -oE 'data-build-version="[^"]*"' | head -1)
+            echo "SUCCESS: Found version marker: $VERSION"
+          else
+            echo "WARNING: Version marker not found in HTML. CDN cache might not have updated yet."
+            echo "Trying clipopai.vercel.app directly..."
+            HTML2=$(curl -s "https://clipopai.vercel.app/?_=$(date +%s)")
+            if echo "$HTML2" | grep -q "data-build-version"; then
+              VERSION=$(echo "$HTML2" | grep -oE 'data-build-version="[^"]*"' | head -1)
+              echo "SUCCESS: Found version marker on clipopai.vercel.app: $VERSION"
+            else
+              echo "ERROR: Version marker not found. The deployment might not have the latest code."
+              exit 1
+            fi
+          fi
