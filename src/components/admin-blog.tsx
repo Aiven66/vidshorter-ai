@@ -1394,7 +1394,12 @@ export function BlogPage({ locale }: BlogPageProps) {
             accept="image/*"
             onFiles={(files) => {
               const file = files[0];
-              if (file && file.type.startsWith('image/')) {
+              if (!file) return;
+              // 双重判断：type 或文件名后缀任一命中即视为图片
+              const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg', '.avif'];
+              const isImage = file.type.startsWith('image/') ||
+                imageExts.some(ext => file.name.toLowerCase().endsWith(ext));
+              if (isImage) {
                 setCoverImageFile(file);
                 readFileAsDataUrl(file).then((url) => setCoverImagePreview(url));
               }
@@ -1473,7 +1478,13 @@ export function BlogPage({ locale }: BlogPageProps) {
             accept="image/*"
             multiple
             onFiles={(files) => {
-              const imageFiles = files.filter(f => f.type.startsWith('image/'));
+              // 双重判断：type 或文件名后缀任一命中即视为图片
+              // 解决某些浏览器/macOS Finder 选择文件时 file.type 为空字符串的问题
+              const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg', '.avif'];
+              const imageFiles = files.filter(f =>
+                f.type.startsWith('image/') ||
+                imageExts.some(ext => f.name.toLowerCase().endsWith(ext))
+              );
               if (imageFiles.length === 0) return;
               setAdditionalImages((prev) => [...prev, ...imageFiles]);
               Promise.all(imageFiles.map((f) => readFileAsDataUrl(f))).then((urls) => {
