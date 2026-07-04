@@ -26,10 +26,9 @@ jobs:
       - name: Build
         run: pnpm run build
 
-      - name: Find and deploy to correct Vercel project
+      - name: Find correct Vercel project ID
+        id: find-project
         run: |
-          npm install -g vercel@latest
-
           # Find the "clipopai" project ID via Vercel API
           echo "Finding 'clipopai' project ID..."
           PROJECTS_JSON=$(curl -s -H "Authorization: Bearer ${{ secrets.VERCEL_TOKEN }}" \
@@ -48,27 +47,31 @@ jobs:
           if [ -z "$CLIPOPAI_PROJECT_ID" ]; then
             echo "WARNING: 'clipopai' project not found in team. Listing all projects:"
             echo "$PROJECTS_JSON" | python3 -c "
-            import json, sys
-            data = json.load(sys.stdin)
-            for project in data.get('projects', []):
-                print(f\"  - {project.get('name')}: {project.get('id')}\")
-            " 2>/dev/null || echo "Failed to parse projects JSON"
+          import json, sys
+          data = json.load(sys.stdin)
+          for project in data.get('projects', []):
+              print(f\"  - {project.get('name')}: {project.get('id')}\")
+          " 2>/dev/null || echo "Failed to parse projects JSON"
 
             # Fall back to the configured VERCEL_PROJECT_ID
-            echo "Falling back to VERCEL_PROJECT_ID from secrets: ${{ secrets.VERCEL_PROJECT_ID }}"
+            echo "Falling back to VERCEL_PROJECT_ID from secrets"
             CLIPOPAI_PROJECT_ID="${{ secrets.VERCEL_PROJECT_ID }}"
           else
             echo "SUCCESS: Found 'clipopai' project with ID: $CLIPOPAI_PROJECT_ID"
           fi
 
+          # Export the correct project ID for the deploy step
+          echo "CLIPOPAI_PROJECT_ID=$CLIPOPAI_PROJECT_ID" >> $GITHUB_ENV
+
+      - name: Deploy to Vercel
+        run: |
+          npm install -g vercel@latest
           # Update .vercel/project.json with the correct project ID
+          mkdir -p .vercel
           echo "{\"projectId\":\"$CLIPOPAI_PROJECT_ID\",\"orgId\":\"${{ secrets.VERCEL_ORG_ID }}\",\"projectName\":\"clipopai\"}" > .vercel/project.json
           echo "Updated .vercel/project.json:"
           cat .vercel/project.json
-
-          # Deploy to the correct project
-          echo "Deploying to Vercel..."
+          # Deploy - vercel will use .vercel/project.json since we don't set VERCEL_PROJECT_ID env
           vercel --prod --token=${{ secrets.VERCEL_TOKEN }} --yes
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
