@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { createSingleAdminPost } from '@/lib/blog-content';
 
+export const runtime = 'nodejs';
+export const maxDuration = 300;
+export const dynamic = 'force-dynamic';
+
 const TRUSTED_ADMIN_EMAILS = new Set([
   'admin@vidshorter.ai',
   'admin@126.com',

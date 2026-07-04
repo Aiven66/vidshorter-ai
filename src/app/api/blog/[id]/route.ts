@@ -115,27 +115,46 @@ export async function DELETE(
   }
 
   try {
-    const { data: target } = await client
+    // 查询目标文章
+    const { data: target, error: targetError } = await client
       .from('blogs')
       .select('id,parent_id')
       .eq('id', blogId)
       .maybeSingle();
 
-    if (!target) {
-      return NextResponse.json({ ok: true, deleted: blogId });
+    console.log('Delete target query:', { blogId, target, targetError: targetError?.message });
+
+    // 计算要删除的 ID 列表
+    // 使用两步查询代替 .or()，避免 Supabase .or() 过滤器的已知问题
+    const idsToDelete: string[] = [blogId];
+
+    if (target) {
+      const parentId = target.parent_id || target.id;
+      if (parentId !== blogId) {
+        idsToDelete.push(parentId);
+      }
+
+      // 查询所有翻译版本（parent_id = parentId）
+      const { data: translations, error: translationsError } = await client
+        .from('blogs')
+        .select('id')
+        .eq('parent_id', parentId);
+
+      console.log('Translations query:', { parentId, count: translations?.length, error: translationsError?.message });
+
+      if (translations && translations.length > 0) {
+        for (const t of translations) {
+          if (!idsToDelete.includes(t.id)) {
+            idsToDelete.push(t.id);
+          }
+        }
+      }
+    } else {
+      // target 查询返回 null，可能是因为 parent_id 列不存在或查询失败
+      // 直接尝试删除 blogId 本身
+      console.log('Target not found, attempting direct delete of blogId:', blogId);
     }
 
-    const parentId = target.parent_id || target.id;
-    const { data: allPosts } = await client
-      .from('blogs')
-      .select('id')
-      .or(`id.eq.${parentId},parent_id.eq.${parentId}`);
-
-    if (!allPosts || allPosts.length === 0) {
-      return NextResponse.json({ ok: true, deleted: parentId });
-    }
-
-    const idsToDelete = allPosts.map(p => p.id);
     console.log('Deleting blog posts:', idsToDelete);
 
     const { error, count } = await client
@@ -151,8 +170,13 @@ export async function DELETE(
       );
     }
 
-    console.log(`Deleted ${count} blog posts`);
-    return NextResponse.json({ ok: true, deleted: parentId, count });
+    console.log(`Deleted ${count} blog posts (requested ${idsToDelete.length})`);
+    return NextResponse.json({
+      ok: true,
+      deleted: blogId,
+      count,
+      deletedIds: idsToDelete,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err) || 'Failed to delete';
     console.error('Delete error:', message, err);

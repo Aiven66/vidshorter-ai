@@ -922,15 +922,6 @@ export function BlogPage({ locale }: BlogPageProps) {
               <RefreshCw className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
               {locale === 'zh' ? '同步内置文章' : 'Sync Built-in'}
             </Button>
-            <Button
-              variant="destructive"
-              onClick={clearAllPosts}
-              disabled={clearing}
-              className="flex items-center gap-2"
-            >
-              <Trash2 className={`h-4 w-4 ${clearing ? 'animate-spin' : ''}`} />
-              {locale === 'zh' ? '清空所有文章' : 'Clear All'}
-            </Button>
           </div>
         </div>
 
