@@ -776,6 +776,8 @@ export function BlogPage({ locale }: BlogPageProps) {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result as string);
       reader.onerror = () => reject(reader.error || new Error('read failed'));
+      // 必须调用 readAsDataURL 启动读取，否则 onload 永远不会触发
+      reader.readAsDataURL(file);
     });
   }
 
