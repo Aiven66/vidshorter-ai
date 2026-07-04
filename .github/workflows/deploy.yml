@@ -26,9 +26,48 @@ jobs:
       - name: Build
         run: pnpm run build
 
-      - name: Deploy to Vercel
+      - name: Find and deploy to correct Vercel project
         run: |
           npm install -g vercel@latest
+
+          # Find the "clipopai" project ID via Vercel API
+          echo "Finding 'clipopai' project ID..."
+          PROJECTS_JSON=$(curl -s -H "Authorization: Bearer ${{ secrets.VERCEL_TOKEN }}" \
+            "https://api.vercel.com/v9/projects?teamId=${{ secrets.VERCEL_ORG_ID }}&limit=100")
+
+          # Try to find project named "clipopai"
+          CLIPOPAI_PROJECT_ID=$(echo "$PROJECTS_JSON" | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          for project in data.get('projects', []):
+              if project.get('name') == 'clipopai':
+                  print(project.get('id'))
+                  break
+          " 2>/dev/null)
+
+          if [ -z "$CLIPOPAI_PROJECT_ID" ]; then
+            echo "WARNING: 'clipopai' project not found in team. Listing all projects:"
+            echo "$PROJECTS_JSON" | python3 -c "
+            import json, sys
+            data = json.load(sys.stdin)
+            for project in data.get('projects', []):
+                print(f\"  - {project.get('name')}: {project.get('id')}\")
+            " 2>/dev/null || echo "Failed to parse projects JSON"
+
+            # Fall back to the configured VERCEL_PROJECT_ID
+            echo "Falling back to VERCEL_PROJECT_ID from secrets: ${{ secrets.VERCEL_PROJECT_ID }}"
+            CLIPOPAI_PROJECT_ID="${{ secrets.VERCEL_PROJECT_ID }}"
+          else
+            echo "SUCCESS: Found 'clipopai' project with ID: $CLIPOPAI_PROJECT_ID"
+          fi
+
+          # Update .vercel/project.json with the correct project ID
+          echo "{\"projectId\":\"$CLIPOPAI_PROJECT_ID\",\"orgId\":\"${{ secrets.VERCEL_ORG_ID }}\",\"projectName\":\"clipopai\"}" > .vercel/project.json
+          echo "Updated .vercel/project.json:"
+          cat .vercel/project.json
+
+          # Deploy to the correct project
+          echo "Deploying to Vercel..."
           vercel --prod --token=${{ secrets.VERCEL_TOKEN }} --yes
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
