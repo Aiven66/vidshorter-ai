@@ -2419,6 +2419,44 @@ async function downloadStreamToLocalFile(url: string, outputPath: string, option
   return false;
 }
 
+// Cache full-stream downloads across clips in the same invocation. Vercel serverless
+// may reuse the module, and the downloaded file in /tmp is available during the request.
+const fullStreamCache: Map<string, Promise<string | null>> = new Map();
+
+async function getFullYouTubeStreamLocalPath(videoId: string, maxHeight: number = 360): Promise<string | null> {
+  const cfWorkerUrl = getCfWorkerUrl();
+  if (!cfWorkerUrl) return null;
+  const cacheKey = `${videoId}-${maxHeight}`;
+
+  if (fullStreamCache.has(cacheKey)) {
+    return fullStreamCache.get(cacheKey)!;
+  }
+
+  const promise = (async () => {
+    const outputPath = path.join(CACHE_DIR, `yt-full-${videoId}-${maxHeight}.mp4`);
+    const exists = await access(outputPath, fsConstants.R_OK).then(() => true).catch(() => false);
+    if (exists) {
+      console.log(`getFullYouTubeStreamLocalPath: reusing cached ${outputPath}`);
+      return outputPath;
+    }
+
+    const streamUrl = `${cfWorkerUrl}/stream?videoId=${encodeURIComponent(videoId)}&maxHeight=${maxHeight}`;
+    console.log(`getFullYouTubeStreamLocalPath: downloading full stream for ${videoId} (${maxHeight}p) -> ${outputPath}`);
+    const ok = await downloadStreamToLocalFile(streamUrl, outputPath, {
+      maxBudgetMs: IS_VERCEL ? 120_000 : 240_000,
+      maxBytes: 250 * 1024 * 1024, // 250 MB cap — enough for 360p long videos
+    });
+    if (!ok) {
+      console.warn(`getFullYouTubeStreamLocalPath: failed to download full stream for ${videoId}`);
+      return null;
+    }
+    return outputPath;
+  })();
+
+  fullStreamCache.set(cacheKey, promise);
+  return promise;
+}
+
 async function preflightStream(url: string): Promise<boolean> {
   const isWorker = (() => {
     try {
@@ -3884,6 +3922,40 @@ async function createClipFromYouTubeStream(params: {
       }
     } catch (err) {
       console.warn(`createClipFromYouTubeStream: local segment candidate failed: ${err instanceof Error ? err.message.slice(0, 200) : err}`);
+    }
+  }
+
+  // Candidate -2: download the full stream to /tmp and clip locally.
+  // ffmpeg fails with 502 when fetching the CF Worker /stream URL directly, but
+  // Node.js fetch can download it. We cache the full stream across clips.
+  if (cfWorkerUrl) {
+    try {
+      console.log(`createClipFromYouTubeStream: trying full local stream candidate (${startTime}s-${endTime}s)`);
+      const fullStreamPath = await getFullYouTubeStreamLocalPath(videoId, 360);
+      if (fullStreamPath) {
+        const result = await createLocalClip({
+          inputPath: fullStreamPath,
+          startTime,
+          endTime,
+          title,
+          fastCopy: false,
+        });
+        console.log(`createClipFromYouTubeStream: full local stream candidate succeeded!`);
+        return {
+          id: result.outputPath ? path.basename(result.outputPath) : clipFileName(title),
+          title,
+          startTime,
+          endTime,
+          duration,
+          summary: summary || '',
+          engagementScore: 0,
+          videoUrl: result.dataUrl || result.publicUrl,
+          thumbnailUrl: result.thumbnailUrl || '',
+          status: 'completed',
+        };
+      }
+    } catch (err) {
+      console.warn(`createClipFromYouTubeStream: full local stream candidate failed: ${err instanceof Error ? err.message.slice(0, 200) : err}`);
     }
   }
 
