@@ -2442,7 +2442,8 @@ async function getFullYouTubeStreamLocalPath(videoId: string, maxHeight: number 
 
     const streamUrl = `${cfWorkerUrl}/stream?videoId=${encodeURIComponent(videoId)}&maxHeight=${maxHeight}`;
     console.log(`getFullYouTubeStreamLocalPath: downloading full stream for ${videoId} (${maxHeight}p) -> ${outputPath}`);
-    const ok = await downloadStreamToLocalFile(streamUrl, outputPath, {
+    // Use a single non-Range fetch: it's faster than chunked ranges for a full stream.
+    const ok = await downloadStreamWithoutRange(streamUrl, outputPath, {
       maxBudgetMs: IS_VERCEL ? 120_000 : 240_000,
       maxBytes: 250 * 1024 * 1024, // 250 MB cap — enough for 360p long videos
     });
