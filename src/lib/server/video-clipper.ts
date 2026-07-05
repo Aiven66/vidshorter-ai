@@ -2440,7 +2440,39 @@ async function getFullYouTubeStreamLocalPath(videoId: string, maxHeight: number 
       return outputPath;
     }
 
-    const streamUrl = `${cfWorkerUrl}/stream?videoId=${encodeURIComponent(videoId)}&maxHeight=${maxHeight}`;
+    // Use the pre-resolved streamUrl path: /resolve first, then /stream?streamUrl=...
+    // The slow path /stream?videoId=... currently returns 502 from the CF Worker.
+    console.log(`getFullYouTubeStreamLocalPath: resolving stream for ${videoId} (${maxHeight}p)`);
+    const resolved = await getYouTubeInfoViaCFWorker(videoId, maxHeight);
+    if (!resolved.streamUrl) {
+      console.warn(`getFullYouTubeStreamLocalPath: no streamUrl for ${videoId}`);
+      return null;
+    }
+
+    // Strip ip= and set ipbits=0 to avoid IP-binding/colo-mismatch 403s.
+    const strippedStreamUrl = (() => {
+      try {
+        const u = new URL(resolved.streamUrl);
+        u.searchParams.delete('ip');
+        u.searchParams.set('ipbits', '0');
+        return u.toString();
+      } catch {
+        return resolved.streamUrl;
+      }
+    })();
+
+    const u = new URL(cfWorkerUrl);
+    u.pathname = `${u.pathname.replace(/\/$/, '')}/stream`;
+    u.searchParams.set('videoId', videoId);
+    u.searchParams.set('maxHeight', String(maxHeight));
+    u.searchParams.set('streamUrl', strippedStreamUrl);
+    if (resolved.userAgent) u.searchParams.set('userAgent', resolved.userAgent);
+    if (resolved.visitorData) u.searchParams.set('visitorData', resolved.visitorData);
+    if (resolved.xClientName !== undefined) u.searchParams.set('xClientName', String(resolved.xClientName));
+    if (resolved.clientVersion) u.searchParams.set('clientVersion', resolved.clientVersion);
+    if (resolved.client) u.searchParams.set('clientName', resolved.client);
+    const streamUrl = u.toString();
+
     console.log(`getFullYouTubeStreamLocalPath: downloading full stream for ${videoId} (${maxHeight}p) -> ${outputPath}`);
     // Use a single non-Range fetch: it's faster than chunked ranges for a full stream.
     const ok = await downloadStreamWithoutRange(streamUrl, outputPath, {
