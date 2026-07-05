@@ -121,3 +121,5 @@ apps/macos-agent/dist-old/
 config/
 .gstack/
 .env*.local
+.env.prod
+.env.vercel

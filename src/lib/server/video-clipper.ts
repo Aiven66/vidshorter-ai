@@ -41,6 +41,8 @@ const YT_DLP_DARWIN_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/down
 // ── ffmpeg (cross-platform via @ffmpeg-installer/ffmpeg) ─────────────────────
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const ffmpegInstaller: { path: string } = require('@ffmpeg-installer/ffmpeg');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const ffmpegStatic: string | undefined = require('ffmpeg-static');
 
 // ── Piped proxy instances (YouTube proxy, community-hosted) ──────────────────
 const PIPED_INSTANCES = [
@@ -482,13 +484,21 @@ async function ensureDirectories() {
 
 // ── ffmpeg ───────────────────────────────────────────────────────────────────
 async function ensureFfmpegAvailable(): Promise<string> {
-  // 1. @ffmpeg-installer/ffmpeg bundled binary
+  // 1. ffmpeg-static binary (newer build with modern TLS support)
+  try {
+    if (ffmpegStatic) {
+      await access(ffmpegStatic, fsConstants.X_OK);
+      console.log(`ffmpeg: using ffmpeg-static at ${ffmpegStatic}`);
+      return ffmpegStatic;
+    }
+  } catch { /* fall through */ }
+  // 2. @ffmpeg-installer/ffmpeg bundled binary
   try {
     const fp = ffmpegInstaller.path;
     await access(fp, fsConstants.X_OK);
     return fp;
   } catch { /* fall through */ }
-  // 2. System PATH ffmpeg
+  // 3. System PATH ffmpeg
   try {
     const { stdout } = await execFile('which', ['ffmpeg']);
     const fp = stdout.trim();
