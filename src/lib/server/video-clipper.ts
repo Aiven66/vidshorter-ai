@@ -2179,8 +2179,8 @@ async function getYouTubeStreamUrlWithFallbacks(
 // (not faststart). When ffmpeg uses a remote HTTP URL as -i, it must download
 // the ENTIRE video before it can seek to any timestamp, causing 60-120s delays.
 // Solution: fetch the stream to /tmp first (~1-10s), then ffmpeg seeks instantly.
-async function downloadStreamToLocalFile(url: string, outputPath: string, options?: { maxBudgetMs?: number }): Promise<boolean> {
-  const maxBytes = 400 * 1024 * 1024; // 400 MB — stay under Vercel /tmp 512 MB limit
+async function downloadStreamToLocalFile(url: string, outputPath: string, options?: { maxBudgetMs?: number; maxBytes?: number }): Promise<boolean> {
+  const maxBytes = options?.maxBytes ?? (400 * 1024 * 1024); // 400 MB default — stay under Vercel /tmp 512 MB limit
   try {
     await access(outputPath, fsConstants.R_OK);
     return true;
@@ -2231,7 +2231,8 @@ async function downloadStreamToLocalFile(url: string, outputPath: string, option
         if (Date.now() - startedAt > budgetMs) {
           throw new Error('Download timed out');
         }
-        const end = offset + chunkSize - 1;
+        const requestChunkSize = Math.min(chunkSize, Math.max(1, maxBytes - downloadedBytes));
+        const end = offset + requestChunkSize - 1;
         const rangeValue = `bytes=${offset}-${end}`;
         const fetchChunk = async () => fetch(url, {
           headers: {
@@ -3213,12 +3214,20 @@ async function generateFallbackClip(params: {
     ], { cwd: CACHE_DIR, timeout: 30_000, maxBuffer: 10 * 1024 * 1024 });
   }
 
-  const safeTitle = (params.title || 'Highlight').replace(/[\\/:*?"<>|]/g, ' ').slice(0, 60);
-  const timeLabel = `${formatTime(params.startTime)} - ${formatTime(params.endTime)}`;
+  // Vary the motion per clip so fallback videos don't all look identical.
+  // Deterministic choice based on startTime so the same highlight is always rendered the same way.
+  const motionVariant = Math.floor(params.startTime / 20) % 4;
+  const zoomExpressions = [
+    `zoompan=z='min(zoom+0.0015,1.45)':d=${duration * 24}:s=1280x720:fps=24`, // zoom in
+    `zoompan=z='max(zoom-0.0015,1.0)':d=${duration * 24}:s=1280x720:fps=24:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'`, // zoom out
+    `zoompan=z='min(zoom+0.001,1.35)':d=${duration * 24}:s=1280x720:fps=24:x='iw/2-(iw/zoom/2)+((iw/2-iw/10)*sin(0.05*n))':y='ih/2-(ih/zoom/2)'`, // pan horizontal
+    `zoompan=z='min(zoom+0.001,1.35)':d=${duration * 24}:s=1280x720:fps=24:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)+((ih/2-ih/10)*sin(0.05*n))'`, // pan vertical
+  ];
+  const zoomFilter = zoomExpressions[motionVariant];
 
   const videoFilters = [
     'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2',
-    `zoompan=z='min(zoom+0.001,1.5)':d=${duration * 24}:s=1280x720:fps=24`,
+    zoomFilter,
     'format=yuv420p',
   ];
 
@@ -3226,6 +3235,8 @@ async function generateFallbackClip(params: {
     '-y',
     '-loop', '1',
     '-i', imagePath,
+    '-f', 'lavfi',
+    '-i', 'anullsrc=r=44100:cl=stereo',
     '-t', String(duration),
     '-vf', videoFilters.join(','),
     '-c:v', 'libx264',
@@ -3235,8 +3246,10 @@ async function generateFallbackClip(params: {
     '-level', '3.0',
     '-pix_fmt', 'yuv420p',
     '-r', '24',
+    '-c:a', 'aac',
+    '-b:a', '128k',
+    '-shortest',
     '-movflags', '+faststart',
-    '-an',
     outputPath,
   ];
 
@@ -3289,6 +3302,72 @@ async function generateFallbackClip(params: {
     // 标记此 clip 是 zoompan fallback 伪视频（静态缩略图 + zoompan 缩放效果），
     // 不是真实视频内容。前端识别此标记后会触发 regenerateThumbnailClips
     // 通过浏览器 IP 下载真实视频片段并重新生成。
+    isFallback: true,
+  };
+}
+
+// Minimal fallback: solid color + silent audio.  Used only when generateFallbackClip
+// fails (e.g. network/timeout), so route.ts never has to fall back to link_only.
+async function generateMinimalFallbackClip(params: {
+  videoId: string;
+  title: string;
+  summary?: string;
+  startTime: number;
+  endTime: number;
+}): Promise<ClipResult> {
+  await ensureDirectories();
+  const ffmpegPath = await ensureFfmpegAvailable();
+  const fileName = clipFileName(params.title);
+  const outputPath = path.join(PUBLIC_CLIP_DIR, fileName);
+  const duration = Math.max(30, Math.min(60, params.endTime - params.startTime));
+
+  const motionVariant = Math.floor(params.startTime / 20) % 4;
+  const colors = ['0x1a1a2e', '0x16213e', '0x0f3460', '0x533483'];
+  const color = colors[motionVariant];
+
+  await execFile(ffmpegPath, [
+    '-y',
+    '-f', 'lavfi',
+    '-i', `color=c=${color}:s=1280x720:d=${duration}`,
+    '-f', 'lavfi',
+    '-i', 'anullsrc=r=44100:cl=stereo',
+    '-t', String(duration),
+    '-c:v', 'libx264',
+    '-preset', 'ultrafast',
+    '-crf', '28',
+    '-profile:v', 'baseline',
+    '-level', '3.0',
+    '-pix_fmt', 'yuv420p',
+    '-r', '24',
+    '-c:a', 'aac',
+    '-b:a', '128k',
+    '-shortest',
+    '-movflags', '+faststart',
+    outputPath,
+  ], { cwd: CACHE_DIR, timeout: 60_000, maxBuffer: 20 * 1024 * 1024 });
+
+  let dataUrl = '';
+  try {
+    const outBuf = await readFile(outputPath);
+    if (outBuf.length <= 45 * 1024 * 1024) {
+      dataUrl = `data:video/mp4;base64,${outBuf.toString('base64')}`;
+    }
+  } catch {}
+
+  const localBase = getLocalMediaBaseUrl();
+  const publicUrl = localBase ? `${localBase}/api/serve-clip/${fileName}` : `/api/serve-clip/${fileName}`;
+
+  return {
+    id: fileName,
+    title: params.title,
+    startTime: params.startTime,
+    endTime: params.endTime,
+    duration,
+    summary: params.summary || '',
+    engagementScore: 0,
+    videoUrl: dataUrl || publicUrl,
+    thumbnailUrl: '',
+    status: 'completed',
     isFallback: true,
   };
 }
@@ -3389,6 +3468,180 @@ async function getInvidiousLocalProxiedStreams(videoId: string, maxHeight: numbe
   }
 
   return null;
+}
+
+// Simple non-Range download for short segments.  Avoids 502 errors from CF Worker /stream
+// when Range + begin are combined, while still enforcing a byte/time budget.
+async function downloadStreamWithoutRange(
+  url: string,
+  outputPath: string,
+  options: { maxBudgetMs?: number; maxBytes?: number } = {},
+): Promise<boolean> {
+  const maxBytes = options.maxBytes ?? 12 * 1024 * 1024;
+  const budgetMs = options.maxBudgetMs ?? (IS_VERCEL ? 60_000 : 120_000);
+  const tempPath = `${outputPath}.part`;
+  const startedAt = Date.now();
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (attempt > 0) {
+      console.log(`downloadStreamWithoutRange: retry ${attempt + 1}/3 for ${url.slice(0, 80)}...`);
+      await new Promise<void>((r) => setTimeout(r, 1000 * attempt));
+    }
+    try {
+      if (Date.now() - startedAt > budgetMs) throw new Error('Download timed out');
+
+      const res = await fetch(url, {
+        headers: {
+          ...getBypassHeadersForUrl(url),
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+          'Accept': '*/*',
+          'Accept-Encoding': 'identity',
+        },
+        signal: AbortSignal.timeout(Math.min(60_000, budgetMs)),
+      });
+      if (!res.ok) {
+        console.warn(`downloadStreamWithoutRange: HTTP ${res.status}`);
+        continue;
+      }
+      if (!res.body) throw new Error('Empty body');
+
+      const fileStream = createWriteStream(tempPath);
+      let downloadedBytes = 0;
+      try {
+        const readable = Readable.fromWeb(res.body as never);
+        for await (const chunk of readable) {
+          const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
+          downloadedBytes += buf.length;
+          if (downloadedBytes > maxBytes) throw new Error('Exceeded size limit');
+          if (!fileStream.write(buf)) await once(fileStream, 'drain');
+        }
+        fileStream.end();
+        await once(fileStream, 'finish');
+      } catch (streamErr) {
+        fileStream.destroy();
+        await once(fileStream, 'close').catch(() => {});
+        throw streamErr;
+      }
+
+      if (downloadedBytes <= 0) {
+        console.warn('downloadStreamWithoutRange: empty file');
+        continue;
+      }
+      await rename(tempPath, outputPath);
+      console.log(`downloadStreamWithoutRange: ${Math.round(downloadedBytes / 1024 / 1024 * 10) / 10}MB -> ${outputPath}`);
+      return true;
+    } catch (err) {
+      console.warn(`downloadStreamWithoutRange attempt ${attempt + 1} failed: ${err instanceof Error ? err.message.slice(0, 120) : err}`);
+    }
+  }
+  await unlink(tempPath).catch(() => {});
+  return false;
+}
+
+// Download a specific segment of a YouTube video via CF Worker /stream?begin=...
+// This is the most reliable way to generate clips on Vercel because:
+// 1. The segment starts at the correct timestamp (begin= parameter).
+// 2. The downloaded file is a local MP4 with correct moov atom, so ffmpeg can seek/clip instantly.
+// 3. Audio is included if the stream is muxed (360p/720p combined streams).
+async function downloadYouTubeSegmentLocally(
+  videoId: string,
+  startTime: number,
+  endTime: number,
+  maxHeight: number = 360,
+): Promise<string | null> {
+  const cfWorkerUrl = getCfWorkerUrl();
+  if (!cfWorkerUrl) return null;
+
+  const duration = Math.max(1, endTime - startTime);
+  // Start at the requested timestamp. CF Worker /stream begin= is accurate enough.
+  const beginMs = Math.max(0, Math.floor(startTime * 1000));
+  // 360p ~ 1 Mbps => ~0.125 MB/s. 720p ~ 3 Mbps. Cap at 12 MB for Vercel /tmp/time budgets.
+  const maxBytes = Math.min(12 * 1024 * 1024, Math.max(4 * 1024 * 1024, Math.ceil(duration * 1024 * 1024 / 8)));
+
+  const u = new URL(cfWorkerUrl);
+  u.pathname = `${u.pathname.replace(/\/$/, '')}/stream`;
+  u.searchParams.set('videoId', videoId);
+  u.searchParams.set('maxHeight', String(maxHeight));
+  u.searchParams.set('begin', String(beginMs));
+
+  const segmentPath = path.join(CACHE_DIR, `segment-${videoId}-${startTime}-${endTime}-${Date.now()}.mp4`);
+  try {
+    // Use a simple non-Range fetch for the segment.  Some CF Worker /stream colos return 502
+    // when a byte Range is combined with the `begin` parameter, so we fetch the whole segment
+    // and stop once we have enough bytes/time.
+    const ok = await downloadStreamWithoutRange(u.toString(), segmentPath, {
+      maxBudgetMs: IS_VERCEL ? 60_000 : 120_000,
+      maxBytes,
+    });
+    if (!ok) return null;
+
+    // Verify we got a real video file with at least the duration we need.
+    const ffmpegPath = await ensureFfmpegAvailable();
+    const { stdout } = await execFile(ffmpegPath, [
+      '-v', 'error', '-show_entries', 'format=duration', '-of',
+      'default=noprint_wrappers=1:nokey=1', segmentPath,
+    ], { timeout: 10_000 });
+    const downloadedDuration = parseFloat(stdout);
+    if (!Number.isFinite(downloadedDuration) || downloadedDuration < duration * 0.5) {
+      console.warn(`Downloaded segment too short: ${downloadedDuration}s (needed ${duration}s)`);
+      await unlink(segmentPath).catch(() => {});
+      return null;
+    }
+
+    // Verify the segment has an audio stream. Some /stream responses are video-only.
+    // If audio is missing, try to download a separate audio segment and merge.
+    const hasAudioStream = await (async () => {
+      try {
+        const { stdout: streamOut } = await execFile(ffmpegPath, [
+          '-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=codec_type',
+          '-of', 'default=noprint_wrappers=1:nokey=1', segmentPath,
+        ], { timeout: 10_000 });
+        return streamOut.trim().length > 0;
+      } catch {
+        return false;
+      }
+    })();
+
+    if (!hasAudioStream) {
+      console.warn(`Downloaded segment has no audio stream, trying to fetch audio-only segment`);
+      try {
+        const audioUrl = new URL(cfWorkerUrl);
+        audioUrl.pathname = `${audioUrl.pathname.replace(/\/$/, '')}/stream`;
+        audioUrl.searchParams.set('videoId', videoId);
+        audioUrl.searchParams.set('maxHeight', String(maxHeight));
+        audioUrl.searchParams.set('begin', String(beginMs));
+        audioUrl.searchParams.set('audio', '1');
+        const audioPath = segmentPath.replace(/\.mp4$/, '.audio.m4a');
+        const audioOk = await downloadStreamToLocalFile(audioUrl.toString(), audioPath, {
+          maxBudgetMs: IS_VERCEL ? 45_000 : 90_000,
+          maxBytes: Math.min(4 * 1024 * 1024, Math.max(2 * 1024 * 1024, Math.ceil(duration * 1024 * 1024 / 16))),
+        });
+        if (audioOk) {
+          const mergedPath = segmentPath.replace(/\.mp4$/, '.merged.mp4');
+          await execFile(ffmpegPath, [
+            '-y', '-i', segmentPath, '-i', audioPath,
+            '-c', 'copy', '-movflags', '+faststart', mergedPath,
+          ], { timeout: 30_000 });
+          await unlink(segmentPath).catch(() => {});
+          await unlink(audioPath).catch(() => {});
+          console.log(`Merged audio-only segment into video segment: ${mergedPath}`);
+          return mergedPath;
+        }
+      } catch (audioErr) {
+        console.warn(`Failed to fetch/merge audio-only segment: ${audioErr instanceof Error ? audioErr.message.slice(0, 120) : audioErr}`);
+      }
+      console.warn(`Downloaded YouTube segment has no audio and audio-only fetch failed, rejecting segment`);
+      await unlink(segmentPath).catch(() => {});
+      return null;
+    }
+
+    console.log(`Downloaded YouTube segment: ${segmentPath} (${Math.round(downloadedDuration)}s, ${Math.round(maxBytes / 1024 / 1024)}MB cap)`);
+    return segmentPath;
+  } catch (err) {
+    console.warn(`downloadYouTubeSegmentLocally failed: ${err instanceof Error ? err.message.slice(0, 120) : err}`);
+    await unlink(segmentPath).catch(() => {});
+    return null;
+  }
 }
 
 // When downloadSourceVideo fails entirely (all proxies/CF Worker/Invidious down),
@@ -3588,6 +3841,42 @@ async function createClipFromYouTubeStream(params: {
   const overallDeadline = Date.now() + (IS_VERCEL ? 90_000 : 180_000);
   const timeLeft = () => Math.max(5_000, overallDeadline - Date.now());
 
+  // Candidate -1: download the exact segment locally via CF Worker /stream?begin=.
+  // This is the most reliable candidate because it avoids ffmpeg remote-seek issues,
+  // colo-mismatch, and missing audio. It also makes each clip start exactly at the
+  // requested timestamp, so different highlights produce genuinely different clips.
+  if (cfWorkerUrl) {
+    try {
+      console.log(`createClipFromYouTubeStream: trying local segment candidate (${startTime}s-${endTime}s)`);
+      const localSegmentPath = await downloadYouTubeSegmentLocally(videoId, startTime, endTime, 360);
+      if (localSegmentPath) {
+        const result = await createLocalClip({
+          inputPath: localSegmentPath,
+          startTime: 0,
+          endTime: duration,
+          title,
+          fastCopy: false, // re-encode to ensure consistent format and audio
+        });
+        unlink(localSegmentPath).catch(() => {});
+        console.log(`createClipFromYouTubeStream: local segment candidate succeeded!`);
+        return {
+          id: result.outputPath ? path.basename(result.outputPath) : clipFileName(title),
+          title,
+          startTime,
+          endTime,
+          duration,
+          summary: summary || '',
+          engagementScore: 0,
+          videoUrl: result.dataUrl || result.publicUrl,
+          thumbnailUrl: result.thumbnailUrl || '',
+          status: 'completed',
+        };
+      }
+    } catch (err) {
+      console.warn(`createClipFromYouTubeStream: local segment candidate failed: ${err instanceof Error ? err.message.slice(0, 200) : err}`);
+    }
+  }
+
   // Try each candidate with ffmpeg fast-seek
   console.log(`createClipFromYouTubeStream: trying ${candidates.length} candidates: ${candidates.map(c => c.label).join(', ')}`);
   for (const candidate of candidates) {
@@ -3639,7 +3928,7 @@ async function createClipFromYouTubeStream(params: {
 
 const videoClipper = {
   analyzeVideo, createLocalClip, downloadSourceVideo, downloadYouTubeClip, generateFallbackClip,
-  createClipFromYouTubeStream, isYouTubeUrl, isBilibiliUrl,
+  generateMinimalFallbackClip, createClipFromYouTubeStream, isYouTubeUrl, isBilibiliUrl,
 };
 
 export default videoClipper;

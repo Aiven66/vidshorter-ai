@@ -700,6 +700,33 @@ export async function POST(request: NextRequest) {
               continue;
             } catch (fallbackErr) {
               console.warn(`Fallback clip generation failed for highlight ${index}:`, fallbackErr instanceof Error ? fallbackErr.message.slice(0, 100) : fallbackErr);
+              // Last resort: generate a minimal fallback clip (silent color video).
+              // Mark it as isFallback so the frontend triggers regenerateThumbnailClips.
+              try {
+                const minimalClip = await videoClipper.generateMinimalFallbackClip({
+                  videoId: linkOnlyVideoId,
+                  title: highlight.title,
+                  summary: highlight.summary,
+                  startTime: safeStart,
+                  endTime: safeEnd,
+                });
+                minimalClip.id = draftClip.id;
+                minimalClip.engagementScore = draftClip.engagementScore;
+                minimalClip.linkOnlyUrl = buildYouTubeTimestampUrl(linkOnlyVideoId, safeStart);
+                clips.push(minimalClip);
+
+                if (abortSignal.aborted) return;
+                if (!send({
+                  stage: 'clip_ready',
+                  progress: 55 + Math.floor(((index + 1) / highlights.length) * 35),
+                  message: `Clip ready: "${highlight.title}"`,
+                  data: { clip: minimalClip, clipIndex: clipOffset + index, jobId, videoId: dbVideoId || undefined, linkOnlyMode: true },
+                })) return;
+                continue;
+              } catch (minimalErr) {
+                console.warn(`Minimal fallback also failed for highlight ${index}:`, minimalErr instanceof Error ? minimalErr.message.slice(0, 100) : minimalErr);
+              }
+
               draftClip.status = 'link_only';
               draftClip.videoUrl = null;
               draftClip.linkOnlyUrl = buildYouTubeTimestampUrl(linkOnlyVideoId, safeStart);
