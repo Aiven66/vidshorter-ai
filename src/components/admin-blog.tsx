@@ -901,14 +901,36 @@ export function BlogPage({ locale }: BlogPageProps) {
         }, 1500);
       } else {
         const data = await res.json().catch(() => ({}));
+        // 针对常见失败场景给出可操作的提示
+        let reason = data.error || res.statusText || `HTTP ${res.status}`;
+        if (res.status === 503) {
+          reason = locale === 'zh'
+            ? '服务器数据库未配置，请联系管理员检查环境变量'
+            : 'Server database is not configured. Please ask the administrator to check environment variables';
+        } else if (res.status === 401 || res.status === 403) {
+          reason = locale === 'zh'
+            ? '权限不足或登录已过期，请重新登录管理员账号'
+            : 'Access denied or session expired. Please sign in as admin again';
+        } else if (res.status === 413) {
+          reason = locale === 'zh'
+            ? '文件过大，请压缩图片后再上传'
+            : 'Files too large. Please compress images before uploading';
+        }
         setHtmlStatus(
           locale === 'zh'
-            ? `发布失败：${data.error || res.statusText}`
-            : `Publish failed: ${data.error || res.statusText}`
+            ? `发布失败：${reason}`
+            : `Publish failed: ${reason}`
         );
       }
     } catch (err) {
-      setHtmlStatus(err instanceof Error ? err.message : (locale === 'zh' ? '发布失败' : 'Publish failed'));
+      const msg = err instanceof Error ? err.message : String(err);
+      // 网络错误/超时给出更友好的提示
+      const friendly = /network|fetch|timeout|aborted/i.test(msg)
+        ? (locale === 'zh'
+            ? '网络连接失败，请检查网络后重试'
+            : 'Network error. Please check your connection and retry')
+        : (locale === 'zh' ? '发布失败' : 'Publish failed');
+      setHtmlStatus(`${friendly}${msg ? ` (${msg})` : ''}`);
     } finally {
       setHtmlSaving(false);
     }

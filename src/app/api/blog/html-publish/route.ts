@@ -425,7 +425,18 @@ export async function POST(req: NextRequest) {
   const serviceRoleKey = getServiceRoleKey();
 
   if (!url || !serviceRoleKey) {
-    return NextResponse.json({ error: 'Database not configured' }, { status: 503 });
+    // 明确指出缺失的环境变量，便于部署诊断
+    const missing: string[] = [];
+    if (!url) missing.push('NEXT_PUBLIC_SUPABASE_URL');
+    if (!serviceRoleKey) missing.push('SUPABASE_SERVICE_ROLE_KEY');
+    console.error('[html-publish] Missing env vars:', missing.join(', '));
+    return NextResponse.json(
+      {
+        error: `Server is missing database configuration (${missing.join(', ')}). Please contact the administrator.`,
+        missing,
+      },
+      { status: 503 }
+    );
   }
 
   const token = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '').trim();
