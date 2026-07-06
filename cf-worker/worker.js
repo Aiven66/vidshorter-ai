@@ -262,7 +262,7 @@ export default {
     if (mode === 'stream') {
       try {
         const effectiveMaxHeight = maxHeight || MAX_HEIGHT;
-        const range = request.headers.get('Range') || request.headers.get('range') || 'bytes=0-';
+        const range = request.headers.get('Range') || request.headers.get('range') || '';
         // quickCheck=1: only try the fast path (streamUrl param) + cache.
         // Skip tryClient/HD re-resolve. Used by Vercel preflight to quickly
         // detect colo-mismatch failures before committing to ffmpeg input.
@@ -299,7 +299,6 @@ export default {
           }
 
           const headers = {
-            Range: range,
             'User-Agent': resolved.userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
             'Accept': '*/*',
             'Accept-Encoding': 'identity',
@@ -312,6 +311,7 @@ export default {
               ...(cookieHeader ? { Cookie: cookieHeader } : {}),
             } : {}),
           };
+          if (range) headers['Range'] = range;
 
           let upstream = await fetch(fetchUrl, { headers });
           if (upstream.status === 200 || upstream.status === 206) return upstream;

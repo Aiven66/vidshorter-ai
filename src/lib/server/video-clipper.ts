@@ -2440,8 +2440,10 @@ async function getFullYouTubeStreamLocalPath(videoId: string, maxHeight: number 
       return outputPath;
     }
 
-    // Use the pre-resolved streamUrl path: /resolve first, then /stream?streamUrl=...
-    // The slow path /stream?videoId=... currently returns 502 from the CF Worker.
+    // resolved.streamUrl from getYouTubeInfoViaCFWorker is ALREADY a /stream proxy URL
+    // (built by buildStreamProxyUrl inside that function). Use it directly — do NOT
+    // wrap it in another /stream URL, which creates a nested /stream that times out.
+    // The CF Worker handles IP-binding bypass internally (strips ip= on 403 and retries).
     console.log(`getFullYouTubeStreamLocalPath: resolving stream for ${videoId} (${maxHeight}p)`);
     const resolved = await getYouTubeInfoViaCFWorker(videoId, maxHeight);
     if (!resolved.streamUrl) {
@@ -2449,33 +2451,9 @@ async function getFullYouTubeStreamLocalPath(videoId: string, maxHeight: number 
       return null;
     }
 
-    // Strip ip= and set ipbits=0 to avoid IP-binding/colo-mismatch 403s.
-    const strippedStreamUrl = (() => {
-      try {
-        const u = new URL(resolved.streamUrl);
-        u.searchParams.delete('ip');
-        u.searchParams.set('ipbits', '0');
-        return u.toString();
-      } catch {
-        return resolved.streamUrl;
-      }
-    })();
-
-    const u = new URL(cfWorkerUrl);
-    u.pathname = `${u.pathname.replace(/\/$/, '')}/stream`;
-    u.searchParams.set('videoId', videoId);
-    u.searchParams.set('maxHeight', String(maxHeight));
-    u.searchParams.set('streamUrl', strippedStreamUrl);
-    if (resolved.userAgent) u.searchParams.set('userAgent', resolved.userAgent);
-    if (resolved.visitorData) u.searchParams.set('visitorData', resolved.visitorData);
-    if (resolved.xClientName !== undefined) u.searchParams.set('xClientName', String(resolved.xClientName));
-    if (resolved.clientVersion) u.searchParams.set('clientVersion', resolved.clientVersion);
-    if (resolved.client) u.searchParams.set('clientName', resolved.client);
-    const streamUrl = u.toString();
-
     console.log(`getFullYouTubeStreamLocalPath: downloading full stream for ${videoId} (${maxHeight}p) -> ${outputPath}`);
     // Use a single non-Range fetch: it's faster than chunked ranges for a full stream.
-    const ok = await downloadStreamWithoutRange(streamUrl, outputPath, {
+    const ok = await downloadStreamWithoutRange(resolved.streamUrl, outputPath, {
       maxBudgetMs: IS_VERCEL ? 120_000 : 240_000,
       maxBytes: 250 * 1024 * 1024, // 250 MB cap — enough for 360p long videos
     });
@@ -3639,18 +3617,41 @@ async function downloadYouTubeSegmentLocally(
   // 360p ~ 1 Mbps => ~0.125 MB/s. 720p ~ 3 Mbps. Cap at 12 MB for Vercel /tmp/time budgets.
   const maxBytes = Math.min(12 * 1024 * 1024, Math.max(4 * 1024 * 1024, Math.ceil(duration * 1024 * 1024 / 8)));
 
-  const u = new URL(cfWorkerUrl);
-  u.pathname = `${u.pathname.replace(/\/$/, '')}/stream`;
-  u.searchParams.set('videoId', videoId);
-  u.searchParams.set('maxHeight', String(maxHeight));
-  u.searchParams.set('begin', String(beginMs));
+  // Pre-resolve via CF Worker /resolve to get a /stream proxy URL (fast path).
+  // The slow path (no streamUrl param) requires CF Worker to call tryClient
+  // (InnerTube API), which times out when YouTube rate-limits the CF colo.
+  // resolved.streamUrl is already a /stream proxy URL with streamUrl param —
+  // just add begin to it. CF Worker applies begin to the googlevideo.com URL.
+  let segmentStreamUrl = '';
+  let resolvedAudioUrl: string | null = null;
+  try {
+    console.log(`downloadYouTubeSegmentLocally: pre-resolving ${videoId} (${maxHeight}p)`);
+    const resolved = await getYouTubeInfoViaCFWorker(videoId, maxHeight);
+    if (!resolved.streamUrl) return null;
+    const u = new URL(resolved.streamUrl);
+    u.searchParams.set('begin', String(beginMs));
+    segmentStreamUrl = u.toString();
+    if (resolved.audioUrl) {
+      const au = new URL(resolved.audioUrl);
+      au.searchParams.set('begin', String(beginMs));
+      resolvedAudioUrl = au.toString();
+    }
+  } catch {
+    // Fallback to slow path if /resolve fails
+    const u = new URL(cfWorkerUrl);
+    u.pathname = `${u.pathname.replace(/\/$/, '')}/stream`;
+    u.searchParams.set('videoId', videoId);
+    u.searchParams.set('maxHeight', String(maxHeight));
+    u.searchParams.set('begin', String(beginMs));
+    segmentStreamUrl = u.toString();
+  }
 
   const segmentPath = path.join(CACHE_DIR, `segment-${videoId}-${startTime}-${endTime}-${Date.now()}.mp4`);
   try {
     // Use a simple non-Range fetch for the segment.  Some CF Worker /stream colos return 502
     // when a byte Range is combined with the `begin` parameter, so we fetch the whole segment
     // and stop once we have enough bytes/time.
-    const ok = await downloadStreamWithoutRange(u.toString(), segmentPath, {
+    const ok = await downloadStreamWithoutRange(segmentStreamUrl, segmentPath, {
       maxBudgetMs: IS_VERCEL ? 60_000 : 120_000,
       maxBytes,
     });
@@ -3686,14 +3687,18 @@ async function downloadYouTubeSegmentLocally(
     if (!hasAudioStream) {
       console.warn(`Downloaded segment has no audio stream, trying to fetch audio-only segment`);
       try {
-        const audioUrl = new URL(cfWorkerUrl);
-        audioUrl.pathname = `${audioUrl.pathname.replace(/\/$/, '')}/stream`;
-        audioUrl.searchParams.set('videoId', videoId);
-        audioUrl.searchParams.set('maxHeight', String(maxHeight));
-        audioUrl.searchParams.set('begin', String(beginMs));
-        audioUrl.searchParams.set('audio', '1');
+        // Use pre-resolved audio URL if available (fast path); otherwise slow path.
+        const audioFetchUrl = resolvedAudioUrl || (() => {
+          const au = new URL(cfWorkerUrl);
+          au.pathname = `${au.pathname.replace(/\/$/, '')}/stream`;
+          au.searchParams.set('videoId', videoId);
+          au.searchParams.set('maxHeight', String(maxHeight));
+          au.searchParams.set('begin', String(beginMs));
+          au.searchParams.set('audio', '1');
+          return au.toString();
+        })();
         const audioPath = segmentPath.replace(/\.mp4$/, '.audio.m4a');
-        const audioOk = await downloadStreamToLocalFile(audioUrl.toString(), audioPath, {
+        const audioOk = await downloadStreamToLocalFile(audioFetchUrl, audioPath, {
           maxBudgetMs: IS_VERCEL ? 45_000 : 90_000,
           maxBytes: Math.min(4 * 1024 * 1024, Math.max(2 * 1024 * 1024, Math.ceil(duration * 1024 * 1024 / 16))),
         });

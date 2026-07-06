@@ -10,10 +10,11 @@ import { useLocale } from '@/lib/locale-context';
 import { useAuth } from '@/lib/auth-context';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { Video, CheckCircle, Mail, Lock, Monitor } from 'lucide-react';
+import { Video, CheckCircle, Mail, Lock, Monitor, Smartphone } from 'lucide-react';
 import { GoogleLoginButton } from '@/components/google-login-button';
 import { posthog } from '@/lib/posthog';
 import {
+  buildDesktopDeepLink,
   getDesktopCallbackFromSearch,
   isDesktopAuthRequest,
   openDesktopLocalCallback,
@@ -37,6 +38,7 @@ function LoginContent() {
 
   const fromDesktop = sp.get('from') === 'desktop' || sp.get('desktop') === '1';
   const callbackUrl = sp.get('callback') || '';
+  const isAndroidClient = sp.get('platform') === 'android';
 
   useEffect(() => {
     const urlError = sp.get('error');
@@ -125,6 +127,13 @@ function LoginContent() {
 
   const handleReturnToDesktop = async () => {
     const payload = buildDesktopPayload();
+    // Android: 直接触发 deep link，无需本地回调服务器
+    if (isAndroidClient && payload.token) {
+      const deepLink = buildDesktopDeepLink(payload);
+      console.log('[DesktopAuth] Android deep link:', deepLink.slice(0, 60));
+      try { window.location.href = deepLink; } catch {}
+      return;
+    }
     const result = await syncDesktopAuthAndOpen(savedCallbackUrl, payload);
     console.log('[DesktopAuth] Local sync and desktop deep link:', {
       hasDeepLink: !!result.deepLink,
@@ -133,6 +142,20 @@ function LoginContent() {
       localSyncError: result.localSync.error,
     });
   };
+
+  // Android: 登录成功后自动触发 deep link（无需手动点击）
+  useEffect(() => {
+    if (isAndroidClient && isDesktopFlow && loginSuccess && currentToken) {
+      const payload = buildDesktopPayload();
+      if (payload.token) {
+        const deepLink = buildDesktopDeepLink(payload);
+        const timer = setTimeout(() => {
+          try { window.location.href = deepLink; } catch {}
+        }, 800);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [isAndroidClient, isDesktopFlow, loginSuccess, currentToken]);
 
   const handleLocalDesktopSync = () => {
     const redirectUrl = openDesktopLocalCallback(savedCallbackUrl, buildDesktopPayload());
@@ -162,16 +185,18 @@ function LoginContent() {
               </p>
             </div>
             <Button className="w-full h-12 text-lg" onClick={handleReturnToDesktop}>
-              <Monitor className="w-5 h-5 mr-2" />
-              {t('login.returnToDesktop')}
+              {isAndroidClient ? <Smartphone className="w-5 h-5 mr-2" /> : <Monitor className="w-5 h-5 mr-2" />}
+              {isAndroidClient ? 'Return to Clipop AI App' : t('login.returnToDesktop')}
             </Button>
-            {savedCallbackUrl && (
+            {!isAndroidClient && savedCallbackUrl && (
               <Button variant="outline" className="w-full h-11" onClick={handleLocalDesktopSync}>
                 Sync via local callback
               </Button>
             )}
             <p className="text-center text-sm text-muted-foreground">
-              {t('login.desktopNotOpened')}
+              {isAndroidClient
+                ? 'Opening the app automatically... If it doesn\'t open, tap the button above.'
+                : t('login.desktopNotOpened')}
             </p>
           </CardContent>
         </Card>

@@ -123,3 +123,8 @@ config/
 .env*.local
 .env.prod
 .env.vercel
+.env.vercel-prod
+
+# Build artifacts
+release/
+dist/

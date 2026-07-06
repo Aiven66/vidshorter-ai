@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
 import {
+  buildDesktopDeepLink,
   getDesktopCallbackFromSearch,
   isDesktopAuthRequest,
   openDesktopLocalCallback,
@@ -13,7 +14,7 @@ import {
   syncDesktopAuthAndOpen,
   type DesktopAuthPayload,
 } from '@/lib/desktop-auth';
-import { Monitor, CheckCircle, Loader2, ExternalLink } from 'lucide-react';
+import { Monitor, Smartphone, CheckCircle, Loader2, ExternalLink } from 'lucide-react';
 
 function DesktopCallbackContent() {
   const sp = useSearchParams();
@@ -151,7 +152,16 @@ function DesktopCallbackContent() {
     resolveAndSetPayload();
   }, [resolveAndSetPayload]);
 
+  const isAndroid = sp.get('platform') === 'android';
+
   const handleOpenDesktop = async () => {
+    // Android: 直接触发 deep link，无需本地回调服务器
+    if (isAndroid && payload.token) {
+      const deepLink = buildDesktopDeepLink(payload);
+      console.log('[DesktopCallback] Android deep link:', deepLink.slice(0, 60));
+      try { window.location.href = deepLink; } catch {}
+      return;
+    }
     const result = await syncDesktopAuthAndOpen(callbackUrl, payload);
     console.log('[DesktopCallback] Local sync and desktop deep link:', {
       hasDeepLink: !!result.deepLink,
@@ -160,6 +170,17 @@ function DesktopCallbackContent() {
       localSyncError: result.localSync.error,
     });
   };
+
+  // Android: 获取 token 后自动触发 deep link（无需手动点击）
+  useEffect(() => {
+    if (isAndroid && payload.token && !loading) {
+      const deepLink = buildDesktopDeepLink(payload);
+      const timer = setTimeout(() => {
+        try { window.location.href = deepLink; } catch {}
+      }, 800);
+      return () => clearTimeout(timer);
+    }
+  }, [isAndroid, payload.token, loading]);
 
   const handleLocalSync = () => {
     const redirectUrl = openDesktopLocalCallback(callbackUrl, payload);
@@ -225,10 +246,10 @@ function DesktopCallbackContent() {
                 className="w-full text-base"
                 onClick={handleOpenDesktop}
               >
-                <Monitor className="w-5 h-5 mr-2" />
-                Open Clipop Agent
+                {isAndroid ? <Smartphone className="w-5 h-5 mr-2" /> : <Monitor className="w-5 h-5 mr-2" />}
+                {isAndroid ? 'Return to Clipop AI App' : 'Open Clipop Agent'}
               </Button>
-              {callbackUrl && (
+              {!isAndroid && callbackUrl && (
                 <Button
                   variant="outline"
                   className="w-full"
@@ -238,7 +259,9 @@ function DesktopCallbackContent() {
                 </Button>
               )}
               <p className="text-xs text-muted-foreground">
-                If the desktop app didn't open, please switch to it manually or click the button again.
+                {isAndroid
+                  ? 'Opening the app automatically... If it doesn\'t open, tap the button above.'
+                  : 'If the desktop app didn\'t open, please switch to it manually or click the button again.'}
               </p>
             </div>
           )}
