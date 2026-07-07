@@ -642,15 +642,22 @@ export async function POST(request: NextRequest) {
 
             if (!isSDFastPath || true) {
               try {
-                const streamClip = await videoClipper.createClipFromYouTubeStream({
-                  videoId: linkOnlyVideoId,
-                  title: highlight.title,
-                  summary: highlight.summary,
-                  startTime: safeStart,
-                  endTime: safeEnd,
-                  fastCopy: isSDFastPath,
-                  ...(preResolvedStreamUrl ? { preResolvedStreamUrl, preResolvedMetadata } : {}),
-                });
+                // 强制 30s 超时：createClipFromYouTubeStream 内部的 overallDeadline
+                // 不够可靠（每个候选可能有自己的超时），用外层 promiseWithTimeout 强制限制。
+                // 30s 足够尝试 1-2 个候选，失败后快速进入 fallback。
+                const streamClip = await promiseWithTimeout(
+                  videoClipper.createClipFromYouTubeStream({
+                    videoId: linkOnlyVideoId,
+                    title: highlight.title,
+                    summary: highlight.summary,
+                    startTime: safeStart,
+                    endTime: safeEnd,
+                    fastCopy: isSDFastPath,
+                    ...(preResolvedStreamUrl ? { preResolvedStreamUrl, preResolvedMetadata } : {}),
+                  }),
+                  30_000,
+                  'Stream clip generation timed out (30s), falling back to thumbnail video',
+                );
 
                 if (streamClip && streamClip.videoUrl) {
                   streamClip.id = draftClip.id;
@@ -905,17 +912,21 @@ export async function POST(request: NextRequest) {
               const safeStart = Math.max(0, Math.floor(h.start_time));
               const safeEnd = Math.max(safeStart + 1, Math.floor(h.end_time));
 
-              // Strategy 1: Try real video stream first
+              // Strategy 1: Try real video stream first (30s timeout)
               let clipCreated = false;
               try {
-                const streamClip = await videoClipper.createClipFromYouTubeStream({
-                  videoId: fallbackYtId,
-                  title: h.title,
-                  summary: h.summary,
-                  startTime: safeStart,
-                  endTime: safeEnd,
-                  ...(preResolvedStreamUrl ? { preResolvedStreamUrl, preResolvedMetadata } : {}),
-                });
+                const streamClip = await promiseWithTimeout(
+                  videoClipper.createClipFromYouTubeStream({
+                    videoId: fallbackYtId,
+                    title: h.title,
+                    summary: h.summary,
+                    startTime: safeStart,
+                    endTime: safeEnd,
+                    ...(preResolvedStreamUrl ? { preResolvedStreamUrl, preResolvedMetadata } : {}),
+                  }),
+                  30_000,
+                  'Stream clip timed out (30s)',
+                );
                 if (streamClip && streamClip.videoUrl) {
                   c.status = 'completed';
                   c.videoUrl = streamClip.videoUrl;
