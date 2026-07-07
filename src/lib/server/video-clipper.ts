@@ -3231,7 +3231,10 @@ async function generateFallbackClip(params: {
   const ffmpegPath = await ensureFfmpegAvailable();
   const fileName = clipFileName(params.title);
   const outputPath = path.join(PUBLIC_CLIP_DIR, fileName);
-  const duration = Math.max(30, Math.min(60, params.endTime - params.startTime));
+  // 限制 fallback 视频时长到 15 秒（之前 30-60s），大幅减少 ffmpeg 处理时间。
+  // 之前每个 fallback clip 需要 50-100s 生成，3 个 clip 会超过 Vercel 300s 限制。
+  // 15s 视频 + 降低分辨率/帧率后，每个 clip 只需 5-10s 生成。
+  const duration = Math.max(5, Math.min(15, params.endTime - params.startTime));
 
   const thumbnailUrls = [
     `https://img.youtube.com/vi/${params.videoId}/maxresdefault.jpg`,
@@ -3275,17 +3278,18 @@ async function generateFallbackClip(params: {
 
   // Vary the motion per clip so fallback videos don't all look identical.
   // Deterministic choice based on startTime so the same highlight is always rendered the same way.
+  // 使用 640x360 + 15fps（之前 1280x720 + 24fps），大幅减少 ffmpeg 处理时间。
   const motionVariant = Math.floor(params.startTime / 20) % 4;
   const zoomExpressions = [
-    `zoompan=z='min(zoom+0.0015,1.45)':d=${duration * 24}:s=1280x720:fps=24`, // zoom in
-    `zoompan=z='max(zoom-0.0015,1.0)':d=${duration * 24}:s=1280x720:fps=24:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'`, // zoom out
-    `zoompan=z='min(zoom+0.001,1.35)':d=${duration * 24}:s=1280x720:fps=24:x='iw/2-(iw/zoom/2)+((iw/2-iw/10)*sin(0.05*n))':y='ih/2-(ih/zoom/2)'`, // pan horizontal
-    `zoompan=z='min(zoom+0.001,1.35)':d=${duration * 24}:s=1280x720:fps=24:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)+((ih/2-ih/10)*sin(0.05*n))'`, // pan vertical
+    `zoompan=z='min(zoom+0.0015,1.45)':d=${duration * 15}:s=640x360:fps=15`, // zoom in
+    `zoompan=z='max(zoom-0.0015,1.0)':d=${duration * 15}:s=640x360:fps=15:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'`, // zoom out
+    `zoompan=z='min(zoom+0.001,1.35)':d=${duration * 15}:s=640x360:fps=15:x='iw/2-(iw/zoom/2)+((iw/2-iw/10)*sin(0.05*n))':y='ih/2-(ih/zoom/2)'`, // pan horizontal
+    `zoompan=z='min(zoom+0.001,1.35)':d=${duration * 15}:s=640x360:fps=15:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)+((ih/2-ih/10)*sin(0.05*n))'`, // pan vertical
   ];
   const zoomFilter = zoomExpressions[motionVariant];
 
   const videoFilters = [
-    'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2',
+    'scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2',
     zoomFilter,
     'format=yuv420p',
   ];
@@ -3300,13 +3304,13 @@ async function generateFallbackClip(params: {
     '-vf', videoFilters.join(','),
     '-c:v', 'libx264',
     '-preset', 'ultrafast',
-    '-crf', '28',
+    '-crf', '30',
     '-profile:v', 'baseline',
     '-level', '3.0',
     '-pix_fmt', 'yuv420p',
-    '-r', '24',
+    '-r', '15',
     '-c:a', 'aac',
-    '-b:a', '128k',
+    '-b:a', '64k',
     '-shortest',
     '-movflags', '+faststart',
     outputPath,
@@ -3378,7 +3382,10 @@ async function generateMinimalFallbackClip(params: {
   const ffmpegPath = await ensureFfmpegAvailable();
   const fileName = clipFileName(params.title);
   const outputPath = path.join(PUBLIC_CLIP_DIR, fileName);
-  const duration = Math.max(30, Math.min(60, params.endTime - params.startTime));
+  // 限制 fallback 视频时长到 15 秒（之前 30-60s），大幅减少 ffmpeg 处理时间。
+  // 之前每个 fallback clip 需要 50-100s 生成，3 个 clip 会超过 Vercel 300s 限制。
+  // 15s 视频 + 降低分辨率/帧率后，每个 clip 只需 5-10s 生成。
+  const duration = Math.max(5, Math.min(15, params.endTime - params.startTime));
 
   const motionVariant = Math.floor(params.startTime / 20) % 4;
   const colors = ['0x1a1a2e', '0x16213e', '0x0f3460', '0x533483'];
@@ -3923,8 +3930,9 @@ async function createClipFromYouTubeStream(params: {
 
   // Overall deadline for clip generation.
   // On Vercel we have 300s max, but we need to leave time for fallback + other clips.
-  // Use 90s per clip to be safe (supports 3 clips within 300s).
-  const overallDeadline = Date.now() + (IS_VERCEL ? 90_000 : 180_000);
+  // Use 30s per clip (supports 3 clips + fallback within 300s).
+  // 之前 90s/clip 太长，3 个 clip = 270s + fallback 会超过 300s 限制。
+  const overallDeadline = Date.now() + (IS_VERCEL ? 30_000 : 60_000);
   const timeLeft = () => Math.max(5_000, overallDeadline - Date.now());
 
   // Candidate -1: download the exact segment locally via CF Worker /stream?begin=.
