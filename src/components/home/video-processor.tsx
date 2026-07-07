@@ -154,20 +154,60 @@ function saveDemoVideoRecord(url: string, title: string | null, clips: VideoClip
     const videoId = `video-${Date.now()}`;
     const key = getDemoVideosKey(userId);
     const existing = JSON.parse(localStorage.getItem(key) || '[]');
-    const completedClips = clips.filter(c => c.status === 'completed' && c.videoUrl);
+    // 保留所有有内容的 clips：completed（真实视频）+ link_only（YouTube 链接）
+    // 之前只保留 status === 'completed' && videoUrl，导致 link_only clips 完全丢失，
+    // 用户在首页看到的 clips 在历史中消失。
+    const savedClips = clips.filter(c =>
+      (c.status === 'completed' && c.videoUrl) ||
+      (c.status === 'link_only' && c.linkOnlyUrl)
+    );
+    // 对 data URL 的 clips，不保存巨大的 data URL 到 localStorage（会超容量限制）
+    // 只保存 serve-clip URL 或 linkOnlyUrl
+    const lightweightClips = savedClips.map(c => {
+      const clip: VideoClip = { ...c };
+      // data URL 可能几 MB，localStorage 只有 5-10MB，保存会导致 QuotaExceededError
+      // 只保留非 data URL 的 videoUrl
+      if (clip.videoUrl && clip.videoUrl.startsWith('data:')) {
+        // 不保存 data URL 到 localStorage，避免超限
+        // 用户在历史中点击时会触发重新生成
+        clip.videoUrl = null;
+        clip.status = 'link_only';
+        if (!clip.linkOnlyUrl) {
+          // 从 clip.id 提取 videoId 构建 YouTube 链接
+          clip.linkOnlyUrl = url;
+        }
+      }
+      return clip;
+    });
     const record = {
       id: videoId,
       original_url: url,
       source_type: url.includes('bilibili') || url.includes('b23.tv') ? 'bilibili' : url.includes('youtube') || url.includes('youtu.be') ? 'youtube' : 'url',
       title: title || null,
-      status: completedClips.length > 0 ? 'completed' : 'failed',
-      clips_count: completedClips.length,
-      clips: completedClips,
+      status: lightweightClips.length > 0 ? 'completed' : 'failed',
+      clips_count: lightweightClips.length,
+      clips: lightweightClips,
       created_at: new Date().toISOString(),
     };
     const updated = [record, ...existing].slice(0, 50);
-    localStorage.setItem(key, JSON.stringify(updated));
-  } catch {}
+    try {
+      localStorage.setItem(key, JSON.stringify(updated));
+    } catch {
+      // localStorage 超容量限制，移除旧记录重试
+      console.warn('[saveDemoVideoRecord] localStorage quota exceeded, trimming old records');
+      const trimmed = [record, ...existing.slice(0, 9)];
+      try {
+        localStorage.setItem(key, JSON.stringify(trimmed));
+      } catch {
+        // 仍然失败，只保留当前记录
+        try {
+          localStorage.setItem(key, JSON.stringify([record]));
+        } catch {}
+      }
+    }
+  } catch (e) {
+    console.warn('[saveDemoVideoRecord] Failed to save:', e);
+  }
 }
 
 function mergeClips(prev: VideoClip[], next: VideoClip[]) {

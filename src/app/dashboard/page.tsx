@@ -426,7 +426,7 @@ export default function DashboardPage() {
         .select('*, short_videos(*)')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
-        .limit(20);
+        .limit(50);
 
       if (error) throw error;
       const rows = (data || []) as unknown as DbVideoRow[];

@@ -42,7 +42,13 @@ export async function captureVideoClip(params: {
   onProgress?: (msg: string) => void;
 }): Promise<CaptureResult> {
   const { videoUrl, startTime, endTime, onProgress } = params;
-  const duration = Math.max(1, endTime - startTime);
+  // 限制最大录制时长到 15 秒，避免实时录制过长导致用户等待。
+  // captureVideoClip 是实时录制（record duration seconds），60s 的 clip 需要 60s 录制。
+  // 3 个 60s clip = 180s 纯录制时间，用户体验很差。
+  // 15s 足以展示高光片段的核心内容，3 个 clip 只需 45s 录制时间。
+  const MAX_RECORD_DURATION = 15;
+  const rawDuration = Math.max(1, endTime - startTime);
+  const duration = Math.min(rawDuration, MAX_RECORD_DURATION);
 
   // Check if captureStream is available
   const videoProto = HTMLVideoElement.prototype as HTMLVideoElement & {
