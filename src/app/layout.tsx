@@ -59,7 +59,7 @@ export default function RootLayout({
   const cfWorkerUrl = String(process.env.CF_WORKER_URL || '').trim();
 
   return (
-    <html lang="en" suppressHydrationWarning data-build-version="2026-07-07-v3">
+    <html lang="en" suppressHydrationWarning data-build-version="2026-07-08-v1">
       <head>
         <Script id="cf-worker-config" strategy="beforeInteractive">
           {`window.__CF_WORKER_URL__ = ${JSON.stringify(cfWorkerUrl)};`}

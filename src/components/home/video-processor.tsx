@@ -416,7 +416,20 @@ async function regenerateThumbnailClips(params: {
       }
 
       if (!finalVideoUrl) {
-        console.error(`[Regenerate] All methods failed for clip "${clip.title}", keeping fallback`);
+        console.error(`[Regenerate] All methods failed for clip "${clip.title}", converting to link_only`);
+        // 所有方法失败时，将 clip 转为 link_only 状态（而非保持 fallback 伪视频）。
+        // 这样用户在 home 页面和 dashboard 都能通过 YouTube IFrame embed 观看高光片段。
+        // fallback zoompan 伪视频对用户没有价值（只是静态缩略图缩放）。
+        if (clip.linkOnlyUrl) {
+          const linkOnlyClip: VideoClip = {
+            ...clip,
+            videoUrl: null,
+            status: 'link_only',
+            isFallback: false,
+          };
+          onClipUpdated(linkOnlyClip);
+          console.log(`[Regenerate] Converted clip "${clip.title}" to link_only`);
+        }
         continue;
       }
 

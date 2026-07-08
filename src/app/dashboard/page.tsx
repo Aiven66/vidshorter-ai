@@ -15,10 +15,42 @@ import { useRouter } from 'next/navigation';
 import { Textarea } from '@/components/ui/textarea';
 import {
   CreditCard, Video, History, Settings, ArrowRight, Play, FileVideo,
-  Download, ChevronDown, ChevronRight, Image as ImageIcon, Film,
+  Download, ChevronDown, ChevronRight, Image as ImageIcon, Film, ExternalLink,
 } from 'lucide-react';
 import Link from 'next/link';
 import { isSupabaseConfigured } from '@/storage/database/supabase-client';
+
+// 从 linkOnlyUrl (https://youtu.be/<id>?t=<seconds>s) 提取 videoId 和 startTime
+function parseYouTubeLink(url: string): { videoId: string; startTime: number } | null {
+  try {
+    const u = new URL(url);
+    let videoId = '';
+    let startTime = 0;
+    if (u.hostname === 'youtu.be') {
+      videoId = u.pathname.replace('/', '').trim();
+    } else if (u.hostname.includes('youtube.com')) {
+      const v = u.searchParams.get('v');
+      if (v) videoId = v;
+      const m = u.pathname.match(/\/(?:embed|shorts)\/([a-zA-Z0-9_-]{7,15})/);
+      if (m) videoId = m[1];
+    }
+    if (!/^[a-zA-Z0-9_-]{7,15}$/.test(videoId)) return null;
+    const t = u.searchParams.get('t') || u.searchParams.get('start');
+    if (t) {
+      const n = parseInt(t.replace(/[^\d]/g, ''), 10);
+      if (Number.isFinite(n)) startTime = n;
+    }
+    return { videoId, startTime };
+  } catch {
+    return null;
+  }
+}
+
+function buildYouTubeEmbedUrl(videoId: string, startTime: number, endTime: number): string {
+  const start = Math.max(0, Math.floor(startTime));
+  const end = Math.max(start + 1, Math.floor(endTime));
+  return `https://www.youtube.com/embed/${videoId}?start=${start}&end=${end}&autoplay=1&rel=0&modestbranding=1`;
+}
 
 interface VideoClip {
   id: string;
@@ -32,6 +64,7 @@ interface VideoClip {
   videoUrl: string | null;
   status: 'processing' | 'completed' | 'failed' | 'link_only';
   linkOnlyUrl?: string;
+  isFallback?: boolean;
 }
 
 interface VideoRecord {
@@ -108,8 +141,6 @@ function ClipPlayerDialog({
   const [resolved, setResolved] = useState<string>('');
   const [resolving, setResolving] = useState(false);
 
-  if (!clip) return null
-
   useEffect(() => {
     if (open) return;
     setResolved(prev => {
@@ -165,6 +196,8 @@ function ClipPlayerDialog({
     };
   }, [open, clip?.id, clip?.videoUrl, accessToken]);
 
+  if (!clip) return null;
+
   const resolveUrl = (c: VideoClip) => {
     if (!c.videoUrl) return '';
     if (c.videoUrl.includes('bilibili-fallback')) return 'https://samplelib.com/preview/mp4/sample-5s.mp4';
@@ -188,6 +221,13 @@ function ClipPlayerDialog({
         ? `/api/video-proxy?${new URLSearchParams({ url: clip.videoUrl, title: clip.title, download: 'true' })}`
         : '';
 
+  // link_only clips：使用 YouTube IFrame embed 播放（参考 home 页面 preview-dialog.tsx）
+  // 保存到 localStorage 时 data URL 被移除以避免超限，clips 变成 link_only 状态。
+  // 数据库中的 clips 如果 url 是 youtu.be/youtube.com 也会被标记为 link_only。
+  const useYouTubeEmbed = (clip.status === 'link_only' || clip.isFallback === true) && clip.linkOnlyUrl;
+  const ytInfo = useYouTubeEmbed && clip.linkOnlyUrl ? parseYouTubeLink(clip.linkOnlyUrl) : null;
+  const embedUrl = ytInfo ? buildYouTubeEmbedUrl(ytInfo.videoId, ytInfo.startTime, clip.endTime) : '';
+
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl p-0 overflow-hidden">
@@ -195,7 +235,17 @@ function ClipPlayerDialog({
           <DialogTitle className="text-sm truncate">{clip.title}</DialogTitle>
         </DialogHeader>
         <div className="bg-black">
-          {clip.videoUrl && (!clip.videoUrl.startsWith('regenerate:') || !!resolved) ? (
+          {useYouTubeEmbed && ytInfo ? (
+            <iframe
+              key={`embed-${clip.id}-${ytInfo.startTime}`}
+              src={embedUrl}
+              title={clip.title}
+              className="w-full aspect-video"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allowFullScreen
+              referrerPolicy="strict-origin-when-cross-origin"
+            />
+          ) : clip.videoUrl && (!clip.videoUrl.startsWith('regenerate:') || !!resolved) ? (
             <video
               key={clip.id}
               controls
@@ -220,13 +270,22 @@ function ClipPlayerDialog({
             <p>{fmt(clip.startTime)} – {fmt(clip.endTime)} · {fmt(clip.duration)}</p>
             <p className="line-clamp-2">{clip.summary}</p>
           </div>
-          {downloadUrl && (
-            <Button size="sm" variant="outline" asChild className="flex-shrink-0">
-              <a href={downloadUrl} download={`${clip.title}.mp4`}>
-                <Download className="h-4 w-4 mr-1" />{t('video.download')}
-              </a>
-            </Button>
-          )}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {useYouTubeEmbed && clip.linkOnlyUrl && (
+              <Button size="sm" variant="outline" asChild>
+                <a href={clip.linkOnlyUrl} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink className="h-4 w-4 mr-1" />YouTube
+                </a>
+              </Button>
+            )}
+            {downloadUrl && (
+              <Button size="sm" variant="outline" asChild>
+                <a href={downloadUrl} download={`${clip.title}.mp4`}>
+                  <Download className="h-4 w-4 mr-1" />{t('video.download')}
+                </a>
+              </Button>
+            )}
+          </div>
         </div>
       </DialogContent>
     </Dialog>
@@ -236,8 +295,10 @@ function ClipPlayerDialog({
 /* ── Clip Thumbnail Card ── */
 function ClipCard({ clip, onPlay }: { clip: VideoClip; onPlay: () => void }) {
   const [imgErr, setImgErr] = useState(false);
+  // link_only 或 isFallback 的 clip 使用 YouTube embed 播放（无本地 MP4）
+  const isLinkOnly = clip.status === 'link_only' || clip.isFallback === true;
   return (
-    <div className="relative group rounded-lg overflow-hidden bg-muted border cursor-pointer" onClick={onPlay}>
+    <div className="relative group rounded-lg overflow-hidden bg-muted border cursor-pointer" onClick={(e) => { e.stopPropagation(); onPlay(); }}>
       {/* Thumbnail */}
       <div className="aspect-video relative">
         {clip.thumbnailUrl && !imgErr ? (
@@ -266,6 +327,12 @@ function ClipCard({ clip, onPlay }: { clip: VideoClip; onPlay: () => void }) {
         <div className="absolute top-1.5 left-1.5 bg-primary/80 text-primary-foreground text-[10px] px-1.5 py-0.5 rounded">
           ★ {Math.round(clip.engagementScore * 100)}
         </div>
+        {/* link_only 标识：右上角 YouTube 标签 */}
+        {isLinkOnly && (
+          <div className="absolute top-1.5 right-1.5 bg-red-600/90 text-white text-[10px] px-1.5 py-0.5 rounded font-medium flex items-center gap-0.5">
+            <ExternalLink className="h-2.5 w-2.5" />YouTube
+          </div>
+        )}
       </div>
       <div className="p-2">
         <p className="text-xs font-medium truncate">{clip.title}</p>
