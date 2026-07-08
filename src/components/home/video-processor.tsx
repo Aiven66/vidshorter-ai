@@ -264,34 +264,56 @@ async function regenerateThumbnailClips(params: {
 
   if (!cfWorkerUrl) {
     console.error('[Regenerate] No CF_WORKER_URL available, cannot regenerate clips');
-    onProgress?.('Cloudflare Worker not configured. Keeping fallback clips.');
+    onProgress?.('Cloudflare Worker not configured. Keeping link_only clips.');
     return;
   }
 
-  console.log(`[Regenerate] CF Worker available, processing ${thumbnailClips.length} clips`);
+  // Health-check CF Worker /stream before attempting captureVideoClip.
+  // When YouTube blocks the CF Worker's colo (e.g. SJC), /stream returns 502
+  // and ALL captureVideoClip + download+upload attempts will fail — each taking
+  // 30s+ to time out, which causes the user to see "Network error" and wait
+  // several minutes before clips appear. A quick HEAD check avoids this.
+  const streamEndpoint = new URL(cfWorkerUrl);
+  streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
+  streamEndpoint.searchParams.set('videoId', ytVideoId);
+  streamEndpoint.searchParams.set('maxHeight', '360');
+  const videoStreamUrl = streamEndpoint.toString();
+  console.log(`[Regenerate] videoStreamUrl: ${videoStreamUrl.slice(0, 140)}...`);
 
-  // 构建完整视频的 stream URL（不带 begin 参数）。
-  //
-  // 重要发现（2026-07-06）：
-  // YouTube googlevideo.com URL 的 `begin` 查询参数不能通过 URL 修改生效——
-  // googlevideo.com 的签名（sig/lsig）覆盖了所有 URL 参数，修改 begin 会导致
-  // 签名不匹配，YouTube 忽略 begin 并返回从 0:00 开始的完整视频。
-  // 测试确认：begin=151000 和 begin=239000 返回的内容 MD5 完全相同。
-  //
-  // 正确方案：用 captureVideoClip 加载完整视频，通过 <video>.currentTime seek
-  // 到 clip.startTime，浏览器会自动用 Range 请求加载需要的部分。
-  // CF Worker /stream 代理了 googlevideo.com，浏览器 seek 时发出的 Range 请求
-  // 会通过 CF Worker 转发，不受 YouTube IP 绑定限制。
-  let videoStreamUrl: string;
-  if (cfWorkerUrl) {
-    const streamEndpoint = new URL(cfWorkerUrl);
-    streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
-    streamEndpoint.searchParams.set('videoId', ytVideoId);
-    streamEndpoint.searchParams.set('maxHeight', '360');
-    videoStreamUrl = streamEndpoint.toString();
-  } else {
-    videoStreamUrl = `/api/yt-stream?videoId=${encodeURIComponent(ytVideoId)}&maxHeight=360&proxy=1`;
+  try {
+    onProgress?.('Checking video stream availability...');
+    const healthRes = await fetch(videoStreamUrl, {
+      method: 'HEAD',
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!healthRes.ok) {
+      console.warn(`[Regenerate] CF Worker /stream health check failed: HTTP ${healthRes.status}. YouTube may have blocked this colo. Skipping regeneration.`);
+      onProgress?.(`Video stream unavailable (HTTP ${healthRes.status}). Clips will use YouTube links.`);
+      // Convert all fallback clips to link_only (they're already link_only or fallback).
+      for (const clip of thumbnailClips) {
+        if (clip.linkOnlyUrl) {
+          onClipUpdated({ ...clip, videoUrl: null, status: 'link_only', isFallback: false });
+        }
+      }
+      return;
+    }
+    console.log('[Regenerate] CF Worker /stream is available, proceeding with capture');
+  } catch (healthErr) {
+    console.warn(`[Regenerate] CF Worker /stream health check error:`, healthErr instanceof Error ? healthErr.message : healthErr, '. Skipping regeneration.');
+    onProgress?.('Video stream check failed. Clips will use YouTube links.');
+    for (const clip of thumbnailClips) {
+      if (clip.linkOnlyUrl) {
+        onClipUpdated({ ...clip, videoUrl: null, status: 'link_only', isFallback: false });
+      }
+    }
+    return;
   }
+
+  console.log(`[Regenerate] CF Worker /stream available, processing ${thumbnailClips.length} clips`);
+
+  // videoStreamUrl was built above during the health check.
+  // CF Worker /stream proxies googlevideo.com; browser Range requests during seek
+  // are forwarded by CF Worker, bypassing YouTube IP binding.
   console.log(`[Regenerate] videoStreamUrl: ${videoStreamUrl.slice(0, 140)}...`);
 
   for (let i = 0; i < thumbnailClips.length; i += 1) {
@@ -974,6 +996,24 @@ export default function VideoProcessor() {
         streamEndpoint.searchParams.set('videoId', ytVideoId);
         streamEndpoint.searchParams.set('maxHeight', '360');
         const videoStreamUrl = streamEndpoint.toString();
+
+        // Quick health check: if /stream is 502 (YouTube blocked the CF colo),
+        // captureVideoClip will time out after 30s. Fail fast and open YouTube.
+        try {
+          const healthRes = await fetch(videoStreamUrl, {
+            method: 'HEAD',
+            signal: AbortSignal.timeout(8_000),
+          });
+          if (!healthRes.ok) {
+            console.warn(`[Download] CF Worker /stream HTTP ${healthRes.status}, opening YouTube link`);
+            if (clip.linkOnlyUrl) window.open(clip.linkOnlyUrl, '_blank');
+            return;
+          }
+        } catch (healthErr) {
+          console.warn('[Download] CF Worker /stream health check failed:', healthErr instanceof Error ? healthErr.message : healthErr);
+          if (clip.linkOnlyUrl) window.open(clip.linkOnlyUrl, '_blank');
+          return;
+        }
 
         const { captureVideoClip } = await import('@/lib/ffmpeg-client');
         const { videoBlob } = await captureVideoClip({

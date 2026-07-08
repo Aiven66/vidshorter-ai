@@ -250,6 +250,24 @@ function ClipPlayerDialog({
       streamEndpoint.searchParams.set('maxHeight', '360');
       const videoStreamUrl = streamEndpoint.toString();
 
+      // Quick health check: if /stream is 502 (YouTube blocked the CF colo),
+      // captureVideoClip will time out after 30s. Fail fast and open YouTube.
+      try {
+        const healthRes = await fetch(videoStreamUrl, {
+          method: 'HEAD',
+          signal: AbortSignal.timeout(8_000),
+        });
+        if (!healthRes.ok) {
+          console.warn(`[Download] CF Worker /stream HTTP ${healthRes.status}, opening YouTube link`);
+          window.open(clip.linkOnlyUrl, '_blank');
+          return;
+        }
+      } catch (healthErr) {
+        console.warn('[Download] CF Worker /stream health check failed:', healthErr instanceof Error ? healthErr.message : healthErr);
+        window.open(clip.linkOnlyUrl, '_blank');
+        return;
+      }
+
       const { captureVideoClip } = await import('@/lib/ffmpeg-client');
       const { videoBlob } = await captureVideoClip({
         videoUrl: videoStreamUrl,
