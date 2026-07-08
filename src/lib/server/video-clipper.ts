@@ -1619,30 +1619,78 @@ async function fetchYouTubeTranscriptCues(videoId: string): Promise<CaptionCue[]
   return [];
 }
 
-// Fetch video duration by scraping the YouTube watch page HTML.
-// The page embeds "lengthSeconds":"NNNN" in its initial data.
-// This is a reliable, keyless, public fallback when Invidious/Piped/CFWorker all fail.
+// Fetch video duration via YouTube watch page HTML scraping and InnerTube API.
+// This is a reliable, keyless fallback when Invidious/Piped/CFWorker all fail.
 async function getYouTubeDurationFromWatchPage(videoId: string): Promise<number | null> {
+  // Method 1: InnerTube player API (POST, returns JSON with videoDetails.lengthSeconds)
   try {
-    const res = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9',
+    const res = await fetch(
+      'https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8n4b5m0Y9HWqcxgU8s6KJLk&prettyPrint=false',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip',
+        },
+        body: JSON.stringify({
+          context: {
+            client: {
+              clientName: 'ANDROID',
+              clientVersion: '19.09.37',
+              androidSdkVersion: 30,
+              hl: 'en',
+              gl: 'US',
+            },
+          },
+          videoId,
+        }),
+        signal: AbortSignal.timeout(8000),
       },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) return null;
-    const html = await res.text();
-    // Match "lengthSeconds":"3748" (with or without quotes around the number)
-    const m = html.match(/"lengthSeconds"\s*:\s*"?(\d+)"?/);
-    if (m) {
-      const dur = parseInt(m[1], 10);
-      if (Number.isFinite(dur) && dur > 0 && dur < 100_000) return dur;
+    );
+    if (res.ok) {
+      const data = await res.json() as { videoDetails?: { lengthSeconds?: string } };
+      const len = parseInt(data?.videoDetails?.lengthSeconds || '0', 10);
+      if (Number.isFinite(len) && len > 0 && len < 100_000) {
+        console.log(`Got duration ${len}s from InnerTube API for ${videoId}`);
+        return len;
+      }
     }
-    return null;
-  } catch {
-    return null;
+  } catch (err) {
+    console.warn(`InnerTube duration fetch failed:`, err instanceof Error ? err.message.slice(0, 80) : err);
   }
+
+  // Method 2: Scrape YouTube watch page HTML for "lengthSeconds"
+  try {
+    const res = await fetch(
+      `https://www.youtube.com/watch?v=${videoId}&gl=US&hl=en`,
+      {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+          'Accept-Language': 'en-US,en;q=0.9',
+          // Bypass EU consent redirect (Vercel hkg1 might trigger it)
+          'Cookie': 'CONSENT=YES+1; PREF=f4=1',
+        },
+        redirect: 'follow',
+        signal: AbortSignal.timeout(8000),
+      },
+    );
+    if (res.ok) {
+      const html = await res.text();
+      // Try multiple patterns: "lengthSeconds":"3748" or "lengthSeconds":3748
+      const m = html.match(/"lengthSeconds"\s*:\s*"?(\d+)"?/);
+      if (m) {
+        const dur = parseInt(m[1], 10);
+        if (Number.isFinite(dur) && dur > 0 && dur < 100_000) {
+          console.log(`Got duration ${dur}s from watch page HTML for ${videoId}`);
+          return dur;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn(`Watch page duration fetch failed:`, err instanceof Error ? err.message.slice(0, 80) : err);
+  }
+
+  return null;
 }
 
 // ── YouTube analysis via YouTube.js / Invidious / Piped + transcript ─────────
@@ -1730,6 +1778,14 @@ async function analyzeYouTubeViaPipedAndTranscript(videoUrl: string): Promise<Vi
       console.log(`Got duration ${watchPageDuration}s from YouTube watch page (fallback)`);
       duration = watchPageDuration;
     }
+  }
+
+  // Final fallback: if duration is still the default (300s), use 600s (10 min)
+  // so recommendClipCount returns 10 clips instead of 5. The clips will cover
+  // the first 10 minutes, which is better than 5 clips covering only 5 minutes.
+  if (duration <= 300) {
+    console.log(`Duration still at default, using 600s fallback for 10 clips`);
+    duration = 600;
   }
 
   // Estimate duration from cues if proxies gave nothing
@@ -3220,7 +3276,7 @@ async function analyzeVideo(videoUrl: string): Promise<VideoAnalysisResult> {
       try {
         return await analyzeYouTubeViaPipedAndTranscript(normalizedUrl);
       } catch {
-        return { duration: 180, title: 'YouTube video', highlights: buildFallbackHighlights(180) };
+        return { duration: 600, title: 'YouTube video', highlights: buildFallbackHighlights(600) };
       }
     }
   }
