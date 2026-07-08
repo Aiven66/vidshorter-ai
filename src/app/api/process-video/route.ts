@@ -99,8 +99,12 @@ function clampInt(value: unknown, min: number, max: number, fallback: number) {
 
 function recommendClipCount(duration: number) {
   const safe = Math.max(0, Number.isFinite(duration) ? duration : 0);
-  const guess = Math.round(safe / 90);
-  return Math.max(3, Math.min(10, guess));
+  // 生成更多高光片段：每 60s 视频约 1 个 clip（之前 90s）
+  // 5分钟视频 → 5个（之前 3个）
+  // 10分钟视频 → 10个（之前 7个）
+  // 20分钟视频 → 10个（之前 10个，已上限）
+  const guess = Math.round(safe / 60);
+  return Math.max(5, Math.min(10, guess));
 }
 
 function isValidVideoUrl(value: string) {
@@ -147,13 +151,13 @@ function buildYouTubeThumbnailUrl(videoId: string): string {
   return `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
 }
 
-// Number of clips to generate per batch. On Vercel, 3 clips per batch balances
-// quality (multiple highlights) with the 300s function timeout (~60-90s per HD clip).
-// Was 1 (only 1 clip per batch — users had to click "generate more" repeatedly).
-// Override via PROCESS_VIDEO_BATCH_SIZE env var (1-10).
+// Number of clips to generate per batch. Link-only mode (YouTube SD) generates
+// clips in milliseconds (just URL + thumbnail), so 10 per batch is safe.
+// HD mode still uses smaller batches due to 300s function timeout.
+// Override via PROCESS_VIDEO_BATCH_SIZE env var (1-20).
 const DEFAULT_BATCH_SIZE =
-  clampInt(process.env.PROCESS_VIDEO_BATCH_SIZE, 1, 10, 0) ||
-  (process.env.VERCEL ? 3 : 10);
+  clampInt(process.env.PROCESS_VIDEO_BATCH_SIZE, 1, 20, 0) ||
+  (process.env.VERCEL ? 10 : 10);
 
 export async function POST(request: NextRequest) {
   const body = (await request.json()) as ProcessVideoRequest;
@@ -636,119 +640,27 @@ export async function POST(request: NextRequest) {
             data: { clip: draftClip, clipIndex: clipOffset + index, jobId, videoId: dbVideoId || undefined },
           })) return;
 
-          // Link-only mode: try real video generation first (Invidious proxy, CF Worker), then fallback
+          // Link-only mode: generate link_only clips directly (YouTube embed playback).
+          // Previous approach tried createClipFromYouTubeStream (30s timeout per clip) then
+          // generateFallbackClip (zoompan pseudo-video). But YouTube blocks CF Worker colos,
+          // so createClipFromYouTubeStream always fails (wasting 30s per clip = 300s for 10 clips).
+          // Direct link_only generation takes milliseconds per clip, allowing 10+ clips per batch.
+          // Frontend plays these via YouTube IFrame embed (dashboard + home preview dialog).
           if (isLinkOnlyMode && linkOnlyVideoId) {
-            const isSDFastPath = !isHD && quality === 'sd';
+            draftClip.status = 'link_only';
+            draftClip.videoUrl = null;
+            draftClip.linkOnlyUrl = buildYouTubeTimestampUrl(linkOnlyVideoId, safeStart);
+            draftClip.thumbnailUrl = buildYouTubeThumbnailUrl(linkOnlyVideoId);
+            clips.push(draftClip);
 
-            if (!isSDFastPath || true) {
-              try {
-                // 强制 30s 超时：createClipFromYouTubeStream 内部的 overallDeadline
-                // 不够可靠（每个候选可能有自己的超时），用外层 promiseWithTimeout 强制限制。
-                // 30s 足够尝试 1-2 个候选，失败后快速进入 fallback。
-                const streamClip = await promiseWithTimeout(
-                  videoClipper.createClipFromYouTubeStream({
-                    videoId: linkOnlyVideoId,
-                    title: highlight.title,
-                    summary: highlight.summary,
-                    startTime: safeStart,
-                    endTime: safeEnd,
-                    fastCopy: isSDFastPath,
-                    ...(preResolvedStreamUrl ? { preResolvedStreamUrl, preResolvedMetadata } : {}),
-                  }),
-                  30_000,
-                  'Stream clip generation timed out (30s), falling back to thumbnail video',
-                );
-
-                if (streamClip && streamClip.videoUrl) {
-                  streamClip.id = draftClip.id;
-                  streamClip.engagementScore = draftClip.engagementScore;
-                  streamClip.linkOnlyUrl = buildYouTubeTimestampUrl(linkOnlyVideoId, safeStart);
-                  streamClip.isFallback = false;
-
-                  clips.push(streamClip);
-
-                  if (abortSignal.aborted) return;
-                  if (!send({
-                    stage: 'clip_ready',
-                    progress: 55 + Math.floor(((index + 1) / highlights.length) * 35),
-                    message: `Clip ready: "${highlight.title}"`,
-                    data: { clip: streamClip, clipIndex: clipOffset + index, jobId, videoId: dbVideoId || undefined, linkOnlyMode: true },
-                  })) return;
-                  continue;
-                }
-              } catch (streamErr) {
-                console.warn(`Stream clip failed for highlight ${index}, trying thumbnail fallback:`,
-                  streamErr instanceof Error ? streamErr.message.slice(0, 100) : streamErr);
-              }
-            }
-
-            try {
-              const fallbackClip = await videoClipper.generateFallbackClip({
-                videoId: linkOnlyVideoId,
-                title: highlight.title,
-                summary: highlight.summary,
-                startTime: safeStart,
-                endTime: safeEnd,
-              });
-
-              fallbackClip.id = draftClip.id;
-              fallbackClip.engagementScore = draftClip.engagementScore;
-              fallbackClip.linkOnlyUrl = buildYouTubeTimestampUrl(linkOnlyVideoId, safeStart);
-
-              clips.push(fallbackClip);
-
-              if (abortSignal.aborted) return;
-              if (!send({
-                stage: 'clip_ready',
-                progress: 55 + Math.floor(((index + 1) / highlights.length) * 35),
-                message: `Clip ready: "${highlight.title}"`,
-                data: { clip: fallbackClip, clipIndex: clipOffset + index, jobId, videoId: dbVideoId || undefined, linkOnlyMode: true },
-              })) return;
-              continue;
-            } catch (fallbackErr) {
-              console.warn(`Fallback clip generation failed for highlight ${index}:`, fallbackErr instanceof Error ? fallbackErr.message.slice(0, 100) : fallbackErr);
-              // Last resort: generate a minimal fallback clip (silent color video).
-              // Mark it as isFallback so the frontend triggers regenerateThumbnailClips.
-              try {
-                const minimalClip = await videoClipper.generateMinimalFallbackClip({
-                  videoId: linkOnlyVideoId,
-                  title: highlight.title,
-                  summary: highlight.summary,
-                  startTime: safeStart,
-                  endTime: safeEnd,
-                });
-                minimalClip.id = draftClip.id;
-                minimalClip.engagementScore = draftClip.engagementScore;
-                minimalClip.linkOnlyUrl = buildYouTubeTimestampUrl(linkOnlyVideoId, safeStart);
-                clips.push(minimalClip);
-
-                if (abortSignal.aborted) return;
-                if (!send({
-                  stage: 'clip_ready',
-                  progress: 55 + Math.floor(((index + 1) / highlights.length) * 35),
-                  message: `Clip ready: "${highlight.title}"`,
-                  data: { clip: minimalClip, clipIndex: clipOffset + index, jobId, videoId: dbVideoId || undefined, linkOnlyMode: true },
-                })) return;
-                continue;
-              } catch (minimalErr) {
-                console.warn(`Minimal fallback also failed for highlight ${index}:`, minimalErr instanceof Error ? minimalErr.message.slice(0, 100) : minimalErr);
-              }
-
-              draftClip.status = 'link_only';
-              draftClip.videoUrl = null;
-              draftClip.linkOnlyUrl = buildYouTubeTimestampUrl(linkOnlyVideoId, safeStart);
-              draftClip.thumbnailUrl = buildYouTubeThumbnailUrl(linkOnlyVideoId);
-              clips.push(draftClip);
-
-              if (abortSignal.aborted) return;
-              if (!send({
-                stage: 'clip_ready',
-                progress: 55 + Math.floor(((index + 1) / highlights.length) * 35),
-                message: `Highlight link ready: "${highlight.title}"`,
-                data: { clip: draftClip, clipIndex: clipOffset + index, jobId, videoId: dbVideoId || undefined, linkOnlyMode: true },
-              })) return;
-              continue;
-            }
+            if (abortSignal.aborted) return;
+            if (!send({
+              stage: 'clip_ready',
+              progress: 55 + Math.floor(((index + 1) / highlights.length) * 35),
+              message: `Highlight ready: "${highlight.title}"`,
+              data: { clip: draftClip, clipIndex: clipOffset + index, jobId, videoId: dbVideoId || undefined, linkOnlyMode: true },
+            })) return;
+            continue;
           }
 
           // Stream fast path mode: use createClipFromYouTubeStream with fastCopy

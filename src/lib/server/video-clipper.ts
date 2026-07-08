@@ -347,21 +347,12 @@ function buildHighlightReason(text: string, score: number) {
   ].some((k) => t.includes(k.toLowerCase()));
   const dense = text.length >= 160;
   if (hasPunct || score >= 8 || hasKeyword) {
-    return {
-      zh: '该片段信息密度高且包含关键表达，适合作为高光展示。',
-      en: 'High information density with key moments, making it a strong highlight.',
-    };
+    return 'High information density with key moments, making it a strong highlight.';
   }
   if (dense) {
-    return {
-      zh: '该片段内容连贯且信息量较高，适合作为高光摘要。',
-      en: 'Clear, content-rich segment selected as a concise highlight.',
-    };
+    return 'Clear, content-rich segment selected as a concise highlight.';
   }
-  return {
-    zh: '该片段代表视频中的典型片段，适合作为高光回顾。',
-    en: 'Representative moment selected to summarize the video.',
-  };
+  return 'Representative moment selected to summarize the video.';
 }
 
 function normalizeHighlights(input: Highlight[], duration: number) {
@@ -382,7 +373,9 @@ function normalizeHighlights(input: Highlight[], duration: number) {
           ? item.summary.trim().slice(0, 220)
           : title;
       const reason = buildHighlightReason(baseText, score);
-      const summary = `${reason.zh} ${reason.en}`;
+      const summary = baseText && baseText.length > 20
+        ? `${reason} ${baseText.slice(0, 120)}`
+        : reason;
 
       let start = Number.isFinite(item.start_time) ? Math.floor(item.start_time) : 0;
       let end = Number.isFinite(item.end_time)
@@ -429,7 +422,7 @@ function buildFallbackHighlights(duration: number) {
         title: `Highlight ${i + 1}`,
         start_time: start,
         end_time: Math.min(start + cfg.target, safeDuration),
-        summary: 'AI 自动从视频中均匀选取的代表性片段。AI-selected representative segment sampled across the video.',
+        summary: 'AI-selected representative segment sampled across the video.',
         engagement_score: 7,
       };
     }),
