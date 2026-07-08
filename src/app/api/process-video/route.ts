@@ -414,14 +414,14 @@ export async function POST(request: NextRequest) {
           },
         })) return;
 
-        if (!suppliedHighlights || suppliedHighlights.length === 0) {
-          clearInterval(heartbeat);
-          try {
-            controller.close();
-          } catch {}
-          return;
-        }
-
+        // Generate clips in the same stream (single-call flow).
+        // Previously, when no suppliedHighlights were provided (first call), the API
+        // closed the stream after analysis and the frontend had to make a second call
+        // with the highlights to generate clips. This was fragile — if the second call
+        // failed (network error, timeout), the user got NO clips at all.
+        // Now, analysis and clip generation happen in one stream, which is simpler
+        // and more reliable. The frontend's continuation loop still works as a fallback
+        // (if done=false after this call, it makes another call with the highlights).
         const clips: ClipResult[] = [];
         let source: { inputPath: string; audioInputPath?: string; ffmpegHeaders?: string } | null = null;
         let isLinkOnlyMode = false;
