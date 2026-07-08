@@ -329,6 +329,20 @@ export default function PreviewDialog({
                 )}
               </Button>
             )}
+            {/* Download button for link_only clips: capture on-demand via CF Worker /stream */}
+            {!hasRealMp4 && useYouTubeEmbed && (
+              <Button
+                onClick={() => onDownload(clip)}
+                disabled={downloadingId === clip.id}
+                className="gap-2"
+              >
+                {downloadingId === clip.id ? (
+                  <><Loader2 className="h-4 w-4 animate-pulse" />{t('common.saving')}</>
+                ) : (
+                  <><Download className="h-4 w-4" />{t('video.download')}</>
+                )}
+              </Button>
+            )}
           </div>
         </div>
 

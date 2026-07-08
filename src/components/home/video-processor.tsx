@@ -243,15 +243,20 @@ async function regenerateThumbnailClips(params: {
 }): Promise<void> {
   const { clips, ytVideoId, existingStreamUrl, existingMetadata, onClipUpdated, onProgress } = params;
 
+  // Include both fallback zoompan clips AND link_only clips (no videoUrl yet).
+  // link_only clips are produced when Vercel cannot download YouTube video; the
+  // browser can still fetch via CF Worker /stream and captureVideoClip to produce
+  // a real downloadable mp4.
   const thumbnailClips = clips.filter(c =>
-    c.isFallback === true && c.videoUrl
+    (c.isFallback === true && c.videoUrl) ||
+    (c.status === 'link_only' && c.linkOnlyUrl)
   );
   if (thumbnailClips.length === 0) {
-    console.log('[Regenerate] No fallback clips to regenerate');
+    console.log('[Regenerate] No fallback or link_only clips to regenerate');
     return;
   }
 
-  console.log(`[Regenerate] Found ${thumbnailClips.length} thumbnail clips to regenerate`);
+  console.log(`[Regenerate] Found ${thumbnailClips.length} clips to regenerate (fallback + link_only)`);
   onProgress?.(`Regenerating ${thumbnailClips.length} clip(s) from real video...`);
 
   const cfWorkerUrl = String(window.__CF_WORKER_URL__ || '').trim();
@@ -949,6 +954,51 @@ export default function VideoProcessor() {
   }, [accessToken, error, getLocalMediaBaseUrl, refreshCredits, selectedFile, trimmedVideoUrl, uploadToSupabase, useAgent, user]);
 
   const handleDownload = async (clip: VideoClip) => {
+    // link_only clips: no videoUrl, but can be captured on-demand via CF Worker /stream.
+    // Try to extract YouTube videoId from linkOnlyUrl; if available, capture the
+    // clip in-browser and download as mp4. If capture fails, fall back to opening
+    // the YouTube link in a new tab.
+    if (clip.status === 'link_only' || (clip.isFallback === true && !clip.videoUrl)) {
+      const ytIdMatch = clip.linkOnlyUrl?.match(/youtu\.be\/([a-zA-Z0-9_-]{7,15})/);
+      if (!ytIdMatch) {
+        if (clip.linkOnlyUrl) window.open(clip.linkOnlyUrl, '_blank');
+        return;
+      }
+      const ytVideoId = ytIdMatch[1];
+      setDownloadingId(clip.id);
+      try {
+        const cfWorkerUrl = String(window.__CF_WORKER_URL__ || '').trim();
+        if (!cfWorkerUrl) throw new Error('CF Worker not configured');
+        const streamEndpoint = new URL(cfWorkerUrl);
+        streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
+        streamEndpoint.searchParams.set('videoId', ytVideoId);
+        streamEndpoint.searchParams.set('maxHeight', '360');
+        const videoStreamUrl = streamEndpoint.toString();
+
+        const { captureVideoClip } = await import('@/lib/ffmpeg-client');
+        const { videoBlob } = await captureVideoClip({
+          videoUrl: videoStreamUrl,
+          startTime: clip.startTime,
+          endTime: clip.endTime,
+          onProgress: (msg) => console.log(`[Download] ${clip.title}: ${msg}`),
+        });
+
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(videoBlob);
+        a.download = `${clip.title.replace(/[^a-zA-Z0-9]/g, '_')}.mp4`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(a.href);
+      } catch (e) {
+        console.error('Download (link_only) error:', e);
+        if (clip.linkOnlyUrl) window.open(clip.linkOnlyUrl, '_blank');
+      } finally {
+        setDownloadingId(null);
+      }
+      return;
+    }
+
     if (!clip.videoUrl) return;
     setDownloadingId(clip.id);
     try {
@@ -1318,9 +1368,15 @@ export default function VideoProcessor() {
                               <Button
                                 size="sm"
                                 className="flex-1 gap-1.5"
-                                onClick={() => clip.linkOnlyUrl && window.open(clip.linkOnlyUrl, '_blank')}
+                                onClick={() => handleDownload(clip)}
+                                disabled={downloadingId === clip.id}
+                                title="Download clip as MP4"
                               >
-                                <ExternalLink className="h-4 w-4" />YouTube
+                                {downloadingId === clip.id ? (
+                                  <><Loader2 className="h-4 w-4 animate-pulse" />{t('common.saving')}</>
+                                ) : (
+                                  <><Download className="h-4 w-4" />{t('video.download')}</>
+                                )}
                               </Button>
                             </>
                           ) : (

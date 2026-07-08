@@ -16,6 +16,7 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   CreditCard, Video, History, Settings, ArrowRight, Play, FileVideo,
   Download, ChevronDown, ChevronRight, Image as ImageIcon, Film, ExternalLink,
+  Loader2,
 } from 'lucide-react';
 import Link from 'next/link';
 import { isSupabaseConfigured } from '@/storage/database/supabase-client';
@@ -140,6 +141,7 @@ function ClipPlayerDialog({
     const { t } = useLocale();
   const [resolved, setResolved] = useState<string>('');
   const [resolving, setResolving] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
     if (open) return;
@@ -228,6 +230,48 @@ function ClipPlayerDialog({
   const ytInfo = useYouTubeEmbed && clip.linkOnlyUrl ? parseYouTubeLink(clip.linkOnlyUrl) : null;
   const embedUrl = ytInfo ? buildYouTubeEmbedUrl(ytInfo.videoId, ytInfo.startTime, clip.endTime) : '';
 
+  // On-demand download for link_only clips: capture via CF Worker /stream + captureVideoClip.
+  // This produces a real downloadable mp4 in-browser, no server-side download needed.
+  const handleLinkOnlyDownload = async () => {
+    if (!clip.linkOnlyUrl) return;
+    const ytIdMatch = clip.linkOnlyUrl.match(/youtu\.be\/([a-zA-Z0-9_-]{7,15})/);
+    if (!ytIdMatch) {
+      window.open(clip.linkOnlyUrl, '_blank');
+      return;
+    }
+    const ytVideoId = ytIdMatch[1];
+    setDownloading(true);
+    try {
+      const cfWorkerUrl = String(window.__CF_WORKER_URL__ || '').trim();
+      if (!cfWorkerUrl) throw new Error('CF Worker not configured');
+      const streamEndpoint = new URL(cfWorkerUrl);
+      streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
+      streamEndpoint.searchParams.set('videoId', ytVideoId);
+      streamEndpoint.searchParams.set('maxHeight', '360');
+      const videoStreamUrl = streamEndpoint.toString();
+
+      const { captureVideoClip } = await import('@/lib/ffmpeg-client');
+      const { videoBlob } = await captureVideoClip({
+        videoUrl: videoStreamUrl,
+        startTime: clip.startTime,
+        endTime: clip.endTime,
+      });
+
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(videoBlob);
+      a.download = `${clip.title.replace(/[^a-zA-Z0-9]/g, '_')}.mp4`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(a.href);
+    } catch (e) {
+      console.error('Download (link_only) error:', e);
+      window.open(clip.linkOnlyUrl, '_blank');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl p-0 overflow-hidden">
@@ -283,6 +327,20 @@ function ClipPlayerDialog({
                 <a href={downloadUrl} download={`${clip.title}.mp4`}>
                   <Download className="h-4 w-4 mr-1" />{t('video.download')}
                 </a>
+              </Button>
+            )}
+            {!downloadUrl && useYouTubeEmbed && clip.linkOnlyUrl && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleLinkOnlyDownload}
+                disabled={downloading}
+              >
+                {downloading ? (
+                  <><Loader2 className="h-4 w-4 mr-1 animate-pulse" />{t('common.saving')}</>
+                ) : (
+                  <><Download className="h-4 w-4 mr-1" />{t('video.download')}</>
+                )}
               </Button>
             )}
           </div>
