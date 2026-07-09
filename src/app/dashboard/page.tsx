@@ -230,8 +230,9 @@ function ClipPlayerDialog({
   const ytInfo = useYouTubeEmbed && clip.linkOnlyUrl ? parseYouTubeLink(clip.linkOnlyUrl) : null;
   const embedUrl = ytInfo ? buildYouTubeEmbedUrl(ytInfo.videoId, ytInfo.startTime, clip.endTime) : '';
 
-  // On-demand download for link_only clips: capture via CF Worker /stream + captureVideoClip.
-  // This produces a real downloadable mp4 in-browser, no server-side download needed.
+  // On-demand download for link_only clips: use Edge Runtime API to download video directly.
+  // /api/yt-clip-download calls CF Worker /resolve (InnerTube API) to get streamUrl,
+  // then fetches video bytes from googlevideo.com via Vercel Edge Runtime (not blocked).
   const handleLinkOnlyDownload = async () => {
     if (!clip.linkOnlyUrl) return;
     const ytIdMatch = clip.linkOnlyUrl.match(/youtu\.be\/([a-zA-Z0-9_-]{7,15})/);
@@ -242,41 +243,28 @@ function ClipPlayerDialog({
     const ytVideoId = ytIdMatch[1];
     setDownloading(true);
     try {
-      const cfWorkerUrl = String(window.__CF_WORKER_URL__ || '').trim();
-      if (!cfWorkerUrl) throw new Error('CF Worker not configured');
-      const streamEndpoint = new URL(cfWorkerUrl);
-      streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
-      streamEndpoint.searchParams.set('videoId', ytVideoId);
-      streamEndpoint.searchParams.set('maxHeight', '360');
-      const videoStreamUrl = streamEndpoint.toString();
+      const params = new URLSearchParams({
+        videoId: ytVideoId,
+        startTime: String(clip.startTime),
+        endTime: String(clip.endTime),
+        title: clip.title,
+      });
+      const downloadUrl = `/api/yt-clip-download?${params}`;
 
-      // Quick health check: if /stream is 502 (YouTube blocked the CF colo),
-      // captureVideoClip will time out after 30s. Fail fast and open YouTube.
-      try {
-        const healthRes = await fetch(videoStreamUrl, {
-          method: 'HEAD',
-          signal: AbortSignal.timeout(8_000),
-        });
-        if (!healthRes.ok) {
-          console.warn(`[Download] CF Worker /stream HTTP ${healthRes.status}, opening YouTube link`);
-          window.open(clip.linkOnlyUrl, '_blank');
-          return;
-        }
-      } catch (healthErr) {
-        console.warn('[Download] CF Worker /stream health check failed:', healthErr instanceof Error ? healthErr.message : healthErr);
+      const res = await fetch(downloadUrl, { signal: AbortSignal.timeout(55_000) });
+      if (!res.ok) {
+        console.warn(`[Download] Edge API HTTP ${res.status}, opening YouTube link`);
         window.open(clip.linkOnlyUrl, '_blank');
         return;
       }
 
-      const { captureVideoClip } = await import('@/lib/ffmpeg-client');
-      const { videoBlob } = await captureVideoClip({
-        videoUrl: videoStreamUrl,
-        startTime: clip.startTime,
-        endTime: clip.endTime,
-      });
+      const blob = await res.blob();
+      if (blob.size === 0) {
+        throw new Error('Empty response');
+      }
 
       const a = document.createElement('a');
-      a.href = URL.createObjectURL(videoBlob);
+      a.href = URL.createObjectURL(blob);
       a.download = `${clip.title.replace(/[^a-zA-Z0-9]/g, '_')}.mp4`;
       document.body.appendChild(a);
       a.click();

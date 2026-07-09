@@ -976,10 +976,10 @@ export default function VideoProcessor() {
   }, [accessToken, error, getLocalMediaBaseUrl, refreshCredits, selectedFile, trimmedVideoUrl, uploadToSupabase, useAgent, user]);
 
   const handleDownload = async (clip: VideoClip) => {
-    // link_only clips: no videoUrl, but can be captured on-demand via CF Worker /stream.
-    // Try to extract YouTube videoId from linkOnlyUrl; if available, capture the
-    // clip in-browser and download as mp4. If capture fails, fall back to opening
-    // the YouTube link in a new tab.
+    // link_only clips: use Edge Runtime API to download video directly.
+    // /api/yt-clip-download calls CF Worker /resolve (InnerTube API) to get streamUrl,
+    // then fetches video bytes from googlevideo.com via Vercel Edge Runtime (not blocked).
+    // Falls back to opening YouTube link if the Edge API fails.
     if (clip.status === 'link_only' || (clip.isFallback === true && !clip.videoUrl)) {
       const ytIdMatch = clip.linkOnlyUrl?.match(/youtu\.be\/([a-zA-Z0-9_-]{7,15})/);
       if (!ytIdMatch) {
@@ -989,42 +989,30 @@ export default function VideoProcessor() {
       const ytVideoId = ytIdMatch[1];
       setDownloadingId(clip.id);
       try {
-        const cfWorkerUrl = String(window.__CF_WORKER_URL__ || '').trim();
-        if (!cfWorkerUrl) throw new Error('CF Worker not configured');
-        const streamEndpoint = new URL(cfWorkerUrl);
-        streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
-        streamEndpoint.searchParams.set('videoId', ytVideoId);
-        streamEndpoint.searchParams.set('maxHeight', '360');
-        const videoStreamUrl = streamEndpoint.toString();
+        // Build download URL for Edge Runtime API
+        const params = new URLSearchParams({
+          videoId: ytVideoId,
+          startTime: String(clip.startTime),
+          endTime: String(clip.endTime),
+          title: clip.title,
+        });
+        const downloadUrl = `/api/yt-clip-download?${params}`;
 
-        // Quick health check: if /stream is 502 (YouTube blocked the CF colo),
-        // captureVideoClip will time out after 30s. Fail fast and open YouTube.
-        try {
-          const healthRes = await fetch(videoStreamUrl, {
-            method: 'HEAD',
-            signal: AbortSignal.timeout(8_000),
-          });
-          if (!healthRes.ok) {
-            console.warn(`[Download] CF Worker /stream HTTP ${healthRes.status}, opening YouTube link`);
-            if (clip.linkOnlyUrl) window.open(clip.linkOnlyUrl, '_blank');
-            return;
-          }
-        } catch (healthErr) {
-          console.warn('[Download] CF Worker /stream health check failed:', healthErr instanceof Error ? healthErr.message : healthErr);
+        // Fetch as blob (Edge Runtime streams video bytes with CORS headers)
+        const res = await fetch(downloadUrl, { signal: AbortSignal.timeout(55_000) });
+        if (!res.ok) {
+          console.warn(`[Download] Edge API HTTP ${res.status}, opening YouTube link`);
           if (clip.linkOnlyUrl) window.open(clip.linkOnlyUrl, '_blank');
           return;
         }
 
-        const { captureVideoClip } = await import('@/lib/ffmpeg-client');
-        const { videoBlob } = await captureVideoClip({
-          videoUrl: videoStreamUrl,
-          startTime: clip.startTime,
-          endTime: clip.endTime,
-          onProgress: (msg) => console.log(`[Download] ${clip.title}: ${msg}`),
-        });
+        const blob = await res.blob();
+        if (blob.size === 0) {
+          throw new Error('Empty response');
+        }
 
         const a = document.createElement('a');
-        a.href = URL.createObjectURL(videoBlob);
+        a.href = URL.createObjectURL(blob);
         a.download = `${clip.title.replace(/[^a-zA-Z0-9]/g, '_')}.mp4`;
         document.body.appendChild(a);
         a.click();
