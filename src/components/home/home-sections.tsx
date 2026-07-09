@@ -1,6 +1,3 @@
-'use client';
-
-import { useLocale } from '@/lib/locale-context';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Sparkles, Film, Zap, Video, Scissors, Download, Play, UploadCloud, WandSparkles, Captions, ArrowRight, Gift, Link2, Clapperboard } from 'lucide-react';
@@ -26,8 +23,7 @@ const steps = [
   { step: '4', titleKey: 'home.howItWorks.step4.title', descKey: 'home.howItWorks.step4.desc', Icon: Download },
 ];
 
-export function HomeHero() {
-  const { t } = useLocale();
+export function HomeHero({ t }: { t: (key: string) => string }) {
   return (
     <div className="mb-6 text-center">
         <Badge variant="outline" className="mb-4 px-4 py-1.5 text-sm">
@@ -51,8 +47,7 @@ export function HomeHero() {
   );
 }
 
-export function HomeValueHighlights() {
-  const { t } = useLocale();
+export function HomeValueHighlights({ t }: { t: (key: string) => string }) {
   return (
     <section className="mb-10">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -73,8 +68,7 @@ export function HomeValueHighlights() {
   );
 }
 
-export function HomeEditingShowcase() {
-  const { t } = useLocale();
+export function HomeEditingShowcase({ t }: { t: (key: string) => string }) {
   return (
     <section className="py-14">
       <div className="mx-auto max-w-6xl">
@@ -173,8 +167,7 @@ export function HomeEditingShowcase() {
   );
 }
 
-export function HomeFeatures() {
-  const { t } = useLocale();
+export function HomeFeatures({ t }: { t: (key: string) => string }) {
   return (
     <section className="py-16">
       <div className="container mx-auto px-4">
@@ -197,8 +190,7 @@ export function HomeFeatures() {
   );
 }
 
-export function HomeHowItWorks() {
-  const { t } = useLocale();
+export function HomeHowItWorks({ t }: { t: (key: string) => string }) {
   return (
     <section className="py-16 bg-muted/30">
       <div className="container mx-auto px-4">

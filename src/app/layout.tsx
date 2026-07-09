@@ -68,7 +68,7 @@ export default function RootLayout({
   const serverTranslations = enTranslations;
 
   return (
-    <html lang={serverLocale} suppressHydrationWarning data-build-version="2026-07-10-v2">
+    <html lang={serverLocale} suppressHydrationWarning data-build-version="2026-07-10-v3">
       <head>
         <Script id="cf-worker-config" strategy="beforeInteractive">
           {`window.__CF_WORKER_URL__ = ${JSON.stringify(cfWorkerUrl)};`}
