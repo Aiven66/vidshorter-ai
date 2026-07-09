@@ -134,6 +134,13 @@ export const commonTranslations = {
     insufficientCredits: 'Insufficient credits. You need at least 60 credits.',
     enterVideoUrl: 'Please enter a video URL or upload a local video file.',
     enterValidUrl: 'Please enter a valid public http(s) video URL.',
+    quality: {
+      sd: 'SD',
+      hd: 'HD',
+      sdDesc: 'Standard quality (480p)',
+      hdDesc: 'High quality (720p)',
+      hdWarning: 'HD mode requires more processing time and credits. Choose SD for faster results.',
+    },
     stage: {
       init: 'Initializing...',
       extractFrames: 'Extracting video frames...',

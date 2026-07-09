@@ -6,7 +6,10 @@ import { Navbar } from '@/components/navbar';
 import { Footer } from '@/components/footer';
 import { DevInspector } from '@/components/dev-inspector';
 import LazyPostHog from '@/components/lazy-posthog';
-import { getServerTranslation } from '@/lib/i18n/server';
+import { defaultLocale, flattenTranslations, commonTranslations } from '@/lib/i18n/index';
+
+// Pre-compute English translations at build time (static, no cookies() needed)
+const enTranslations = flattenTranslations(commonTranslations);
 
 const siteUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://www.clipopai.com').replace(/\/$/, '');
 
@@ -47,7 +50,7 @@ export const metadata: Metadata = {
   },
 };
 
-export default async function RootLayout({
+export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
@@ -59,11 +62,13 @@ export default async function RootLayout({
   // access control; that's expected — the key is already bundled in client JS.
   const cfWorkerUrl = String(process.env.CF_WORKER_URL || '').trim();
 
-  // Read locale from cookie for SSR i18n (avoids FOUC and enables RSC)
-  const { locale: serverLocale, translations: serverTranslations } = await getServerTranslation();
+  // Static locale: default to 'en' for SSR (no cookies() = static rendering).
+  // Client-side LocaleProvider reads cookie/localStorage and updates after hydration.
+  const serverLocale = defaultLocale;
+  const serverTranslations = enTranslations;
 
   return (
-    <html lang={serverLocale} suppressHydrationWarning data-build-version="2026-07-10-v1">
+    <html lang={serverLocale} suppressHydrationWarning data-build-version="2026-07-10-v2">
       <head>
         <Script id="cf-worker-config" strategy="beforeInteractive">
           {`window.__CF_WORKER_URL__ = ${JSON.stringify(cfWorkerUrl)};`}
