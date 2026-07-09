@@ -235,6 +235,8 @@ export default function BlogPage() {
                       <img
                         src={post.cover_image || getDefaultCoverImage(post.category)}
                         alt={post.title}
+                        loading="lazy"
+                        decoding="async"
                         className="absolute inset-0 w-full h-full object-cover"
                         onError={(e) => {
                           const target = e.currentTarget as HTMLImageElement;

@@ -59,17 +59,17 @@ export default function RootLayout({
   const cfWorkerUrl = String(process.env.CF_WORKER_URL || '').trim();
 
   return (
-    <html lang="en" suppressHydrationWarning data-build-version="2026-07-09-v5">
+    <html lang="en" suppressHydrationWarning data-build-version="2026-07-10-v1">
       <head>
         <Script id="cf-worker-config" strategy="beforeInteractive">
           {`window.__CF_WORKER_URL__ = ${JSON.stringify(cfWorkerUrl)};`}
         </Script>
-        {/* Google tag (gtag.js) - Google Analytics */}
+        {/* Google tag (gtag.js) - Google Analytics (lazyOnload to avoid blocking LCP) */}
         <Script
           src="https://www.googletagmanager.com/gtag/js?id=G-6P1172P3PK"
-          strategy="afterInteractive"
+          strategy="lazyOnload"
         />
-        <Script id="google-analytics" strategy="afterInteractive">
+        <Script id="google-analytics" strategy="lazyOnload">
           {`
             window.dataLayer = window.dataLayer || [];
             function gtag(){dataLayer.push(arguments);}
@@ -77,6 +77,9 @@ export default function RootLayout({
             gtag('config', 'G-6P1172P3PK');
           `}
         </Script>
+        <link rel="dns-prefetch" href="https://www.googletagmanager.com" />
+        <link rel="dns-prefetch" href="https://us-assets.i.posthog.com" />
+        <link rel="dns-prefetch" href="https://api.github.com" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
       </head>

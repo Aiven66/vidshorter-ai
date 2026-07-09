@@ -269,6 +269,7 @@ export default function BlogDetailPage() {
               <img
                 src={post.cover_image}
                 alt={post.title}
+                decoding="async"
                 className="w-full h-auto max-h-[420px] object-cover"
                 onError={(e) => {
                   const target = e.currentTarget as HTMLImageElement;
@@ -305,6 +306,8 @@ export default function BlogDetailPage() {
                           <img
                             src={relatedPost.cover_image || getDefaultCoverImage(relatedPost.category)}
                             alt={relatedPost.title}
+                            loading="lazy"
+                            decoding="async"
                             className="absolute inset-0 w-full h-full object-cover"
                             onError={(e) => {
                               const target = e.currentTarget as HTMLImageElement;

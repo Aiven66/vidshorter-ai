@@ -2,12 +2,9 @@
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Sparkles, Film, Zap, Video, Scissors, Download, Play, UploadCloud, WandSparkles, Captions, ArrowRight, Gift, HelpCircle, Link2, Clapperboard } from 'lucide-react';
 import { HomeStartButton } from '@/components/home/home-start-button';
-import { useAuth } from '@/lib/auth-context';
-import { useRouter } from 'next/navigation';
 
 const features = [
   { Icon: Sparkles, titleKey: 'home.features.auto.title', descKey: 'home.features.auto.desc' },
