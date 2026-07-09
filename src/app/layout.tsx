@@ -1,5 +1,4 @@
 import type { Metadata } from 'next';
-import Script from 'next/script';
 import './globals.css';
 import { Providers } from './providers';
 import { Navbar } from '@/components/navbar';
@@ -68,29 +67,34 @@ export default function RootLayout({
   const serverTranslations = enTranslations;
 
   return (
-    <html lang={serverLocale} suppressHydrationWarning data-build-version="2026-07-10-v3">
+    <html lang={serverLocale} suppressHydrationWarning data-build-version="2026-07-10-v4">
       <head>
-        <Script id="cf-worker-config" strategy="beforeInteractive">
-          {`window.__CF_WORKER_URL__ = ${JSON.stringify(cfWorkerUrl)};`}
-        </Script>
-        {/* Google tag (gtag.js) - Google Analytics (lazyOnload to avoid blocking LCP) */}
-        <Script
-          src="https://www.googletagmanager.com/gtag/js?id=G-6P1172P3PK"
-          strategy="lazyOnload"
-        />
-        <Script id="google-analytics" strategy="lazyOnload">
-          {`
-            window.dataLayer = window.dataLayer || [];
-            function gtag(){dataLayer.push(arguments);}
-            gtag('js', new Date());
-            gtag('config', 'G-6P1172P3PK');
-          `}
-        </Script>
-        <link rel="dns-prefetch" href="https://www.googletagmanager.com" />
+        {/* Inline CF Worker config — plain script tag (no Script component overhead) */}
+        <script dangerouslySetInnerHTML={{ __html: `window.__CF_WORKER_URL__ = ${JSON.stringify(cfWorkerUrl)};` }} />
+        {/* Google Analytics — deferred to first user interaction (saves 178KB from initial load) */}
+        <script dangerouslySetInnerHTML={{ __html: `
+          (function() {
+            var loaded = false;
+            function loadGA() {
+              if (loaded) return;
+              loaded = true;
+              var s = document.createElement('script');
+              s.async = true;
+              s.src = 'https://www.googletagmanager.com/gtag/js?id=G-6P1172P3PK';
+              document.head.appendChild(s);
+              window.dataLayer = window.dataLayer || [];
+              window.gtag = function(){dataLayer.push(arguments);};
+              gtag('js', new Date());
+              gtag('config', 'G-6P1172P3PK');
+            }
+            ['click','scroll','keydown','touchstart','mousemove'].forEach(function(e){
+              window.addEventListener(e, loadGA, {once:true, passive:true, capture:true});
+            });
+            setTimeout(loadGA, 4500);
+          })();
+        `}} />
         <link rel="dns-prefetch" href="https://us-assets.i.posthog.com" />
         <link rel="dns-prefetch" href="https://api.github.com" />
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
       </head>
       <body className="antialiased min-h-screen flex flex-col" suppressHydrationWarning>
         {isDev && <DevInspector />}
