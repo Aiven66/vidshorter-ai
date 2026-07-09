@@ -5,6 +5,7 @@ import { ThemeProvider } from 'next-themes';
 import { AuthProvider } from '@/lib/auth-context';
 import { CreditsProvider } from '@/lib/credits-context';
 import { LocaleProvider } from '@/lib/locale-context';
+import type { Locale } from '@/lib/i18n/index';
 import dynamic from 'next/dynamic';
 import { DesktopAuthReturnBanner } from '@/components/desktop-auth-return-banner';
 
@@ -42,7 +43,7 @@ class ProviderErrorBoundary extends Component<
   }
 }
 
-export function Providers({ children }: { children: ReactNode }) {
+export function Providers({ children, initialLocale, initialTranslations }: { children: ReactNode; initialLocale?: Locale; initialTranslations?: Record<string, string> }) {
   return (
     <ThemeProvider
       attribute="class"
@@ -51,7 +52,7 @@ export function Providers({ children }: { children: ReactNode }) {
       disableTransitionOnChange
     >
       <ProviderErrorBoundary name="Locale">
-        <LocaleProvider>
+        <LocaleProvider initialLocale={initialLocale} initialTranslations={initialTranslations}>
           <ProviderErrorBoundary name="Auth">
             <AuthProvider>
               <ProviderErrorBoundary name="Credits">

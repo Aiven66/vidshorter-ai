@@ -1,11 +1,9 @@
-'use client';
-
-import { useLocale } from '@/lib/locale-context';
+import { getServerTranslation } from '@/lib/i18n/server';
 import { HomeHero, HomeValueHighlights, HomeFeatures, HomeHowItWorks, HomeEditingShowcase, HomeFAQ } from '@/components/home/home-sections';
 import ClientVideoProcessor from '@/components/home/client-video-processor';
 
-export default function HomePage() {
-  const { t } = useLocale();
+export default async function HomePage() {
+  const { t } = await getServerTranslation();
 
   return (
     <div className="min-h-screen">

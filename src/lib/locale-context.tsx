@@ -16,9 +16,9 @@ function isValidLocale(locale: string): locale is Locale {
   return locales.includes(locale as Locale);
 }
 
-export function LocaleProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocaleState] = useState<Locale>(defaultLocale);
-  const [loadedTranslations, setLoadedTranslations] = useState<Record<string, string> | undefined>(undefined);
+export function LocaleProvider({ children, initialLocale, initialTranslations }: { children: ReactNode; initialLocale?: Locale; initialTranslations?: Record<string, string> }) {
+  const [locale, setLocaleState] = useState<Locale>(initialLocale || defaultLocale);
+  const [loadedTranslations, setLoadedTranslations] = useState<Record<string, string> | undefined>(initialTranslations);
   const [loading, setLoading] = useState(false);
   const loadingRef = useRef<string | null>(null);
 
@@ -40,8 +40,13 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    // If initialTranslations were provided from SSR, translations are already loaded.
+    if (initialTranslations) return;
     try {
-      const savedLocale = localStorage.getItem('locale') as Locale;
+      // Read locale from cookie first (shared with server-side rendering),
+      // fall back to localStorage for backward compatibility.
+      const cookieMatch = document.cookie.match(/(?:^|;\s*)locale=([^;]+)/);
+      const savedLocale = (cookieMatch?.[1] || localStorage.getItem('locale')) as Locale;
       if (savedLocale && isValidLocale(savedLocale)) {
         setLocaleState(savedLocale);
         if (savedLocale !== defaultLocale) {
@@ -49,9 +54,9 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
         }
       }
     } catch (e) {
-      console.warn('Failed to load locale from localStorage:', e);
+      console.warn('Failed to load locale from storage:', e);
     }
-  }, [loadTranslations]);
+  }, [loadTranslations, initialTranslations]);
 
   const setLocale = (newLocale: Locale) => {
     if (!isValidLocale(newLocale)) {
@@ -69,6 +74,8 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
 
     try {
       localStorage.setItem('locale', newLocale);
+      // Also write to cookie so server-side rendering can read it
+      document.cookie = `locale=${newLocale}; path=/; max-age=31536000; samesite=lax`;
       if (document && document.documentElement) {
         document.documentElement.lang = newLocale;
       }

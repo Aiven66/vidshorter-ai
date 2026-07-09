@@ -6,6 +6,7 @@ import { Navbar } from '@/components/navbar';
 import { Footer } from '@/components/footer';
 import { DevInspector } from '@/components/dev-inspector';
 import LazyPostHog from '@/components/lazy-posthog';
+import { getServerTranslation } from '@/lib/i18n/server';
 
 const siteUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://www.clipopai.com').replace(/\/$/, '');
 
@@ -46,7 +47,7 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
@@ -58,8 +59,11 @@ export default function RootLayout({
   // access control; that's expected — the key is already bundled in client JS.
   const cfWorkerUrl = String(process.env.CF_WORKER_URL || '').trim();
 
+  // Read locale from cookie for SSR i18n (avoids FOUC and enables RSC)
+  const { locale: serverLocale, translations: serverTranslations } = await getServerTranslation();
+
   return (
-    <html lang="en" suppressHydrationWarning data-build-version="2026-07-10-v1">
+    <html lang={serverLocale} suppressHydrationWarning data-build-version="2026-07-10-v1">
       <head>
         <Script id="cf-worker-config" strategy="beforeInteractive">
           {`window.__CF_WORKER_URL__ = ${JSON.stringify(cfWorkerUrl)};`}
@@ -85,7 +89,7 @@ export default function RootLayout({
       </head>
       <body className="antialiased min-h-screen flex flex-col" suppressHydrationWarning>
         {isDev && <DevInspector />}
-        <Providers>
+        <Providers initialLocale={serverLocale} initialTranslations={serverTranslations}>
           <Navbar />
           <main className="flex-1">{children}</main>
           <Footer />
