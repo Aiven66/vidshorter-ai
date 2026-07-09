@@ -95,12 +95,14 @@ export function Navbar() {
     ? [
         { href: '/', label: t('nav.home') },
         { href: `${process.env.NEXT_PUBLIC_APP_URL || DESKTOP_WEB_APP_URL}/pricing`, label: t('nav.pricing'), external: true },
+        { href: `${process.env.NEXT_PUBLIC_APP_URL || DESKTOP_WEB_APP_URL}/download`, label: t('nav.download'), external: true },
         { href: `${process.env.NEXT_PUBLIC_APP_URL || DESKTOP_WEB_APP_URL}/blog`, label: t('nav.blog'), external: true },
         { href: `${process.env.NEXT_PUBLIC_APP_URL || DESKTOP_WEB_APP_URL}/about`, label: t('nav.about'), external: true },
       ]
     : [
         { href: '/', label: t('nav.home') },
         { href: '/pricing', label: t('nav.pricing') },
+        { href: '/download', label: t('nav.download') },
         { href: '/blog', label: t('nav.blog') },
         { href: '/about', label: t('nav.about') },
       ];

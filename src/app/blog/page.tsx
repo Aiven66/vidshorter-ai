@@ -47,13 +47,15 @@ export default function BlogPage() {
         const { getSupabaseClient } = await import('@/storage/database/supabase-client');
         const client = getSupabaseClient();
 
-        // 先获取所有已发布文章
+        // Performance optimization: only select fields needed for the list view.
+        // Excluding 'content' (which can be large HTML) dramatically reduces
+        // payload size and parsing time. We fetch summary separately for previews.
         const allResult = await client
           .from('blogs')
-          .select('*')
+          .select('id,slug,title,summary,category,cover_image,author,created_at,published_at,view_count,locale,parent_id,is_published')
           .eq('is_published', true)
           .order('created_at', { ascending: false })
-          .limit(500);
+          .limit(60);
 
         let data = allResult.data;
         const queryError = allResult.error;
@@ -107,7 +109,7 @@ export default function BlogPage() {
           new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
         );
 
-        // 转化为 BlogPost 对象
+        // 转化为 BlogPost 对象（content 为空，因为列表页不需要渲染正文）
         const databasePosts = finalRows.map(row => normalizeBlogRow(row));
 
         // localStorage 文章作为补充（仅数据库无数据时）
@@ -157,8 +159,28 @@ export default function BlogPage() {
 
   if (loading) {
     return (
-      <div className="container mx-auto px-4 py-16 text-center">
-        <p className="text-muted-foreground">{t('common.loading')}</p>
+      <div className="min-h-screen bg-muted/30">
+        <div className="container mx-auto px-4 py-16">
+          <div className="max-w-4xl mx-auto">
+            <div className="h-9 w-48 bg-muted animate-pulse rounded mb-4" />
+            <div className="h-4 w-72 bg-muted animate-pulse rounded mb-12" />
+            <div className="grid gap-8">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Card key={i} className="overflow-hidden">
+                  <div className="md:flex">
+                    <div className="h-48 md:w-1/3 bg-muted animate-pulse" />
+                    <div className="p-6 md:w-2/3">
+                      <div className="h-4 w-24 bg-muted animate-pulse rounded mb-3" />
+                      <div className="h-6 w-3/4 bg-muted animate-pulse rounded mb-4" />
+                      <div className="h-4 w-full bg-muted animate-pulse rounded mb-2" />
+                      <div className="h-4 w-5/6 bg-muted animate-pulse rounded" />
+                    </div>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -234,7 +256,7 @@ export default function BlogPage() {
                       </Link>
                     </h2>
                       <p className="text-muted-foreground mb-4 line-clamp-3">
-                        {stripHtml(post.content).substring(0, 200)}...
+                        {(post.summary || stripHtml(post.content)).substring(0, 200)}{post.summary || post.content.length > 200 ? '...' : ''}
                       </p>
                       <Button variant="link" className="p-0 h-auto" asChild>
                         <Link href={`/blog/${post.id}`} className="flex items-center gap-1">

@@ -1,188 +1,244 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import Link from 'next/link';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { useLocale } from '@/lib/locale-context';
-import { Monitor, HardDrive, Apple, ChevronRight, ArrowDownToLine, Shield, Zap, Server } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import {
+  Download, Apple, Cpu, Shield, Zap, CheckCircle2, Loader2,
+  ExternalLink, Monitor, Terminal, Package,
+} from 'lucide-react';
 
-interface ReleaseInfo {
+interface DownloadInfo {
   available: boolean;
-  version?: string;
-  dmgUrl?: string;
-  dmgSize?: number;
-  releaseUrl?: string;
+  version: string;
+  name: string;
+  publishedAt: string;
+  dmgUrl: string;
+  dmgSize: number;
+  releaseUrl: string;
+  releaseNotes: string;
 }
 
 function formatFileSize(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  if (!bytes) return '';
+  const mb = bytes / (1024 * 1024);
+  if (mb >= 1024) return `${(mb / 1024).toFixed(2)} GB`;
+  return `${mb.toFixed(1)} MB`;
+}
+
+function formatDate(dateString: string, locale: string): string {
+  if (!dateString) return '';
+  const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) return '';
+  const dateLocale = locale === 'zh' ? 'zh-CN' : 'en-US';
+  return date.toLocaleDateString(dateLocale, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 export default function DownloadPage() {
-  const { t } = useLocale();
-  const [release, setRelease] = useState<ReleaseInfo>({ available: false });
+  const { t, locale } = useLocale();
+  const [info, setInfo] = useState<DownloadInfo | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch('/api/download/latest')
-      .then((res) => res.json())
-      .then((data) => {
-        setRelease(data);
-        setLoading(false);
-      })
-      .catch(() => {
-        setRelease({ available: false });
-        setLoading(false);
-      });
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/download/latest');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = (await res.json()) as DownloadInfo;
+        if (!cancelled) {
+          setInfo(data);
+          setError(null);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : 'Failed to fetch download info');
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
   }, []);
 
+  const isZh = locale === 'zh';
+
   const features = [
-    { Icon: Shield, titleKey: 'downloadPage.features.stable.title', descKey: 'downloadPage.features.stable.desc' },
-    { Icon: Zap, titleKey: 'downloadPage.features.fast.title', descKey: 'downloadPage.features.fast.desc' },
-    { Icon: Server, titleKey: 'downloadPage.features.local.title', descKey: 'downloadPage.features.local.desc' },
+    { icon: Zap, title: isZh ? '本地加速处理' : 'Native Fast Processing', desc: isZh ? '利用 Mac 本地 CPU/GPU 加速视频处理，无需上传到云端' : 'Leverage your Mac\'s CPU/GPU for faster video processing without cloud uploads' },
+    { icon: Shield, title: isZh ? '隐私优先' : 'Privacy First', desc: isZh ? '视频文件在本地处理，不会上传到服务器' : 'Video files are processed locally and never uploaded to servers' },
+    { icon: Monitor, title: isZh ? '稳定 YouTube 下载' : 'Stable YouTube Download', desc: isZh ? '绕过云端 IP 限制，直接从浏览器下载 YouTube 视频' : 'Bypass cloud IP restrictions and download YouTube videos directly from your browser' },
+    { icon: Cpu, title: isZh ? '离线可用' : 'Offline Capable', desc: isZh ? '本地 Agent 运行时无需依赖网络连接' : 'Local Agent runs without requiring constant network connectivity' },
   ];
 
   const steps = [
-    { num: 1, key: 'downloadPage.step1' },
-    { num: 2, key: 'downloadPage.step2' },
-    { num: 3, key: 'downloadPage.step3' },
-    { num: 4, key: 'downloadPage.step4' },
+    { icon: Download, title: isZh ? '1. 下载安装包' : '1. Download the installer', desc: isZh ? '点击下载按钮保存 .dmg 文件到本地' : 'Click the download button to save the .dmg file' },
+    { icon: Package, title: isZh ? '2. 打开安装包' : '2. Open the installer', desc: isZh ? '双击下载的 .dmg 文件，将 Clipop Agent 拖到 Applications 文件夹' : 'Double-click the downloaded .dmg file, drag Clipop Agent to Applications' },
+    { icon: Terminal, title: isZh ? '3. 启动应用' : '3. Launch the app', desc: isZh ? '从启动台或 Applications 文件夹打开 Clipop Agent' : 'Open Clipop Agent from Launchpad or Applications folder' },
+    { icon: CheckCircle2, title: isZh ? '4. 开始使用' : '4. Start using', desc: isZh ? '在网页端选择"使用本地 Agent"即可开始处理视频' : 'Select "Use local Mac Agent" on the web app to start processing videos' },
   ];
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-background to-muted/30">
-      <div className="container mx-auto px-4 py-12 md:py-20">
-        <div className="max-w-4xl mx-auto">
-          <div className="text-center mb-12">
-            <Badge variant="outline" className="mb-4 px-4 py-1.5 text-sm">
-              <Monitor className="h-4 w-4 mr-2 text-primary" />
-              {t('downloadPage.badge')}
+    <div className="min-h-screen bg-muted/30">
+      {/* Hero section */}
+      <section className="border-b border-border bg-background">
+        <div className="container mx-auto px-4 py-16 md:py-24">
+          <div className="max-w-4xl mx-auto text-center">
+            <Badge variant="secondary" className="mb-4">
+              <Apple className="h-3.5 w-3.5 mr-1.5" />
+              macOS Desktop App
             </Badge>
-            <h1 className="text-3xl md:text-5xl font-bold tracking-tight mb-4">
-              {t('downloadPage.title')}
+            <h1 className="text-4xl md:text-5xl font-bold mb-4">
+              {isZh ? '下载 Clipop AI 桌面客户端' : 'Download Clipop AI Desktop App'}
             </h1>
-            <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-              {t('downloadPage.subtitle')}
+            <p className="text-lg text-muted-foreground mb-8 max-w-2xl mx-auto">
+              {isZh
+                ? '安装本地桌面客户端，享受更快的视频处理速度、稳定的 YouTube 下载和隐私优先的本地处理体验。'
+                : 'Install the native desktop client for faster video processing, stable YouTube downloads, and privacy-first local processing.'}
             </p>
-          </div>
 
-          <div className="grid md:grid-cols-2 gap-8 mb-16">
-            <Card className="relative overflow-hidden border-2 border-primary/20 hover:border-primary/40 transition-colors">
-              <div className="absolute top-4 right-4">
-                <Badge className="bg-primary text-primary-foreground">
-                  <Apple className="h-3 w-3 mr-1" />
-                  {t('downloadPage.macTitle')}
-                </Badge>
-              </div>
-              <CardHeader className="pb-4">
-                <div className="flex items-center gap-3">
-                  <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center">
-                    <Apple className="h-6 w-6 text-primary" />
+            {/* Download card */}
+            <Card className="max-w-md mx-auto">
+              <CardContent className="p-6">
+                {loading ? (
+                  <div className="flex flex-col items-center gap-3 py-4">
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                    <p className="text-sm text-muted-foreground">{isZh ? '获取最新版本...' : 'Fetching latest release...'}</p>
+                  </div>
+                ) : error ? (
+                  <div className="flex flex-col items-center gap-3 py-4">
+                    <p className="text-sm text-destructive">{error}</p>
+                    <Button variant="outline" size="sm" onClick={() => window.location.reload()}>
+                      {isZh ? '重试' : 'Retry'}
+                    </Button>
+                  </div>
+                ) : info ? (
+                  <div className="flex flex-col items-center gap-4">
+                    <div className="flex items-center gap-2">
+                      <Apple className="h-8 w-8" />
+                      <div className="text-left">
+                        <div className="font-semibold text-lg">Clipop Agent</div>
+                        <div className="text-xs text-muted-foreground">v{info.version}</div>
+                      </div>
+                    </div>
+
+                    {info.publishedAt && (
+                      <p className="text-xs text-muted-foreground">
+                        {isZh ? '发布于 ' : 'Released '}{formatDate(info.publishedAt, locale)}
+                        {info.dmgSize > 0 && ` · ${formatFileSize(info.dmgSize)}`}
+                      </p>
+                    )}
+
+                    {info.available && info.dmgUrl ? (
+                      <Button size="lg" className="w-full gap-2" asChild>
+                        <a href={info.dmgUrl}>
+                          <Download className="h-5 w-5" />
+                          {isZh ? '下载 for macOS' : 'Download for macOS'}
+                        </a>
+                      </Button>
+                    ) : (
+                      <Button size="lg" className="w-full gap-2" variant="outline" asChild>
+                        <a href={info.releaseUrl} target="_blank" rel="noopener noreferrer">
+                          <ExternalLink className="h-5 w-5" />
+                          {isZh ? '查看发布页面' : 'View Release Page'}
+                        </a>
+                      </Button>
+                    )}
+
+                    <a
+                      href={info.releaseUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      {isZh ? '查看发布说明' : 'View release notes'}
+                    </a>
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      </section>
+
+      {/* Features section */}
+      <section className="container mx-auto px-4 py-16">
+        <div className="max-w-5xl mx-auto">
+          <h2 className="text-2xl md:text-3xl font-bold text-center mb-12">
+            {isZh ? '为什么使用桌面客户端？' : 'Why use the desktop app?'}
+          </h2>
+          <div className="grid gap-6 sm:grid-cols-2">
+            {features.map((feature) => (
+              <Card key={feature.title}>
+                <CardContent className="p-6 flex gap-4">
+                  <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
+                    <feature.icon className="h-5 w-5 text-primary" />
                   </div>
                   <div>
-                    <CardTitle className="text-xl">{t('downloadPage.macTitle')}</CardTitle>
-                    <CardDescription>{t('downloadPage.macDesc')}</CardDescription>
+                    <h3 className="font-semibold mb-1">{feature.title}</h3>
+                    <p className="text-sm text-muted-foreground">{feature.desc}</p>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Installation steps */}
+      <section className="border-t border-border bg-background">
+        <div className="container mx-auto px-4 py-16">
+          <div className="max-w-3xl mx-auto">
+            <h2 className="text-2xl md:text-3xl font-bold text-center mb-12">
+              {isZh ? '安装步骤' : 'Installation Guide'}
+            </h2>
+            <div className="space-y-6">
+              {steps.map((step) => (
+                <div key={step.title} className="flex gap-4">
+                  <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                    <step.icon className="h-5 w-5 text-primary" />
+                  </div>
+                  <div className="pt-1.5">
+                    <h3 className="font-semibold mb-1">{step.title}</h3>
+                    <p className="text-sm text-muted-foreground">{step.desc}</p>
                   </div>
                 </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {loading ? (
-                  <div className="space-y-3">
-                    <div className="h-12 bg-muted animate-pulse rounded-lg" />
-                    <div className="h-4 bg-muted animate-pulse rounded w-1/2" />
-                  </div>
-                ) : release.available && release.dmgUrl ? (
-                  <>
-                    <Button asChild className="w-full h-12 text-base" size="lg">
-                      <a href={release.dmgUrl}>
-                        <ArrowDownToLine className="h-5 w-5 mr-2" />
-                        {t('downloadPage.downloadButton')}
-                      </a>
-                    </Button>
-                    <div className="flex items-center justify-center gap-4 text-sm text-muted-foreground">
-                      {release.version && (
-                        <span>{t('downloadPage.version')} {release.version}</span>
-                      )}
-                      {release.dmgSize ? (
-                        <>
-                          <span>·</span>
-                          <span>{formatFileSize(release.dmgSize)}</span>
-                        </>
-                      ) : null}
-                    </div>
-                    <p className="text-xs text-muted-foreground text-center">
-                      {t('downloadPage.requirements')}
-                    </p>
-                  </>
-                ) : (
-                  <div className="text-center py-4">
-                    <p className="text-muted-foreground text-sm">
-                      {t('downloadPage.notAvailable')}
-                    </p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-xl flex items-center gap-2">
-                  <HardDrive className="h-5 w-5 text-primary" />
-                  {t('downloadPage.installing')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ol className="space-y-3">
-                  {steps.map((step) => (
-                    <li key={step.num} className="flex items-start gap-3">
-                      <span className="flex-shrink-0 h-6 w-6 rounded-full bg-primary/10 text-primary text-xs font-medium flex items-center justify-center mt-0.5">
-                        {step.num}
-                      </span>
-                      <span className="text-sm text-muted-foreground">
-                        {t(step.key)}
-                      </span>
-                    </li>
-                  ))}
-                </ol>
-              </CardContent>
-            </Card>
-          </div>
-
-          <div className="mb-16">
-            <h2 className="text-2xl font-bold text-center mb-8">
-              {t('downloadPage.whyDesktopTitle')}
-            </h2>
-            <div className="grid md:grid-cols-3 gap-6">
-              {features.map(({ Icon, titleKey, descKey }) => (
-                <Card key={titleKey} className="text-center">
-                  <CardContent className="pt-6">
-                    <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center mx-auto mb-4">
-                      <Icon className="h-6 w-6 text-primary" />
-                    </div>
-                    <h3 className="font-semibold mb-2">{t(titleKey)}</h3>
-                    <p className="text-sm text-muted-foreground">{t(descKey)}</p>
-                  </CardContent>
-                </Card>
               ))}
             </div>
           </div>
-
-          <div className="text-center">
-            <Link href="/">
-              <Button variant="ghost" className="text-muted-foreground">
-                <ChevronRight className="h-4 w-4 mr-1 rotate-180" />
-                {t('downloadPage.backToHome')}
-              </Button>
-            </Link>
-          </div>
         </div>
-      </div>
+      </section>
+
+      {/* Requirements */}
+      <section className="container mx-auto px-4 py-12">
+        <div className="max-w-3xl mx-auto">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">{isZh ? '系统要求' : 'System Requirements'}</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm text-muted-foreground">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
+                <span>{isZh ? 'macOS 12.0 (Monterey) 或更高版本' : 'macOS 12.0 (Monterey) or later'}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
+                <span>{isZh ? 'Apple Silicon (M1/M2/M3) 或 Intel 处理器' : 'Apple Silicon (M1/M2/M3) or Intel processor'}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
+                <span>{isZh ? '至少 4GB 可用内存' : 'At least 4GB available RAM'}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
+                <span>{isZh ? '200MB 可用磁盘空间' : '200MB available disk space'}</span>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </section>
     </div>
   );
 }
