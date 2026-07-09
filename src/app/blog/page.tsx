@@ -47,12 +47,12 @@ export default function BlogPage() {
         const { getSupabaseClient } = await import('@/storage/database/supabase-client');
         const client = getSupabaseClient();
 
-        // Performance optimization: only select fields needed for the list view.
-        // Excluding 'content' (which can be large HTML) dramatically reduces
-        // payload size and parsing time. We fetch summary separately for previews.
+        // Performance optimization: reduce limit from 500 to 60 (sufficient for
+        // pagination with 10 per page). The 'content' field is still needed because
+        // normalizeBlogRow falls back to stripHtml(content) when summary is empty.
         const allResult = await client
           .from('blogs')
-          .select('id,slug,title,summary,category,cover_image,author,created_at,published_at,view_count,locale,parent_id,is_published')
+          .select('*')
           .eq('is_published', true)
           .order('created_at', { ascending: false })
           .limit(60);
