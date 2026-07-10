@@ -379,14 +379,16 @@ export async function downloadYouTubeClip(params: {
 
   // Fetch partial video data as ArrayBuffer.
   // If /stream fails (e.g., YouTube rate-limited the CF Worker colo) or
-  // returns a non-video response (JSON error), fall back to screen capture.
+  // returns non-video response (JSON error), fall back to screen capture.
+  // Timeout is 120s — CF Worker must resolve via InnerTube API (~10-15s)
+  // then stream data from googlevideo.com (~67KB/s observed, so 5MB ≈ 75s).
   const sizeMB = (neededBytes / 1024 / 1024).toFixed(1);
   onProgress?.(`Downloading video data (${sizeMB}MB)...`);
   let arrayBuffer: ArrayBuffer;
   try {
     const videoRes = await fetch(streamEndpoint.toString(), {
       headers: { Range: `bytes=0-${neededBytes - 1}` },
-      signal: AbortSignal.timeout(60_000),
+      signal: AbortSignal.timeout(120_000),
     });
     if (!videoRes.ok && videoRes.status !== 206) {
       throw new Error(`Stream fetch failed: HTTP ${videoRes.status}`);
