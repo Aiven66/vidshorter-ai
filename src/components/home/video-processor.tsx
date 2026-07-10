@@ -12,6 +12,15 @@ import { useAuth } from '@/lib/auth-context';
 import { useCredits } from '@/lib/credits-context';
 import { getSupabaseClient, isSupabaseConfigured } from '@/storage/database/supabase-client';
 import {
+  downloadYouTubeClip,
+  downloadFullVideoStream,
+  resolveYouTubeStream,
+  cacheResolvedStream,
+  buildStreamProxyUrl,
+  extractYouTubeVideoId,
+  type ResolvedStream,
+} from '@/lib/youtube-clip-download';
+import {
   Video, Upload, Link2, Sparkles, Download, Play,
   Film, Scissors, Zap, ArrowRight, CheckCircle,
   AlertCircle, Loader2, Clock, Eye, ExternalLink
@@ -268,18 +277,48 @@ async function regenerateThumbnailClips(params: {
     return;
   }
 
-  // Health-check CF Worker /stream before attempting captureVideoClip.
-  // When YouTube blocks the CF Worker's colo (e.g. SJC), /stream returns 502
-  // and ALL captureVideoClip + download+upload attempts will fail — each taking
-  // 30s+ to time out, which causes the user to see "Network error" and wait
-  // several minutes before clips appear. A quick HEAD check avoids this.
-  const streamEndpoint = new URL(cfWorkerUrl);
-  streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
-  streamEndpoint.searchParams.set('videoId', ytVideoId);
-  streamEndpoint.searchParams.set('maxHeight', '360');
-  const videoStreamUrl = streamEndpoint.toString();
+  // Build CF Worker /stream URL with pre-resolved streamUrl (fast path).
+  // CRITICAL: Without the streamUrl param, /stream calls InnerTube API which is
+  // rate-limited by YouTube (LOGIN_REQUIRED on SJC colo after 1-2 calls).
+  // With the streamUrl param, /stream fetches the URL directly from CF Worker IP
+  // (matching IP binding) — this works reliably.
+  //
+  // If we have a pre-resolved streamUrl from handleProcess, use it directly.
+  // Otherwise, call /resolve via the shared utility (with caching).
+  let resolvedForRegen: ResolvedStream | null = null;
+  if (existingStreamUrl) {
+    resolvedForRegen = {
+      streamUrl: existingStreamUrl,
+      userAgent: existingMetadata?.userAgent || '',
+      visitorData: existingMetadata?.visitorData || '',
+      xClientName: existingMetadata?.xClientName || '1',
+      clientVersion: existingMetadata?.clientVersion || '',
+      client: existingMetadata?.client || 'direct',
+      audioUrl: existingMetadata?.audioUrl,
+      duration: existingMetadata?.duration,
+    };
+    // Pre-populate the shared cache so handleDownload can reuse it
+    cacheResolvedStream(ytVideoId, resolvedForRegen);
+  } else {
+    try {
+      onProgress?.('Resolving video stream...');
+      resolvedForRegen = await resolveYouTubeStream(ytVideoId, 0);
+    } catch (resolveErr) {
+      console.warn('[Regenerate] /resolve failed:', resolveErr instanceof Error ? resolveErr.message : resolveErr);
+      onProgress?.('Video stream unavailable. Clips will use YouTube links.');
+      for (const clip of thumbnailClips) {
+        if (clip.linkOnlyUrl) {
+          onClipUpdated({ ...clip, videoUrl: null, status: 'link_only', isFallback: false });
+        }
+      }
+      return;
+    }
+  }
+
+  const videoStreamUrl = buildStreamProxyUrl(ytVideoId, resolvedForRegen);
   console.log(`[Regenerate] videoStreamUrl: ${videoStreamUrl.slice(0, 140)}...`);
 
+  // Health-check the /stream URL (with streamUrl param, this should work).
   try {
     onProgress?.('Checking video stream availability...');
     const healthRes = await fetch(videoStreamUrl, {
@@ -289,7 +328,6 @@ async function regenerateThumbnailClips(params: {
     if (!healthRes.ok) {
       console.warn(`[Regenerate] CF Worker /stream health check failed: HTTP ${healthRes.status}. YouTube may have blocked this colo. Skipping regeneration.`);
       onProgress?.(`Video stream unavailable (HTTP ${healthRes.status}). Clips will use YouTube links.`);
-      // Convert all fallback clips to link_only (they're already link_only or fallback).
       for (const clip of thumbnailClips) {
         if (clip.linkOnlyUrl) {
           onClipUpdated({ ...clip, videoUrl: null, status: 'link_only', isFallback: false });
@@ -310,11 +348,6 @@ async function regenerateThumbnailClips(params: {
   }
 
   console.log(`[Regenerate] CF Worker /stream available, processing ${thumbnailClips.length} clips`);
-
-  // videoStreamUrl was built above during the health check.
-  // CF Worker /stream proxies googlevideo.com; browser Range requests during seek
-  // are forwarded by CF Worker, bypassing YouTube IP binding.
-  console.log(`[Regenerate] videoStreamUrl: ${videoStreamUrl.slice(0, 140)}...`);
 
   for (let i = 0; i < thumbnailClips.length; i += 1) {
     try {
@@ -495,6 +528,7 @@ export default function VideoProcessor() {
   const [error, setError] = useState<string | null>(null);
   const [previewClip, setPreviewClip] = useState<VideoClip | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [downloadProgress, setDownloadProgress] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const trimmedVideoUrl = videoUrl.trim();
   const canStart = (!!trimmedVideoUrl && isHttpVideoUrl(trimmedVideoUrl)) || !!selectedFile;
@@ -976,53 +1010,53 @@ export default function VideoProcessor() {
   }, [accessToken, error, getLocalMediaBaseUrl, refreshCredits, selectedFile, trimmedVideoUrl, uploadToSupabase, useAgent, user]);
 
   const handleDownload = async (clip: VideoClip) => {
-    // link_only clips: use Edge Runtime API to download video directly.
-    // /api/yt-clip-download calls CF Worker /resolve (InnerTube API) to get streamUrl,
-    // then fetches video bytes from googlevideo.com via Vercel Edge Runtime (not blocked).
-    // Falls back to opening YouTube link if the Edge API fails.
+    // link_only clips: record the clip segment via browser captureStream + MediaRecorder.
+    //
+    // PROBLEM: The old /api/yt-clip-download Edge Runtime route is broken —
+    // Vercel Edge IPs are blocked by YouTube (403). CF Worker /stream without
+    // streamUrl param also fails (502 — InnerTube rate-limited on SJC colo).
+    //
+    // SOLUTION:
+    //   1. Resolve streamUrl via CF Worker /resolve (cached for 5h)
+    //   2. Pass streamUrl to CF Worker /stream (fast path — no InnerTube call)
+    //   3. Use captureVideoClip to record [startTime, endTime] segment (real-time)
+    //   4. Trigger browser download of the recorded blob
+    //
+    // If captureVideoClip fails (e.g., browser doesn't support captureStream),
+    // fall back to downloading the full video stream as a blob.
     if (clip.status === 'link_only' || (clip.isFallback === true && !clip.videoUrl)) {
-      const ytIdMatch = clip.linkOnlyUrl?.match(/youtu\.be\/([a-zA-Z0-9_-]{7,15})/);
-      if (!ytIdMatch) {
+      const ytVideoId = extractYouTubeVideoId(clip.linkOnlyUrl);
+      if (!ytVideoId) {
         if (clip.linkOnlyUrl) window.open(clip.linkOnlyUrl, '_blank');
         return;
       }
-      const ytVideoId = ytIdMatch[1];
       setDownloadingId(clip.id);
+      setDownloadProgress('Preparing download...');
       try {
-        // Build download URL for Edge Runtime API
-        const params = new URLSearchParams({
+        await downloadYouTubeClip({
           videoId: ytVideoId,
-          startTime: String(clip.startTime),
-          endTime: String(clip.endTime),
+          startTime: clip.startTime,
+          endTime: clip.endTime,
           title: clip.title,
+          onProgress: (msg) => setDownloadProgress(msg),
         });
-        const downloadUrl = `/api/yt-clip-download?${params}`;
-
-        // Fetch as blob (Edge Runtime streams video bytes with CORS headers)
-        const res = await fetch(downloadUrl, { signal: AbortSignal.timeout(55_000) });
-        if (!res.ok) {
-          console.warn(`[Download] Edge API HTTP ${res.status}, opening YouTube link`);
+      } catch (captureErr) {
+        console.warn('[Download] captureVideoClip failed, trying full video stream:', captureErr instanceof Error ? captureErr.message : captureErr);
+        setDownloadProgress('Trying alternative download...');
+        try {
+          await downloadFullVideoStream({
+            videoId: ytVideoId,
+            title: clip.title,
+            maxBytes: 50 * 1024 * 1024, // 50MB max
+            onProgress: (msg) => setDownloadProgress(msg),
+          });
+        } catch (fullErr) {
+          console.error('[Download] All download methods failed:', fullErr);
           if (clip.linkOnlyUrl) window.open(clip.linkOnlyUrl, '_blank');
-          return;
         }
-
-        const blob = await res.blob();
-        if (blob.size === 0) {
-          throw new Error('Empty response');
-        }
-
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = `${clip.title.replace(/[^a-zA-Z0-9]/g, '_')}.mp4`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(a.href);
-      } catch (e) {
-        console.error('Download (link_only) error:', e);
-        if (clip.linkOnlyUrl) window.open(clip.linkOnlyUrl, '_blank');
       } finally {
         setDownloadingId(null);
+        setDownloadProgress(null);
       }
       return;
     }
@@ -1377,7 +1411,7 @@ export default function VideoProcessor() {
                                 disabled={downloadingId === clip.id}
                               >
                                 {downloadingId === clip.id ? (
-                                  <><Loader2 className="h-4 w-4 animate-pulse" />{t('common.saving')}</>
+                                  <><Loader2 className="h-4 w-4 animate-pulse" />{downloadingId === clip.id && downloadProgress ? downloadProgress : t('common.saving')}</>
                                 ) : (
                                   <><Download className="h-4 w-4" />{t('video.download')}</>
                                 )}
@@ -1398,10 +1432,10 @@ export default function VideoProcessor() {
                                 className="flex-1 gap-1.5"
                                 onClick={() => handleDownload(clip)}
                                 disabled={downloadingId === clip.id}
-                                title="Download clip as MP4"
+                                title="Download clip (records ~15s in real-time)"
                               >
                                 {downloadingId === clip.id ? (
-                                  <><Loader2 className="h-4 w-4 animate-pulse" />{t('common.saving')}</>
+                                  <><Loader2 className="h-4 w-4 animate-pulse" />{downloadingId === clip.id && downloadProgress ? downloadProgress : t('common.saving')}</>
                                 ) : (
                                   <><Download className="h-4 w-4" />{t('video.download')}</>
                                 )}

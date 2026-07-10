@@ -128,6 +128,12 @@ export async function GET(request: Request) {
         error: 'video_fetch_failed',
         status: videoRes.status,
         details: errBody.slice(0, 200),
+        debug: url.searchParams.get('debug') === '1' ? {
+          fetchUrlPrefix: fetchUrl.slice(0, 100),
+          hasVisitorData: !!resolved.visitorData,
+          client: resolved.client,
+          xClientName: resolved.xClientName,
+        } : undefined,
       }), {
         status: 502,
         headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
