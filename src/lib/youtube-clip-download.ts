@@ -196,21 +196,214 @@ export function buildStreamProxyUrl(
 }
 
 /**
+ * Trim an ArrayBuffer to the last complete MP4 box boundary.
+ *
+ * YouTube DASH video-only streams (itag=136) are fragmented MP4 (fMP4):
+ *   ftyp + moov + (moof + mdat) * N
+ *
+ * When we do a partial Range download, the last moof or mdat box may be
+ * truncated. The browser's media engine encounters an incomplete box and
+ * throws MEDIA_ERR_SRC_NOT_SUPPORTED (error code 4) on play() or seek().
+ *
+ * This function parses MP4 boxes sequentially and truncates the buffer to
+ * the end of the last complete box. The result is a valid fMP4 file that
+ * the browser can play and seek within.
+ *
+ * Box format: [4 bytes size (big-endian uint32)] [4 bytes type (ascii)]
+ *   size=0: box extends to end of file (always complete)
+ *   size=1: actual size in next 8 bytes (uint64)
+ */
+function trimToCompleteFragment(buffer: ArrayBuffer): ArrayBuffer {
+  const view = new DataView(buffer);
+  const len = buffer.byteLength;
+  let offset = 0;
+  let lastValidEnd = 0;
+
+  while (offset + 8 <= len) {
+    const boxSize = view.getUint32(offset);
+    const typeBytes = [
+      view.getUint8(offset + 4),
+      view.getUint8(offset + 5),
+      view.getUint8(offset + 6),
+      view.getUint8(offset + 7),
+    ];
+    const boxType = String.fromCharCode(...typeBytes);
+
+    let actualSize: number;
+    if (boxSize === 0) {
+      // Box extends to end of file — always complete
+      lastValidEnd = len;
+      break;
+    } else if (boxSize === 1) {
+      // 64-bit size in next 8 bytes
+      if (offset + 16 > len) break;
+      const high = view.getUint32(offset + 8);
+      const low = view.getUint32(offset + 12);
+      if (high > 0) {
+        // >4GB, treat as extending to end
+        actualSize = len - offset;
+      } else {
+        actualSize = low;
+      }
+    } else {
+      actualSize = boxSize;
+    }
+
+    const boxEnd = offset + actualSize;
+    if (boxEnd > len) {
+      // This box is truncated — stop here
+      break;
+    }
+
+    // Box is complete
+    lastValidEnd = boxEnd;
+    offset = boxEnd;
+
+    // After mdat, we've completed a moof+mdat fragment pair.
+    // Log for debugging (removed in production)
+    if (boxType === 'mdat') {
+      // lastValidEnd already set above
+    }
+  }
+
+  if (lastValidEnd > 0 && lastValidEnd < len) {
+    return buffer.slice(0, lastValidEnd);
+  }
+  return buffer;
+}
+
+/**
+ * Download a clip via screen capture (getDisplayMedia).
+ *
+ * Used when the clip position is too far into the video (>~75s) for the blob
+ * approach to work. This method:
+ *   1. Asks the user to share their screen/tab
+ *   2. Creates a YouTube IFrame embed that autoplays from startTime
+ *   3. Records the shared stream for the clip duration
+ *   4. Triggers download of the recording
+ *
+ * Advantages: works at ANY position, includes AUDIO.
+ * Disadvantage: requires user to click "Share this tab".
+ */
+async function downloadViaScreenCapture(params: {
+  videoId: string;
+  startTime: number;
+  endTime: number;
+  title: string;
+  onProgress?: (msg: string) => void;
+}): Promise<{ blob: Blob; extension: string }> {
+  const { videoId, startTime, endTime, title, onProgress } = params;
+  const duration = Math.min(Math.max(1, endTime - startTime), 15);
+
+  onProgress?.('Requesting screen capture (please allow)...');
+
+  let displayStream: MediaStream;
+  try {
+    const displayOpts: DisplayMediaStreamOptions = {
+      video: { frameRate: 30 },
+      audio: true,
+    };
+    displayStream = await navigator.mediaDevices.getDisplayMedia(displayOpts);
+  } catch {
+    throw new Error('Screen capture was denied. Please allow screen sharing to download clips at this position.');
+  }
+
+  // Create fullscreen overlay with YouTube embed
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:#000;z-index:99999;';
+  document.body.appendChild(overlay);
+
+  const iframe = document.createElement('iframe');
+  iframe.src = `https://www.youtube.com/embed/${videoId}?start=${Math.floor(startTime)}&autoplay=1&controls=0&modestbranding=1&rel=0&playsinline=1`;
+  iframe.style.cssText = 'width:100%;height:100%;border:0;';
+  iframe.allow = 'autoplay; encrypted-media; picture-in-picture';
+  overlay.appendChild(iframe);
+
+  // Wait for iframe to load and start playing
+  await new Promise((r) => setTimeout(r, 3000));
+
+  // Set up MediaRecorder
+  const mimeTypes = [
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm',
+  ];
+  const mimeType = mimeTypes.find((m) => {
+    try { return MediaRecorder.isTypeSupported(m); } catch { return false; }
+  }) || 'video/webm';
+
+  const recorder = new MediaRecorder(displayStream, {
+    mimeType,
+    videoBitsPerSecond: 2_000_000,
+    audioBitsPerSecond: 128_000,
+  });
+
+  const chunks: Blob[] = [];
+  recorder.ondataavailable = (e) => {
+    if (e.data && e.data.size > 0) chunks.push(e.data);
+  };
+
+  const recordingDone = new Promise<Blob>((resolve) => {
+    recorder.onstop = () => {
+      resolve(new Blob(chunks, { type: mimeType.split(';')[0] }));
+    };
+  });
+
+  onProgress?.(`Recording ${duration}s (with audio)...`);
+  recorder.start(100);
+
+  // Wait for clip duration
+  await new Promise<void>((resolve) => {
+    const stopTime = Date.now() + duration * 1000;
+    const check = setInterval(() => {
+      if (Date.now() >= stopTime) {
+        clearInterval(check);
+        resolve();
+      }
+    }, 100);
+  });
+
+  // Cleanup
+  try { recorder.stop(); } catch {}
+  displayStream.getTracks().forEach((t) => t.stop());
+  overlay.remove();
+
+  const blob = await recordingDone;
+  if (blob.size < 10_000) throw new Error('Recording too small');
+
+  // Trigger download
+  const safeName = title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50) || 'clip';
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${safeName}.webm`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(a.href);
+
+  onProgress?.('Download complete!');
+  return { blob, extension: 'webm' };
+}
+
+/**
  * Download a YouTube video clip by recording it via captureStream + MediaRecorder.
  *
  * Flow:
  *   1. Resolve streamUrl via CF Worker /resolve (cached)
  *   2. Build /stream URL with streamUrl param (fast path, CORS-enabled)
- *   3. Fetch partial video as blob (enough to cover clip position)
- *   4. Create blob URL and load in <video> → metadata loads instantly
- *   5. Seek to startTime, use captureStream + MediaRecorder to record
- *   6. Trigger browser download of the recorded blob
+ *   3. Fetch partial video as ArrayBuffer
+ *   4. Trim to last complete MP4 fragment (fixes play/seek errors)
+ *   5. Create blob URL with explicit video/mp4 MIME type
+ *   6. Seek to startTime, use captureStream + MediaRecorder to record
+ *   7. Trigger browser download of the recorded blob
  *
- * CRITICAL: DASH video-only streams (itag=136) cannot be loaded directly by
- * <video src="streamUrl"> — loadedmetadata never fires because the browser's
- * media engine can't parse the fragmented MP4 in a streaming fashion. Fetching
- * as a blob first solves this: the browser has all data immediately available
- * and can parse ftyp+moov atoms from the beginning of the file.
+ * CRITICAL FIXES:
+ *   - DASH video-only streams (itag=136) cannot be loaded directly by
+ *     <video src="streamUrl">. Fetching as a blob first fixes metadata loading.
+ *   - Partial Range downloads may end mid-fragment, causing MEDIA_ERR_SRC_NOT_SUPPORTED.
+ *     trimToCompleteFragment() truncates to the last complete box boundary.
+ *   - For clips far into the video (>75s), falls back to screen capture
+ *     (getDisplayMedia) which works at any position and includes audio.
  *
  * @returns The recorded blob (also triggers download)
  */
@@ -223,6 +416,14 @@ export async function downloadYouTubeClip(params: {
 }): Promise<{ blob: Blob; extension: string }> {
   const { videoId, startTime, endTime, title, onProgress } = params;
 
+  // For clips far into the video (>75s), the blob approach requires too much
+  // data. Use screen capture instead (works at any position, includes audio).
+  const BLOB_MAX_END_TIME = 75; // seconds — ~30MB at 400KB/s
+  if (endTime > BLOB_MAX_END_TIME) {
+    onProgress?.('Clip is far into video, using screen capture...');
+    return downloadViaScreenCapture({ videoId, startTime, endTime, title, onProgress });
+  }
+
   onProgress?.('Resolving video stream...');
   const resolved = await resolveYouTubeStream(videoId);
 
@@ -233,27 +434,9 @@ export async function downloadYouTubeClip(params: {
   // 720p video-only stream (itag=136) is ~2-3Mbps (250-375 KB/s).
   // Use 400KB/s as a conservative estimate. Need data from 0 to endTime + 5s buffer.
   const BITRATE_BYTES_PER_SEC = 400_000;
-  const maxBlobSize = 50 * 1024 * 1024; // 50MB cap
-  const neededBytes = Math.min(
-    Math.ceil((endTime + 5) * BITRATE_BYTES_PER_SEC),
-    maxBlobSize,
-  );
+  const neededBytes = Math.ceil((endTime + 5) * BITRATE_BYTES_PER_SEC);
 
-  // If the clip is too far into the video (>~125s at 400KB/s), the blob
-  // approach would require too much data. Fall back to full stream download.
-  if (neededBytes >= maxBlobSize) {
-    onProgress?.('Clip position is far, downloading full stream...');
-    await downloadFullVideoStream({
-      videoId,
-      title,
-      maxBytes: maxBlobSize,
-      onProgress,
-    });
-    return { blob: new Blob(), extension: 'mp4' };
-  }
-
-  // Fetch partial video as a blob. This is the key fix: <video> can load
-  // metadata from a blob URL instantly, but can't parse DASH streams directly.
+  // Fetch partial video data as ArrayBuffer (not blob — we need to trim it)
   const sizeMB = (neededBytes / 1024 / 1024).toFixed(1);
   onProgress?.(`Downloading video data (${sizeMB}MB)...`);
   const videoRes = await fetch(streamProxyUrl, {
@@ -263,10 +446,20 @@ export async function downloadYouTubeClip(params: {
   if (!videoRes.ok && videoRes.status !== 206) {
     throw new Error(`Stream fetch failed: HTTP ${videoRes.status}`);
   }
-  const videoBlob = await videoRes.blob();
-  if (videoBlob.size < 50_000) {
-    throw new Error(`Stream too small: ${videoBlob.size} bytes`);
+
+  const arrayBuffer = await videoRes.arrayBuffer();
+  if (arrayBuffer.byteLength < 50_000) {
+    throw new Error(`Stream too small: ${arrayBuffer.byteLength} bytes`);
   }
+
+  // Trim to last complete MP4 fragment — this is the KEY fix.
+  // Incomplete fragments cause MEDIA_ERR_SRC_NOT_SUPPORTED on play/seek.
+  const trimmedBuffer = trimToCompleteFragment(arrayBuffer);
+  const trimmedMB = (trimmedBuffer.byteLength / 1024 / 1024).toFixed(1);
+  console.log(`[downloadYouTubeClip] Blob trimmed: ${arrayBuffer.byteLength} → ${trimmedBuffer.byteLength} bytes (${trimmedMB}MB)`);
+
+  // Create blob with explicit MIME type so the browser uses the MP4 media engine
+  const videoBlob = new Blob([trimmedBuffer], { type: 'video/mp4' });
   const blobUrl = URL.createObjectURL(videoBlob);
 
   onProgress?.('Recording clip (real-time, max 15s)...');
