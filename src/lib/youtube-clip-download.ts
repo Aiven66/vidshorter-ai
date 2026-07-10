@@ -201,8 +201,16 @@ export function buildStreamProxyUrl(
  * Flow:
  *   1. Resolve streamUrl via CF Worker /resolve (cached)
  *   2. Build /stream URL with streamUrl param (fast path, CORS-enabled)
- *   3. Use captureVideoClip to record [startTime, endTime] segment (real-time)
- *   4. Trigger browser download of the recorded blob
+ *   3. Fetch partial video as blob (enough to cover clip position)
+ *   4. Create blob URL and load in <video> → metadata loads instantly
+ *   5. Seek to startTime, use captureStream + MediaRecorder to record
+ *   6. Trigger browser download of the recorded blob
+ *
+ * CRITICAL: DASH video-only streams (itag=136) cannot be loaded directly by
+ * <video src="streamUrl"> — loadedmetadata never fires because the browser's
+ * media engine can't parse the fragmented MP4 in a streaming fashion. Fetching
+ * as a blob first solves this: the browser has all data immediately available
+ * and can parse ftyp+moov atoms from the beginning of the file.
  *
  * @returns The recorded blob (also triggers download)
  */
@@ -221,34 +229,76 @@ export async function downloadYouTubeClip(params: {
   onProgress?.('Preparing video player...');
   const streamProxyUrl = buildStreamProxyUrl(videoId, resolved);
 
-  onProgress?.('Recording clip (real-time, max 15s)...');
-  const { captureVideoClip } = await import('@/lib/ffmpeg-client');
-  const { videoBlob } = await captureVideoClip({
-    videoUrl: streamProxyUrl,
-    startTime,
-    endTime,
-    onProgress: (msg) => onProgress?.(msg),
-  });
+  // Calculate how many bytes we need to cover the clip position.
+  // 720p video-only stream (itag=136) is ~2-3Mbps (250-375 KB/s).
+  // Use 400KB/s as a conservative estimate. Need data from 0 to endTime + 5s buffer.
+  const BITRATE_BYTES_PER_SEC = 400_000;
+  const maxBlobSize = 50 * 1024 * 1024; // 50MB cap
+  const neededBytes = Math.min(
+    Math.ceil((endTime + 5) * BITRATE_BYTES_PER_SEC),
+    maxBlobSize,
+  );
 
-  if (videoBlob.size < 10_000) {
-    throw new Error(`Recording too small: ${videoBlob.size} bytes`);
+  // If the clip is too far into the video (>~125s at 400KB/s), the blob
+  // approach would require too much data. Fall back to full stream download.
+  if (neededBytes >= maxBlobSize) {
+    onProgress?.('Clip position is far, downloading full stream...');
+    await downloadFullVideoStream({
+      videoId,
+      title,
+      maxBytes: maxBlobSize,
+      onProgress,
+    });
+    return { blob: new Blob(), extension: 'mp4' };
   }
 
-  // Determine file extension from blob type
-  const extension = videoBlob.type.includes('mp4') ? 'mp4' : 'webm';
-  const safeName = (title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50) || 'clip');
+  // Fetch partial video as a blob. This is the key fix: <video> can load
+  // metadata from a blob URL instantly, but can't parse DASH streams directly.
+  const sizeMB = (neededBytes / 1024 / 1024).toFixed(1);
+  onProgress?.(`Downloading video data (${sizeMB}MB)...`);
+  const videoRes = await fetch(streamProxyUrl, {
+    headers: { Range: `bytes=0-${neededBytes - 1}` },
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!videoRes.ok && videoRes.status !== 206) {
+    throw new Error(`Stream fetch failed: HTTP ${videoRes.status}`);
+  }
+  const videoBlob = await videoRes.blob();
+  if (videoBlob.size < 50_000) {
+    throw new Error(`Stream too small: ${videoBlob.size} bytes`);
+  }
+  const blobUrl = URL.createObjectURL(videoBlob);
 
-  // Trigger download
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(videoBlob);
-  a.download = `${safeName}.${extension}`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(a.href);
+  onProgress?.('Recording clip (real-time, max 15s)...');
+  const { captureVideoClip } = await import('@/lib/ffmpeg-client');
+  try {
+    const { videoBlob: recordedBlob } = await captureVideoClip({
+      videoUrl: blobUrl,
+      startTime,
+      endTime,
+      onProgress: (msg) => onProgress?.(msg),
+    });
 
-  onProgress?.('Download complete!');
-  return { blob: videoBlob, extension };
+    if (recordedBlob.size < 10_000) {
+      throw new Error(`Recording too small: ${recordedBlob.size} bytes`);
+    }
+
+    const extension = recordedBlob.type.includes('mp4') ? 'mp4' : 'webm';
+    const safeName = (title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50) || 'clip');
+
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(recordedBlob);
+    a.download = `${safeName}.${extension}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(a.href);
+
+    onProgress?.('Download complete!');
+    return { blob: recordedBlob, extension };
+  } finally {
+    URL.revokeObjectURL(blobUrl);
+  }
 }
 
 /**
