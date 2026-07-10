@@ -319,6 +319,10 @@ async function downloadViaScreenCapture(params: {
  *   4. Seek to startTime, use captureStream + MediaRecorder to record
  *   5. Trigger browser download of the recorded blob
  *
+ * FALLBACK: If /stream fails (e.g., YouTube rate-limited the CF Worker colo)
+ * or returns non-MP4 data, falls back to screen capture (getDisplayMedia)
+ * which works at any position and includes audio.
+ *
  * CRITICAL FIXES (v10):
  *   - Removed /resolve + /stream fast-path dual call: caused 502 when the two
  *     requests routed to different CF Worker colos (different egress IPs).
@@ -373,20 +377,40 @@ export async function downloadYouTubeClip(params: {
   const BITRATE_BYTES_PER_SEC = 400_000;
   const neededBytes = Math.ceil((endTime + 5) * BITRATE_BYTES_PER_SEC);
 
-  // Fetch partial video data as ArrayBuffer
+  // Fetch partial video data as ArrayBuffer.
+  // If /stream fails (e.g., YouTube rate-limited the CF Worker colo) or
+  // returns a non-video response (JSON error), fall back to screen capture.
   const sizeMB = (neededBytes / 1024 / 1024).toFixed(1);
   onProgress?.(`Downloading video data (${sizeMB}MB)...`);
-  const videoRes = await fetch(streamEndpoint.toString(), {
-    headers: { Range: `bytes=0-${neededBytes - 1}` },
-    signal: AbortSignal.timeout(60_000),
-  });
-  if (!videoRes.ok && videoRes.status !== 206) {
-    throw new Error(`Stream fetch failed: HTTP ${videoRes.status}`);
-  }
-
-  const arrayBuffer = await videoRes.arrayBuffer();
-  if (arrayBuffer.byteLength < 50_000) {
-    throw new Error(`Stream too small: ${arrayBuffer.byteLength} bytes`);
+  let arrayBuffer: ArrayBuffer;
+  try {
+    const videoRes = await fetch(streamEndpoint.toString(), {
+      headers: { Range: `bytes=0-${neededBytes - 1}` },
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!videoRes.ok && videoRes.status !== 206) {
+      throw new Error(`Stream fetch failed: HTTP ${videoRes.status}`);
+    }
+    arrayBuffer = await videoRes.arrayBuffer();
+    // Check if response is a valid MP4 (starts with "ftyp" box at offset 4).
+    // /stream may return a JSON error (small, non-MP4) when YouTube rate-limits
+    // the CF Worker colo. In that case, fall back to screen capture.
+    if (arrayBuffer.byteLength < 50_000) {
+      const preview = new TextDecoder().decode(arrayBuffer.slice(0, 200));
+      throw new Error(`Stream returned non-video data (${arrayBuffer.byteLength} bytes): ${preview}`);
+    }
+    const view = new DataView(arrayBuffer);
+    const boxType = String.fromCharCode(
+      view.getUint8(4), view.getUint8(5), view.getUint8(6), view.getUint8(7),
+    );
+    if (boxType !== 'ftyp') {
+      const preview = new TextDecoder().decode(arrayBuffer.slice(0, 200));
+      throw new Error(`Stream returned non-MP4 data (boxType=${boxType}): ${preview}`);
+    }
+  } catch (streamErr) {
+    console.warn('[downloadYouTubeClip] /stream failed, falling back to screen capture:', streamErr instanceof Error ? streamErr.message : streamErr);
+    onProgress?.('Stream unavailable, using screen capture...');
+    return downloadViaScreenCapture({ videoId, startTime, endTime, title, onProgress });
   }
 
   // Use the full ArrayBuffer directly — do NOT trim.
