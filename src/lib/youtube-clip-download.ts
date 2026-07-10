@@ -196,83 +196,6 @@ export function buildStreamProxyUrl(
 }
 
 /**
- * Trim an ArrayBuffer to the last complete MP4 box boundary.
- *
- * YouTube DASH video-only streams (itag=136) are fragmented MP4 (fMP4):
- *   ftyp + moov + (moof + mdat) * N
- *
- * When we do a partial Range download, the last moof or mdat box may be
- * truncated. The browser's media engine encounters an incomplete box and
- * throws MEDIA_ERR_SRC_NOT_SUPPORTED (error code 4) on play() or seek().
- *
- * This function parses MP4 boxes sequentially and truncates the buffer to
- * the end of the last complete box. The result is a valid fMP4 file that
- * the browser can play and seek within.
- *
- * Box format: [4 bytes size (big-endian uint32)] [4 bytes type (ascii)]
- *   size=0: box extends to end of file (always complete)
- *   size=1: actual size in next 8 bytes (uint64)
- */
-function trimToCompleteFragment(buffer: ArrayBuffer): ArrayBuffer {
-  const view = new DataView(buffer);
-  const len = buffer.byteLength;
-  let offset = 0;
-  let lastValidEnd = 0;
-
-  while (offset + 8 <= len) {
-    const boxSize = view.getUint32(offset);
-    const typeBytes = [
-      view.getUint8(offset + 4),
-      view.getUint8(offset + 5),
-      view.getUint8(offset + 6),
-      view.getUint8(offset + 7),
-    ];
-    const boxType = String.fromCharCode(...typeBytes);
-
-    let actualSize: number;
-    if (boxSize === 0) {
-      // Box extends to end of file — always complete
-      lastValidEnd = len;
-      break;
-    } else if (boxSize === 1) {
-      // 64-bit size in next 8 bytes
-      if (offset + 16 > len) break;
-      const high = view.getUint32(offset + 8);
-      const low = view.getUint32(offset + 12);
-      if (high > 0) {
-        // >4GB, treat as extending to end
-        actualSize = len - offset;
-      } else {
-        actualSize = low;
-      }
-    } else {
-      actualSize = boxSize;
-    }
-
-    const boxEnd = offset + actualSize;
-    if (boxEnd > len) {
-      // This box is truncated — stop here
-      break;
-    }
-
-    // Box is complete
-    lastValidEnd = boxEnd;
-    offset = boxEnd;
-
-    // After mdat, we've completed a moof+mdat fragment pair.
-    // Log for debugging (removed in production)
-    if (boxType === 'mdat') {
-      // lastValidEnd already set above
-    }
-  }
-
-  if (lastValidEnd > 0 && lastValidEnd < len) {
-    return buffer.slice(0, lastValidEnd);
-  }
-  return buffer;
-}
-
-/**
  * Download a clip via screen capture (getDisplayMedia).
  *
  * Used when the clip position is too far into the video (>~75s) for the blob
@@ -389,19 +312,22 @@ async function downloadViaScreenCapture(params: {
  * Download a YouTube video clip by recording it via captureStream + MediaRecorder.
  *
  * Flow:
- *   1. Resolve streamUrl via CF Worker /resolve (cached)
- *   2. Build /stream URL with streamUrl param (fast path, CORS-enabled)
- *   3. Fetch partial video as ArrayBuffer
- *   4. Trim to last complete MP4 fragment (fixes play/seek errors)
- *   5. Create blob URL with explicit video/mp4 MIME type
- *   6. Seek to startTime, use captureStream + MediaRecorder to record
- *   7. Trigger browser download of the recorded blob
+ *   1. Build /stream URL directly (no streamUrl param) — Worker handles
+ *      resolve + stream internally, avoiding colo-mismatch 502 errors.
+ *   2. Fetch partial video as ArrayBuffer (combined MP4 from Worker fallback)
+ *   3. Create blob URL with explicit video/mp4 MIME type (no trimming)
+ *   4. Seek to startTime, use captureStream + MediaRecorder to record
+ *   5. Trigger browser download of the recorded blob
  *
- * CRITICAL FIXES:
- *   - DASH video-only streams (itag=136) cannot be loaded directly by
- *     <video src="streamUrl">. Fetching as a blob first fixes metadata loading.
- *   - Partial Range downloads may end mid-fragment, causing MEDIA_ERR_SRC_NOT_SUPPORTED.
- *     trimToCompleteFragment() truncates to the last complete box boundary.
+ * CRITICAL FIXES (v10):
+ *   - Removed /resolve + /stream fast-path dual call: caused 502 when the two
+ *     requests routed to different CF Worker colos (different egress IPs).
+ *     Direct /stream call lets Worker handle resolve internally with consistent
+ *     IP binding, and falls back to 360p combined MP4 (itag=18) when HD fails.
+ *   - Removed trimToCompleteFragment: it incorrectly truncated the buffer to
+ *     just ftyp+moov (517KB), discarding the entire mdat (video data).
+ *     Combined MP4 from /stream is a regular MP4 (ftyp+moov+mdat) that plays
+ *     and seeks correctly without trimming.
  *   - For clips far into the video (>75s), falls back to screen capture
  *     (getDisplayMedia) which works at any position and includes audio.
  *
@@ -424,22 +350,33 @@ export async function downloadYouTubeClip(params: {
     return downloadViaScreenCapture({ videoId, startTime, endTime, title, onProgress });
   }
 
-  onProgress?.('Resolving video stream...');
-  const resolved = await resolveYouTubeStream(videoId);
+  // Build /stream URL directly (without streamUrl param) — Worker handles
+  // resolve + stream internally. This avoids the 502 error caused by
+  // /resolve + /stream fast-path dual calls hitting different CF Worker colos
+  // (different egress IPs → streamUrl IP binding mismatch → YouTube 403).
+  // Worker falls back to 360p combined MP4 (itag=18) when 720p fails — this is
+  // a regular MP4 (ftyp+moov+mdat) that plays and seeks correctly.
+  const cfWorkerUrl = String(
+    typeof window !== 'undefined' ? window.__CF_WORKER_URL__ : '',
+  ).trim();
+  if (!cfWorkerUrl) {
+    throw new Error('CF_WORKER_URL not configured');
+  }
 
-  onProgress?.('Preparing video player...');
-  const streamProxyUrl = buildStreamProxyUrl(videoId, resolved);
+  const streamEndpoint = new URL(cfWorkerUrl);
+  streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
+  streamEndpoint.searchParams.set('videoId', videoId);
+  streamEndpoint.searchParams.set('maxHeight', '360');
 
   // Calculate how many bytes we need to cover the clip position.
-  // 720p video-only stream (itag=136) is ~2-3Mbps (250-375 KB/s).
-  // Use 400KB/s as a conservative estimate. Need data from 0 to endTime + 5s buffer.
+  // 360p combined MP4 (itag=18) is ~400KB/s. Need data from 0 to endTime + 5s buffer.
   const BITRATE_BYTES_PER_SEC = 400_000;
   const neededBytes = Math.ceil((endTime + 5) * BITRATE_BYTES_PER_SEC);
 
-  // Fetch partial video data as ArrayBuffer (not blob — we need to trim it)
+  // Fetch partial video data as ArrayBuffer
   const sizeMB = (neededBytes / 1024 / 1024).toFixed(1);
   onProgress?.(`Downloading video data (${sizeMB}MB)...`);
-  const videoRes = await fetch(streamProxyUrl, {
+  const videoRes = await fetch(streamEndpoint.toString(), {
     headers: { Range: `bytes=0-${neededBytes - 1}` },
     signal: AbortSignal.timeout(60_000),
   });
@@ -452,14 +389,17 @@ export async function downloadYouTubeClip(params: {
     throw new Error(`Stream too small: ${arrayBuffer.byteLength} bytes`);
   }
 
-  // Trim to last complete MP4 fragment — this is the KEY fix.
-  // Incomplete fragments cause MEDIA_ERR_SRC_NOT_SUPPORTED on play/seek.
-  const trimmedBuffer = trimToCompleteFragment(arrayBuffer);
-  const trimmedMB = (trimmedBuffer.byteLength / 1024 / 1024).toFixed(1);
-  console.log(`[downloadYouTubeClip] Blob trimmed: ${arrayBuffer.byteLength} → ${trimmedBuffer.byteLength} bytes (${trimmedMB}MB)`);
+  // Use the full ArrayBuffer directly — do NOT trim.
+  // Combined MP4 (itag=18) from /stream is a regular MP4 (ftyp+moov+mdat),
+  // not DASH fMP4. trimToCompleteFragment was found to incorrectly truncate
+  // the buffer to just ftyp+moov (~517KB), discarding all mdat video data.
+  // Tests confirmed: 5MB and 10MB complete blobs load metadata, seek, and
+  // record correctly without any trimming.
+  const downloadedMB = (arrayBuffer.byteLength / 1024 / 1024).toFixed(1);
+  console.log(`[downloadYouTubeClip] Blob downloaded: ${arrayBuffer.byteLength} bytes (${downloadedMB}MB)`);
 
   // Create blob with explicit MIME type so the browser uses the MP4 media engine
-  const videoBlob = new Blob([trimmedBuffer], { type: 'video/mp4' });
+  const videoBlob = new Blob([arrayBuffer], { type: 'video/mp4' });
   const blobUrl = URL.createObjectURL(videoBlob);
 
   onProgress?.('Recording clip (real-time, max 15s)...');
