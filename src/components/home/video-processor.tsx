@@ -10,6 +10,7 @@ import { Progress } from '@/components/ui/progress';
 import { useLocale } from '@/lib/locale-context';
 import { useAuth } from '@/lib/auth-context';
 import { useCredits } from '@/lib/credits-context';
+import { isAdminUser } from '@/lib/admin-gate';
 import { getSupabaseClient, isSupabaseConfigured } from '@/storage/database/supabase-client';
 import {
   downloadYouTubeClip,
@@ -626,7 +627,7 @@ export default function VideoProcessor() {
       return;
     }
     const latestBalance = await refreshCredits();
-    if (latestBalance < 60) { setError('Insufficient credits. You need at least 60 credits.'); return; }
+    if (!isAdminUser(user) && latestBalance < 60) { setError('Insufficient credits. You need at least 60 credits.'); return; }
 
     setIsProcessing(true);
     setProgress({ stage: 'init', progress: 0, message: 'Starting...' });

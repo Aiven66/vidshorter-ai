@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { useAuth } from './auth-context';
+import { isAdminUser } from './admin-gate';
 
 function isSupabaseConfigured(): boolean {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.COZE_SUPABASE_URL;
@@ -120,7 +121,7 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (user) {
       // Admin always gets 10000 credits
-      const isAdmin = user.role === 'admin';
+      const isAdmin = isAdminUser(user);
       const defaultCredits = isAdmin ? ADMIN_CREDITS : DAILY_FREE_CREDITS;
       const useDemoMode = !isSupabaseConfigured() || user.id.startsWith('demo-') || user.id.startsWith('google-demo-');
 
@@ -158,7 +159,7 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
   async function fetchCredits() {
     // Check configuration directly
     if (!isSupabaseConfigured()) {
-      const isAdmin = user?.role === 'admin';
+      const isAdmin = isAdminUser(user);
       const defaultCredits = isAdmin ? ADMIN_CREDITS : DAILY_FREE_CREDITS;
       if (isAdmin || !shouldResetDemoCredits()) {
         setBalance(getDemoCredits(user?.id));
@@ -189,7 +190,7 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
         .select('plan_type')
         .eq('user_id', user.id)
         .maybeSingle();
-      const dailyCredits = user.role === 'admin' ? ADMIN_CREDITS : planDailyCredits(sub?.plan_type);
+      const dailyCredits = isAdminUser(user) ? ADMIN_CREDITS : planDailyCredits(sub?.plan_type);
 
       const { data, error } = await client
         .from('credits')
@@ -206,10 +207,10 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
       }
       
       if (data) {
-        if (user.role !== 'admin' && shouldResetUtc(data.last_reset_at)) {
+        if (!isAdminUser(user) && shouldResetUtc(data.last_reset_at)) {
           await refreshCredits();
         } else {
-          setBalance(user.role === 'admin' ? Math.max(data.balance, ADMIN_CREDITS) : data.balance);
+          setBalance(isAdminUser(user) ? Math.max(data.balance, ADMIN_CREDITS) : data.balance);
         }
       } else {
         // Create credits record for new user
@@ -243,19 +244,19 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
 
     // Demo mode
     if (!isSupabaseConfigured() || user.id.startsWith('demo-') || user.id.startsWith('google-demo-')) {
-      const isAdmin = user.role === 'admin';
+      const isAdmin = isAdminUser(user);
       const resetAmount = isAdmin ? ADMIN_CREDITS : DAILY_FREE_CREDITS;
       setBalance(resetAmount);
       saveDemoCredits(resetAmount, user.id);
       setDemoResetTime();
       return resetAmount;
     }
-    
+
     try {
       if (!accessToken) return balance;
       const client = await getSupabaseClient(accessToken);
 
-      if (user.role === 'admin') {
+      if (isAdminUser(user)) {
         const adminBalance = Math.max(balance, ADMIN_CREDITS);
         setBalance(adminBalance);
         return adminBalance;
@@ -311,7 +312,7 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
 
   async function deductCredits(amount: number): Promise<boolean> {
     if (!user) return false;
-    if (user.role === 'admin') return true;
+    if (isAdminUser(user)) return true;
     if (balance < amount) return false;
 
     // Demo mode

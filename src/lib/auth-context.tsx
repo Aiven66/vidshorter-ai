@@ -114,6 +114,9 @@ const DEMO_ADMINS: Record<string, { password: string; name: string; email: strin
   'admin': { password: 'admin123', name: 'Admin', email: 'admin@clipop.ai' },
 };
 
+// Verified admin emails — used when users table doesn't have the record
+const ADMIN_EMAILS = new Set(['admin@clipop.ai', 'admin@126.com', 'admin@vidshorter.ai']);
+
 function isDemoAdmin(email: string, password: string): boolean {
   const admin = DEMO_ADMINS[email.toLowerCase()];
   return !!admin && admin.password === password;
@@ -215,7 +218,7 @@ async function verifyTokenAndFetchUser(token: string): Promise<User | null> {
       id: authUser.id,
       email: authUser.email || '',
       name: authUser.user_metadata?.name || null,
-      role: 'user',
+      role: ADMIN_EMAILS.has((authUser.email || '').toLowerCase()) ? 'admin' : 'user',
       avatarUrl: authUser.user_metadata?.avatar_url || null,
     };
   } catch {
@@ -363,7 +366,7 @@ function applyDesktopToken(
       id: fallbackUserId || '',
       email: fallbackEmail,
       name: fallbackName || fallbackEmail.split('@')[0],
-      role: 'user',
+      role: ADMIN_EMAILS.has(fallbackEmail.toLowerCase()) ? 'admin' : 'user',
       avatarUrl: null,
     });
     setLoading(false);
@@ -498,11 +501,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             avatarUrl: userData.avatar_url,
           });
         } else {
+          const email = session.user.email || '';
           setUser({
             id: session.user.id,
-            email: session.user.email || '',
+            email,
             name: session.user.user_metadata?.name || null,
-            role: 'user',
+            role: ADMIN_EMAILS.has(email.toLowerCase()) ? 'admin' : 'user',
             avatarUrl: session.user.user_metadata?.avatar_url || null,
           });
         }
@@ -601,11 +605,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                     avatarUrl: userData.avatar_url,
                   });
                 } else {
+                  const email = user.email || '';
                   setUser({
                     id: user.id,
-                    email: user.email || '',
+                    email,
                     name: user.user_metadata?.name || null,
-                    role: 'user',
+                    role: ADMIN_EMAILS.has(email.toLowerCase()) ? 'admin' : 'user',
                     avatarUrl: user.user_metadata?.avatar_url || null,
                   });
 

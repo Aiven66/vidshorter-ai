@@ -272,6 +272,11 @@ export async function POST(request: NextRequest) {
             .maybeSingle();
           userRole = profile?.role || 'user';
 
+          // Also check by email (admin@clipop.ai, admin@126.com) — users table may not have the record
+          const ADMIN_EMAILS = new Set(['admin@clipop.ai', 'admin@126.com', 'admin@vidshorter.ai']);
+          const isAdminEmail = user.email ? ADMIN_EMAILS.has(user.email.toLowerCase()) : false;
+          if (isAdminEmail) userRole = 'admin';
+
           if (!isContinuation && clipOffset === 0 && userRole !== 'admin') {
             const { data: sub } = await client
               .from('subscriptions')
