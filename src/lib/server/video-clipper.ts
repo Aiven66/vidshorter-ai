@@ -3005,6 +3005,9 @@ async function createLocalClip(params: {
   // 快速模式：使用 -c copy 流复制，速度极快但只能在关键帧处切割
   // 适合 SD 模式下快速生成高光片段
   fastCopy?: boolean;
+  // 可选：限制最终可内联的最大字节数。用于 /api/download-youtube-clip 这种
+  // 对响应体大小有严格限制（Vercel 4.5/6MB）的端点。
+  maxInlineBytes?: number;
 }): Promise<ClipResult> {
   await ensureDirectories();
   const ffmpegPath = await ensureFfmpegAvailable();
@@ -3063,6 +3066,7 @@ async function createLocalClip(params: {
 
   // On Vercel: use aggressive compression to keep output small for base64 inline transport.
   // 360p + CRF 28 + ultrafast → typically 1.5-4 MB for a 30-60s clip.
+  const maxInlineBytes = Math.min(params.maxInlineBytes ?? MAX_INLINE_BYTES, MAX_INLINE_BYTES);
   const videoFilter = SHOULD_INLINE_CLIPS
     ? ['-vf', VERCEL_SCALE]
     : ['-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2'];
@@ -3193,7 +3197,7 @@ async function createLocalClip(params: {
     let fileBuffer = await readFile(outputPath);
     let fileSizeBytes = fileBuffer.length;
 
-    if (SHOULD_INLINE_CLIPS && fileSizeBytes > MAX_INLINE_BYTES) {
+    if (SHOULD_INLINE_CLIPS && fileSizeBytes > maxInlineBytes) {
       const attempts = [
         { crfDelta: 6, width: VERCEL_TARGET_WIDTH_NUM, height: VERCEL_TARGET_HEIGHT_NUM },
         { crfDelta: 10, width: 854, height: 480 },
@@ -3202,7 +3206,7 @@ async function createLocalClip(params: {
       ];
 
       const baseCrf = clampInt(VERCEL_CRF, 22, 40, 26);
-      for (let i = 0; i < attempts.length && fileSizeBytes > MAX_INLINE_BYTES; i += 1) {
+      for (let i = 0; i < attempts.length && fileSizeBytes > maxInlineBytes; i += 1) {
         const t = attempts[i];
         const fallbackCrf = String(Math.min(40, baseCrf + t.crfDelta));
         const fallbackW = String(ensureEven(t.width));
@@ -3234,19 +3238,19 @@ async function createLocalClip(params: {
         }
       }
 
-      if (fileSizeBytes <= MAX_INLINE_BYTES) {
+      if (fileSizeBytes <= maxInlineBytes) {
         unlink(outputPath).catch(() => {});
       }
     }
 
-    if (SHOULD_INLINE_CLIPS && fileSizeBytes <= MAX_INLINE_BYTES) {
+    if (SHOULD_INLINE_CLIPS && fileSizeBytes <= maxInlineBytes) {
       dataUrl = `data:video/mp4;base64,${fileBuffer.toString('base64')}`;
       console.log(`Clip inlined as data URL: ${Math.round(fileSizeBytes / 1024)}KB`);
       if (dataUrl) {
         unlink(outputPath).catch(() => {});
       }
     } else {
-      console.warn(`Clip too large for inline (${Math.round(fileSizeBytes / 1024 / 1024)}MB > ${MAX_INLINE_BYTES / 1024 / 1024}MB limit), falling back to serve-clip`);
+      console.warn(`Clip too large for inline (${Math.round(fileSizeBytes / 1024 / 1024)}MB > ${maxInlineBytes / 1024 / 1024}MB limit), falling back to serve-clip`);
     }
   } catch (readErr) {
     console.warn('Could not read clip for data URL:', readErr instanceof Error ? readErr.message : readErr);
@@ -3295,6 +3299,7 @@ async function analyzeVideo(videoUrl: string): Promise<VideoAnalysisResult> {
 
 async function downloadYouTubeClip(params: {
   videoUrl: string; title: string; startTime: number; endTime: number;
+  maxInlineBytes?: number;
 }) {
   const source = await downloadSourceVideo(params.videoUrl);
   return createLocalClip({
@@ -3304,6 +3309,7 @@ async function downloadYouTubeClip(params: {
     startTime: params.startTime,
     endTime: params.endTime,
     title: params.title,
+    maxInlineBytes: params.maxInlineBytes,
   });
 }
 

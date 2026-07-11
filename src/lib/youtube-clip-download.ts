@@ -398,13 +398,14 @@ async function fetchStreamChunked(
 }
 
 /**
- * Download a YouTube video clip via canvas captureStream + decoded audio buffer.
+ * Download a YouTube video clip.
  *
- * Key insight: createMediaElementSource() on cross-origin audio elements
- * outputs zeroes due to CORS taint. We bypass this by fetching the audio
- * stream as ArrayBuffer and decoding it with AudioContext.decodeAudioData().
- * AudioBufferSourceNode can then play from any offset and route to a
- * MediaStreamDestination, giving us a real audio track.
+ * PRIMARY PATH (v20): call the server-side /api/download-youtube-clip endpoint.
+ * It uses ffmpeg to merge video+audio streams and cut the exact [startTime, endTime]
+ * segment. This avoids browser-side CORS taint, missing audio, and seek failures.
+ *
+ * FALLBACK PATH: browser-side canvas captureStream + decoded audio buffer.
+ * Used only when the server endpoint fails or is unreachable.
  *
  * @returns The recorded blob (also triggers download)
  */
@@ -417,6 +418,53 @@ export async function downloadYouTubeClip(params: {
 }): Promise<{ blob: Blob; extension: string }> {
   const { videoId, startTime, endTime, title, onProgress } = params;
 
+  // ── Primary path: server-side ffmpeg clipper ───────────────────────────────
+  try {
+    onProgress?.('Preparing server-side clip...');
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const apiUrl = new URL('/api/download-youtube-clip', origin || undefined);
+    apiUrl.searchParams.set('videoId', videoId);
+    apiUrl.searchParams.set('startTime', String(startTime));
+    apiUrl.searchParams.set('endTime', String(endTime));
+    apiUrl.searchParams.set('title', title);
+
+    const res = await fetch(apiUrl.toString(), {
+      signal: AbortSignal.timeout(300_000), // 5 minutes — server may download + transcode
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      throw new Error(body.error || `Server clip failed: HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+    if (!data.success || !data.dataUrl || !data.dataUrl.startsWith('data:')) {
+      throw new Error(data.error || 'Server returned no clip data');
+    }
+
+    onProgress?.('Downloading clip...');
+    const blob = await fetch(data.dataUrl).then((r) => r.blob());
+    if (blob.size < 1_000) {
+      throw new Error(`Server clip too small: ${blob.size} bytes`);
+    }
+
+    const safeName = (title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50) || 'clip');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${safeName}.mp4`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+
+    onProgress?.('Download complete!');
+    return { blob, extension: 'mp4' };
+  } catch (serverErr) {
+    console.warn('[downloadYouTubeClip] Server-side clip failed, falling back to browser capture:', serverErr);
+    onProgress?.('Server clip unavailable, using browser fallback...');
+  }
+
+  // ── Fallback path: browser-side capture (existing implementation) ───────────
   const cfWorkerUrl = String(
     typeof window !== 'undefined' ? window.__CF_WORKER_URL__ : '',
   ).trim();
