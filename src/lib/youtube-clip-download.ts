@@ -1,22 +1,24 @@
 'use client';
 
 /**
- * YouTube clip download utility — canvas captureStream + Web Audio API.
+ * YouTube clip download utility — canvas captureStream + decoded audio buffer.
  *
  * PROBLEM:
  *   - video.captureStream() on cross-origin video may return empty frames
- *   - createMediaElementSource() on cross-origin audio may fail (CORS taint)
+ *   - createMediaElementSource() on cross-origin audio outputs zeros (CORS taint)
  *   - googlevideo.com streamUrls are video-only DASH (itag=136), no audio
  *   - googlevideo.com begin param signature mismatch — can't seek via URL
  *
- * SOLUTION (v18):
+ * SOLUTION (v19):
  *   1. /resolve to get streamUrl (video) + audioUrl (audio)
- *   2. /stream?streamUrl=... proxies video and audio with CORS headers
- *   3. <video> plays video stream, <audio> plays audio stream
+ *   2. /stream?streamUrl=... proxies both streams with CORS headers
+ *   3. <video> plays video stream, seek to startTime
  *   4. requestAnimationFrame draws video frames to <canvas>
- *   5. canvas.captureStream(30) → video track (always works, no CORS taint)
- *   6. AudioContext + createMediaElementSource(audio) → audio track
- *   7. Merge tracks → MediaRecorder → download
+ *   5. canvas.captureStream(30) → video track
+ *   6. fetch audio ArrayBuffer → decodeAudioData → AudioBufferSourceNode
+ *      (bypasses audio element CORS taint)
+ *   7. AudioBufferSourceNode.start(0, startTime, duration) → audio track
+ *   8. Merge tracks → MediaRecorder → download
  *
  * FALLBACK CHAIN (in handleDownload):
  *   downloadYouTubeClip → downloadFullVideoStream → downloadPartialMP4 → window.open(linkOnlyUrl)
@@ -396,21 +398,13 @@ async function fetchStreamChunked(
 }
 
 /**
- * Download a YouTube video clip via canvas captureStream + Web Audio API.
+ * Download a YouTube video clip via canvas captureStream + decoded audio buffer.
  *
- * This approach bypasses video.captureStream() (which may return empty frames
- * on cross-origin video) by manually drawing video frames to a canvas and
- * using canvas.captureStream() for the video track.
- *
- * Flow:
- *   1. /resolve → streamUrl (video) + audioUrl (audio)
- *   2. /stream?streamUrl=... proxies both streams with CORS headers
- *   3. <video> plays video stream (muted, hidden but rendered)
- *   4. <audio> plays audio stream (if separate audioUrl)
- *   5. requestAnimationFrame draws video frames → <canvas>
- *   6. canvas.captureStream(30) → video track
- *   7. AudioContext + createMediaElementSource(audio) → audio track
- *   8. Merge tracks → MediaRecorder → download
+ * Key insight: createMediaElementSource() on cross-origin audio elements
+ * outputs zeroes due to CORS taint. We bypass this by fetching the audio
+ * stream as ArrayBuffer and decoding it with AudioContext.decodeAudioData().
+ * AudioBufferSourceNode can then play from any offset and route to a
+ * MediaStreamDestination, giving us a real audio track.
  *
  * @returns The recorded blob (also triggers download)
  */
@@ -430,7 +424,7 @@ export async function downloadYouTubeClip(params: {
     throw new Error('CF_WORKER_URL not configured');
   }
 
-  // Step 1: Resolve stream URLs
+  // Step 1: Resolve stream URLs (bypass cache to ensure fresh streamUrl).
   onProgress?.('Resolving video stream...');
   let resolved: ResolvedStream | null = null;
   try {
@@ -445,7 +439,11 @@ export async function downloadYouTubeClip(params: {
     console.warn('[downloadYouTubeClip] /resolve failed:', resolveErr);
   }
 
-  // Step 2: Build /stream?streamUrl=... URLs
+  if (resolved && !resolved.streamUrl) {
+    resolved = null;
+  }
+
+  // Step 2: Build /stream?streamUrl=... URLs (fast path).
   const streamBase = new URL(cfWorkerUrl);
   streamBase.pathname = `${streamBase.pathname.replace(/\/$/, '')}/stream`;
 
@@ -471,7 +469,6 @@ export async function downloadYouTubeClip(params: {
       audioStreamUrl = buildStreamUrl(resolved.audioUrl);
     }
   } else {
-    // Slow path
     const u = new URL(streamBase.toString());
     u.searchParams.set('videoId', videoId);
     u.searchParams.set('maxHeight', '360');
@@ -483,25 +480,14 @@ export async function downloadYouTubeClip(params: {
 
   onProgress?.('Loading video stream...');
 
-  // Create video element — must be in DOM and rendered (not display:none)
-  // for canvas.drawImage to work. Use opacity:0.01 to keep it invisible.
+  // Create video element — must be in DOM and rendered for canvas.drawImage.
   const video = document.createElement('video');
   video.crossOrigin = 'anonymous';
-  video.muted = true; // Bypass autoplay policy
+  video.muted = true; // Bypass autoplay policy; captureStream still gets audio
   video.playsInline = true;
   video.preload = 'auto';
   video.style.cssText = 'position:fixed;left:0;top:0;width:640px;height:360px;opacity:0.01;pointer-events:none;z-index:-1;';
   document.body.appendChild(video);
-
-  // Create audio element (for separate audio stream)
-  let audioEl: HTMLAudioElement | null = null;
-  if (audioStreamUrl) {
-    audioEl = document.createElement('audio');
-    audioEl.crossOrigin = 'anonymous';
-    audioEl.preload = 'auto';
-    audioEl.style.cssText = 'position:fixed;left:-9999px;top:0;pointer-events:none;';
-    document.body.appendChild(audioEl);
-  }
 
   // Create canvas for video frame capture
   const canvas = document.createElement('canvas');
@@ -512,8 +498,9 @@ export async function downloadYouTubeClip(params: {
   const ctx = canvas.getContext('2d', { alpha: false });
 
   let recorder: MediaRecorder | null = null;
-  let cleanupAudioCtx: AudioContext | null = null;
+  let audioCtx: AudioContext | null = null;
   let rafId: number | null = null;
+  let audioSource: AudioBufferSourceNode | null = null;
 
   try {
     if (!ctx) throw new Error('Canvas 2D context not available');
@@ -532,30 +519,11 @@ export async function downloadYouTubeClip(params: {
       video.addEventListener('error', onError, { once: true });
     });
 
-    // Update canvas size to match video
+    // Match canvas size to video
     const vw = video.videoWidth || 640;
     const vh = video.videoHeight || 360;
     canvas.width = vw;
     canvas.height = vh;
-
-    // Load audio (if separate stream)
-    if (audioEl) {
-      audioEl.src = audioStreamUrl!;
-      await new Promise<void>((resolve) => {
-        const timeout = setTimeout(() => {
-          console.warn('[downloadYouTubeClip] Audio load timeout, proceeding without audio');
-          resolve();
-        }, 15_000);
-        const onReady = () => { clearTimeout(timeout); resolve(); };
-        const onError = () => {
-          clearTimeout(timeout);
-          console.warn('[downloadYouTubeClip] Audio load failed, proceeding without audio');
-          resolve();
-        };
-        audioEl!.addEventListener('canplaythrough', onReady, { once: true });
-        audioEl!.addEventListener('error', onError, { once: true });
-      });
-    }
 
     // Seek video to startTime
     if (startTime > 0.1) {
@@ -571,67 +539,12 @@ export async function downloadYouTubeClip(params: {
       });
     }
 
-    // Seek audio to startTime
-    if (audioEl && startTime > 0.1) {
-      try {
-        audioEl.currentTime = Math.max(0, startTime);
-        await new Promise<void>((resolve) => {
-          const timeout = setTimeout(resolve, 10_000);
-          const onSeeked = () => { clearTimeout(timeout); resolve(); };
-          audioEl!.addEventListener('seeked', onSeeked, { once: true });
-        });
-      } catch {
-        console.warn('[downloadYouTubeClip] Audio seek failed');
-      }
-    }
-
-    // Play video
+    // Play video (muted=true bypasses autoplay policy)
     onProgress?.('Starting recording...');
     try {
       await video.play();
     } catch (playErr) {
       throw new Error(`Video play failed: ${playErr instanceof Error ? playErr.message : playErr}`);
-    }
-
-    // Set up audio via Web Audio API
-    let audioTrack: MediaStreamTrack | null = null;
-    if (audioEl) {
-      try {
-        const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-        const audioCtx = new AudioCtx();
-        cleanupAudioCtx = audioCtx;
-        if (audioCtx.state === 'suspended') {
-          await audioCtx.resume();
-        }
-        const sourceNode = audioCtx.createMediaElementSource(audioEl);
-        const destNode = audioCtx.createMediaStreamDestination();
-        sourceNode.connect(destNode);
-        await audioEl.play();
-        audioTrack = destNode.stream.getAudioTracks()[0] || null;
-        console.log('[downloadYouTubeClip] Audio track from separate audio stream:', !!audioTrack);
-      } catch (audioErr) {
-        console.warn('[downloadYouTubeClip] Separate audio failed:', audioErr);
-      }
-    }
-
-    // If no separate audio, try Web Audio API on video element (for muxed format)
-    if (!audioTrack) {
-      try {
-        const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-        if (!cleanupAudioCtx) {
-          cleanupAudioCtx = new AudioCtx();
-          if (cleanupAudioCtx.state === 'suspended') {
-            await cleanupAudioCtx.resume();
-          }
-        }
-        const sourceNode = cleanupAudioCtx.createMediaElementSource(video);
-        const destNode = cleanupAudioCtx.createMediaStreamDestination();
-        sourceNode.connect(destNode);
-        audioTrack = destNode.stream.getAudioTracks()[0] || null;
-        console.log('[downloadYouTubeClip] Audio track from video element:', !!audioTrack);
-      } catch (audioErr) {
-        console.warn('[downloadYouTubeClip] Video audio extraction failed:', audioErr);
-      }
     }
 
     // Start drawing video frames to canvas
@@ -640,20 +553,87 @@ export async function downloadYouTubeClip(params: {
         if (!video.paused && !video.ended) {
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         }
-      } catch {}
+      } catch (e) {
+        // drawImage may throw if video frame not ready; ignore
+      }
       rafId = requestAnimationFrame(drawFrame);
     };
     rafId = requestAnimationFrame(drawFrame);
 
-    // Wait a bit for first frame to be drawn
-    await new Promise<void>((r) => setTimeout(r, 100));
-
     // Capture canvas stream (video track)
+    await new Promise<void>((r) => setTimeout(r, 100));
     const canvasStream = canvas.captureStream(30);
     const videoTrack = canvasStream.getVideoTracks()[0];
     if (!videoTrack) throw new Error('Failed to capture canvas stream');
 
-    // Merge video + audio tracks
+    // Set up audio track
+    let audioTrack: MediaStreamTrack | null = null;
+
+    if (audioStreamUrl) {
+      try {
+        onProgress?.('Loading audio stream...');
+
+        // Fetch audio data directly (bypasses audio element CORS taint)
+        const audioRes = await fetch(audioStreamUrl, {
+          signal: AbortSignal.timeout(30_000),
+        });
+        if (!audioRes.ok) {
+          throw new Error(`Audio fetch failed: HTTP ${audioRes.status}`);
+        }
+        const audioBuffer = await audioRes.arrayBuffer();
+        if (audioBuffer.byteLength < 1_000) {
+          throw new Error(`Audio data too small: ${audioBuffer.byteLength}`);
+        }
+
+        const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        audioCtx = new AudioCtx();
+        if (audioCtx.state === 'suspended') {
+          await audioCtx.resume();
+        }
+
+        const decodedAudio = await audioCtx.decodeAudioData(audioBuffer);
+        console.log('[downloadYouTubeClip] Decoded audio:', {
+          duration: decodedAudio.duration,
+          channels: decodedAudio.numberOfChannels,
+          sampleRate: decodedAudio.sampleRate,
+        });
+
+        // Create audio track from decoded buffer
+        const destNode = audioCtx.createMediaStreamDestination();
+        audioSource = audioCtx.createBufferSource();
+        audioSource.buffer = decodedAudio;
+        audioSource.connect(destNode);
+        // Start at startTime, play for clip duration
+        audioSource.start(0, Math.max(0, startTime), duration);
+        audioTrack = destNode.stream.getAudioTracks()[0] || null;
+
+        console.log('[downloadYouTubeClip] Audio track from decoded buffer:', !!audioTrack);
+      } catch (audioErr) {
+        console.warn('[downloadYouTubeClip] Decoded audio failed:', audioErr);
+      }
+    }
+
+    // Fallback: extract audio from video element (if muxed format)
+    if (!audioTrack) {
+      try {
+        const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        if (!audioCtx) {
+          audioCtx = new AudioCtx();
+          if (audioCtx.state === 'suspended') {
+            await audioCtx.resume();
+          }
+        }
+        const sourceNode = audioCtx.createMediaElementSource(video);
+        const destNode = audioCtx.createMediaStreamDestination();
+        sourceNode.connect(destNode);
+        audioTrack = destNode.stream.getAudioTracks()[0] || null;
+        console.log('[downloadYouTubeClip] Audio track from video element:', !!audioTrack);
+      } catch (audioErr) {
+        console.warn('[downloadYouTubeClip] Video audio extraction failed:', audioErr);
+      }
+    }
+
+    // Merge tracks
     const tracks: MediaStreamTrack[] = [videoTrack];
     if (audioTrack) tracks.push(audioTrack);
     const mergedStream = new MediaStream(tracks);
@@ -663,7 +643,7 @@ export async function downloadYouTubeClip(params: {
       audio: mergedStream.getAudioTracks().length,
     });
 
-    // Pick best mimeType
+    // Pick best supported mimeType
     const mimeTypes = [
       'video/webm;codecs=vp9,opus',
       'video/webm;codecs=vp8,opus',
@@ -715,7 +695,9 @@ export async function downloadYouTubeClip(params: {
 
     // Stop everything
     video.pause();
-    if (audioEl) audioEl.pause();
+    if (audioSource) {
+      try { audioSource.stop(); } catch {}
+    }
     if (rafId !== null) {
       cancelAnimationFrame(rafId);
       rafId = null;
@@ -746,21 +728,16 @@ export async function downloadYouTubeClip(params: {
   } finally {
     // Cleanup
     if (rafId !== null) cancelAnimationFrame(rafId);
+    try { if (audioSource) audioSource.stop(); } catch {}
     try { if (recorder && recorder.state !== 'inactive') recorder.stop(); } catch {}
     try { video.pause(); } catch {}
     try { video.src = ''; } catch {}
     try { video.load(); } catch {}
     try { document.body.removeChild(video); } catch {}
-    if (audioEl) {
-      try { audioEl.pause(); } catch {}
-      try { audioEl.src = ''; } catch {}
-      try { audioEl.load(); } catch {}
-      try { document.body.removeChild(audioEl); } catch {}
-    }
     try { document.body.removeChild(canvas); } catch {}
     try {
-      if (cleanupAudioCtx && cleanupAudioCtx.state !== 'closed') {
-        await cleanupAudioCtx.close();
+      if (audioCtx && audioCtx.state !== 'closed') {
+        await audioCtx.close();
       }
     } catch {}
   }
