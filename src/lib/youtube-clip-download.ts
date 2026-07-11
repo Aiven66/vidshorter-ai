@@ -426,14 +426,6 @@ export async function downloadYouTubeClip(params: {
 }): Promise<{ blob: Blob; extension: string }> {
   const { videoId, startTime, endTime, title, onProgress } = params;
 
-  // For clips far into the video (>75s), the blob approach requires too much
-  // data. Use screen capture instead (works at any position, includes audio).
-  const BLOB_MAX_END_TIME = 75; // seconds — ~30MB at 400KB/s
-  if (endTime > BLOB_MAX_END_TIME) {
-    onProgress?.('Clip is far into video, using screen capture...');
-    return downloadViaScreenCapture({ videoId, startTime, endTime, title, onProgress });
-  }
-
   // Build /stream URL directly (without streamUrl param) — Worker handles
   // resolve + stream internally. This avoids the 502 error caused by
   // /resolve + /stream fast-path dual calls hitting different CF Worker colos.
@@ -477,9 +469,24 @@ export async function downloadYouTubeClip(params: {
   // For clips starting beyond the available data, fall back to screen capture.
   const availableSeconds = arrayBuffer.byteLength / BITRATE_BYTES_PER_SEC;
   if (startTime > availableSeconds) {
-    console.warn(`[downloadYouTubeClip] Only ${availableSeconds.toFixed(1)}s of data available (need startTime=${startTime}s). Falling back to screen capture.`);
-    onProgress?.('Not enough data for this position, using screen capture...');
-    return downloadViaScreenCapture({ videoId, startTime, endTime, title, onProgress });
+    // Not enough data to seek to startTime. Download what we have as a partial MP4.
+    // This gives the user a downloadable file (first ~10s of the video) instead of
+    // requiring screen capture permission (which fails in headless/mobile contexts).
+    console.warn(`[downloadYouTubeClip] Only ${availableSeconds.toFixed(1)}s of data available (need startTime=${startTime}s). Downloading partial MP4.`);
+    onProgress?.(`Downloaded ${(arrayBuffer.byteLength / 1024 / 1024).toFixed(1)}MB (partial video). Download starting...`);
+
+    const partialBlob = new Blob([arrayBuffer], { type: 'video/mp4' });
+    const safeName = (title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50) || 'clip');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(partialBlob);
+    a.download = `${safeName}.mp4`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(a.href);
+
+    onProgress?.('Download complete (partial video — first segment only).');
+    return { blob: partialBlob, extension: 'mp4' };
   }
 
   // Create blob with explicit MIME type so the browser uses the MP4 media engine

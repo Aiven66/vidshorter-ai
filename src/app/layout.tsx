@@ -67,7 +67,7 @@ export default function RootLayout({
   const serverTranslations = enTranslations;
 
   return (
-    <html lang={serverLocale} suppressHydrationWarning data-build-version="2026-07-11-v13-admin-email">
+    <html lang={serverLocale} suppressHydrationWarning data-build-version="2026-07-11-v14-partial-mp4">
       <head>
         {/* Inline CF Worker config — plain script tag (no Script component overhead) */}
         <script dangerouslySetInnerHTML={{ __html: `window.__CF_WORKER_URL__ = ${JSON.stringify(cfWorkerUrl)};` }} />
