@@ -47,6 +47,18 @@ export async function GET(request: NextRequest) {
   const endTime = parseFloat(url.searchParams.get('endTime') || '0');
   const title = url.searchParams.get('title') || 'clip';
 
+  // Optional pre-resolved stream metadata from the frontend. When the server's
+  // CF Worker colo is rate-limited, the browser's colo may still be able to
+  // resolve the stream. Passing the metadata lets the server skip /resolve and
+  // use the working streamUrl directly via CF Worker /stream proxy.
+  const streamUrl = url.searchParams.get('streamUrl') || undefined;
+  const audioUrl = url.searchParams.get('audioUrl') || undefined;
+  const userAgent = url.searchParams.get('userAgent') || undefined;
+  const visitorData = url.searchParams.get('visitorData') || undefined;
+  const xClientName = url.searchParams.get('xClientName') || undefined;
+  const clientVersion = url.searchParams.get('clientVersion') || undefined;
+  const clientName = url.searchParams.get('clientName') || undefined;
+
   if (!videoId || !/^[a-zA-Z0-9_-]{7,15}$/.test(videoId)) {
     return NextResponse.json(
       { error: 'Invalid or missing videoId' },
@@ -73,7 +85,7 @@ export async function GET(request: NextRequest) {
   try {
     const videoClipper = (await import('@/lib/server/video-clipper')).default;
 
-    console.log(`[download-youtube-clip] videoId=${videoId} start=${startTime} end=${endTime} duration=${duration.toFixed(1)}s`);
+    console.log(`[download-youtube-clip] videoId=${videoId} start=${startTime} end=${endTime} duration=${duration.toFixed(1)}s hasStreamUrl=${!!streamUrl}`);
 
     const result = await videoClipper.downloadYouTubeClip({
       videoUrl: `https://www.youtube.com/watch?v=${videoId}`,
@@ -81,6 +93,15 @@ export async function GET(request: NextRequest) {
       startTime,
       endTime,
       maxInlineBytes: API_MAX_CLIP_BYTES,
+      ...(streamUrl ? {
+        streamUrl,
+        audioUrl,
+        userAgent,
+        visitorData,
+        xClientName,
+        clientVersion,
+        clientName,
+      } : {}),
     });
 
     if (!result) {

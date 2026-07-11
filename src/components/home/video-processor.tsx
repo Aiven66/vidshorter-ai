@@ -1060,6 +1060,7 @@ export default function VideoProcessor() {
             await downloadPartialMP4({
               videoId: ytVideoId,
               title: clip.title,
+              startTime: clip.startTime,
               endTime: clip.endTime,
               onProgress: (msg) => setDownloadProgress(msg),
             });

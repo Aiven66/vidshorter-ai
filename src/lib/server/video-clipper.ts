@@ -984,6 +984,7 @@ const CF_WORKER_CACHE_TTL_MS = 4 * 60 * 1000;
 async function getYouTubeInfoViaCFWorker(
   videoId: string,
   maxHeightOverride: number = 0,
+  wantMuxed: boolean = false,
 ): Promise<PipedVideoInfo> {
   const cfWorkerUrl = getCfWorkerUrl();
   if (!cfWorkerUrl) throw new Error('CF_WORKER_URL not configured');
@@ -997,7 +998,8 @@ async function getYouTubeInfoViaCFWorker(
 
   // Check in-memory cache first — avoids hitting CF Worker repeatedly,
   // which triggers YouTube rate-limiting (502 errors on subsequent calls).
-  const cacheKey = `${videoId}:${maxHeight}`;
+  // muxed requests use a separate cache key so they don't shadow non-muxed results.
+  const cacheKey = `${videoId}:${maxHeight}${wantMuxed ? ':muxed' : ''}`;
   const cached = cfWorkerResolveCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     console.log(`CF Worker cache hit for ${cacheKey} (expires in ${Math.round((cached.expiresAt - Date.now()) / 1000)}s)`);
@@ -1008,6 +1010,10 @@ async function getYouTubeInfoViaCFWorker(
   u.pathname = `${u.pathname.replace(/\/$/, '')}/resolve`;
   u.searchParams.set('videoId', videoId);
   u.searchParams.set('maxHeight', String(maxHeight));
+  // muxed=1 forces CF Worker to return a combined (video+audio) stream instead of
+  // HD video-only DASH + separate audio. This is critical for videos where YouTube
+  // blocks the separate audio stream on CF Worker colos (e.g., c_KmQkjBJt8).
+  if (wantMuxed) u.searchParams.set('muxed', '1');
   const endpoint = u.toString();
   // CF Worker resolve may need 60s+ on cold cache. Shorten timeout for analysis
   // to avoid hitting the 180s overall analysis timeout. The clip generation
@@ -2215,7 +2221,21 @@ async function getYouTubeStreamUrlWithFallbacks(
         // Putting Invidious/Piped first wasted 60-84s on failed instances
         // (most public Invidious/Piped instances now return 403/401 for YouTube)
         // and exhausted the 120s budget before CF Worker could even start.
-        ...(getCfWorkerUrl() ? [{ name: 'CF Worker', fn: () => getYouTubeInfoViaCFWorker(videoId, maxHeightOverride) }] : []),
+        ...(getCfWorkerUrl() ? [{
+          name: 'CF Worker',
+          fn: async () => {
+            const r = await getYouTubeInfoViaCFWorker(videoId, maxHeightOverride);
+            // If CF Worker returns a video-only stream (no separate audio), retry with
+            // muxed=1 to force a combined video+audio stream. Some videos (e.g.
+            // c_KmQkjBJt8) block separate audio streams on CF Worker colos, causing
+            // silent clips. The muxed stream is usually 360p but always has audio.
+            if (!r.audioUrl && !r.streamUrl.includes('muxed') && !(r.quality || '').includes('muxed')) {
+              console.log(`CF Worker returned no separate audio for ${videoId}, retrying with muxed=1`);
+              return getYouTubeInfoViaCFWorker(videoId, maxHeightOverride, true);
+            }
+            return r;
+          },
+        }] : []),
         // Invidious & Piped as fallback — they support HD video-only + separate audio
         // via adaptiveFormats, but most public instances are now blocked.
         { name: 'Invidious', fn: () => getYouTubeInfoViaInvidious(videoId, maxHeightOverride) },
@@ -2226,7 +2246,17 @@ async function getYouTubeStreamUrlWithFallbacks(
           : []),
       ]
     : [
-        ...(getCfWorkerUrl() ? [{ name: 'CF Worker', fn: () => getYouTubeInfoViaCFWorker(videoId) }] : []),
+        ...(getCfWorkerUrl() ? [{
+          name: 'CF Worker',
+          fn: async () => {
+            const r = await getYouTubeInfoViaCFWorker(videoId);
+            if (!r.audioUrl && !r.streamUrl.includes('muxed') && !(r.quality || '').includes('muxed')) {
+              console.log(`CF Worker returned no separate audio for ${videoId}, retrying with muxed=1`);
+              return getYouTubeInfoViaCFWorker(videoId, 0, true);
+            }
+            return r;
+          },
+        }] : []),
         ...(getAppBaseUrl()
           ? [{ name: 'EdgeFunction', fn: () => getYouTubeInfoViaEdgeFunction(videoId) }]
           : []),
@@ -2309,7 +2339,10 @@ async function downloadStreamToLocalFile(url: string, outputPath: string, option
   const downloadChunked = async () => {
     const fileStream = createWriteStream(tempPath);
     let downloadedBytes = 0;
-    const chunkSize = 8 * 1024 * 1024;
+    // CF Worker /stream proxies googlevideo.com which has a ~2MB per-request size limit
+    // on some colos. Using 2MB chunks avoids 502/403 failures when the upstream truncates
+    // or rejects larger Range requests. Non-worker streams keep a larger chunk for speed.
+    const chunkSize = isWorkerStreamUrl ? 2 * 1024 * 1024 : 8 * 1024 * 1024;
     let offset = 0;
     let total: number | null = null;
     const startedAt = Date.now();
@@ -3297,10 +3330,137 @@ async function analyzeVideo(videoUrl: string): Promise<VideoAnalysisResult> {
   return { duration: 180, title: 'Source video', highlights: buildFallbackHighlights(180) };
 }
 
+/**
+ * Prepare a local ffmpeg input from a frontend-resolved streamUrl.
+ *
+ * The frontend may successfully resolve a stream from its CF Worker colo while
+ * the server's colo is rate-limited. When that happens, the frontend passes the
+ * resolved streamUrl (usually a CF Worker /stream proxy URL) to the server.
+ * This function downloads the streams to /tmp so createLocalClip can seek/cut
+ * reliably with ffmpeg.
+ */
+async function prepareSourceFromResolvedStream(params: {
+  videoId: string;
+  streamUrl: string;
+  audioUrl?: string;
+  userAgent?: string;
+  visitorData?: string;
+  xClientName?: string | number;
+  clientVersion?: string;
+  clientName?: string;
+}): Promise<PreparedSource> {
+  const {
+    videoId, streamUrl, audioUrl, userAgent, visitorData,
+    xClientName, clientVersion, clientName,
+  } = params;
+
+  await ensureDirectories();
+  const workDir = path.join(CACHE_DIR, `frontend-resolve-${videoId}-${Date.now()}`);
+  await mkdir(workDir, { recursive: true });
+
+  // If the frontend passed a raw googlevideo.com URL, wrap it in CF Worker /stream
+  // so Vercel can fetch it. If it already is a CF Worker /stream URL, use as-is.
+  let videoFetchUrl = streamUrl;
+  if (streamUrl.includes('googlevideo.com') && !streamUrl.includes('/stream')) {
+    videoFetchUrl = wrapInStreamProxyIfNeeded(streamUrl, videoId, false);
+  }
+
+  // Build headers for CF Worker /stream fast path when the URL lacks metadata.
+  const needsMetadata =
+    videoFetchUrl.includes('/stream') &&
+    !new URL(videoFetchUrl).searchParams.has('streamUrl');
+  let ffmpegHeaders = '';
+  if (needsMetadata) {
+    const u = new URL(videoFetchUrl);
+    if (userAgent) u.searchParams.set('userAgent', userAgent);
+    if (visitorData) u.searchParams.set('visitorData', visitorData);
+    if (xClientName !== undefined) u.searchParams.set('xClientName', String(xClientName));
+    if (clientVersion) u.searchParams.set('clientVersion', clientVersion);
+    if (clientName) u.searchParams.set('clientName', clientName);
+    videoFetchUrl = u.toString();
+  }
+
+  const localPath = path.join(workDir, 'source.mp4');
+  const audioLocalPath = audioUrl ? path.join(workDir, 'audio.mp4') : undefined;
+
+  const videoDownloaded = await downloadStreamToLocalFile(videoFetchUrl, localPath, {
+    maxBudgetMs: IS_VERCEL ? 150_000 : 300_000,
+  });
+  if (!videoDownloaded) throw new Error('Frontend-provided video stream download failed');
+
+  if (audioUrl && audioLocalPath) {
+    let audioFetchUrl = audioUrl;
+    if (audioUrl.includes('googlevideo.com') && !audioUrl.includes('/stream')) {
+      audioFetchUrl = wrapInStreamProxyIfNeeded(audioUrl, videoId, true);
+    }
+    if (needsMetadata) {
+      const u = new URL(audioFetchUrl);
+      if (userAgent) u.searchParams.set('userAgent', userAgent);
+      if (visitorData) u.searchParams.set('visitorData', visitorData);
+      if (xClientName !== undefined) u.searchParams.set('xClientName', String(xClientName));
+      if (clientVersion) u.searchParams.set('clientVersion', clientVersion);
+      if (clientName) u.searchParams.set('clientName', clientName);
+      audioFetchUrl = u.toString();
+    }
+
+    try {
+      const audioDownloaded = await downloadStreamToLocalFile(audioFetchUrl, audioLocalPath, {
+        maxBudgetMs: IS_VERCEL ? 150_000 : 300_000,
+      });
+      if (audioDownloaded) {
+        return { inputPath: localPath, audioInputPath: audioLocalPath, ffmpegHeaders };
+      }
+    } catch (audioErr) {
+      console.warn(`[prepareSourceFromResolvedStream] audio download failed: ${audioErr instanceof Error ? audioErr.message.slice(0, 120) : audioErr}`);
+    }
+  }
+
+  return { inputPath: localPath, ffmpegHeaders };
+}
+
 async function downloadYouTubeClip(params: {
   videoUrl: string; title: string; startTime: number; endTime: number;
   maxInlineBytes?: number;
+  streamUrl?: string;
+  audioUrl?: string;
+  userAgent?: string;
+  visitorData?: string;
+  xClientName?: string | number;
+  clientVersion?: string;
+  clientName?: string;
 }) {
+  const videoId = extractYouTubeVideoId(params.videoUrl);
+
+  // If the frontend already resolved a working streamUrl (from its own CF Worker colo),
+  // use it directly instead of re-resolving on the server. This bypasses server-side
+  // CF Worker rate-limits (LOGIN_REQUIRED) when the browser's colo is healthy.
+  if (params.streamUrl && videoId) {
+    try {
+      console.log(`[downloadYouTubeClip] using frontend-provided streamUrl for ${videoId}`);
+      const source = await prepareSourceFromResolvedStream({
+        videoId,
+        streamUrl: params.streamUrl,
+        audioUrl: params.audioUrl,
+        userAgent: params.userAgent,
+        visitorData: params.visitorData,
+        xClientName: params.xClientName,
+        clientVersion: params.clientVersion,
+        clientName: params.clientName,
+      });
+      return createLocalClip({
+        inputPath: source.inputPath,
+        audioInputPath: source.audioInputPath,
+        inputHeaders: source.ffmpegHeaders,
+        startTime: params.startTime,
+        endTime: params.endTime,
+        title: params.title,
+        maxInlineBytes: params.maxInlineBytes,
+      });
+    } catch (providedErr) {
+      console.warn(`[downloadYouTubeClip] frontend-provided stream failed, falling back to server resolve: ${providedErr instanceof Error ? providedErr.message.slice(0, 150) : providedErr}`);
+    }
+  }
+
   const source = await downloadSourceVideo(params.videoUrl);
   return createLocalClip({
     inputPath: source.inputPath,
@@ -4028,43 +4188,7 @@ async function createClipFromYouTubeStream(params: {
   const overallDeadline = Date.now() + (IS_VERCEL ? 30_000 : 60_000);
   const timeLeft = () => Math.max(5_000, overallDeadline - Date.now());
 
-  // Candidate -1: download the exact segment locally via CF Worker /stream?begin=.
-  // This is the most reliable candidate because it avoids ffmpeg remote-seek issues,
-  // colo-mismatch, and missing audio. It also makes each clip start exactly at the
-  // requested timestamp, so different highlights produce genuinely different clips.
-  if (cfWorkerUrl) {
-    try {
-      console.log(`createClipFromYouTubeStream: trying local segment candidate (${startTime}s-${endTime}s)`);
-      const localSegmentPath = await downloadYouTubeSegmentLocally(videoId, startTime, endTime, 360);
-      if (localSegmentPath) {
-        const result = await createLocalClip({
-          inputPath: localSegmentPath,
-          startTime: 0,
-          endTime: duration,
-          title,
-          fastCopy: false, // re-encode to ensure consistent format and audio
-        });
-        unlink(localSegmentPath).catch(() => {});
-        console.log(`createClipFromYouTubeStream: local segment candidate succeeded!`);
-        return {
-          id: result.outputPath ? path.basename(result.outputPath) : clipFileName(title),
-          title,
-          startTime,
-          endTime,
-          duration,
-          summary: summary || '',
-          engagementScore: 0,
-          videoUrl: result.dataUrl || result.publicUrl,
-          thumbnailUrl: result.thumbnailUrl || '',
-          status: 'completed',
-        };
-      }
-    } catch (err) {
-      console.warn(`createClipFromYouTubeStream: local segment candidate failed: ${err instanceof Error ? err.message.slice(0, 200) : err}`);
-    }
-  }
-
-  // Candidate -2: download the full stream to /tmp and clip locally.
+  // Candidate -1: download the full stream to /tmp and clip locally.
   // ffmpeg fails with 502 when fetching the CF Worker /stream URL directly, but
   // Node.js fetch can download it. We cache the full stream across clips.
   if (cfWorkerUrl) {

@@ -193,16 +193,17 @@ const PIPED_INSTANCES = [
   'https://piped-api.privacy.com.de',
 ];
 
-function resolveCacheRequest(videoId, maxHeight) {
+function resolveCacheRequest(videoId, maxHeight, wantMuxed = false) {
   const u = new URL('https://cache.youtube-proxy.local/resolve');
   u.searchParams.set('videoId', videoId);
   u.searchParams.set('maxHeight', String(maxHeight || MAX_HEIGHT));
+  if (wantMuxed) u.searchParams.set('muxed', '1');
   return new Request(u.toString(), { method: 'GET' });
 }
 
-async function cacheGetResolved(videoId, maxHeight, includeStale = false) {
+async function cacheGetResolved(videoId, maxHeight, includeStale = false, wantMuxed = false) {
   try {
-    const req = resolveCacheRequest(videoId, maxHeight);
+    const req = resolveCacheRequest(videoId, maxHeight, wantMuxed);
     const hit = await caches.default.match(req);
     if (!hit) return null;
     const data = await hit.json();
@@ -220,9 +221,9 @@ async function cacheGetResolved(videoId, maxHeight, includeStale = false) {
   }
 }
 
-async function cachePutResolved(videoId, maxHeight, resolved) {
+async function cachePutResolved(videoId, maxHeight, resolved, wantMuxed = false) {
   try {
-    const req = resolveCacheRequest(videoId, maxHeight);
+    const req = resolveCacheRequest(videoId, maxHeight, wantMuxed);
     // Extend cache TTL to 30 minutes (was 10). YouTube stream URLs expire in 6 hours,
     // but /stream has IP-binding bypass (strips ip= param), so stale streamUrls
     // remain usable even after the original IP-bound expiry.
@@ -400,7 +401,7 @@ export default {
 
           const cachedLocal = cache.get(cacheKey);
           const localResolved = cachedLocal && cachedLocal.expiresAt > Date.now() && cachedLocal.value?.streamUrl ? cachedLocal.value : null;
-          const globalResolved = localResolved ? null : await cacheGetResolved(videoId, h);
+          const globalResolved = localResolved ? null : await cacheGetResolved(videoId, h, false, wantMuxed);
           const cachedResolved = localResolved || globalResolved;
 
           if (cachedResolved?.streamUrl) {
@@ -413,7 +414,7 @@ export default {
             const body = await upstream.text().catch(() => '');
             errors.push(`cached@${h}: HTTP ${upstream.status} ${body.slice(0, 120)}`);
             cache.delete(cacheKey);
-            try { await caches.default.delete(resolveCacheRequest(videoId, h)); } catch {}
+            try { await caches.default.delete(resolveCacheRequest(videoId, h, wantMuxed)); } catch {}
           }
 
           for (const client of CLIENTS) {
@@ -437,7 +438,7 @@ export default {
               const upstream = await doFetch(resolved);
               if (upstream.status === 200 || upstream.status === 206) {
                 cache.set(cacheKey, { value: resolved, expiresAt: Date.now() + 10 * 60 * 1000 });
-                await cachePutResolved(videoId, h, resolved);
+                await cachePutResolved(videoId, h, resolved, wantMuxed);
                 return passthroughStream(upstream);
               }
               const body = await upstream.text().catch(() => '');
@@ -463,7 +464,7 @@ export default {
             const upstream = await doFetch(resolved);
             if (upstream.status === 200 || upstream.status === 206) {
               cache.set(cacheKey, { value: resolved, expiresAt: Date.now() + 10 * 60 * 1000 });
-              await cachePutResolved(videoId, h, resolved);
+              await cachePutResolved(videoId, h, resolved, wantMuxed);
               return passthroughStream(upstream);
             }
             const body = await upstream.text().catch(() => '');
@@ -574,30 +575,39 @@ export default {
     const resolveHdHeights = Array.from(new Set([requestedMaxHeight, MIN_HD_HEIGHT].filter((h) => h >= MIN_HD_HEIGHT)));
     const resolveSdHeights = resolveAllowSd ? [480, 360, 240, 144].filter((h) => h < MIN_HD_HEIGHT) : [];
     const heights = [...resolveHdHeights, ...resolveSdHeights];
+    // muxed=1: force tryClient to return a combined (video+audio) stream instead of
+    // HD video-only DASH + separate audio. Needed when Vercel cannot fetch the
+    // separate audio stream (e.g., googlevideo.com rate-limits audio on CF colos).
+    const resolveWantMuxed = url.searchParams.get('muxed') === '1';
 
     for (const h of heights) {
       const cached = await cacheGetResolved(videoId, h);
       if (cached?.streamUrl) {
-        return json({
-          title: cached.title || 'YouTube Video',
-          duration: cached.duration || 300,
-          streamUrl: cached.streamUrl,
-          quality: cached.quality || 'cached',
-          userAgent: cached.userAgent,
-          visitorData: cached.visitorData,
-          xClientName: cached.xClientName,
-          clientVersion: cached.clientVersion,
-          client: cached.client || 'cached',
-          // Preserve audioUrl from cache (HD video-only + separate audio path).
-          // Previously this was dropped on cache hit, causing Vercel to receive
-          // a video-only stream without audio and ffmpeg to fail.
-          ...(cached.audioUrl ? { audioUrl: cached.audioUrl } : {}),
-        });
+        // When caller explicitly wants muxed but cached entry is video-only without audio,
+        // skip cache and re-resolve so we can return a muxed stream.
+        const cachedMuxed = !!(cached.audioUrl || (cached.quality || '').includes('muxed'));
+        if (!resolveWantMuxed || cachedMuxed) {
+          return json({
+            title: cached.title || 'YouTube Video',
+            duration: cached.duration || 300,
+            streamUrl: cached.streamUrl,
+            quality: cached.quality || 'cached',
+            userAgent: cached.userAgent,
+            visitorData: cached.visitorData,
+            xClientName: cached.xClientName,
+            clientVersion: cached.clientVersion,
+            client: cached.client || 'cached',
+            // Preserve audioUrl from cache (HD video-only + separate audio path).
+            // Previously this was dropped on cache hit, causing Vercel to receive
+            // a video-only stream without audio and ffmpeg to fail.
+            ...(cached.audioUrl ? { audioUrl: cached.audioUrl } : {}),
+          });
+        }
       }
 
       for (const client of CLIENTS) {
         try {
-          const result = await tryClient(videoId, client, h, cookieHeader);
+          const result = await tryClient(videoId, client, h, cookieHeader, resolveWantMuxed);
           if (result) {
             await cachePutResolved(videoId, h, { ...result, client: client.name });
             return json({ ...result, client: client.name, colo: request.cf?.colo || '?' });
@@ -698,6 +708,7 @@ function normalizeMaxHeight(value) {
 }
 
 async function tryClient(videoId, client, maxHeight, cookieHeader, wantMuxed) {
+  const effectiveWantMuxed = wantMuxed === true;
   const body = {
     videoId,
     contentCheckOk: true,
@@ -752,14 +763,40 @@ async function tryClient(videoId, client, maxHeight, cookieHeader, wantMuxed) {
     (f?.url || f?.signatureCipher || f?.cipher) && typeof f.mimeType === 'string' && f.mimeType.startsWith('video/')
   );
   const muxed = videoFormats.filter((f) => f.audioQuality || f.audioChannels || f.audioBitrate);
-  const combinedFormat = pickBest(muxed.length ? muxed : videoFormats, maxHeight);
-  const combinedHeight = formatHeight(combinedFormat);
+  const muxedFormat = pickBest(muxed, maxHeight);
+  const muxedHeight = formatHeight(muxedFormat);
 
-  // If combined is below 720p, try adaptiveFormats for HD video-only + audio
-  let chosen = combinedFormat || videoFormats[0] || formats[0];
+  // muxed=1: caller explicitly wants a combined video+audio stream (e.g., Vercel
+  // cannot fetch separate audio, or browser-side captureStream needs one stream).
+  // Return the best muxed format even if it is lower quality than video-only.
+  // If this client has no muxed formats, skip it so the caller can try other
+  // clients (some InnerTube clients expose combined formats while others don't).
+  if (effectiveWantMuxed) {
+    if (muxedFormat) {
+      const resolvedUrl = await resolveFormatUrl(muxedFormat, videoId, cookieHeader);
+      if (resolvedUrl) {
+        return {
+          title: data.videoDetails?.title ?? 'YouTube Video',
+          duration: parseInt(data.videoDetails?.lengthSeconds ?? '300', 10) || 300,
+          streamUrl: resolvedUrl,
+          quality: `${muxedFormat.qualityLabel ?? muxedFormat.quality ?? `${muxedHeight}p`} (muxed)`,
+          userAgent: client.userAgent,
+          visitorData,
+          xClientName: client.xClientName,
+          clientVersion: client.clientVersion,
+          _debug: { combinedHeight: muxedHeight, chosenHeight: muxedHeight, requestedMaxHeight: maxHeight, muxed: true },
+        };
+      }
+    }
+    throw new Error('No muxed (combined video+audio) format available from this client');
+  }
+
+  // Default path: try HD video-only + separate audio first, then fall back to muxed.
+  let chosen = muxedFormat || videoFormats[0] || formats[0];
+  let chosenHeight = muxedHeight;
   let audioUrl = '';
   const debug = {
-    combinedHeight,
+    combinedHeight: muxedHeight,
     videoOnlyCount: 0,
     audioOnlyCount: 0,
     audioOnlyWithUrl: 0,
@@ -768,50 +805,52 @@ async function tryClient(videoId, client, maxHeight, cookieHeader, wantMuxed) {
     audioResolvedOk: false,
   };
 
-  if (combinedHeight < 720 && !wantMuxed) {
-    // muxed=1: skip HD video-only + audio path, use combined (muxed) format
-    // which has both video and audio in a single stream. Needed for browser-side
-    // captureStream recording (can't merge separate video+audio streams).
-    const videoOnly = videoFormats.filter((f) => !(f.audioQuality || f.audioChannels || f.audioBitrate));
-    const audioOnly = formats.filter((f) =>
-      (f?.url || f?.signatureCipher || f?.cipher) &&
-      typeof f.mimeType === 'string' && (f.mimeType.startsWith('audio/mp4') || f.mimeType.includes('audio/'))
-    );
+  const videoOnly = videoFormats.filter((f) => !(f.audioQuality || f.audioChannels || f.audioBitrate));
+  const audioOnly = formats.filter((f) =>
+    (f?.url || f?.signatureCipher || f?.cipher) &&
+    typeof f.mimeType === 'string' && (f.mimeType.startsWith('audio/mp4') || f.mimeType.includes('audio/'))
+  );
 
-    debug.videoOnlyCount = videoOnly.length;
-    debug.audioOnlyCount = audioOnly.length;
-    debug.audioOnlyWithUrl = audioOnly.filter((a) => a.url).length;
-    debug.audioOnlyCiphered = audioOnly.filter((a) => a.signatureCipher || a.cipher).length;
+  debug.videoOnlyCount = videoOnly.length;
+  debug.audioOnlyCount = audioOnly.length;
+  debug.audioOnlyWithUrl = audioOnly.filter((a) => a.url).length;
+  debug.audioOnlyCiphered = audioOnly.filter((a) => a.signatureCipher || a.cipher).length;
 
-    const videoCandidates = videoOnly
-      .map((f) => ({ f, q: formatHeight(f) }))
-      .filter((x) => x.q > 0 && x.q <= (maxHeight || MAX_HEIGHT))
-      .sort((a, b) => b.q - a.q);
+  const videoCandidates = videoOnly
+    .map((f) => ({ f, q: formatHeight(f) }))
+    .filter((x) => x.q > 0 && x.q <= (maxHeight || MAX_HEIGHT))
+    .sort((a, b) => b.q - a.q);
 
-    for (const candidate of videoCandidates) {
-      if (candidate.q <= combinedHeight) break;
-      const videoResolved = await resolveFormatUrl(candidate.f, videoId, cookieHeader);
-      if (!videoResolved) continue;
-      debug.videoResolvedOk = true;
+  for (const candidate of videoCandidates) {
+    // Skip candidates that are not better than the best muxed format.
+    if (muxedFormat && candidate.q <= muxedHeight) break;
+    const videoResolved = await resolveFormatUrl(candidate.f, videoId, cookieHeader);
+    if (!videoResolved) continue;
+    debug.videoResolvedOk = true;
 
-      // Find a resolvable audio stream
-      for (const a of audioOnly) {
-        const audioResolved = await resolveFormatUrl(a, videoId, cookieHeader);
-        if (audioResolved) {
-          audioUrl = audioResolved;
-          break;
-        }
-      }
-
-      // Only choose video-only if we have a matching audio stream.
-      // Otherwise fall back to combined (lower quality but has audio).
-      if (audioUrl) {
-        chosen = candidate.f;
-        debug.audioResolvedOk = true;
+    // Find a resolvable audio stream
+    for (const a of audioOnly) {
+      const audioResolved = await resolveFormatUrl(a, videoId, cookieHeader);
+      if (audioResolved) {
+        audioUrl = audioResolved;
         break;
       }
-      // audioUrl failed for this candidate — try next video candidate
     }
+
+    // Only choose video-only if we have a matching audio stream.
+    // Otherwise try the next video candidate.
+    if (audioUrl) {
+      chosen = candidate.f;
+      chosenHeight = candidate.q;
+      debug.audioResolvedOk = true;
+      break;
+    }
+  }
+
+  // If no video-only candidate had a usable audio stream, fall back to muxed.
+  if (!audioUrl && muxedFormat) {
+    chosen = muxedFormat;
+    chosenHeight = muxedHeight;
   }
 
   const resolvedUrl = await resolveFormatUrl(chosen, videoId, cookieHeader);
