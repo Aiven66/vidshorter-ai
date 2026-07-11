@@ -14,6 +14,7 @@ import { getSupabaseClient, isSupabaseConfigured } from '@/storage/database/supa
 import {
   downloadYouTubeClip,
   downloadFullVideoStream,
+  downloadPartialMP4,
   resolveYouTubeStream,
   cacheResolvedStream,
   buildStreamProxyUrl,
@@ -1051,8 +1052,20 @@ export default function VideoProcessor() {
             onProgress: (msg) => setDownloadProgress(msg),
           });
         } catch (fullErr) {
-          console.error('[Download] All download methods failed:', fullErr);
-          if (clip.linkOnlyUrl) window.open(clip.linkOnlyUrl, '_blank');
+          console.warn('[Download] Full video stream failed, trying partial MP4:', fullErr instanceof Error ? fullErr.message : fullErr);
+          setDownloadProgress('Downloading partial video...');
+          try {
+            // Ultimate fallback: download partial MP4 directly (no captureStream)
+            await downloadPartialMP4({
+              videoId: ytVideoId,
+              title: clip.title,
+              endTime: clip.endTime,
+              onProgress: (msg) => setDownloadProgress(msg),
+            });
+          } catch (partialErr) {
+            console.error('[Download] All download methods failed:', partialErr);
+            if (clip.linkOnlyUrl) window.open(clip.linkOnlyUrl, '_blank');
+          }
         }
       } finally {
         setDownloadingId(null);

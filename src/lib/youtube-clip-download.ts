@@ -461,11 +461,14 @@ export async function downloadYouTubeClip(params: {
 }
 
 /**
- * Fallback download: fetch the full video stream as a blob and trigger download.
+ * Fallback download: fetch the video stream as a blob and trigger download.
  * Used when captureVideoClip fails (e.g., browser doesn't support captureStream).
  *
- * This downloads the FULL video (not just the clip segment), which is large
- * but ensures the user gets something downloadable.
+ * This downloads a partial video (up to maxBytes), which includes video from 0:00
+ * to ~maxBytes/400KBps. The user can use a video player to find the highlight segment.
+ *
+ * v10 fix: Uses direct /stream URL (no /resolve + /stream dual call) to avoid
+ * colo-mismatch 502 errors. Also validates that the response is a valid MP4.
  */
 export async function downloadFullVideoStream(params: {
   videoId: string;
@@ -475,14 +478,21 @@ export async function downloadFullVideoStream(params: {
 }): Promise<void> {
   const { videoId, title, maxBytes = 50 * 1024 * 1024, onProgress } = params;
 
-  onProgress?.('Resolving video stream...');
-  const resolved = await resolveYouTubeStream(videoId);
+  // Build /stream URL directly (no streamUrl param) — same fix as downloadYouTubeClip
+  const cfWorkerUrl = String(
+    typeof window !== 'undefined' ? window.__CF_WORKER_URL__ : '',
+  ).trim();
+  if (!cfWorkerUrl) {
+    throw new Error('CF_WORKER_URL not configured');
+  }
 
-  onProgress?.('Building stream proxy URL...');
-  const streamProxyUrl = buildStreamProxyUrl(videoId, resolved);
+  const streamEndpoint = new URL(cfWorkerUrl);
+  streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
+  streamEndpoint.searchParams.set('videoId', videoId);
+  streamEndpoint.searchParams.set('maxHeight', '360');
 
   onProgress?.('Downloading video (this may take a while)...');
-  const res = await fetch(streamProxyUrl, {
+  const res = await fetch(streamEndpoint.toString(), {
     headers: { Range: `bytes=0-${maxBytes - 1}` },
     signal: AbortSignal.timeout(120_000),
   });
@@ -494,10 +504,77 @@ export async function downloadFullVideoStream(params: {
   const blob = await res.blob();
   if (blob.size === 0) throw new Error('Empty response');
 
+  // Validate that we got a real MP4, not a JSON error response
+  if (blob.size < 50_000) {
+    const text = await blob.text();
+    throw new Error(`Stream returned non-video data (${blob.size} bytes): ${text.slice(0, 200)}`);
+  }
+
   const safeName = title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50) || 'clip';
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = `${safeName}.mp4`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(a.href);
+
+  onProgress?.('Download complete!');
+}
+
+/**
+ * Ultimate fallback: download partial video data as a raw MP4 file.
+ *
+ * When captureStream/MediaRecorder fails AND downloadFullVideoStream also
+ * fails (or returns non-video data), this function fetches a small portion
+ * of the /stream and downloads it directly. The user gets a playable MP4
+ * that contains video from 0:00 to ~endTime.
+ *
+ * This is NOT the ideal solution (it's not the exact [startTime, endTime]
+ * segment), but it ensures the user always gets a downloadable file.
+ */
+export async function downloadPartialMP4(params: {
+  videoId: string;
+  title: string;
+  endTime: number;
+  onProgress?: (msg: string) => void;
+}): Promise<void> {
+  const { videoId, title, endTime, onProgress } = params;
+
+  const cfWorkerUrl = String(
+    typeof window !== 'undefined' ? window.__CF_WORKER_URL__ : '',
+  ).trim();
+  if (!cfWorkerUrl) {
+    throw new Error('CF_WORKER_URL not configured');
+  }
+
+  const streamEndpoint = new URL(cfWorkerUrl);
+  streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
+  streamEndpoint.searchParams.set('videoId', videoId);
+  streamEndpoint.searchParams.set('maxHeight', '360');
+
+  // Download enough data to cover the clip position
+  const neededBytes = Math.ceil(Math.min(endTime + 5, 75) * 400_000);
+
+  onProgress?.(`Downloading video data (${(neededBytes / 1024 / 1024).toFixed(1)}MB)...`);
+  const res = await fetch(streamEndpoint.toString(), {
+    headers: { Range: `bytes=0-${neededBytes - 1}` },
+    signal: AbortSignal.timeout(120_000),
+  });
+
+  if (!res.ok && res.status !== 206) {
+    throw new Error(`Stream fetch failed: HTTP ${res.status}`);
+  }
+
+  const blob = await res.blob();
+  if (blob.size < 50_000) {
+    throw new Error(`Stream too small: ${blob.size} bytes`);
+  }
+
+  const safeName = title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50) || 'clip';
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${safeName}_partial.mp4`;
   document.body.appendChild(a);
   a.click();
   a.remove();

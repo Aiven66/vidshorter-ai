@@ -23,6 +23,7 @@ import { isSupabaseConfigured } from '@/storage/database/supabase-client';
 import {
   downloadYouTubeClip,
   downloadFullVideoStream,
+  downloadPartialMP4,
   extractYouTubeVideoId,
 } from '@/lib/youtube-clip-download';
 
@@ -265,12 +266,23 @@ function ClipPlayerDialog({
       } catch (recordErr) {
         console.warn('[Dashboard Download] captureVideoClip failed, trying full stream download:', recordErr);
         setDownloadProgress('Trying full stream download...');
-        await downloadFullVideoStream({
-          videoId: ytVideoId,
-          title: clip.title,
-          maxBytes: 30 * 1024 * 1024,
-          onProgress: (msg) => setDownloadProgress(msg),
-        });
+        try {
+          await downloadFullVideoStream({
+            videoId: ytVideoId,
+            title: clip.title,
+            maxBytes: 30 * 1024 * 1024,
+            onProgress: (msg) => setDownloadProgress(msg),
+          });
+        } catch (fullErr) {
+          console.warn('[Dashboard Download] Full stream failed, trying partial MP4:', fullErr);
+          setDownloadProgress('Downloading partial video...');
+          await downloadPartialMP4({
+            videoId: ytVideoId,
+            title: clip.title,
+            endTime: cappedEnd,
+            onProgress: (msg) => setDownloadProgress(msg),
+          });
+        }
       }
     } catch (e) {
       console.error('Download (link_only) error:', e);
