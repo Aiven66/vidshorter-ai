@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * YouTube clip download utility — browser-side recording via CF Worker /stream.
+ * YouTube clip download utility — direct MP4 download via CF Worker /stream.
  *
  * PROBLEM:
  *   - CF Worker /stream without streamUrl param calls InnerTube API, which is
@@ -9,21 +9,22 @@
  *   - Vercel Edge/Lambda IPs are blocked by YouTube (403).
  *   - googlevideo.com streamUrls are video-only DASH (itag=136), no audio.
  *   - Browser CORS prevents direct fetch of googlevideo.com URLs.
+ *   - googlevideo.com imposes 2MB per-Range-request limit on CF Worker colos.
  *
- * SOLUTION:
- *   1. Browser calls CF Worker /resolve (InnerTube API) — works on first call,
- *      gets rate-limited after. Cache the result for 5 hours (streamUrl expiry).
- *   2. Browser passes the resolved streamUrl to CF Worker /stream as a query
- *      param (fast path). /stream fetches the streamUrl from CF Worker IP
- *      (matches IP binding) and adds CORS headers (Access-Control-Allow-Origin: *).
- *   3. Browser creates a <video> element with the /stream URL, seeks to
- *      startTime, and uses captureStream + MediaRecorder to record the segment.
- *   4. Browser triggers download of the recorded blob.
+ * SOLUTION (v15):
+ *   1. Build /stream URL directly (no /resolve pre-call) — Worker handles
+ *      resolve + stream internally, avoiding colo-mismatch 502 errors.
+ *   2. Fetch up to 10MB of MP4 data in 2MB chunks (fetchStreamChunked)
+ *      to bypass googlevideo.com's per-request size rate limiting.
+ *   3. Create Blob with video/mp4 MIME type and trigger browser download.
+ *
+ * FALLBACK CHAIN (in handleDownload):
+ *   downloadYouTubeClip → downloadFullVideoStream → downloadPartialMP4 → window.open(linkOnlyUrl)
  *
  * LIMITATIONS:
- *   - Real-time recording (takes min(duration, 15) seconds)
  *   - Video-only (no audio) — YouTube IOS_v20 client returns video-only DASH
- *   - Max 15 seconds per clip (captureVideoClip MAX_RECORD_DURATION)
+ *   - Downloads from 0:00, not from startTime (googlevideo.com begin param
+ *     signature mismatch). User gets a playable MP4 containing the clip.
  */
 
 export interface ResolvedStream {
@@ -343,7 +344,7 @@ async function fetchStreamChunked(
     try {
       res = await fetch(streamUrl, {
         headers: { Range: `bytes=${chunkStart}-${chunkEnd}` },
-        signal: AbortSignal.timeout(60_000),
+        signal: AbortSignal.timeout(15_000),
       });
     } catch (err) {
       if (fetched === 0) throw err;
@@ -400,22 +401,20 @@ async function fetchStreamChunked(
 }
 
 /**
- * Download a YouTube video clip by recording it via captureStream + MediaRecorder.
+ * Download a YouTube video clip by directly fetching MP4 data from CF Worker /stream.
  *
  * Flow:
  *   1. Build /stream URL directly (no streamUrl param) — Worker handles
  *      resolve + stream internally, avoiding colo-mismatch 502 errors.
  *   2. Fetch partial video as ArrayBuffer using chunked downloads (2MB each)
  *      to bypass googlevideo.com's per-request size rate limiting.
- *   3. Create blob URL with explicit video/mp4 MIME type (no trimming)
- *   4. Seek to startTime, use captureStream + MediaRecorder to record
- *   5. Trigger browser download of the recorded blob
+ *   3. Create blob with video/mp4 MIME type and trigger browser download.
  *
- * FALLBACK: If /stream fails or returns non-MP4 data, or if not enough data
- * was fetched to reach startTime, falls back to screen capture (getDisplayMedia)
- * which works at any position and includes audio.
+ * This is fast (no real-time recording) and always produces a downloadable file.
+ * If /stream fails, caller (handleDownload) falls back to downloadFullVideoStream
+ * then downloadPartialMP4, then finally opens the YouTube link in a new tab.
  *
- * @returns The recorded blob (also triggers download)
+ * @returns The downloaded blob (also triggers download)
  */
 export async function downloadYouTubeClip(params: {
   videoId: string;
@@ -424,7 +423,7 @@ export async function downloadYouTubeClip(params: {
   title: string;
   onProgress?: (msg: string) => void;
 }): Promise<{ blob: Blob; extension: string }> {
-  const { videoId, startTime, endTime, title, onProgress } = params;
+  const { videoId, title, onProgress } = params;
 
   // Build /stream URL directly (without streamUrl param) — Worker handles
   // resolve + stream internally. This avoids the 502 error caused by
@@ -441,91 +440,48 @@ export async function downloadYouTubeClip(params: {
   streamEndpoint.searchParams.set('videoId', videoId);
   streamEndpoint.searchParams.set('maxHeight', '360');
 
-  // Calculate how many bytes we need to cover the clip position.
-  // 360p combined MP4 (itag=18) is ~400KB/s. Need data from 0 to endTime + 5s buffer.
-  const BITRATE_BYTES_PER_SEC = 400_000;
-  const neededBytes = Math.ceil((endTime + 5) * BITRATE_BYTES_PER_SEC);
-
-  // Fetch partial video data using chunked downloads (2MB per chunk).
+  // Fetch up to 10MB of video data (5 chunks of 2MB each).
   // googlevideo.com rate-limits large Range requests from CF Worker colos:
   // 2MB succeeds, 6MB fails. fetchStreamChunked handles this automatically.
-  const sizeMB = (neededBytes / 1024 / 1024).toFixed(1);
-  onProgress?.(`Downloading video data (${sizeMB}MB in 2MB chunks)...`);
+  // If subsequent chunks fail, it returns whatever data was fetched (graceful degradation).
+  const MAX_DOWNLOAD_BYTES = 10 * 1024 * 1024; // 10MB
+  onProgress?.('Downloading video data...');
   let arrayBuffer: ArrayBuffer;
   try {
     arrayBuffer = await fetchStreamChunked(
       streamEndpoint.toString(),
-      neededBytes,
+      MAX_DOWNLOAD_BYTES,
       (msg) => onProgress?.(msg),
     );
   } catch (streamErr) {
-    console.warn('[downloadYouTubeClip] /stream failed, falling back to screen capture:', streamErr instanceof Error ? streamErr.message : streamErr);
-    onProgress?.('Stream unavailable, using screen capture...');
-    return downloadViaScreenCapture({ videoId, startTime, endTime, title, onProgress });
+    const msg = streamErr instanceof Error ? streamErr.message : String(streamErr);
+    console.warn('[downloadYouTubeClip] /stream failed:', msg);
+    throw new Error(`Video stream unavailable: ${msg}`);
   }
 
-  // Check if we have enough data to seek to startTime.
-  // If subsequent chunks failed (colo rate limit), we may only have 2MB (~5s).
-  // For clips starting beyond the available data, fall back to screen capture.
-  const availableSeconds = arrayBuffer.byteLength / BITRATE_BYTES_PER_SEC;
-  if (startTime > availableSeconds) {
-    // Not enough data to seek to startTime. Download what we have as a partial MP4.
-    // This gives the user a downloadable file (first ~10s of the video) instead of
-    // requiring screen capture permission (which fails in headless/mobile contexts).
-    console.warn(`[downloadYouTubeClip] Only ${availableSeconds.toFixed(1)}s of data available (need startTime=${startTime}s). Downloading partial MP4.`);
-    onProgress?.(`Downloaded ${(arrayBuffer.byteLength / 1024 / 1024).toFixed(1)}MB (partial video). Download starting...`);
-
-    const partialBlob = new Blob([arrayBuffer], { type: 'video/mp4' });
-    const safeName = (title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50) || 'clip');
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(partialBlob);
-    a.download = `${safeName}.mp4`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(a.href);
-
-    onProgress?.('Download complete (partial video — first segment only).');
-    return { blob: partialBlob, extension: 'mp4' };
+  if (arrayBuffer.byteLength < 50_000) {
+    throw new Error(`Stream returned too little data: ${arrayBuffer.byteLength} bytes`);
   }
 
-  // Create blob with explicit MIME type so the browser uses the MP4 media engine
+  // Download the fetched MP4 data directly as a file.
+  // This is fast (no real-time recording) and always produces a downloadable file.
   const downloadedMB = (arrayBuffer.byteLength / 1024 / 1024).toFixed(1);
-  console.log(`[downloadYouTubeClip] Blob downloaded: ${arrayBuffer.byteLength} bytes (${downloadedMB}MB)`);
+  console.log(`[downloadYouTubeClip] Downloaded ${arrayBuffer.byteLength} bytes (${downloadedMB}MB)`);
+  onProgress?.(`Downloaded ${downloadedMB}MB. Saving file...`);
 
   const videoBlob = new Blob([arrayBuffer], { type: 'video/mp4' });
-  const blobUrl = URL.createObjectURL(videoBlob);
+  const safeName = (title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50) || 'clip');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(videoBlob);
+  a.download = `${safeName}.mp4`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Delay revoking the URL to ensure the download starts
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 
-  onProgress?.('Recording clip (real-time, max 15s)...');
-  const { captureVideoClip } = await import('@/lib/ffmpeg-client');
-  try {
-    const { videoBlob: recordedBlob } = await captureVideoClip({
-      videoUrl: blobUrl,
-      startTime,
-      endTime,
-      onProgress: (msg) => onProgress?.(msg),
-    });
-
-    if (recordedBlob.size < 10_000) {
-      throw new Error(`Recording too small: ${recordedBlob.size} bytes`);
-    }
-
-    const extension = recordedBlob.type.includes('mp4') ? 'mp4' : 'webm';
-    const safeName = (title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50) || 'clip');
-
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(recordedBlob);
-    a.download = `${safeName}.${extension}`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(a.href);
-
-    onProgress?.('Download complete!');
-    return { blob: recordedBlob, extension };
-  } finally {
-    URL.revokeObjectURL(blobUrl);
-  }
+  onProgress?.('Download complete!');
+  return { blob: videoBlob, extension: 'mp4' };
 }
 
 /**

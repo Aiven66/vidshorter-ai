@@ -298,16 +298,16 @@ function ClipPlayerDialog({
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl p-0 overflow-hidden">
-        <DialogHeader className="px-4 pt-4 pb-2">
+        <DialogHeader className="px-4 pt-4 pb-2 min-w-0">
           <DialogTitle className="text-sm truncate">{clip.title}</DialogTitle>
         </DialogHeader>
-        <div className="bg-black">
+        <div className="bg-black min-w-0 w-full overflow-hidden">
           {useYouTubeEmbed && ytInfo ? (
             <iframe
               key={`embed-${clip.id}-${ytInfo.startTime}`}
               src={embedUrl}
               title={clip.title}
-              className="w-full aspect-video"
+              className="block w-full h-auto aspect-video"
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
               allowFullScreen
               referrerPolicy="strict-origin-when-cross-origin"
@@ -317,7 +317,7 @@ function ClipPlayerDialog({
               key={clip.id}
               controls
               autoPlay
-              className="w-full max-h-[50vh]"
+              className="block w-full h-auto max-h-[50vh]"
               src={resolveUrl(clip)}
             >
               <source src={resolveUrl(clip)} type="video/mp4" />

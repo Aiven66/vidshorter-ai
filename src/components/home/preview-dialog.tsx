@@ -213,8 +213,8 @@ export default function PreviewDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl w-[92vw]">
-        <DialogHeader>
+      <DialogContent className="max-w-4xl w-[92vw] overflow-hidden">
+        <DialogHeader className="min-w-0">
           <DialogTitle className="flex items-center gap-2">
             <Play className="h-5 w-5 text-primary" />
             {clip.title}
@@ -224,24 +224,24 @@ export default function PreviewDialog({
 
         {/* Real MP4 video player */}
         {hasRealMp4 ? (
-          <div className="relative bg-black rounded-lg overflow-hidden">
+          <div className="relative bg-black rounded-lg overflow-hidden min-w-0 w-full">
             <video
               key={clip.id}
               src={proxyUrl(clip)}
               controls
               playsInline
               preload="metadata"
-              className="w-full aspect-video"
+              className="block w-full h-auto aspect-video"
             />
           </div>
         ) : useYouTubeEmbed && ytInfo ? (
           /* YouTube IFrame embed for fallback/link_only clips */
-          <div className="relative bg-black rounded-lg overflow-hidden">
+          <div className="relative bg-black rounded-lg overflow-hidden min-w-0 w-full">
             <iframe
               key={`embed-${clip.id}-${ytInfo.startTime}`}
               src={embedUrl}
               title={clip.title}
-              className="w-full aspect-video"
+              className="block w-full h-auto aspect-video"
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
               allowFullScreen
               referrerPolicy="strict-origin-when-cross-origin"
@@ -249,14 +249,14 @@ export default function PreviewDialog({
           </div>
         ) : clip.videoUrl ? (
           /* Fallback video player (zoompan pseudo-video - should rarely show) */
-          <div className="relative bg-black rounded-lg overflow-hidden">
+          <div className="relative bg-black rounded-lg overflow-hidden min-w-0 w-full">
             <video
               key={clip.id}
               src={proxyUrl(clip)}
               controls
               playsInline
               preload="metadata"
-              className="w-full aspect-video"
+              className="block w-full h-auto aspect-video"
             />
           </div>
         ) : (
