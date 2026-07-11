@@ -1,30 +1,28 @@
 'use client';
 
 /**
- * YouTube clip download utility — direct MP4 download via CF Worker /stream.
+ * YouTube clip download utility — captureStream recording via CF Worker /stream.
  *
  * PROBLEM:
  *   - CF Worker /stream without streamUrl param calls InnerTube API, which is
  *     rate-limited by YouTube (LOGIN_REQUIRED on SJC colo after 1-2 calls).
  *   - Vercel Edge/Lambda IPs are blocked by YouTube (403).
- *   - googlevideo.com streamUrls are video-only DASH (itag=136), no audio.
+ *   - googlevideo.com streamUrls may be video-only DASH (itag=136), no audio.
  *   - Browser CORS prevents direct fetch of googlevideo.com URLs.
  *   - googlevideo.com imposes 2MB per-Range-request limit on CF Worker colos.
+ *   - googlevideo.com begin param signature mismatch — can't seek via URL.
  *
- * SOLUTION (v15):
- *   1. Build /stream URL directly (no /resolve pre-call) — Worker handles
- *      resolve + stream internally, avoiding colo-mismatch 502 errors.
- *   2. Fetch up to 10MB of MP4 data in 2MB chunks (fetchStreamChunked)
- *      to bypass googlevideo.com's per-request size rate limiting.
- *   3. Create Blob with video/mp4 MIME type and trigger browser download.
+ * SOLUTION (v16):
+ *   1. Build /stream URL with muxed=1 (forces muxed format with audio).
+ *   2. Create <video> element with /stream URL, seek to startTime.
+ *   3. Use captureStream + MediaRecorder to record [startTime, endTime] segment.
+ *   4. Trigger browser download of the recorded blob.
+ *
+ * This produces a clip that matches the preview (correct segment) with audio.
+ * Recording is real-time (takes min(duration, 30) seconds).
  *
  * FALLBACK CHAIN (in handleDownload):
  *   downloadYouTubeClip → downloadFullVideoStream → downloadPartialMP4 → window.open(linkOnlyUrl)
- *
- * LIMITATIONS:
- *   - Video-only (no audio) — YouTube IOS_v20 client returns video-only DASH
- *   - Downloads from 0:00, not from startTime (googlevideo.com begin param
- *     signature mismatch). User gets a playable MP4 containing the clip.
  */
 
 export interface ResolvedStream {
@@ -401,20 +399,23 @@ async function fetchStreamChunked(
 }
 
 /**
- * Download a YouTube video clip by directly fetching MP4 data from CF Worker /stream.
+ * Download a YouTube video clip by recording the correct segment via captureStream.
  *
  * Flow:
- *   1. Build /stream URL directly (no streamUrl param) — Worker handles
- *      resolve + stream internally, avoiding colo-mismatch 502 errors.
- *   2. Fetch partial video as ArrayBuffer using chunked downloads (2MB each)
- *      to bypass googlevideo.com's per-request size rate limiting.
- *   3. Create blob with video/mp4 MIME type and trigger browser download.
+ *   1. Build /stream URL with muxed=1 (forces muxed format with audio).
+ *   2. Create a <video> element with the /stream URL as src.
+ *   3. Seek to startTime, then use captureStream + MediaRecorder to record
+ *      the [startTime, endTime] segment in real-time.
+ *   4. Trigger browser download of the recorded blob.
  *
- * This is fast (no real-time recording) and always produces a downloadable file.
- * If /stream fails, caller (handleDownload) falls back to downloadFullVideoStream
- * then downloadPartialMP4, then finally opens the YouTube link in a new tab.
+ * This produces a clip that matches the preview (correct segment) with audio.
+ * Recording is real-time (takes min(duration, 30) seconds).
  *
- * @returns The downloaded blob (also triggers download)
+ * FALLBACK: If captureStream fails (e.g., CORS, codec, seek failure),
+ * caller (handleDownload) falls back to downloadFullVideoStream (downloads
+ * from 0:00) then downloadPartialMP4, then finally opens the YouTube link.
+ *
+ * @returns The recorded blob (also triggers download)
  */
 export async function downloadYouTubeClip(params: {
   videoId: string;
@@ -423,11 +424,8 @@ export async function downloadYouTubeClip(params: {
   title: string;
   onProgress?: (msg: string) => void;
 }): Promise<{ blob: Blob; extension: string }> {
-  const { videoId, title, onProgress } = params;
+  const { videoId, startTime, endTime, title, onProgress } = params;
 
-  // Build /stream URL directly (without streamUrl param) — Worker handles
-  // resolve + stream internally. This avoids the 502 error caused by
-  // /resolve + /stream fast-path dual calls hitting different CF Worker colos.
   const cfWorkerUrl = String(
     typeof window !== 'undefined' ? window.__CF_WORKER_URL__ : '',
   ).trim();
@@ -435,53 +433,190 @@ export async function downloadYouTubeClip(params: {
     throw new Error('CF_WORKER_URL not configured');
   }
 
+  // Build /stream URL with muxed=1 to force muxed (video+audio) format.
+  // Without muxed=1, CF Worker may return video-only DASH (itag=136, no audio).
   const streamEndpoint = new URL(cfWorkerUrl);
   streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
   streamEndpoint.searchParams.set('videoId', videoId);
   streamEndpoint.searchParams.set('maxHeight', '360');
+  streamEndpoint.searchParams.set('muxed', '1');
+  const streamUrl = streamEndpoint.toString();
 
-  // Fetch up to 10MB of video data (5 chunks of 2MB each).
-  // googlevideo.com rate-limits large Range requests from CF Worker colos:
-  // 2MB succeeds, 6MB fails. fetchStreamChunked handles this automatically.
-  // If subsequent chunks fail, it returns whatever data was fetched (graceful degradation).
-  const MAX_DOWNLOAD_BYTES = 10 * 1024 * 1024; // 10MB
-  onProgress?.('Downloading video data...');
-  let arrayBuffer: ArrayBuffer;
+  // Limit recording duration to 30s max (real-time recording is slow).
+  const rawDuration = Math.max(1, endTime - startTime);
+  const duration = Math.min(rawDuration, 30);
+
+  onProgress?.('Loading video stream...');
+
+  // Create hidden video element
+  const video = document.createElement('video');
+  video.crossOrigin = 'anonymous';
+  video.muted = false; // Keep audio enabled for captureStream
+  video.playsInline = true;
+  video.preload = 'auto';
+  video.style.cssText = 'position:fixed;left:-9999px;top:0;width:640px;height:360px;opacity:0.01;pointer-events:none;';
+  document.body.appendChild(video);
+
+  let recorder: MediaRecorder | null = null;
+  let cleanupAudioCtx: AudioContext | null = null;
+
   try {
-    arrayBuffer = await fetchStreamChunked(
-      streamEndpoint.toString(),
-      MAX_DOWNLOAD_BYTES,
-      (msg) => onProgress?.(msg),
-    );
-  } catch (streamErr) {
-    const msg = streamErr instanceof Error ? streamErr.message : String(streamErr);
-    console.warn('[downloadYouTubeClip] /stream failed:', msg);
-    throw new Error(`Video stream unavailable: ${msg}`);
+    // Load video metadata
+    video.src = streamUrl;
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Video load timeout (30s)')), 30_000);
+      const onLoaded = () => { clearTimeout(timeout); resolve(); };
+      const onError = () => { clearTimeout(timeout); reject(new Error('Video load failed (CORS or codec)')); };
+      video.addEventListener('loadedmetadata', onLoaded, { once: true });
+      video.addEventListener('error', onError, { once: true });
+    });
+
+    // Seek to startTime
+    if (startTime > 0.1) {
+      onProgress?.(`Seeking to ${Math.round(startTime)}s...`);
+      video.currentTime = Math.max(0, startTime);
+      await new Promise<void>((resolve) => {
+        const timeout = setTimeout(() => {
+          console.warn('[downloadYouTubeClip] Seek timeout, proceeding anyway');
+          resolve();
+        }, 10_000);
+        const onSeeked = () => { clearTimeout(timeout); resolve(); };
+        video.addEventListener('seeked', onSeeked, { once: true });
+      });
+    }
+
+    onProgress?.('Starting recording...');
+
+    // Capture stream from video element
+    const videoProto = HTMLVideoElement.prototype as HTMLVideoElement & {
+      captureStream?: () => MediaStream;
+      mozCaptureStream?: () => MediaStream;
+    };
+    if (typeof videoProto.captureStream !== 'function' &&
+        typeof videoProto.mozCaptureStream !== 'function') {
+      throw new Error('captureStream not supported in this browser');
+    }
+
+    const stream = videoProto.captureStream
+      ? videoProto.captureStream.call(video)
+      : videoProto.mozCaptureStream!.call(video);
+
+    if (!stream) throw new Error('Failed to capture stream');
+
+    // If no audio track, try Web Audio API fallback
+    if (!stream.getAudioTracks().length) {
+      try {
+        const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        const audioCtx = new AudioCtx();
+        cleanupAudioCtx = audioCtx;
+        const sourceNode = audioCtx.createMediaElementSource(video);
+        const destNode = audioCtx.createMediaStreamDestination();
+        sourceNode.connect(destNode);
+        sourceNode.connect(audioCtx.destination);
+        const audioTrack = destNode.stream.getAudioTracks()[0];
+        if (audioTrack) stream.addTrack(audioTrack);
+      } catch (audioErr) {
+        console.warn('[downloadYouTubeClip] Web Audio API fallback failed:', audioErr);
+      }
+    }
+
+    // Pick best supported mimeType
+    const mimeTypes = [
+      'video/webm;codecs=vp9,opus',
+      'video/webm;codecs=vp8,opus',
+      'video/webm;codecs=h264,opus',
+      'video/webm',
+    ];
+    const mimeType = mimeTypes.find(m => {
+      try { return MediaRecorder.isTypeSupported(m); } catch { return false; }
+    }) || 'video/webm';
+
+    recorder = new MediaRecorder(stream, {
+      mimeType,
+      videoBitsPerSecond: 2_000_000,
+      audioBitsPerSecond: 128_000,
+    });
+
+    const chunks: Blob[] = [];
+    recorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) chunks.push(e.data);
+    };
+
+    const recordingDone = new Promise<Blob>((resolve, reject) => {
+      recorder!.onstop = () => {
+        try {
+          const blob = new Blob(chunks, { type: mimeType.split(';')[0] });
+          resolve(blob);
+        } catch (err) {
+          reject(err);
+        }
+      };
+      recorder!.onerror = (e) => {
+        reject(new Error(`MediaRecorder error: ${e}`));
+      };
+    });
+
+    // Start recording
+    recorder.start(100);
+
+    // Play the video
+    try {
+      await video.play();
+    } catch (playErr) {
+      throw new Error(`Video play failed: ${playErr instanceof Error ? playErr.message : playErr}`);
+    }
+
+    onProgress?.(`Recording ${Math.round(duration)}s of clip...`);
+
+    // Wait for clip duration
+    await new Promise<void>((resolve) => {
+      const stopTime = Date.now() + duration * 1000;
+      const checkInterval = setInterval(() => {
+        if (Date.now() >= stopTime || video.ended) {
+          clearInterval(checkInterval);
+          resolve();
+        }
+      }, 100);
+    });
+
+    // Stop recording
+    video.pause();
+    if (recorder.state !== 'inactive') {
+      recorder.stop();
+    }
+
+    const videoBlob = await recordingDone;
+
+    if (videoBlob.size < 10_000) {
+      throw new Error(`Recording too small: ${videoBlob.size} bytes`);
+    }
+
+    // Trigger download
+    const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
+    const safeName = (title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50) || 'clip');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(videoBlob);
+    a.download = `${safeName}.${extension}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+
+    onProgress?.('Download complete!');
+    return { blob: videoBlob, extension };
+  } finally {
+    // Cleanup
+    try { if (recorder && recorder.state !== 'inactive') recorder.stop(); } catch {}
+    try { video.pause(); } catch {}
+    try { video.src = ''; } catch {}
+    try { video.load(); } catch {}
+    try { document.body.removeChild(video); } catch {}
+    try {
+      if (cleanupAudioCtx && cleanupAudioCtx.state !== 'closed') {
+        await cleanupAudioCtx.close();
+      }
+    } catch {}
   }
-
-  if (arrayBuffer.byteLength < 50_000) {
-    throw new Error(`Stream returned too little data: ${arrayBuffer.byteLength} bytes`);
-  }
-
-  // Download the fetched MP4 data directly as a file.
-  // This is fast (no real-time recording) and always produces a downloadable file.
-  const downloadedMB = (arrayBuffer.byteLength / 1024 / 1024).toFixed(1);
-  console.log(`[downloadYouTubeClip] Downloaded ${arrayBuffer.byteLength} bytes (${downloadedMB}MB)`);
-  onProgress?.(`Downloaded ${downloadedMB}MB. Saving file...`);
-
-  const videoBlob = new Blob([arrayBuffer], { type: 'video/mp4' });
-  const safeName = (title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50) || 'clip');
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(videoBlob);
-  a.download = `${safeName}.mp4`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  // Delay revoking the URL to ensure the download starts
-  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-
-  onProgress?.('Download complete!');
-  return { blob: videoBlob, extension: 'mp4' };
 }
 
 /**
@@ -514,6 +649,7 @@ export async function downloadFullVideoStream(params: {
   streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
   streamEndpoint.searchParams.set('videoId', videoId);
   streamEndpoint.searchParams.set('maxHeight', '360');
+  streamEndpoint.searchParams.set('muxed', '1');
 
   onProgress?.(`Downloading video (in 2MB chunks, up to ${(maxBytes / 1024 / 1024).toFixed(0)}MB)...`);
 
@@ -575,6 +711,7 @@ export async function downloadPartialMP4(params: {
   streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
   streamEndpoint.searchParams.set('videoId', videoId);
   streamEndpoint.searchParams.set('maxHeight', '360');
+  streamEndpoint.searchParams.set('muxed', '1');
 
   // Download enough data to cover the clip position, capped at 10MB (5 chunks)
   const neededBytes = Math.min(

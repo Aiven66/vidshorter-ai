@@ -271,6 +271,11 @@ export default {
         // Used when /resolve returns adaptiveFormats (video-only + audio) and
         // Vercel's ffmpeg needs separate audio input.
         const wantAudio = url.searchParams.get('audio') === '1';
+        // muxed=1: force tryClient to return muxed (combined video+audio) format
+        // instead of adaptiveFormats (video-only DASH + separate audio).
+        // Used by browser-side captureStream recording which needs a single
+        // stream with both video and audio tracks.
+        const wantMuxed = url.searchParams.get('muxed') === '1';
         // hdOnly=1: reject SD streams, return 502 if HD unavailable.
         // Overrides ALLOW_SD_FALLBACK env. Used by Vercel first attempt to
         // pursue HD quality; Vercel retries without hdOnly on failure.
@@ -413,7 +418,7 @@ export default {
 
           for (const client of CLIENTS) {
             try {
-              const info = await tryClient(videoId, client, h, cookieHeader);
+              const info = await tryClient(videoId, client, h, cookieHeader, wantMuxed);
               const resolved = {
                 streamUrl: info.streamUrl,
                 userAgent: info.userAgent,
@@ -692,7 +697,7 @@ function normalizeMaxHeight(value) {
   return n;
 }
 
-async function tryClient(videoId, client, maxHeight, cookieHeader) {
+async function tryClient(videoId, client, maxHeight, cookieHeader, wantMuxed) {
   const body = {
     videoId,
     contentCheckOk: true,
@@ -763,7 +768,10 @@ async function tryClient(videoId, client, maxHeight, cookieHeader) {
     audioResolvedOk: false,
   };
 
-  if (combinedHeight < 720) {
+  if (combinedHeight < 720 && !wantMuxed) {
+    // muxed=1: skip HD video-only + audio path, use combined (muxed) format
+    // which has both video and audio in a single stream. Needed for browser-side
+    // captureStream recording (can't merge separate video+audio streams).
     const videoOnly = videoFormats.filter((f) => !(f.audioQuality || f.audioChannels || f.audioBitrate));
     const audioOnly = formats.filter((f) =>
       (f?.url || f?.signatureCipher || f?.cipher) &&
