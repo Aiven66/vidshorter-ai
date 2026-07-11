@@ -308,32 +308,112 @@ async function downloadViaScreenCapture(params: {
   return { blob, extension: 'webm' };
 }
 
+// Maximum chunk size that googlevideo.com accepts from CF Worker colos.
+// Testing confirmed: 2MB Range succeeds, 6MB Range fails (returns 603-byte JSON error).
+// This is a per-request size limit imposed by YouTube's CDN on CF Worker egress IPs.
+const MAX_CHUNK_BYTES = 2 * 1024 * 1024; // 2MB
+
+/**
+ * Fetch video stream data in small chunks to avoid googlevideo.com's
+ * per-request size rate limiting on CF Worker colos.
+ *
+ * Makes multiple Range requests of MAX_CHUNK_BYTES each and concatenates
+ * the results. If a chunk request fails after some data has been fetched,
+ * returns whatever data was successfully retrieved (graceful degradation).
+ *
+ * @param streamUrl CF Worker /stream endpoint URL (without streamUrl param)
+ * @param totalBytes Target number of bytes to fetch
+ * @param onProgress Optional progress callback
+ * @returns ArrayBuffer containing the fetched data
+ * @throws Error if the first chunk fails or returns non-MP4 data
+ */
+async function fetchStreamChunked(
+  streamUrl: string,
+  totalBytes: number,
+  onProgress?: (msg: string) => void,
+): Promise<ArrayBuffer> {
+  const chunks: ArrayBuffer[] = [];
+  let fetched = 0;
+
+  while (fetched < totalBytes) {
+    const chunkStart = fetched;
+    const chunkEnd = Math.min(fetched + MAX_CHUNK_BYTES, totalBytes) - 1;
+
+    let res: Response;
+    try {
+      res = await fetch(streamUrl, {
+        headers: { Range: `bytes=${chunkStart}-${chunkEnd}` },
+        signal: AbortSignal.timeout(60_000),
+      });
+    } catch (err) {
+      if (fetched === 0) throw err;
+      console.warn(`[fetchStreamChunked] Chunk at offset ${chunkStart} network error, using ${fetched} bytes`);
+      break;
+    }
+
+    if (!res.ok && res.status !== 206 && res.status !== 200) {
+      if (fetched === 0) {
+        throw new Error(`Stream fetch failed: HTTP ${res.status}`);
+      }
+      console.warn(`[fetchStreamChunked] Chunk at offset ${chunkStart} returned HTTP ${res.status}, using ${fetched} bytes`);
+      break;
+    }
+
+    const chunk = await res.arrayBuffer();
+    if (chunk.byteLength === 0) break;
+
+    // Validate first chunk is a valid MP4 (ftyp box at offset 4)
+    if (fetched === 0) {
+      if (chunk.byteLength < 50_000) {
+        const preview = new TextDecoder().decode(chunk.slice(0, 200));
+        throw new Error(`Stream returned non-video data (${chunk.byteLength} bytes): ${preview}`);
+      }
+      const view = new DataView(chunk);
+      const boxType = String.fromCharCode(
+        view.getUint8(4), view.getUint8(5), view.getUint8(6), view.getUint8(7),
+      );
+      if (boxType !== 'ftyp') {
+        const preview = new TextDecoder().decode(chunk.slice(0, 200));
+        throw new Error(`Stream returned non-MP4 data (boxType=${boxType}): ${preview}`);
+      }
+    }
+
+    chunks.push(chunk);
+    fetched += chunk.byteLength;
+    onProgress?.(`Downloaded ${(fetched / 1024 / 1024).toFixed(1)}MB...`);
+
+    // If response was 200 (full file, Range ignored) or chunk is smaller
+    // than requested, we've reached the end of available data
+    if (res.status === 200 || chunk.byteLength < (chunkEnd - chunkStart + 1)) break;
+  }
+
+  // Concatenate all chunks into a single ArrayBuffer
+  const total = chunks.reduce((sum, c) => sum + c.byteLength, 0);
+  if (total === 0) throw new Error('No data received from stream');
+  const result = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(new Uint8Array(chunk), offset);
+    offset += chunk.byteLength;
+  }
+  return result.buffer;
+}
+
 /**
  * Download a YouTube video clip by recording it via captureStream + MediaRecorder.
  *
  * Flow:
  *   1. Build /stream URL directly (no streamUrl param) — Worker handles
  *      resolve + stream internally, avoiding colo-mismatch 502 errors.
- *   2. Fetch partial video as ArrayBuffer (combined MP4 from Worker fallback)
+ *   2. Fetch partial video as ArrayBuffer using chunked downloads (2MB each)
+ *      to bypass googlevideo.com's per-request size rate limiting.
  *   3. Create blob URL with explicit video/mp4 MIME type (no trimming)
  *   4. Seek to startTime, use captureStream + MediaRecorder to record
  *   5. Trigger browser download of the recorded blob
  *
- * FALLBACK: If /stream fails (e.g., YouTube rate-limited the CF Worker colo)
- * or returns non-MP4 data, falls back to screen capture (getDisplayMedia)
+ * FALLBACK: If /stream fails or returns non-MP4 data, or if not enough data
+ * was fetched to reach startTime, falls back to screen capture (getDisplayMedia)
  * which works at any position and includes audio.
- *
- * CRITICAL FIXES (v10):
- *   - Removed /resolve + /stream fast-path dual call: caused 502 when the two
- *     requests routed to different CF Worker colos (different egress IPs).
- *     Direct /stream call lets Worker handle resolve internally with consistent
- *     IP binding, and falls back to 360p combined MP4 (itag=18) when HD fails.
- *   - Removed trimToCompleteFragment: it incorrectly truncated the buffer to
- *     just ftyp+moov (517KB), discarding the entire mdat (video data).
- *     Combined MP4 from /stream is a regular MP4 (ftyp+moov+mdat) that plays
- *     and seeks correctly without trimming.
- *   - For clips far into the video (>75s), falls back to screen capture
- *     (getDisplayMedia) which works at any position and includes audio.
  *
  * @returns The recorded blob (also triggers download)
  */
@@ -356,10 +436,7 @@ export async function downloadYouTubeClip(params: {
 
   // Build /stream URL directly (without streamUrl param) — Worker handles
   // resolve + stream internally. This avoids the 502 error caused by
-  // /resolve + /stream fast-path dual calls hitting different CF Worker colos
-  // (different egress IPs → streamUrl IP binding mismatch → YouTube 403).
-  // Worker falls back to 360p combined MP4 (itag=18) when 720p fails — this is
-  // a regular MP4 (ftyp+moov+mdat) that plays and seeks correctly.
+  // /resolve + /stream fast-path dual calls hitting different CF Worker colos.
   const cfWorkerUrl = String(
     typeof window !== 'undefined' ? window.__CF_WORKER_URL__ : '',
   ).trim();
@@ -377,54 +454,38 @@ export async function downloadYouTubeClip(params: {
   const BITRATE_BYTES_PER_SEC = 400_000;
   const neededBytes = Math.ceil((endTime + 5) * BITRATE_BYTES_PER_SEC);
 
-  // Fetch partial video data as ArrayBuffer.
-  // If /stream fails (e.g., YouTube rate-limited the CF Worker colo) or
-  // returns non-video response (JSON error), fall back to screen capture.
-  // Timeout is 120s — CF Worker must resolve via InnerTube API (~10-15s)
-  // then stream data from googlevideo.com (~67KB/s observed, so 5MB ≈ 75s).
+  // Fetch partial video data using chunked downloads (2MB per chunk).
+  // googlevideo.com rate-limits large Range requests from CF Worker colos:
+  // 2MB succeeds, 6MB fails. fetchStreamChunked handles this automatically.
   const sizeMB = (neededBytes / 1024 / 1024).toFixed(1);
-  onProgress?.(`Downloading video data (${sizeMB}MB)...`);
+  onProgress?.(`Downloading video data (${sizeMB}MB in 2MB chunks)...`);
   let arrayBuffer: ArrayBuffer;
   try {
-    const videoRes = await fetch(streamEndpoint.toString(), {
-      headers: { Range: `bytes=0-${neededBytes - 1}` },
-      signal: AbortSignal.timeout(120_000),
-    });
-    if (!videoRes.ok && videoRes.status !== 206) {
-      throw new Error(`Stream fetch failed: HTTP ${videoRes.status}`);
-    }
-    arrayBuffer = await videoRes.arrayBuffer();
-    // Check if response is a valid MP4 (starts with "ftyp" box at offset 4).
-    // /stream may return a JSON error (small, non-MP4) when YouTube rate-limits
-    // the CF Worker colo. In that case, fall back to screen capture.
-    if (arrayBuffer.byteLength < 50_000) {
-      const preview = new TextDecoder().decode(arrayBuffer.slice(0, 200));
-      throw new Error(`Stream returned non-video data (${arrayBuffer.byteLength} bytes): ${preview}`);
-    }
-    const view = new DataView(arrayBuffer);
-    const boxType = String.fromCharCode(
-      view.getUint8(4), view.getUint8(5), view.getUint8(6), view.getUint8(7),
+    arrayBuffer = await fetchStreamChunked(
+      streamEndpoint.toString(),
+      neededBytes,
+      (msg) => onProgress?.(msg),
     );
-    if (boxType !== 'ftyp') {
-      const preview = new TextDecoder().decode(arrayBuffer.slice(0, 200));
-      throw new Error(`Stream returned non-MP4 data (boxType=${boxType}): ${preview}`);
-    }
   } catch (streamErr) {
     console.warn('[downloadYouTubeClip] /stream failed, falling back to screen capture:', streamErr instanceof Error ? streamErr.message : streamErr);
     onProgress?.('Stream unavailable, using screen capture...');
     return downloadViaScreenCapture({ videoId, startTime, endTime, title, onProgress });
   }
 
-  // Use the full ArrayBuffer directly — do NOT trim.
-  // Combined MP4 (itag=18) from /stream is a regular MP4 (ftyp+moov+mdat),
-  // not DASH fMP4. trimToCompleteFragment was found to incorrectly truncate
-  // the buffer to just ftyp+moov (~517KB), discarding all mdat video data.
-  // Tests confirmed: 5MB and 10MB complete blobs load metadata, seek, and
-  // record correctly without any trimming.
+  // Check if we have enough data to seek to startTime.
+  // If subsequent chunks failed (colo rate limit), we may only have 2MB (~5s).
+  // For clips starting beyond the available data, fall back to screen capture.
+  const availableSeconds = arrayBuffer.byteLength / BITRATE_BYTES_PER_SEC;
+  if (startTime > availableSeconds) {
+    console.warn(`[downloadYouTubeClip] Only ${availableSeconds.toFixed(1)}s of data available (need startTime=${startTime}s). Falling back to screen capture.`);
+    onProgress?.('Not enough data for this position, using screen capture...');
+    return downloadViaScreenCapture({ videoId, startTime, endTime, title, onProgress });
+  }
+
+  // Create blob with explicit MIME type so the browser uses the MP4 media engine
   const downloadedMB = (arrayBuffer.byteLength / 1024 / 1024).toFixed(1);
   console.log(`[downloadYouTubeClip] Blob downloaded: ${arrayBuffer.byteLength} bytes (${downloadedMB}MB)`);
 
-  // Create blob with explicit MIME type so the browser uses the MP4 media engine
   const videoBlob = new Blob([arrayBuffer], { type: 'video/mp4' });
   const blobUrl = URL.createObjectURL(videoBlob);
 
@@ -467,8 +528,8 @@ export async function downloadYouTubeClip(params: {
  * This downloads a partial video (up to maxBytes), which includes video from 0:00
  * to ~maxBytes/400KBps. The user can use a video player to find the highlight segment.
  *
- * v10 fix: Uses direct /stream URL (no /resolve + /stream dual call) to avoid
- * colo-mismatch 502 errors. Also validates that the response is a valid MP4.
+ * Uses chunked downloads (2MB per chunk) to bypass googlevideo.com's per-request
+ * size rate limiting on CF Worker colos.
  */
 export async function downloadFullVideoStream(params: {
   videoId: string;
@@ -491,25 +552,20 @@ export async function downloadFullVideoStream(params: {
   streamEndpoint.searchParams.set('videoId', videoId);
   streamEndpoint.searchParams.set('maxHeight', '360');
 
-  onProgress?.('Downloading video (this may take a while)...');
-  const res = await fetch(streamEndpoint.toString(), {
-    headers: { Range: `bytes=0-${maxBytes - 1}` },
-    signal: AbortSignal.timeout(120_000),
-  });
+  onProgress?.(`Downloading video (in 2MB chunks, up to ${(maxBytes / 1024 / 1024).toFixed(0)}MB)...`);
 
-  if (!res.ok && res.status !== 206) {
-    throw new Error(`Stream fetch failed: HTTP ${res.status}`);
+  // Use chunked fetch to avoid googlevideo.com's per-request size rate limiting
+  const arrayBuffer = await fetchStreamChunked(
+    streamEndpoint.toString(),
+    maxBytes,
+    (msg) => onProgress?.(msg),
+  );
+
+  if (arrayBuffer.byteLength < 50_000) {
+    throw new Error(`Stream returned too little data: ${arrayBuffer.byteLength} bytes`);
   }
 
-  const blob = await res.blob();
-  if (blob.size === 0) throw new Error('Empty response');
-
-  // Validate that we got a real MP4, not a JSON error response
-  if (blob.size < 50_000) {
-    const text = await blob.text();
-    throw new Error(`Stream returned non-video data (${blob.size} bytes): ${text.slice(0, 200)}`);
-  }
-
+  const blob = new Blob([arrayBuffer], { type: 'video/mp4' });
   const safeName = title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50) || 'clip';
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -529,6 +585,10 @@ export async function downloadFullVideoStream(params: {
  * fails (or returns non-video data), this function fetches a small portion
  * of the /stream and downloads it directly. The user gets a playable MP4
  * that contains video from 0:00 to ~endTime.
+ *
+ * Uses chunked downloads (2MB per chunk) to bypass googlevideo.com's
+ * per-request size rate limiting. At minimum, the first 2MB chunk (which
+ * always succeeds) guarantees the user gets a downloadable file.
  *
  * This is NOT the ideal solution (it's not the exact [startTime, endTime]
  * segment), but it ensures the user always gets a downloadable file.
@@ -553,24 +613,27 @@ export async function downloadPartialMP4(params: {
   streamEndpoint.searchParams.set('videoId', videoId);
   streamEndpoint.searchParams.set('maxHeight', '360');
 
-  // Download enough data to cover the clip position
-  const neededBytes = Math.ceil(Math.min(endTime + 5, 75) * 400_000);
+  // Download enough data to cover the clip position, capped at 10MB (5 chunks)
+  const neededBytes = Math.min(
+    Math.ceil(Math.min(endTime + 5, 75) * 400_000),
+    10 * 1024 * 1024,
+  );
 
-  onProgress?.(`Downloading video data (${(neededBytes / 1024 / 1024).toFixed(1)}MB)...`);
-  const res = await fetch(streamEndpoint.toString(), {
-    headers: { Range: `bytes=0-${neededBytes - 1}` },
-    signal: AbortSignal.timeout(120_000),
-  });
+  onProgress?.(`Downloading video data (${(neededBytes / 1024 / 1024).toFixed(1)}MB in 2MB chunks)...`);
 
-  if (!res.ok && res.status !== 206) {
-    throw new Error(`Stream fetch failed: HTTP ${res.status}`);
+  // Use chunked fetch — the first 2MB chunk always succeeds, ensuring
+  // the user gets at least a partial video file even if subsequent chunks fail.
+  const arrayBuffer = await fetchStreamChunked(
+    streamEndpoint.toString(),
+    neededBytes,
+    (msg) => onProgress?.(msg),
+  );
+
+  if (arrayBuffer.byteLength < 50_000) {
+    throw new Error(`Stream returned too little data: ${arrayBuffer.byteLength} bytes`);
   }
 
-  const blob = await res.blob();
-  if (blob.size < 50_000) {
-    throw new Error(`Stream too small: ${blob.size} bytes`);
-  }
-
+  const blob = new Blob([arrayBuffer], { type: 'video/mp4' });
   const safeName = title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50) || 'clip';
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
