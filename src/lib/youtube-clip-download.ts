@@ -459,6 +459,7 @@ export async function downloadYouTubeClip(params: {
 
   let recorder: MediaRecorder | null = null;
   let cleanupAudioCtx: AudioContext | null = null;
+  let audioEl: HTMLAudioElement | null = null;
 
   try {
     // Load video metadata
@@ -503,20 +504,68 @@ export async function downloadYouTubeClip(params: {
 
     if (!stream) throw new Error('Failed to capture stream');
 
-    // If no audio track, try Web Audio API fallback
+    // If no audio track (video-only DASH), fetch audio from /stream?audio=1
+    // and add it via Web Audio API. /stream?audio=1 returns the audioUrl
+    // (audio-only stream) when tryClient returned video-only + audioUrl.
     if (!stream.getAudioTracks().length) {
       try {
+        onProgress?.('Fetching audio stream...');
+        const audioEndpoint = new URL(streamUrl);
+        audioEndpoint.searchParams.set('audio', '1');
+
+        audioEl = document.createElement('audio');
+        audioEl.crossOrigin = 'anonymous';
+        audioEl.preload = 'auto';
+        audioEl.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0.01;pointer-events:none;';
+        document.body.appendChild(audioEl);
+
+        // Load audio metadata
+        audioEl.src = audioEndpoint.toString();
+        await new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            console.warn('[downloadYouTubeClip] Audio load timeout, proceeding without audio');
+            resolve();
+          }, 15_000);
+          const onLoaded = () => { clearTimeout(timeout); resolve(); };
+          const onError = () => {
+            clearTimeout(timeout);
+            console.warn('[downloadYouTubeClip] Audio stream load failed, proceeding without audio');
+            resolve();
+          };
+          audioEl!.addEventListener('loadedmetadata', onLoaded, { once: true });
+          audioEl!.addEventListener('error', onError, { once: true });
+        });
+
+        // Seek audio to startTime (sync with video)
+        if (startTime > 0.1 && audioEl.readyState >= 1) {
+          audioEl.currentTime = Math.max(0, startTime);
+          await new Promise<void>((resolve) => {
+            const timeout = setTimeout(resolve, 5_000);
+            const onSeeked = () => { clearTimeout(timeout); resolve(); };
+            audioEl!.addEventListener('seeked', onSeeked, { once: true });
+          });
+        }
+
+        // Create audio track via Web Audio API
         const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
         const audioCtx = new AudioCtx();
         cleanupAudioCtx = audioCtx;
-        const sourceNode = audioCtx.createMediaElementSource(video);
+        const sourceNode = audioCtx.createMediaElementSource(audioEl);
         const destNode = audioCtx.createMediaStreamDestination();
         sourceNode.connect(destNode);
         sourceNode.connect(audioCtx.destination);
         const audioTrack = destNode.stream.getAudioTracks()[0];
-        if (audioTrack) stream.addTrack(audioTrack);
+        if (audioTrack) {
+          stream.addTrack(audioTrack);
+          console.log('[downloadYouTubeClip] Audio track added from /stream?audio=1');
+        }
       } catch (audioErr) {
-        console.warn('[downloadYouTubeClip] Web Audio API fallback failed:', audioErr);
+        console.warn('[downloadYouTubeClip] Audio fallback failed:', audioErr);
+        // Clean up audio element if it failed
+        if (audioEl) {
+          try { document.body.removeChild(audioEl); } catch {}
+          audioEl = null;
+        }
       }
     }
 
@@ -559,9 +608,12 @@ export async function downloadYouTubeClip(params: {
     // Start recording
     recorder.start(100);
 
-    // Play the video
+    // Play the video (and audio if using separate audio element)
     try {
       await video.play();
+      if (audioEl) {
+        try { await audioEl.play(); } catch {}
+      }
     } catch (playErr) {
       throw new Error(`Video play failed: ${playErr instanceof Error ? playErr.message : playErr}`);
     }
@@ -581,6 +633,7 @@ export async function downloadYouTubeClip(params: {
 
     // Stop recording
     video.pause();
+    if (audioEl) audioEl.pause();
     if (recorder.state !== 'inactive') {
       recorder.stop();
     }
@@ -611,6 +664,13 @@ export async function downloadYouTubeClip(params: {
     try { video.src = ''; } catch {}
     try { video.load(); } catch {}
     try { document.body.removeChild(video); } catch {}
+    // Clean up separate audio element if used
+    if (audioEl) {
+      try { audioEl.pause(); } catch {}
+      try { audioEl.src = ''; } catch {}
+      try { audioEl.load(); } catch {}
+      try { document.body.removeChild(audioEl); } catch {}
+    }
     try {
       if (cleanupAudioCtx && cleanupAudioCtx.state !== 'closed') {
         await cleanupAudioCtx.close();
