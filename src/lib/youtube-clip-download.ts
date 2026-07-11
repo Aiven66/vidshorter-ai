@@ -12,11 +12,18 @@
  *   - googlevideo.com imposes 2MB per-Range-request limit on CF Worker colos.
  *   - googlevideo.com begin param signature mismatch — can't seek via URL.
  *
- * SOLUTION (v16):
- *   1. Build /stream URL with muxed=1 (forces muxed format with audio).
- *   2. Create <video> element with /stream URL, seek to startTime.
- *   3. Use captureStream + MediaRecorder to record [startTime, endTime] segment.
- *   4. Trigger browser download of the recorded blob.
+ * SOLUTION (v17):
+ *   1. Call /resolve to get streamUrl (video-only DASH) + audioUrl (audio-only).
+ *      Cache result for 5 hours to avoid rate-limiting.
+ *   2. Build two /stream?streamUrl=... URLs (fast path, no InnerTube call):
+ *      - Video stream: /stream?streamUrl=<streamUrl>
+ *      - Audio stream: /stream?streamUrl=<audioUrl>  (if audioUrl exists)
+ *   3. Create <video> element with video /stream URL.
+ *   4. Create <audio> element with audio /stream URL (if audioUrl exists).
+ *   5. Seek both to startTime.
+ *   6. Use captureStream on video + Web Audio API on audio to merge tracks.
+ *   7. MediaRecorder records the merged stream for [startTime, endTime].
+ *   8. Trigger browser download of the recorded blob.
  *
  * This produces a clip that matches the preview (correct segment) with audio.
  * Recording is real-time (takes min(duration, 30) seconds).
@@ -402,18 +409,18 @@ async function fetchStreamChunked(
  * Download a YouTube video clip by recording the correct segment via captureStream.
  *
  * Flow:
- *   1. Build /stream URL with muxed=1 (forces muxed format with audio).
- *   2. Create a <video> element with the /stream URL as src.
- *   3. Seek to startTime, then use captureStream + MediaRecorder to record
- *      the [startTime, endTime] segment in real-time.
- *   4. Trigger browser download of the recorded blob.
+ *   1. Call /resolve to get streamUrl (video) + audioUrl (audio) + client info.
+ *   2. Build /stream?streamUrl=... URLs for video and audio (fast path).
+ *   3. Create <video> + <audio> elements, seek both to startTime.
+ *   4. captureStream on video + Web Audio API on audio → merged MediaStream.
+ *   5. MediaRecorder records for [startTime, min(endTime, startTime+30)].
+ *   6. Trigger browser download of the recorded blob.
  *
  * This produces a clip that matches the preview (correct segment) with audio.
  * Recording is real-time (takes min(duration, 30) seconds).
  *
- * FALLBACK: If captureStream fails (e.g., CORS, codec, seek failure),
- * caller (handleDownload) falls back to downloadFullVideoStream (downloads
- * from 0:00) then downloadPartialMP4, then finally opens the YouTube link.
+ * FALLBACK: If /resolve fails, falls back to /stream (no streamUrl param, slow path).
+ * If captureStream fails, caller falls back to downloadFullVideoStream.
  *
  * @returns The recorded blob (also triggers download)
  */
@@ -433,14 +440,60 @@ export async function downloadYouTubeClip(params: {
     throw new Error('CF_WORKER_URL not configured');
   }
 
-  // Build /stream URL with muxed=1 to force muxed (video+audio) format.
-  // Without muxed=1, CF Worker may return video-only DASH (itag=136, no audio).
-  const streamEndpoint = new URL(cfWorkerUrl);
-  streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
-  streamEndpoint.searchParams.set('videoId', videoId);
-  streamEndpoint.searchParams.set('maxHeight', '360');
-  streamEndpoint.searchParams.set('muxed', '1');
-  const streamUrl = streamEndpoint.toString();
+  // Step 1: Resolve stream URLs via /resolve (cached for 5 hours).
+  // This returns streamUrl (video-only DASH) + audioUrl (audio-only) when
+  // tryClient selects HD video-only + audio path.
+  onProgress?.('Resolving video stream...');
+  let resolved: ResolvedStream | null = null;
+  try {
+    resolved = await resolveYouTubeStream(videoId, 1);
+    console.log('[downloadYouTubeClip] Resolved:', {
+      hasStreamUrl: !!resolved.streamUrl,
+      hasAudioUrl: !!resolved.audioUrl,
+      client: resolved.client,
+      colo: resolved.colo,
+    });
+  } catch (resolveErr) {
+    console.warn('[downloadYouTubeClip] /resolve failed, will use /stream slow path:', resolveErr);
+  }
+
+  // Step 2: Build /stream?streamUrl=... URLs (fast path, no InnerTube call).
+  // If /resolve succeeded, use the resolved streamUrl; otherwise /stream
+  // will call InnerTube internally (slow, may be rate-limited).
+  const streamBase = new URL(cfWorkerUrl);
+  streamBase.pathname = `${streamBase.pathname.replace(/\/$/, '')}/stream`;
+
+  let videoStreamUrl: string;
+  let audioStreamUrl: string | null = null;
+
+  if (resolved) {
+    // Fast path: use resolved streamUrl + audioUrl
+    const videoUrl = new URL(streamBase.toString());
+    videoUrl.searchParams.set('streamUrl', resolved.streamUrl);
+    videoUrl.searchParams.set('userAgent', resolved.userAgent);
+    videoUrl.searchParams.set('visitorData', resolved.visitorData);
+    videoUrl.searchParams.set('xClientName', String(resolved.xClientName));
+    videoUrl.searchParams.set('clientVersion', resolved.clientVersion);
+    videoUrl.searchParams.set('clientName', resolved.client);
+    videoStreamUrl = videoUrl.toString();
+
+    if (resolved.audioUrl) {
+      const audioUrl = new URL(streamBase.toString());
+      audioUrl.searchParams.set('streamUrl', resolved.audioUrl);
+      audioUrl.searchParams.set('userAgent', resolved.userAgent);
+      audioUrl.searchParams.set('visitorData', resolved.visitorData);
+      audioUrl.searchParams.set('xClientName', String(resolved.xClientName));
+      audioUrl.searchParams.set('clientVersion', resolved.clientVersion);
+      audioUrl.searchParams.set('clientName', resolved.client);
+      audioStreamUrl = audioUrl.toString();
+    }
+  } else {
+    // Slow path: let /stream call InnerTube internally
+    const videoUrl = new URL(streamBase.toString());
+    videoUrl.searchParams.set('videoId', videoId);
+    videoUrl.searchParams.set('maxHeight', '360');
+    videoStreamUrl = videoUrl.toString();
+  }
 
   // Limit recording duration to 30s max (real-time recording is slow).
   const rawDuration = Math.max(1, endTime - startTime);
@@ -448,45 +501,137 @@ export async function downloadYouTubeClip(params: {
 
   onProgress?.('Loading video stream...');
 
-  // Create hidden video element
+  // Create hidden video element (muted=true to bypass autoplay policy)
   const video = document.createElement('video');
   video.crossOrigin = 'anonymous';
-  video.muted = false; // Keep audio enabled for captureStream
+  video.muted = true; // Muted=speaker off; captureStream still captures audio
   video.playsInline = true;
   video.preload = 'auto';
   video.style.cssText = 'position:fixed;left:-9999px;top:0;width:640px;height:360px;opacity:0.01;pointer-events:none;';
   document.body.appendChild(video);
 
+  // Create hidden audio element (for separate audio stream, if applicable)
+  let audioEl: HTMLAudioElement | null = null;
+  if (audioStreamUrl) {
+    audioEl = document.createElement('audio');
+    audioEl.crossOrigin = 'anonymous';
+    audioEl.muted = false; // Audio plays through Web Audio API → MediaStreamDestination
+    audioEl.preload = 'auto';
+    audioEl.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0.01;pointer-events:none;';
+    document.body.appendChild(audioEl);
+  }
+
   let recorder: MediaRecorder | null = null;
   let cleanupAudioCtx: AudioContext | null = null;
-  let audioEl: HTMLAudioElement | null = null;
 
   try {
-    // Load video metadata
-    video.src = streamUrl;
+    // Load video metadata (wait for canplay, not just loadedmetadata — ensures
+    // the browser has enough data to actually start playback)
+    video.src = videoStreamUrl;
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('Video load timeout (30s)')), 30_000);
-      const onLoaded = () => { clearTimeout(timeout); resolve(); };
-      const onError = () => { clearTimeout(timeout); reject(new Error('Video load failed (CORS or codec)')); };
-      video.addEventListener('loadedmetadata', onLoaded, { once: true });
+      const onCanPlay = () => { clearTimeout(timeout); resolve(); };
+      const onError = (e: Event) => {
+        clearTimeout(timeout);
+        const err = video.error;
+        reject(new Error(`Video load failed: ${err?.message || 'CORS or codec error'}`));
+      };
+      video.addEventListener('canplay', onCanPlay, { once: true });
       video.addEventListener('error', onError, { once: true });
     });
 
-    // Seek to startTime
+    // Load audio metadata (if separate audio stream)
+    if (audioEl) {
+      audioEl.src = audioStreamUrl!;
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          console.warn('[downloadYouTubeClip] Audio load timeout, proceeding without audio');
+          resolve(); // Don't fail — proceed with video-only
+        }, 15_000);
+        const onCanPlay = () => { clearTimeout(timeout); resolve(); };
+        const onError = () => {
+          clearTimeout(timeout);
+          console.warn('[downloadYouTubeClip] Audio load failed, proceeding without audio');
+          resolve(); // Don't fail — proceed with video-only
+        };
+        audioEl!.addEventListener('canplaythrough', onCanPlay, { once: true });
+        audioEl!.addEventListener('error', onError, { once: true });
+      });
+    }
+
+    // Seek video to startTime
     if (startTime > 0.1) {
       onProgress?.(`Seeking to ${Math.round(startTime)}s...`);
       video.currentTime = Math.max(0, startTime);
       await new Promise<void>((resolve) => {
         const timeout = setTimeout(() => {
-          console.warn('[downloadYouTubeClip] Seek timeout, proceeding anyway');
+          console.warn('[downloadYouTubeClip] Video seek timeout, proceeding anyway');
           resolve();
-        }, 10_000);
+        }, 15_000);
         const onSeeked = () => { clearTimeout(timeout); resolve(); };
         video.addEventListener('seeked', onSeeked, { once: true });
       });
     }
 
+    // Seek audio to startTime (sync with video)
+    if (audioEl && startTime > 0.1) {
+      try {
+        audioEl.currentTime = Math.max(0, startTime);
+        await new Promise<void>((resolve) => {
+          const timeout = setTimeout(resolve, 10_000);
+          const onSeeked = () => { clearTimeout(timeout); resolve(); };
+          audioEl!.addEventListener('seeked', onSeeked, { once: true });
+        });
+      } catch {
+        console.warn('[downloadYouTubeClip] Audio seek failed, proceeding anyway');
+      }
+    }
+
     onProgress?.('Starting recording...');
+
+    // Play the video first (muted=true bypasses autoplay policy)
+    try {
+      await video.play();
+    } catch (playErr) {
+      throw new Error(`Video play failed: ${playErr instanceof Error ? playErr.message : playErr}`);
+    }
+
+    // Play the audio (if separate audio stream)
+    if (audioEl) {
+      try {
+        // AudioContext must be resumed (browser autoplay policy)
+        const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        const audioCtx = new AudioCtx();
+        cleanupAudioCtx = audioCtx;
+        if (audioCtx.state === 'suspended') {
+          await audioCtx.resume();
+        }
+
+        const sourceNode = audioCtx.createMediaElementSource(audioEl);
+        const destNode = audioCtx.createMediaStreamDestination();
+        sourceNode.connect(destNode);
+        // Do NOT connect to audioCtx.destination — we don't want audio to
+        // play through speakers (video is already muted, audio would be jarring)
+
+        await audioEl.play();
+
+        // Store the audio track for later use
+        audioEl.dataset.audioReady = '1';
+        (audioEl as unknown as { _destNode: MediaStreamAudioDestinationNode })._destNode = destNode;
+      } catch (audioPlayErr) {
+        console.warn('[downloadYouTubeClip] Audio play failed, proceeding with video-only:', audioPlayErr);
+        // Reset audioEl so we don't try to use it later
+        if (cleanupAudioCtx) {
+          try { await cleanupAudioCtx.close(); } catch {}
+          cleanupAudioCtx = null;
+        }
+        try { audioEl.pause(); } catch {}
+        audioEl = null;
+      }
+    }
+
+    // Small delay to ensure tracks are ready
+    await new Promise<void>((r) => setTimeout(r, 200));
 
     // Capture stream from video element
     const videoProto = HTMLVideoElement.prototype as HTMLVideoElement & {
@@ -502,72 +647,48 @@ export async function downloadYouTubeClip(params: {
       ? videoProto.captureStream.call(video)
       : videoProto.mozCaptureStream!.call(video);
 
-    if (!stream) throw new Error('Failed to capture stream');
+    if (!stream) throw new Error('Failed to capture stream from video');
 
-    // If no audio track (video-only DASH), fetch audio from /stream?audio=1
-    // and add it via Web Audio API. /stream?audio=1 returns the audioUrl
-    // (audio-only stream) when tryClient returned video-only + audioUrl.
+    // If we have a separate audio stream, add its audio track to the recording
+    if (audioEl && (audioEl as unknown as { _destNode?: MediaStreamAudioDestinationNode })._destNode) {
+      const destNode = (audioEl as unknown as { _destNode: MediaStreamAudioDestinationNode })._destNode;
+      const audioTracks = destNode.stream.getAudioTracks();
+      if (audioTracks.length > 0) {
+        stream.addTrack(audioTracks[0]);
+        console.log('[downloadYouTubeClip] Audio track added from separate audio stream');
+      } else {
+        console.warn('[downloadYouTubeClip] No audio tracks in destNode stream');
+      }
+    }
+
+    // If still no audio track (video-only DASH + no audioUrl), try Web Audio
+    // API on the video element itself (works if video has audio track)
     if (!stream.getAudioTracks().length) {
       try {
-        onProgress?.('Fetching audio stream...');
-        const audioEndpoint = new URL(streamUrl);
-        audioEndpoint.searchParams.set('audio', '1');
-
-        audioEl = document.createElement('audio');
-        audioEl.crossOrigin = 'anonymous';
-        audioEl.preload = 'auto';
-        audioEl.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0.01;pointer-events:none;';
-        document.body.appendChild(audioEl);
-
-        // Load audio metadata
-        audioEl.src = audioEndpoint.toString();
-        await new Promise<void>((resolve, reject) => {
-          const timeout = setTimeout(() => {
-            console.warn('[downloadYouTubeClip] Audio load timeout, proceeding without audio');
-            resolve();
-          }, 15_000);
-          const onLoaded = () => { clearTimeout(timeout); resolve(); };
-          const onError = () => {
-            clearTimeout(timeout);
-            console.warn('[downloadYouTubeClip] Audio stream load failed, proceeding without audio');
-            resolve();
-          };
-          audioEl!.addEventListener('loadedmetadata', onLoaded, { once: true });
-          audioEl!.addEventListener('error', onError, { once: true });
-        });
-
-        // Seek audio to startTime (sync with video)
-        if (startTime > 0.1 && audioEl.readyState >= 1) {
-          audioEl.currentTime = Math.max(0, startTime);
-          await new Promise<void>((resolve) => {
-            const timeout = setTimeout(resolve, 5_000);
-            const onSeeked = () => { clearTimeout(timeout); resolve(); };
-            audioEl!.addEventListener('seeked', onSeeked, { once: true });
-          });
-        }
-
-        // Create audio track via Web Audio API
         const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-        const audioCtx = new AudioCtx();
-        cleanupAudioCtx = audioCtx;
-        const sourceNode = audioCtx.createMediaElementSource(audioEl);
-        const destNode = audioCtx.createMediaStreamDestination();
+        if (!cleanupAudioCtx) {
+          cleanupAudioCtx = new AudioCtx();
+          if (cleanupAudioCtx.state === 'suspended') {
+            await cleanupAudioCtx.resume();
+          }
+        }
+        const sourceNode = cleanupAudioCtx.createMediaElementSource(video);
+        const destNode = cleanupAudioCtx.createMediaStreamDestination();
         sourceNode.connect(destNode);
-        sourceNode.connect(audioCtx.destination);
         const audioTrack = destNode.stream.getAudioTracks()[0];
         if (audioTrack) {
           stream.addTrack(audioTrack);
-          console.log('[downloadYouTubeClip] Audio track added from /stream?audio=1');
+          console.log('[downloadYouTubeClip] Audio track added from video element via Web Audio API');
         }
       } catch (audioErr) {
-        console.warn('[downloadYouTubeClip] Audio fallback failed:', audioErr);
-        // Clean up audio element if it failed
-        if (audioEl) {
-          try { document.body.removeChild(audioEl); } catch {}
-          audioEl = null;
-        }
+        console.warn('[downloadYouTubeClip] Web Audio API on video failed:', audioErr);
       }
     }
+
+    console.log('[downloadYouTubeClip] Stream tracks:', {
+      video: stream.getVideoTracks().length,
+      audio: stream.getAudioTracks().length,
+    });
 
     // Pick best supported mimeType
     const mimeTypes = [
@@ -607,16 +728,6 @@ export async function downloadYouTubeClip(params: {
 
     // Start recording
     recorder.start(100);
-
-    // Play the video (and audio if using separate audio element)
-    try {
-      await video.play();
-      if (audioEl) {
-        try { await audioEl.play(); } catch {}
-      }
-    } catch (playErr) {
-      throw new Error(`Video play failed: ${playErr instanceof Error ? playErr.message : playErr}`);
-    }
 
     onProgress?.(`Recording ${Math.round(duration)}s of clip...`);
 
@@ -664,7 +775,6 @@ export async function downloadYouTubeClip(params: {
     try { video.src = ''; } catch {}
     try { video.load(); } catch {}
     try { document.body.removeChild(video); } catch {}
-    // Clean up separate audio element if used
     if (audioEl) {
       try { audioEl.pause(); } catch {}
       try { audioEl.src = ''; } catch {}
@@ -709,7 +819,6 @@ export async function downloadFullVideoStream(params: {
   streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
   streamEndpoint.searchParams.set('videoId', videoId);
   streamEndpoint.searchParams.set('maxHeight', '360');
-  streamEndpoint.searchParams.set('muxed', '1');
 
   onProgress?.(`Downloading video (in 2MB chunks, up to ${(maxBytes / 1024 / 1024).toFixed(0)}MB)...`);
 
@@ -771,7 +880,6 @@ export async function downloadPartialMP4(params: {
   streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
   streamEndpoint.searchParams.set('videoId', videoId);
   streamEndpoint.searchParams.set('maxHeight', '360');
-  streamEndpoint.searchParams.set('muxed', '1');
 
   // Download enough data to cover the clip position, capped at 10MB (5 chunks)
   const neededBytes = Math.min(
