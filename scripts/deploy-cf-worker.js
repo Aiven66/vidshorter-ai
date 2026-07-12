@@ -54,16 +54,22 @@ async function deploy() {
 
   console.log(`🚀 Deploying Cloudflare Worker "${workerName}"...`);
 
-  // Deploy using Cloudflare API directly
+  // Deploy using Cloudflare API directly (ES module mode via multipart/form-data)
   const url = `https://api.cloudflare.com/client/v4/accounts/${cfAccountId}/workers/scripts/${workerName}`;
+
+  const form = new FormData();
+  form.append('metadata', JSON.stringify({
+    main_module: 'worker.js',
+    bindings: [],
+  }));
+  form.append('worker.js', new Blob([workerScript], { type: 'application/javascript+module' }), 'worker.js');
 
   const response = await fetch(url, {
     method: 'PUT',
     headers: {
       'Authorization': `Bearer ${cfToken}`,
-      'Content-Type': 'application/javascript',
     },
-    body: workerScript,
+    body: form,
   });
 
   if (!response.ok) {

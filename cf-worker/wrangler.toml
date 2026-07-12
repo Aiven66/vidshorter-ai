@@ -1,6 +1,7 @@
 name = "youtube-proxy"
 main = "worker.js"
 compatibility_date = "2024-01-01"
+account_id = "e9d79e0ed14e6b2191fb278c884e5325"
 
 # Optional: protect the worker with a secret key
 # If set, requests must include ?key=<value> to be authorized
