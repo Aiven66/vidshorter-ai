@@ -434,7 +434,7 @@ export async function downloadYouTubeClip(params: {
   // successfully resolved the stream. Without this, the first server attempt
   // always fails and wastes 120s before falling back.
   const callServerApi = async (streamMeta?: ResolvedStream) => {
-    onProgress?.(`Server processing clip (${startTime}s–${endTime}s, up to 90s)...`);
+    onProgress?.(`Server processing clip (${startTime}s–${endTime}s, may take up to 2min)...`);
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
     const apiUrl = new URL('/api/download-youtube-clip', origin || undefined);
     apiUrl.searchParams.set('videoId', videoId);
@@ -453,7 +453,7 @@ export async function downloadYouTubeClip(params: {
     }
 
     const res = await fetch(apiUrl.toString(), {
-      signal: AbortSignal.timeout(90_000), // 90s — server may download + transcode
+      signal: AbortSignal.timeout(120_000), // 120s — server downloads [0,endTime] bytes + ffmpeg cut
     });
 
     if (!res.ok) {

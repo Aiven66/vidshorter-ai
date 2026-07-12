@@ -3390,14 +3390,14 @@ async function prepareSourceFromResolvedStream(params: {
   // CRITICAL: Limit download to bytes needed for [0, endTime + buffer].
   // Previously downloaded up to 400MB (the entire video), which took 60-150s
   // in 2MB chunks and caused the frontend to timeout at 90s ("stuck downloading").
-  // At 360p muxed (~500KB/s), endTime=120s needs ~60MB. Cap at 80MB for safety.
+  // At 360p muxed (~450KB/s), endTime=80s needs ~36MB. Cap at 60MB for safety.
   const endTime = params.endTime;
   const maxDownloadBytes = endTime
-    ? Math.min(Math.ceil((endTime + 15) * 550_000), 80 * 1024 * 1024)
-    : 60 * 1024 * 1024;
+    ? Math.min(Math.ceil((endTime + 10) * 450_000), 60 * 1024 * 1024)
+    : 40 * 1024 * 1024;
 
   const videoDownloaded = await downloadStreamToLocalFile(videoFetchUrl, localPath, {
-    maxBudgetMs: IS_VERCEL ? 90_000 : 180_000,
+    maxBudgetMs: IS_VERCEL ? 120_000 : 240_000,
     maxBytes: maxDownloadBytes,
   });
   if (!videoDownloaded) throw new Error('Frontend-provided video stream download failed');
