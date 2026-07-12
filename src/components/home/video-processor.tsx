@@ -28,6 +28,7 @@ import {
   AlertCircle, Loader2, Clock, Eye, ExternalLink
 } from 'lucide-react';
 import Link from 'next/link';
+import { trackEvent, setAnalyticsUser, VIDEO_FUNNEL } from '@/lib/analytics';
 
 const PreviewDialog = dynamic(
   () => import('@/components/home/preview-dialog'),
@@ -540,6 +541,16 @@ export default function VideoProcessor() {
     (clip.isFallback === true && clip.linkOnlyUrl)
   );
 
+  // 同步当前用户信息到 analytics SDK
+  useEffect(() => {
+    setAnalyticsUser(user ? { id: user.id, email: user.email } : null);
+  }, [user]);
+
+  // 行为埋点：首页访问 (video_generation funnel step 1)
+  useEffect(() => {
+    trackEvent(VIDEO_FUNNEL.PAGE_VIEW_HOME);
+  }, []);
+
   useEffect(() => {
     try {
       const q = new URLSearchParams(window.location.search);
@@ -633,6 +644,16 @@ export default function VideoProcessor() {
     setProgress({ stage: 'init', progress: 0, message: 'Starting...' });
     setClips([]);
     setError(null);
+
+    // 行为埋点：点击 Analyze (video_generation funnel step 2)
+    trackEvent(VIDEO_FUNNEL.CLICK_ANALYZE, {
+      data: {
+        source_type: selectedFile ? 'upload' : 'url',
+        url_domain: selectedFile ? null : (() => {
+          try { return new URL(trimmedVideoUrl).hostname; } catch { return null; }
+        })(),
+      },
+    });
 
     try {
       let inputUrl = trimmedVideoUrl;
@@ -962,6 +983,14 @@ export default function VideoProcessor() {
       }
 
       if (done && !hasError) {
+        // 行为埋点：AI 生成成功 (video_generation funnel step 3)
+        trackEvent(VIDEO_FUNNEL.ANALYZE_SUCCESS, {
+          data: {
+            clip_count: Array.from(clipMap.values()).length,
+            video_source: ytVideoIdFromUrl ? 'youtube' : (selectedFile ? 'upload' : 'url'),
+          },
+        });
+
         // 重新生成 fallback zoompan 伪视频：当 Vercel 因 YouTube colo-mismatch/IP 限制
         // 无法通过 CF Worker 下载视频时，后端会用静态缩略图 + zoompan 滤镜生成"伪视频"，
         // 并标记 isFallback: true。前端浏览器 IP 不受限，可以通过 CF Worker /stream
@@ -1012,6 +1041,16 @@ export default function VideoProcessor() {
   }, [accessToken, error, getLocalMediaBaseUrl, refreshCredits, selectedFile, trimmedVideoUrl, uploadToSupabase, useAgent, user]);
 
   const handleDownload = async (clip: VideoClip) => {
+    // 行为埋点：下载高光短视频 (video_generation funnel step 4)
+    trackEvent(VIDEO_FUNNEL.CLIP_DOWNLOAD, {
+      data: {
+        clip_id: clip.id,
+        clip_title: clip.title,
+        clip_status: clip.status,
+        is_fallback: clip.isFallback === true,
+      },
+    });
+
     // link_only / fallback clips: download via server-side ffmpeg or browser-side chunked fetch.
     //
     // FLOW:

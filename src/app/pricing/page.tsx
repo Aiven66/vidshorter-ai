@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -10,6 +10,7 @@ import { Check } from 'lucide-react';
 import Link from 'next/link';
 import { PaymentModal } from '@/components/payment-modal';
 import { useRouter } from 'next/navigation';
+import { trackEvent, setAnalyticsUser, SUBSCRIBE_FUNNEL } from '@/lib/analytics';
 
 interface PlanConfig {
   id: string;
@@ -94,7 +95,27 @@ export default function PricingPage() {
   const [payingPlan, setPayingPlan] = useState<PlanConfig | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
 
+  // 同步当前用户信息到 analytics SDK
+  useEffect(() => {
+    setAnalyticsUser(user ? { id: user.id, email: user.email } : null);
+  }, [user]);
+
+  // 行为埋点：访问价格页 (subscription funnel step 1)
+  useEffect(() => {
+    trackEvent(SUBSCRIBE_FUNNEL.PAGE_VIEW_PRICING);
+  }, []);
+
   const handleSubscribe = (plan: PlanConfig) => {
+    // 行为埋点：点击付费按钮 (subscription funnel step 2)
+    trackEvent(SUBSCRIBE_FUNNEL.CLICK_SUBSCRIBE, {
+      data: {
+        plan_id: plan.id,
+        plan_name: plan.name,
+        plan_price_cn: plan.price.cn,
+        plan_price_intl: plan.price.intl,
+      },
+    });
+
     if (!user) {
       router.push('/register');
       return;

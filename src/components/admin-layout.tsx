@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { LayoutDashboard, Users, CreditCard, BarChart3, FileText, Menu, X } from 'lucide-react';
+import { LayoutDashboard, Users, CreditCard, BarChart3, FileText, Menu, X, Activity } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface AdminLayoutProps {
@@ -23,6 +23,7 @@ const navItems: NavItem[] = [
   { id: 'users', label: { zh: '用户管理', en: 'Users' }, icon: <Users className="w-5 h-5" /> },
   { id: 'payments', label: { zh: '付费管理', en: 'Payments' }, icon: <CreditCard className="w-5 h-5" /> },
   { id: 'blog', label: { zh: '博客管理', en: 'Blog' }, icon: <FileText className="w-5 h-5" /> },
+  { id: 'events', label: { zh: '行为数据', en: 'Events' }, icon: <Activity className="w-5 h-5" /> },
 ];
 
 export function AdminLayout({ children, currentPage, onPageChange }: AdminLayoutProps) {

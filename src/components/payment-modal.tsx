@@ -21,6 +21,7 @@ import {
 import { useAuth } from '@/lib/auth-context';
 import { posthog } from '@/lib/posthog';
 import { PayPalCheckout } from '@/components/paypal-checkout';
+import { trackEvent, setAnalyticsUser, SUBSCRIBE_FUNNEL } from '@/lib/analytics';
 
 interface PlanInfo {
   id: string;
@@ -64,6 +65,16 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
       currency: 'USD',
       plan: plan.id,
       payment_method: paymentMethod,
+    });
+
+    // 行为埋点：付费订阅成功 (subscription funnel step 3)
+    trackEvent(SUBSCRIBE_FUNNEL.SUBSCRIBE_SUCCESS, {
+      data: {
+        plan_id: plan.id,
+        plan_name: plan.name,
+        amount_usd: plan.price.intl,
+        payment_method: paymentMethod,
+      },
     });
   }, [plan]);
 
