@@ -40,13 +40,12 @@ export async function captureVideoClip(params: {
   startTime: number;
   endTime: number;
   onProgress?: (msg: string) => void;
+  maxRecordDuration?: number;
 }): Promise<CaptureResult> {
   const { videoUrl, startTime, endTime, onProgress } = params;
-  // 限制最大录制时长到 15 秒，避免实时录制过长导致用户等待。
-  // captureVideoClip 是实时录制（record duration seconds），60s 的 clip 需要 60s 录制。
-  // 3 个 60s clip = 180s 纯录制时间，用户体验很差。
-  // 15s 足以展示高光片段的核心内容，3 个 clip 只需 45s 录制时间。
-  const MAX_RECORD_DURATION = 15;
+  // 限制最大录制时长，避免实时录制过长导致用户等待。
+  // 生成阶段默认 15s（3 个 clip 只需 45s）；下载阶段可传入 90s 录制完整片段。
+  const MAX_RECORD_DURATION = params.maxRecordDuration ?? 15;
   const rawDuration = Math.max(1, endTime - startTime);
   const duration = Math.min(rawDuration, MAX_RECORD_DURATION);
 

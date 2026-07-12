@@ -655,3 +655,123 @@ export async function downloadPartialMP4(params: {
 
   onProgress?.('Download complete!');
 }
+
+/**
+ * Browser-side clip download — the RELIABLE path (v37).
+ *
+ * WHY THIS EXISTS:
+ *   The server-side path (/api/download-youtube-clip) has been unreliable:
+ *   - ffmpeg reading from CF Worker /stream encounters 2MB Range limits
+ *   - itag=136 is video-only (no audio) even with muxed=1
+ *   - Vercel 300s timeout + 4.5MB response limit
+ *   - CF Worker colo mismatch between /resolve (browser) and /stream (Vercel)
+ *
+ * THIS APPROACH (entirely browser-side):
+ *   1. Resolve muxed stream via CF Worker /resolve (browser's healthy colo)
+ *   2. Download video bytes via fetchStreamChunked (2MB chunks, from 0:00)
+ *   3. Create a Blob URL (browser handles seeking locally — no HTTP Range issues)
+ *   4. Use captureVideoClip to cut [startTime, endTime] with audio
+ *   5. Download the recorded clip
+ *
+ * Advantages:
+ *   - No server involvement → no Vercel timeout or response size limit
+ *   - Browser's CF Worker colo is healthy (not rate-limited)
+ *   - Blob URL allows local seeking (no HTTP Range request failures)
+ *   - Muxed stream ensures audio is present
+ *   - captureVideoClip records video+audio tracks together
+ *
+ * Limitation: real-time recording (a 60s clip takes ~60s to record).
+ * The user sees a progress bar during recording.
+ */
+export async function downloadClipViaBrowser(params: {
+  videoId: string;
+  startTime: number;
+  endTime: number;
+  title: string;
+  resolved?: ResolvedStream;
+  onProgress?: (msg: string) => void;
+}): Promise<void> {
+  const { videoId, startTime, endTime, title, resolved, onProgress } = params;
+  const clipDuration = Math.min(Math.max(1, endTime - startTime), 90);
+
+  // Step 1: Resolve muxed stream via CF Worker /resolve (from browser)
+  let streamMeta = resolved;
+  if (!streamMeta) {
+    onProgress?.('Resolving YouTube stream...');
+    streamMeta = await resolveYouTubeStream(videoId, 1);
+  }
+  if (!streamMeta?.streamUrl) {
+    throw new Error('No stream URL available (CF Worker /resolve failed)');
+  }
+
+  // Step 2: Build /stream URL with the resolved streamUrl (fast path)
+  const streamUrl = buildStreamProxyUrl(videoId, streamMeta);
+
+  // Calculate bytes needed: 360p muxed ~350KB/s, download [0, endTime+10s]
+  // Cap at 50MB (≈150s of 360p video) to keep download reasonable
+  const neededBytes = Math.min(
+    Math.ceil((endTime + 10) * 350_000),
+    50 * 1024 * 1024,
+  );
+
+  onProgress?.(`Downloading video (${(neededBytes / 1024 / 1024).toFixed(1)}MB in 2MB chunks)...`);
+
+  // Step 3: Download video bytes via chunked fetch (2MB per request)
+  let arrayBuffer: ArrayBuffer;
+  try {
+    arrayBuffer = await fetchStreamChunked(streamUrl, neededBytes, (msg) => onProgress?.(msg));
+  } catch (fetchErr) {
+    throw new Error(`Video download failed: ${fetchErr instanceof Error ? fetchErr.message.slice(0, 150) : fetchErr}`);
+  }
+
+  if (arrayBuffer.byteLength < 50_000) {
+    throw new Error(`Downloaded too little data: ${arrayBuffer.byteLength} bytes`);
+  }
+
+  onProgress?.(`Downloaded ${(arrayBuffer.byteLength / 1024 / 1024).toFixed(1)}MB. Cutting clip...`);
+
+  // Step 4: Create Blob URL (browser handles seeking locally — no HTTP Range issues)
+  const blob = new Blob([arrayBuffer], { type: 'video/mp4' });
+  const blobUrl = URL.createObjectURL(blob);
+
+  let blobUrlRevoked = false;
+  const cleanupBlobUrl = () => {
+    if (!blobUrlRevoked) {
+      URL.revokeObjectURL(blobUrl);
+      blobUrlRevoked = true;
+    }
+  };
+
+  // Step 5: Use captureVideoClip to cut [startTime, endTime] with audio
+  try {
+    const { captureVideoClip } = await import('@/lib/ffmpeg-client');
+    const result = await captureVideoClip({
+      videoUrl: blobUrl,
+      startTime,
+      endTime,
+      maxRecordDuration: 90,
+      onProgress: (msg) => onProgress?.(msg),
+    });
+
+    cleanupBlobUrl();
+
+    if (result.videoBlob.size < 10_000) {
+      throw new Error(`Recording too small: ${result.videoBlob.size} bytes`);
+    }
+
+    // Step 6: Download the recorded clip
+    const safeName = (title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50) || 'clip');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(result.videoBlob);
+    a.download = `${safeName}.mp4`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+
+    onProgress?.('Download complete!');
+  } catch (captureErr) {
+    cleanupBlobUrl();
+    throw captureErr;
+  }
+}

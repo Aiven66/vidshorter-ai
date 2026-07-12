@@ -14,6 +14,7 @@ import { isAdminUser } from '@/lib/admin-gate';
 import { getSupabaseClient, isSupabaseConfigured } from '@/storage/database/supabase-client';
 import {
   downloadYouTubeClip,
+  downloadClipViaBrowser,
   resolveYouTubeStream,
   cacheResolvedStream,
   buildStreamProxyUrl,
@@ -1069,13 +1070,17 @@ export default function VideoProcessor() {
       },
     });
 
-    // link_only / fallback clips: download via server-side ffmpeg clipper.
+    // link_only / fallback clips: download via browser-side clip capture.
     //
-    // FLOW (simplified — old chain had 4 fallbacks taking 10+ min total):
-    //   1. downloadYouTubeClip: resolve stream → server API (ffmpeg cut)
-    //      Server downloads only [0, endTime+buffer] bytes (not full video),
-    //      then ffmpeg cuts [startTime, endTime]. Typically 15-40s.
-    //   2. If server fails: open YouTube embed with start/end times
+    // FLOW (v37 — browser-side primary, server-side fallback):
+    //   1. downloadClipViaBrowser: resolve stream → download bytes → captureVideoClip
+    //      Entirely browser-side, no server involvement. Reliable because:
+    //      - Browser's CF Worker colo is healthy (not rate-limited)
+    //      - Blob URL allows local seeking (no HTTP Range failures)
+    //      - Muxed stream ensures audio is present
+    //   2. If browser-side fails: downloadYouTubeClip (server-side ffmpeg)
+    //      May work when captureStream is not supported or download fails.
+    //   3. If server also fails: open YouTube embed with start/end times
     //      (user can watch the exact highlight segment on YouTube)
     if (clip.status === 'link_only' || (clip.isFallback === true && !clip.videoUrl)) {
       const ytVideoId = extractYouTubeVideoId(clip.linkOnlyUrl);
@@ -1084,26 +1089,48 @@ export default function VideoProcessor() {
         return;
       }
       setDownloadingId(clip.id);
-      setDownloadProgress('Resolving YouTube stream...');
+      setDownloadProgress('Preparing download...');
+      let browserSuccess = false;
       try {
-        await downloadYouTubeClip({
+        await downloadClipViaBrowser({
           videoId: ytVideoId,
           startTime: clip.startTime,
           endTime: clip.endTime,
           title: clip.title,
           onProgress: (msg) => setDownloadProgress(msg),
         });
-      } catch (clipErr) {
-        const errMsg = clipErr instanceof Error ? clipErr.message : String(clipErr);
-        console.warn('[Download] Server clip failed:', errMsg);
-        // Fallback: open YouTube embed with start/end times so user can watch the highlight
+        browserSuccess = true;
+      } catch (browserErr) {
+        const errMsg = browserErr instanceof Error ? browserErr.message : String(browserErr);
+        console.warn('[Download] Browser-side clip failed:', errMsg);
+        setDownloadProgress('Trying server-side fallback...');
+      }
+
+      // Fallback 1: server-side ffmpeg
+      if (!browserSuccess) {
+        try {
+          await downloadYouTubeClip({
+            videoId: ytVideoId,
+            startTime: clip.startTime,
+            endTime: clip.endTime,
+            title: clip.title,
+            onProgress: (msg) => setDownloadProgress(msg),
+          });
+          browserSuccess = true;
+        } catch (serverErr) {
+          const errMsg = serverErr instanceof Error ? serverErr.message : String(serverErr);
+          console.warn('[Download] Server-side clip failed:', errMsg);
+        }
+      }
+
+      // Fallback 2: YouTube embed (last resort — watch on YouTube)
+      if (!browserSuccess) {
         setDownloadProgress('Opening highlight on YouTube...');
         const embedUrl = `https://www.youtube.com/embed/${ytVideoId}?start=${Math.floor(clip.startTime)}&end=${Math.floor(clip.endTime)}&autoplay=1`;
         window.open(embedUrl, '_blank');
-      } finally {
-        setDownloadingId(null);
-        setDownloadProgress(null);
       }
+      setDownloadingId(null);
+      setDownloadProgress(null);
       return;
     }
 
