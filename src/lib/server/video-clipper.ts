@@ -3473,10 +3473,20 @@ async function downloadYouTubeClip(params: {
         maxInlineBytes: params.maxInlineBytes,
       });
     } catch (providedErr) {
-      console.warn(`[downloadYouTubeClip] frontend-provided stream failed, falling back to server resolve: ${providedErr instanceof Error ? providedErr.message.slice(0, 150) : providedErr}`);
+      console.warn(`[downloadYouTubeClip] frontend-provided stream failed: ${providedErr instanceof Error ? providedErr.message.slice(0, 150) : providedErr}`);
+      // CRITICAL: Do NOT fall back to downloadSourceVideo on Vercel.
+      // downloadSourceVideo uses yt-dlp which is unavailable on Vercel, and
+      // server-side CF Worker /resolve is rate-limited (LOGIN_REQUIRED).
+      // The fallback would hang for 120s+ and eventually fail anyway.
+      // Instead, throw immediately so the frontend can use the YouTube embed fallback.
+      throw new Error(`Stream download failed: ${providedErr instanceof Error ? providedErr.message.slice(0, 100) : 'unknown'}`);
     }
   }
 
+  // No frontend-provided streamUrl — this path is for local dev only.
+  // On Vercel, this will likely fail (yt-dlp unavailable), but we try anyway
+  // since the frontend should always pass streamUrl in production.
+  console.warn(`[downloadYouTubeClip] no frontend streamUrl provided, falling back to downloadSourceVideo (slow)`);
   const source = await downloadSourceVideo(params.videoUrl);
   return createLocalClip({
     inputPath: source.inputPath,
