@@ -119,38 +119,20 @@ export default function BlogDetailPage() {
         let databasePost: BlogPost | null = null;
 
         if (targetRow) {
-          const parentId = String(targetRow.parent_id || targetRow.id);
+          // Use targetRow directly. The previous code queried translation versions
+          // via parent_id, but the production blogs table has NO parent_id/locale
+          // columns — that query returned HTTP 400 and was silently swallowed.
+          // Even if those columns exist (future schema), targetRow already holds
+          // the best-matching version from the grouping logic above.
+          databasePost = normalizeBlogRow(targetRow);
 
-          // Query all versions of this article (root + translations)
-          const { data: versions, error: versionsError } = await client
-            .from('blogs')
-            .select('*')
-            .eq('parent_id', parentId)
-            .neq('id', parentId)
-            .or(`id.eq.${parentId}`);
-
-          if (!versionsError && versions && versions.length > 0) {
-            let selected = versions.find(r => r.locale === activeLocale && r.is_published);
-            if (!selected) selected = versions.find(r => (r.locale === 'en' || !r.locale) && r.is_published);
-            if (!selected) selected = targetRow;
-            databasePost = normalizeBlogRow(selected);
-
-            // Increment view count
-            try {
-              await client
-                .from('blogs')
-                .update({ view_count: (selected.view_count || 0) + 1 })
-                .eq('id', selected.id);
-            } catch {}
-          } else {
-            databasePost = normalizeBlogRow(targetRow);
-            try {
-              await client
-                .from('blogs')
-                .update({ view_count: (targetRow.view_count || 0) + 1 })
-                .eq('id', targetRow.id);
-            } catch {}
-          }
+          // Increment view count (best-effort, never block rendering)
+          try {
+            await client
+              .from('blogs')
+              .update({ view_count: (targetRow.view_count || 0) + 1 })
+              .eq('id', targetRow.id);
+          } catch {}
         }
 
         if (!cancelled) {
@@ -158,31 +140,37 @@ export default function BlogDetailPage() {
         }
 
         // ── Related posts: always ensure at least 4 ──────────────────────────
+        // 关键修复：生产数据库 blogs 表没有 locale/parent_id/summary 列。
+        // 之前的查询用 select('id,title,...,locale,parent_id,...,summary') 指定了
+        // 不存在的列，导致 Supabase 返回 HTTP 400 错误，被 try/catch {} 静默吞掉，
+        // 所有推荐查询都失败，推荐列表为空。
+        // 修复：统一使用 select('*')，只查实际存在的列；在 JS 中安全处理
+        // parent_id/locale 为 undefined 的情况。
         const seenRelated = new Set<string>();
         const rPosts: BlogPost[] = [];
 
         if (databasePost) {
-          // Exclude the current article's entire group (root + all translations)
-          // by tracking both its id and parent_id
+          // 当前文章的 id 和 parent_id（用于排除当前文章及其翻译版本）
           const currentId = String(databasePost.id);
           const currentParentId = String((targetRow as any)?.parent_id || (targetRow as any)?.id || currentId);
           seenRelated.add(currentId);
           seenRelated.add(currentParentId);
 
-          // 1. Same category posts from database
+          // 1. 同分类文章
           try {
             const { data: relatedData } = await client
               .from('blogs')
-              .select('id,title,category,cover_image,created_at,locale,parent_id,is_published,view_count,content,summary')
+              .select('*')
               .eq('is_published', true)
               .eq('category', databasePost.category)
               .order('created_at', { ascending: false })
               .limit(60);
 
+            // 按 parent_id 分组（兼容 parent_id 列不存在的情况）
             const groups = new Map<string, any[]>();
             for (const row of (relatedData || [])) {
               const pid = String(row.parent_id || row.id);
-              // Skip the current article's group
+              // 跳过当前文章的整个组（root + 所有翻译版本）
               if (pid === currentParentId || String(row.id) === currentId) continue;
               if (!groups.has(pid)) groups.set(pid, []);
               groups.get(pid)!.push(row);
@@ -201,12 +189,12 @@ export default function BlogDetailPage() {
             }
           } catch {}
 
-          // 2. If not enough, fill with other categories
+          // 2. 不足 4 篇时，补充其他分类文章
           if (rPosts.length < 4) {
             try {
               const { data: otherData } = await client
                 .from('blogs')
-                .select('id,title,category,cover_image,created_at,locale,parent_id,is_published,view_count,content,summary')
+                .select('*')
                 .eq('is_published', true)
                 .neq('category', databasePost.category)
                 .order('created_at', { ascending: false })
@@ -215,7 +203,6 @@ export default function BlogDetailPage() {
               const groups = new Map<string, any[]>();
               for (const row of (otherData || [])) {
                 const pid = String(row.parent_id || row.id);
-                // Skip the current article's group
                 if (pid === currentParentId || String(row.id) === currentId) continue;
                 if (!groups.has(pid)) groups.set(pid, []);
                 groups.get(pid)!.push(row);
@@ -236,12 +223,12 @@ export default function BlogDetailPage() {
             } catch {}
           }
 
-          // 3. Ultimate fallback: if still empty, just grab any published posts
+          // 3. 终极兜底：如果仍然为空，查询任意已发布文章
           if (rPosts.length === 0) {
             try {
               const { data: anyData } = await client
                 .from('blogs')
-                .select('id,title,category,cover_image,created_at,locale,parent_id,is_published,view_count,content,summary')
+                .select('*')
                 .eq('is_published', true)
                 .order('created_at', { ascending: false })
                 .limit(60);
