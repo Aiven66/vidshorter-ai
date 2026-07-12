@@ -1,5 +1,6 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { applyPlanPurchase, isPaidPlan } from '@/lib/server/subscriptions';
+import { trackSubscribeSuccess } from '@/lib/server/track-event';
 
 const PLAN_PRICES: Record<string, string> = {
   starter: '9.90',
@@ -141,11 +142,29 @@ export async function POST(request: NextRequest) {
 
     if (captureResponse.ok && captureData.status === 'COMPLETED') {
       await applyPlanPurchase({ userId, planId, provider: 'paypal', orderId });
+      // 服务端埋点：付费成功（PayPal）— 即使前端关闭浏览器也能记录
+      await trackSubscribeSuccess({
+        userId,
+        paymentMethod: 'paypal',
+        planId,
+        planName: PLAN_NAMES[planId] || planId,
+        amountUsd: parseFloat(PLAN_PRICES[planId] || '0'),
+        orderId,
+      });
       return Response.json({ paid: true });
     }
 
     if (captureData.details?.some((d: any) => d.issue === 'ORDER_ALREADY_CAPTURED')) {
       await applyPlanPurchase({ userId, planId, provider: 'paypal', orderId });
+      // 服务端埋点：付费成功（PayPal，已捕获订单）
+      await trackSubscribeSuccess({
+        userId,
+        paymentMethod: 'paypal',
+        planId,
+        planName: PLAN_NAMES[planId] || planId,
+        amountUsd: parseFloat(PLAN_PRICES[planId] || '0'),
+        orderId,
+      });
       return Response.json({ paid: true });
     }
 

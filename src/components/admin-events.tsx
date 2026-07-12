@@ -7,7 +7,8 @@ import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/lib/auth-context';
 import {
   Activity, Users, MousePointer, Video, Download,
-  DollarSign, TrendingUp, Calendar, ChevronDown, ChevronUp, Filter
+  DollarSign, TrendingUp, Calendar, ChevronDown, ChevronUp, Filter,
+  CreditCard, Wallet, CheckCircle2
 } from 'lucide-react';
 
 type Locale = 'zh' | 'en';
@@ -29,6 +30,32 @@ interface FunnelStats {
   total_count: number;
 }
 
+interface PaymentMethodStat {
+  payment_method: 'paypal' | 'creem' | 'unknown';
+  count: number;
+  unique_users: number;
+  revenue_usd: number;
+  plan_breakdown: { plan_id: string; count: number; revenue_usd: number }[];
+}
+
+interface DailySubscriptionBreakdown {
+  date: string;
+  paypal_count: number;
+  creem_count: number;
+  total_count: number;
+  paypal_revenue: number;
+  creem_revenue: number;
+  total_revenue: number;
+}
+
+interface DailyFunnelRow {
+  date: string;
+  video_generation: Record<string, number>;
+  subscription: Record<string, number>;
+  real_subscriptions: number;
+  total: number;
+}
+
 interface EventsData {
   range: { startDate: string; endDate: string };
   summary: {
@@ -38,6 +65,11 @@ interface EventsData {
   };
   funnels: FunnelStats[];
   daily: Array<{ date: string } & Record<string, number>>;
+  payment_method_breakdown: PaymentMethodStat[];
+  daily_subscription_breakdown: DailySubscriptionBreakdown[];
+  daily_funnel_tables: DailyFunnelRow[];
+  real_subscription_count: number;
+  real_subscription_revenue: number;
 }
 
 interface EventsPageProps {
@@ -132,7 +164,7 @@ export function EventsPage({ locale }: EventsPageProps) {
   const daily = data?.daily || [];
   const hasDailyData = daily.length > 0;
 
-  // 趋势图最大值（用于计算柱状图高度）
+  // 趋势图最大值
   const trendMax = Math.max(
     1,
     ...daily.flatMap(d => [
@@ -146,6 +178,17 @@ export function EventsPage({ locale }: EventsPageProps) {
     ])
   );
 
+  // 支付方式数据
+  const paymentBreakdown = data?.payment_method_breakdown || [];
+  const paypalStat = paymentBreakdown.find(p => p.payment_method === 'paypal');
+  const creemStat = paymentBreakdown.find(p => p.payment_method === 'creem');
+
+  // 每日订阅细分
+  const dailySubBreakdown = data?.daily_subscription_breakdown || [];
+
+  // 每日漏斗数据列表
+  const dailyFunnelTables = data?.daily_funnel_tables || [];
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -156,7 +199,7 @@ export function EventsPage({ locale }: EventsPageProps) {
             {t('行为数据', 'Behavior Analytics')}
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            {t('用户核心行为漏斗分析', 'Core user behavior funnel analysis')}
+            {t('用户核心行为漏斗分析（真实数据）', 'Core user behavior funnel analysis (real data)')}
           </p>
         </div>
 
@@ -235,11 +278,14 @@ export function EventsPage({ locale }: EventsPageProps) {
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs text-muted-foreground">{t('独立会话', 'Unique Sessions')}</p>
-                <p className="text-2xl font-bold mt-1">{data?.summary.unique_sessions || 0}</p>
+                <p className="text-xs text-muted-foreground">{t('真实付费数', 'Real Subscriptions')}</p>
+                <p className="text-2xl font-bold mt-1 text-emerald-600">{data?.real_subscription_count || 0}</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  {t('来自 credit_transactions 表', 'from credit_transactions')}
+                </p>
               </div>
-              <div className="h-10 w-10 rounded-full bg-amber-50 flex items-center justify-center">
-                <Calendar className="h-5 w-5 text-amber-500" />
+              <div className="h-10 w-10 rounded-full bg-emerald-50 flex items-center justify-center">
+                <CheckCircle2 className="h-5 w-5 text-emerald-500" />
               </div>
             </div>
           </CardContent>
@@ -248,13 +294,14 @@ export function EventsPage({ locale }: EventsPageProps) {
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs text-muted-foreground">{t('日期范围', 'Date Range')}</p>
-                <p className="text-lg font-bold mt-1">
-                  {data ? `${data.range.startDate} ~ ${data.range.endDate}` : '-'}
+                <p className="text-xs text-muted-foreground">{t('真实付费收入', 'Real Revenue')}</p>
+                <p className="text-2xl font-bold mt-1 text-emerald-600">
+                  ${data?.real_subscription_revenue?.toFixed(2) || '0.00'}
                 </p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">USD</p>
               </div>
-              <div className="h-10 w-10 rounded-full bg-emerald-50 flex items-center justify-center">
-                <Filter className="h-5 w-5 text-emerald-500" />
+              <div className="h-10 w-10 rounded-full bg-amber-50 flex items-center justify-center">
+                <DollarSign className="h-5 w-5 text-amber-500" />
               </div>
             </div>
           </CardContent>
@@ -264,7 +311,7 @@ export function EventsPage({ locale }: EventsPageProps) {
       {loading && (
         <Card>
           <CardContent className="p-12 text-center text-muted-foreground">
-          <div className="inline-flex items-center gap-2">
+            <div className="inline-flex items-center gap-2">
               <div className="h-4 w-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
               {t('加载中...', 'Loading...')}
             </div>
@@ -282,11 +329,107 @@ export function EventsPage({ locale }: EventsPageProps) {
 
       {!loading && !error && data && (
         <>
+          {/* 真实付费方式细分卡片 */}
+          <Card className="border-emerald-200 bg-gradient-to-br from-emerald-50/50 to-blue-50/30">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <CreditCard className="h-5 w-5 text-emerald-600" />
+                {t('真实付费方式细分（PayPal / Creem）', 'Real Payment Method Breakdown')}
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">
+                {t('数据来源：credit_transactions 表（后端 applyPlanPurchase 写入，最可靠）',
+                   'Source: credit_transactions table (written by backend applyPlanPurchase, most reliable)')}
+              </p>
+            </CardHeader>
+            <CardContent>
+              <div className="grid md:grid-cols-2 gap-4">
+                {/* PayPal */}
+                <PaymentMethodCard
+                  method="paypal"
+                  stat={paypalStat}
+                  locale={locale}
+                />
+                {/* Creem */}
+                <PaymentMethodCard
+                  method="creem"
+                  stat={creemStat}
+                  locale={locale}
+                />
+              </div>
+
+              {/* 每日订阅细分表 */}
+              {dailySubBreakdown.length > 0 ? (
+                <div className="mt-6">
+                  <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                    <Calendar className="h-4 w-4" />
+                    {t('每日付费方式细分', 'Daily Payment Method Breakdown')}
+                  </h4>
+                  <div className="overflow-x-auto rounded-lg border border-border">
+                    <table className="w-full text-xs">
+                      <thead className="bg-muted/50">
+                        <tr>
+                          <th className="text-left p-2.5 font-medium">{t('日期', 'Date')}</th>
+                          <th className="text-right p-2.5 font-medium text-blue-600">PayPal</th>
+                          <th className="text-right p-2.5 font-medium text-violet-600">Creem</th>
+                          <th className="text-right p-2.5 font-semibold">{t('合计', 'Total')}</th>
+                          <th className="text-right p-2.5 font-medium text-blue-600">PayPal $</th>
+                          <th className="text-right p-2.5 font-medium text-violet-600">Creem $</th>
+                          <th className="text-right p-2.5 font-semibold text-emerald-600">{t('收入 $', 'Revenue $')}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...dailySubBreakdown].reverse().map(row => (
+                          <tr key={row.date} className="border-t border-border/50 hover:bg-muted/30">
+                            <td className="p-2.5 font-mono">{row.date}</td>
+                            <td className="text-right p-2.5">{row.paypal_count}</td>
+                            <td className="text-right p-2.5">{row.creem_count}</td>
+                            <td className="text-right p-2.5 font-semibold">{row.total_count}</td>
+                            <td className="text-right p-2.5">${row.paypal_revenue.toFixed(2)}</td>
+                            <td className="text-right p-2.5">${row.creem_revenue.toFixed(2)}</td>
+                            <td className="text-right p-2.5 font-semibold text-emerald-600">${row.total_revenue.toFixed(2)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot className="bg-muted/30 border-t-2 border-border">
+                        <tr>
+                          <td className="p-2.5 font-semibold">{t('合计', 'Total')}</td>
+                          <td className="text-right p-2.5 font-semibold text-blue-600">
+                            {dailySubBreakdown.reduce((s, r) => s + r.paypal_count, 0)}
+                          </td>
+                          <td className="text-right p-2.5 font-semibold text-violet-600">
+                            {dailySubBreakdown.reduce((s, r) => s + r.creem_count, 0)}
+                          </td>
+                          <td className="text-right p-2.5 font-bold">
+                            {dailySubBreakdown.reduce((s, r) => s + r.total_count, 0)}
+                          </td>
+                          <td className="text-right p-2.5 font-semibold text-blue-600">
+                            ${dailySubBreakdown.reduce((s, r) => s + r.paypal_revenue, 0).toFixed(2)}
+                          </td>
+                          <td className="text-right p-2.5 font-semibold text-violet-600">
+                            ${dailySubBreakdown.reduce((s, r) => s + r.creem_revenue, 0).toFixed(2)}
+                          </td>
+                          <td className="text-right p-2.5 font-bold text-emerald-600">
+                            ${dailySubBreakdown.reduce((s, r) => s + r.total_revenue, 0).toFixed(2)}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-4 text-center py-8 text-muted-foreground text-sm">
+                  {t('所选时间范围内暂无真实付费记录', 'No real subscription records in the selected range')}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
           {/* 漏斗 1: AI 生成短视频 */}
           {videoFunnel && (
             <FunnelCard
               title={t('漏斗一：AI 生成高光时刻短视频', 'Funnel 1: AI Highlight Video Generation')}
-              subtitle={t('用户 → 首页 → 点击 Analyze → AI 生成成功 → 下载短视频', 'User → Home → Click Analyze → Generation Success → Download Clip')}
+              subtitle={t('用户 → 首页 → 点击 Analyze → AI 生成成功 → 下载短视频',
+                          'User → Home → Click Analyze → Generation Success → Download Clip')}
               funnel={videoFunnel}
               locale={locale}
             />
@@ -295,8 +438,9 @@ export function EventsPage({ locale }: EventsPageProps) {
           {/* 漏斗 2: 付费订阅 */}
           {subscribeFunnel && (
             <FunnelCard
-              title={t('漏斗二：付费订阅', 'Funnel 2: Subscription')}
-              subtitle={t('用户 → 价格页 → 点击付费按钮 → 付费成功', 'User → Pricing → Click Subscribe → Subscribe Success')}
+              title={t('漏斗二：付费订阅（真实付费数据）', 'Funnel 2: Subscription (Real Payment Data)')}
+              subtitle={t('用户 → 价格页 → 点击付费按钮 → 付费成功（来自 credit_transactions 真实数据）',
+                          'User → Pricing → Click Subscribe → Subscribe Success (real data from credit_transactions)')}
               funnel={subscribeFunnel}
               locale={locale}
             />
@@ -320,7 +464,108 @@ export function EventsPage({ locale }: EventsPageProps) {
               )}
             </CardContent>
           </Card>
+
+          {/* 每日漏斗数据列表 */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <Calendar className="h-5 w-5" />
+                {t('每日漏斗数据列表', 'Daily Funnel Data Table')}
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">
+                {t('按日期维度展示两个核心漏斗的步骤计数（订阅漏斗的"付费成功"为真实数据）',
+                   'Daily step counts for both funnels (subscription "Subscribe Success" is real data)')}
+              </p>
+            </CardHeader>
+            <CardContent>
+              {dailyFunnelTables.length > 0 ? (
+                <DailyFunnelTable
+                  rows={dailyFunnelTables}
+                  locale={locale}
+                />
+              ) : (
+                <div className="text-center py-12 text-muted-foreground">
+                  {t('暂无数据', 'No data')}
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </>
+      )}
+    </div>
+  );
+}
+
+// ── 支付方式卡片 ───────────────────────────────────────────────────────────
+
+interface PaymentMethodCardProps {
+  method: 'paypal' | 'creem';
+  stat?: PaymentMethodStat;
+  locale: Locale;
+}
+
+function PaymentMethodCard({ method, stat, locale }: PaymentMethodCardProps) {
+  const t = (zh: string, en: string) => (locale === 'zh' ? zh : en);
+  const isPaypal = method === 'paypal';
+  const displayName = isPaypal ? 'PayPal' : 'Creem';
+  const Icon = isPaypal ? Wallet : CreditCard;
+  const colorClasses = isPaypal
+    ? { bg: 'from-blue-500 to-blue-700', text: 'text-blue-600', light: 'bg-blue-50', border: 'border-blue-200' }
+    : { bg: 'from-violet-500 to-indigo-600', text: 'text-violet-600', light: 'bg-violet-50', border: 'border-violet-200' };
+
+  const count = stat?.count || 0;
+  const uniqueUsers = stat?.unique_users || 0;
+  const revenue = stat?.revenue_usd || 0;
+  const planBreakdown = stat?.plan_breakdown || [];
+
+  return (
+    <div className={`rounded-xl border ${colorClasses.border} ${colorClasses.light} p-5`}>
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-3">
+          <div className={`h-11 w-11 rounded-xl bg-gradient-to-br ${colorClasses.bg} flex items-center justify-center shadow-md`}>
+            <Icon className="h-5 w-5 text-white" />
+          </div>
+          <div>
+            <p className="font-semibold text-base">{displayName}</p>
+            <p className="text-xs text-muted-foreground">
+              {t(`${displayName} 真实付费统计`, `${displayName} real subscription stats`)}
+            </p>
+          </div>
+        </div>
+        <Badge variant="outline" className={`${colorClasses.text} ${colorClasses.border}`}>
+          {t('真实', 'Real')}
+        </Badge>
+      </div>
+
+      <div className="grid grid-cols-3 gap-3 mb-4">
+        <div>
+          <p className="text-xs text-muted-foreground">{t('订单数', 'Orders')}</p>
+          <p className={`text-xl font-bold ${colorClasses.text}`}>{count}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">{t('独立用户', 'Users')}</p>
+          <p className={`text-xl font-bold ${colorClasses.text}`}>{uniqueUsers}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">{t('收入', 'Revenue')}</p>
+          <p className={`text-xl font-bold ${colorClasses.text}`}>${revenue.toFixed(2)}</p>
+        </div>
+      </div>
+
+      {/* 套餐细分 */}
+      {planBreakdown.length > 0 && (
+        <div className="bg-white/60 rounded-lg p-3 space-y-1.5">
+          <p className="text-[11px] text-muted-foreground font-medium">{t('套餐细分', 'Plan Breakdown')}</p>
+          {planBreakdown.map(plan => (
+            <div key={plan.plan_id} className="flex items-center justify-between text-xs">
+              <span className="font-mono uppercase">{plan.plan_id}</span>
+              <span className="flex gap-3">
+                <span>{plan.count} {t('单', 'orders')}</span>
+                <span className="font-semibold">${plan.revenue_usd.toFixed(2)}</span>
+              </span>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
@@ -448,7 +693,6 @@ interface DailyTrendProps {
 function DailyTrendChart({ daily, locale, max }: DailyTrendProps) {
   const t = (zh: string, en: string) => (locale === 'zh' ? zh : en);
 
-  // 图表线条配置
   const metrics = [
     { key: 'page_view_home', color: 'bg-blue-500', label: t('首页访问', 'Home View'), group: 'video' },
     { key: 'click_analyze', color: 'bg-violet-500', label: t('点击 Analyze', 'Click Analyze'), group: 'video' },
@@ -459,7 +703,6 @@ function DailyTrendChart({ daily, locale, max }: DailyTrendProps) {
     { key: 'subscribe_success', color: 'bg-red-500', label: t('付费成功', 'Sub Success'), group: 'sub' },
   ];
 
-  // 取最近 30 天（如果超过 30 天显示）
   const display = daily.slice(-30);
 
   return (
@@ -477,9 +720,7 @@ function DailyTrendChart({ daily, locale, max }: DailyTrendProps) {
       {/* 柱状图 */}
       <div className="overflow-x-auto">
         <div className="min-w-[600px]">
-          {/* Y轴 */}
           <div className="flex items-end gap-1 h-48 border-b border-border relative">
-            {/* 网格线 */}
             <div className="absolute inset-0 flex flex-col justify-between pointer-events-none">
               {[0, 0.25, 0.5, 0.75, 1].map(r => (
                 <div key={r} className="border-t border-border/30 flex items-center">
@@ -490,7 +731,6 @@ function DailyTrendChart({ daily, locale, max }: DailyTrendProps) {
               ))}
             </div>
 
-            {/* 柱子 */}
             <div className="flex-1 flex items-end gap-0.5 pl-8">
               {display.map((day, idx) => {
                 const total = metrics.reduce((sum, m) => sum + (day[m.key] || 0), 0);
@@ -521,10 +761,8 @@ function DailyTrendChart({ daily, locale, max }: DailyTrendProps) {
             </div>
           </div>
 
-          {/* X轴 */}
           <div className="flex gap-0.5 pl-8 mt-1">
             {display.map((day, idx) => {
-              // 每 5 天显示一次日期
               if (idx % 5 !== 0 && idx !== display.length - 1) {
                 return <div key={idx} className="flex-1" />;
               }
@@ -539,40 +777,114 @@ function DailyTrendChart({ daily, locale, max }: DailyTrendProps) {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
 
-      {/* 详细数据表 */}
-      <details className="mt-4">
-        <summary className="cursor-pointer text-sm text-muted-foreground hover:text-foreground">
-          {t('查看详细数据', 'View detailed data')}
-        </summary>
-        <div className="mt-3 overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="border-b border-border text-muted-foreground">
-                <th className="text-left p-2">{t('日期', 'Date')}</th>
-                {metrics.map(m => (
-                  <th key={m.key} className="text-right p-2 whitespace-nowrap">{m.label}</th>
-                ))}
-                <th className="text-right p-2 font-semibold">{t('合计', 'Total')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {[...display].reverse().map(day => {
-                const total = metrics.reduce((sum, m) => sum + (day[m.key] || 0), 0);
-                return (
-                  <tr key={day.date} className="border-b border-border/50 hover:bg-muted/30">
-                    <td className="p-2 font-mono">{day.date}</td>
-                    {metrics.map(m => (
-                      <td key={m.key} className="text-right p-2">{day[m.key] || 0}</td>
-                    ))}
-                    <td className="text-right p-2 font-semibold">{total}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </details>
+// ── 每日漏斗数据表格 ───────────────────────────────────────────────────────
+
+interface DailyFunnelTableProps {
+  rows: DailyFunnelRow[];
+  locale: Locale;
+}
+
+function DailyFunnelTable({ rows, locale }: DailyFunnelTableProps) {
+  const t = (zh: string, en: string) => (locale === 'zh' ? zh : en);
+
+  const videoSteps = [
+    { key: 'page_view_home', label: t('访问首页', 'Home View') },
+    { key: 'click_analyze', label: t('点击 Analyze', 'Click Analyze') },
+    { key: 'analyze_success', label: t('生成成功', 'Gen Success') },
+    { key: 'clip_download', label: t('下载短视频', 'Download') },
+  ];
+
+  const subSteps = [
+    { key: 'page_view_pricing', label: t('价格页', 'Pricing View') },
+    { key: 'click_subscribe', label: t('点击付费', 'Click Sub') },
+    { key: 'subscribe_success', label: t('付费成功(真实)', 'Sub Success(real)') },
+  ];
+
+  // 倒序展示（最新在前）
+  const display = [...rows].reverse();
+
+  return (
+    <div className="overflow-x-auto rounded-lg border border-border">
+      <table className="w-full text-xs">
+        <thead className="bg-muted/50">
+          <tr>
+            <th rowSpan={2} className="text-left p-2.5 font-medium align-bottom">
+              {t('日期', 'Date')}
+            </th>
+            <th colSpan={4} className="text-center p-2 font-medium border-l border-border bg-blue-50/50">
+              {t('漏斗一：AI 生成短视频', 'Funnel 1: Video Generation')}
+            </th>
+            <th colSpan={3} className="text-center p-2 font-medium border-l border-border bg-violet-50/50">
+              {t('漏斗二：付费订阅', 'Funnel 2: Subscription')}
+            </th>
+            <th rowSpan={2} className="text-right p-2.5 font-medium align-bottom border-l border-border">
+              {t('合计', 'Total')}
+            </th>
+          </tr>
+          <tr className="border-t border-border">
+            {videoSteps.map(s => (
+              <th key={s.key} className="text-right p-2 whitespace-nowrap border-l border-border text-blue-700">
+                {s.label}
+              </th>
+            ))}
+            {subSteps.map(s => (
+              <th key={s.key} className="text-right p-2 whitespace-nowrap border-l border-border text-violet-700">
+                {s.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {display.map(row => (
+            <tr key={row.date} className="border-t border-border/50 hover:bg-muted/30">
+              <td className="p-2.5 font-mono">{row.date}</td>
+              {videoSteps.map(s => (
+                <td key={s.key} className="text-right p-2 border-l border-border/30">
+                  {row.video_generation[s.key] || 0}
+                </td>
+              ))}
+              {subSteps.map(s => (
+                <td key={s.key} className={`text-right p-2 border-l border-border/30 ${
+                  s.key === 'subscribe_success' && (row.real_subscriptions > 0) ? 'font-semibold text-emerald-600' : ''
+                }`}>
+                  {row.subscription[s.key] || 0}
+                </td>
+              ))}
+              <td className="text-right p-2.5 font-semibold border-l border-border">{row.total}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot className="bg-muted/30 border-t-2 border-border">
+          <tr>
+            <td className="p-2.5 font-semibold">{t('合计', 'Total')}</td>
+            {videoSteps.map(s => {
+              const sum = rows.reduce((acc, r) => acc + (r.video_generation[s.key] || 0), 0);
+              return (
+                <td key={s.key} className="text-right p-2.5 font-semibold text-blue-700 border-l border-border/30">
+                  {sum}
+                </td>
+              );
+            })}
+            {subSteps.map(s => {
+              const sum = rows.reduce((acc, r) => acc + (r.subscription[s.key] || 0), 0);
+              return (
+                <td key={s.key} className={`text-right p-2.5 font-semibold border-l border-border/30 ${
+                  s.key === 'subscribe_success' ? 'text-emerald-600' : 'text-violet-700'
+                }`}>
+                  {sum}
+                </td>
+              );
+            })}
+            <td className="text-right p-2.5 font-bold border-l border-border">
+              {rows.reduce((s, r) => s + r.total, 0)}
+            </td>
+          </tr>
+        </tfoot>
+      </table>
     </div>
   );
 }

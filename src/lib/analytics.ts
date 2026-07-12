@@ -19,20 +19,21 @@
  */
 
 // ── 漏斗定义 ───────────────────────────────────────────────────────────────
+// 注意：每个 step 必须包含 funnelId，否则 trackEvent 无法传递 funnel_id
 
 export const VIDEO_FUNNEL = {
   funnelId: 'video_generation',
-  PAGE_VIEW_HOME: { event: 'page_view_home', step: 1 },
-  CLICK_ANALYZE: { event: 'click_analyze', step: 2 },
-  ANALYZE_SUCCESS: { event: 'analyze_success', step: 3 },
-  CLIP_DOWNLOAD: { event: 'clip_download', step: 4 },
+  PAGE_VIEW_HOME: { event: 'page_view_home', step: 1, funnelId: 'video_generation' as const },
+  CLICK_ANALYZE: { event: 'click_analyze', step: 2, funnelId: 'video_generation' as const },
+  ANALYZE_SUCCESS: { event: 'analyze_success', step: 3, funnelId: 'video_generation' as const },
+  CLIP_DOWNLOAD: { event: 'clip_download', step: 4, funnelId: 'video_generation' as const },
 } as const;
 
 export const SUBSCRIBE_FUNNEL = {
   funnelId: 'subscription',
-  PAGE_VIEW_PRICING: { event: 'page_view_pricing', step: 1 },
-  CLICK_SUBSCRIBE: { event: 'click_subscribe', step: 2 },
-  SUBSCRIBE_SUCCESS: { event: 'subscribe_success', step: 3 },
+  PAGE_VIEW_PRICING: { event: 'page_view_pricing', step: 1, funnelId: 'subscription' as const },
+  CLICK_SUBSCRIBE: { event: 'click_subscribe', step: 2, funnelId: 'subscription' as const },
+  SUBSCRIBE_SUCCESS: { event: 'subscribe_success', step: 3, funnelId: 'subscription' as const },
 } as const;
 
 export type FunnelStep = {

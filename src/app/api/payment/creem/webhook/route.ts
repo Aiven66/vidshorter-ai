@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { applyPlanPurchase } from '@/lib/server/subscriptions';
+import { trackSubscribeSuccess } from '@/lib/server/track-event';
 
 export async function POST(request: NextRequest) {
   const rawBody = await request.text();
@@ -30,6 +31,34 @@ export async function POST(request: NextRequest) {
     const eventType = event.eventType || event.type;
     console.log('[Creem Webhook] Event:', eventType, event.id);
 
+    // 应用订阅并埋点（付费成功）
+    const applyAndTrack = async (params: {
+      userId: string;
+      planId: string;
+      orderId: string;
+    }) => {
+      try {
+        await applyPlanPurchase({
+          userId: params.userId,
+          planId: params.planId,
+          provider: 'creem',
+          orderId: params.orderId,
+        });
+        console.log('[Creem Webhook] Plan applied:', params);
+        // 服务端埋点：付费成功（Creem）— 即使前端关闭浏览器也能记录
+        await trackSubscribeSuccess({
+          userId: params.userId,
+          paymentMethod: 'creem',
+          planId: params.planId,
+          planName: params.planId === 'pro' ? 'Pro' : 'Starter',
+          amountUsd: params.planId === 'pro' ? 19.9 : 9.9,
+          orderId: params.orderId,
+        });
+      } catch (err) {
+        console.error('[Creem Webhook] applyPlanPurchase failed:', err);
+      }
+    };
+
     if (eventType === 'checkout.completed') {
       const obj = event.object || {};
       const metadata = obj.metadata || {};
@@ -38,12 +67,7 @@ export async function POST(request: NextRequest) {
       const orderId = obj.order?.id || event.id || `creem_${Date.now()}`;
 
       if (planId && userId) {
-        try {
-          await applyPlanPurchase({ userId, planId, provider: 'creem', orderId });
-          console.log('[Creem Webhook] Plan applied:', { userId, planId, orderId });
-        } catch (err) {
-          console.error('[Creem Webhook] applyPlanPurchase failed:', err);
-        }
+        await applyAndTrack({ userId, planId, orderId });
       }
     }
 
@@ -55,12 +79,7 @@ export async function POST(request: NextRequest) {
       const orderId = obj.last_transaction_id || event.id || `creem_sub_${Date.now()}`;
 
       if (planId && userId) {
-        try {
-          await applyPlanPurchase({ userId, planId, provider: 'creem', orderId });
-          console.log('[Creem Webhook] Subscription applied:', { userId, planId, orderId });
-        } catch (err) {
-          console.error('[Creem Webhook] Subscription applyPlanPurchase failed:', err);
-        }
+        await applyAndTrack({ userId, planId, orderId });
       }
     }
 
