@@ -2,6 +2,17 @@ import { NextRequest } from 'next/server';
 import { isSupabaseConfigured } from '@/storage/database/supabase-client';
 import videoClipper from '@/lib/server/video-clipper';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { createClient } from '@supabase/supabase-js';
+
+// 获取 service role 客户端用于绕过 RLS 的关键积分操作（服务端专用，不会泄露密钥）
+function getServiceRoleClientForCredits(): SupabaseClient | null {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.COZE_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.COZE_SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceKey) return null;
+  return createClient(url, serviceKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+}
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -278,7 +289,11 @@ export async function POST(request: NextRequest) {
           if (isAdminEmail) userRole = 'admin';
 
           if (!isContinuation && clipOffset === 0 && userRole !== 'admin') {
-            const { data: sub } = await client
+            // 使用 service role client 进行积分操作，绕过 RLS 限制（解决新用户无 credits 行的 bug）
+            const adminClient = getServiceRoleClientForCredits();
+            const creditsClient = adminClient || client;
+
+            const { data: sub } = await creditsClient
               .from('subscriptions')
               .select('plan_type')
               .eq('user_id', userId)
@@ -286,24 +301,38 @@ export async function POST(request: NextRequest) {
             const dailyCredits = planDailyCredits(sub?.plan_type);
             const resetAt = utcMidnightIso(new Date());
 
-            const { data: creditsRow } = await client
+            const { data: creditsRow } = await creditsClient
               .from('credits')
               .select('*')
               .eq('user_id', userId)
               .maybeSingle();
 
+            // 仅在跨 UTC 日时重置积分，避免每次点击都重置（修复"重置 bug"）
+            const shouldReset = !creditsRow || shouldResetUtc(creditsRow.last_reset_at);
+
             if (!creditsRow) {
-              await client.from('credits').insert({
+              // 新用户：插入 credits 行
+              const { error: insertErr } = await creditsClient.from('credits').insert({
                 user_id: userId,
                 balance: dailyCredits,
                 last_reset_at: resetAt,
               });
-            } else {
-              await client
+              if (insertErr) {
+                console.warn('[credits] insert failed:', insertErr.message);
+              }
+              await creditsClient.from('credit_transactions').insert({
+                user_id: userId,
+                amount: dailyCredits,
+                type: 'daily_reset',
+                description: 'Daily credits reset (new user)',
+              });
+            } else if (shouldReset) {
+              // 跨日重置：仅在 UTC 日变更时重置
+              await creditsClient
                 .from('credits')
                 .update({ balance: dailyCredits, last_reset_at: resetAt })
                 .eq('user_id', userId);
-              await client.from('credit_transactions').insert({
+              await creditsClient.from('credit_transactions').insert({
                 user_id: userId,
                 amount: dailyCredits,
                 type: 'daily_reset',
@@ -311,15 +340,16 @@ export async function POST(request: NextRequest) {
               });
             }
 
-            const { data: latestCredits } = await client
+            const { data: latestCredits } = await creditsClient
               .from('credits')
               .select('balance')
               .eq('user_id', userId)
               .maybeSingle();
 
             const currentBalance = latestCredits?.balance ?? 0;
+            console.log('[credits] user:', userId, 'balance:', currentBalance, 'dailyCredits:', dailyCredits, 'shouldReset:', shouldReset, 'usingAdmin:', !!adminClient);
             if (currentBalance < 60) {
-              throw new Error('Insufficient credits. You need at least 60 credits.');
+              throw new Error(`Insufficient credits. You need at least 60 credits. Current balance: ${currentBalance}`);
             }
           }
         } else if (!userId) {
@@ -1020,8 +1050,10 @@ export async function POST(request: NextRequest) {
         // Deduct credits only after successful processing
         if (isSupabaseMode && !isContinuation && clipOffset === 0 && userRole !== 'admin' && userId) {
           try {
+            // 使用 service role client 进行积分扣减（绕过 RLS，保证扣减成功）
+            const adminClient = getServiceRoleClientForCredits();
             const { getSupabaseClient } = await import('@/storage/database/supabase-client');
-            const client = getSupabaseClient(bearerToken);
+            const client = adminClient || getSupabaseClient(bearerToken);
             const { data: latestCredits } = await client
               .from('credits')
               .select('balance')
@@ -1039,6 +1071,9 @@ export async function POST(request: NextRequest) {
                 type: 'video_process',
                 description: 'Video processing',
               });
+              console.log('[credits] deducted 60 from user:', userId, 'new balance:', currentBalance - 60);
+            } else {
+              console.warn('[credits] cannot deduct, balance too low:', currentBalance, 'for user:', userId);
             }
           } catch (deductErr) {
             console.error('Failed to deduct credits:', deductErr);

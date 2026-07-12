@@ -268,39 +268,87 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
         .eq('user_id', user.id)
         .maybeSingle();
       const dailyCredits = planDailyCredits(sub?.plan_type);
-      const resetAt = utcMidnightIso(new Date());
-      
-      const { data, error } = await client
+
+      // 先查询当前 credits 行（避免每次都重置）
+      const { data: existingRow, error: queryError } = await client
         .from('credits')
-        .update({
-          balance: dailyCredits,
-          last_reset_at: resetAt,
-        })
+        .select('*')
         .eq('user_id', user.id)
-        .select()
-        .single();
-      
-      if (error) {
-        console.warn('Credits refresh failed, using local value');
+        .maybeSingle();
+
+      if (queryError) {
+        console.warn('Credits query error:', queryError.message);
+        // 查询失败（可能是 RLS 限制或多行）：回退到 dailyCredits 显示，让服务端处理
         setBalance(dailyCredits);
         return dailyCredits;
       }
-      
-      if (data) {
-        setBalance(data.balance);
-        
-        // Log transaction
-        try {
-          await client.from('credit_transactions').insert({
+
+      // 仅在跨 UTC 日时重置（避免每次点击 Generate 都重置为 100）
+      const shouldReset = !existingRow || shouldResetUtc(existingRow.last_reset_at);
+      const resetAt = utcMidnightIso(new Date());
+
+      if (!existingRow) {
+        // 新用户：尝试插入（若 RLS 阻止也无妨，服务端会用 service role 处理）
+        const { data: newRow, error: insertError } = await client
+          .from('credits')
+          .insert({
             user_id: user.id,
-            amount: dailyCredits,
-            type: 'daily_reset',
-            description: 'Daily credits reset',
-          });
-        } catch {
-          // Ignore transaction log errors
+            balance: dailyCredits,
+            last_reset_at: resetAt,
+          })
+          .select()
+          .single();
+        if (insertError) {
+          console.warn('Credits insert blocked (likely RLS), using local value:', insertError.message);
+          setBalance(dailyCredits);
+          return dailyCredits;
         }
-        return data.balance;
+        if (newRow) {
+          setBalance(newRow.balance);
+          try {
+            await client.from('credit_transactions').insert({
+              user_id: user.id,
+              amount: dailyCredits,
+              type: 'daily_reset',
+              description: 'Daily credits reset (new user)',
+            });
+          } catch {}
+          return newRow.balance;
+        }
+      } else if (shouldReset) {
+        // 跨日重置
+        const { data, error } = await client
+          .from('credits')
+          .update({
+            balance: dailyCredits,
+            last_reset_at: resetAt,
+          })
+          .eq('user_id', user.id)
+          .select()
+          .single();
+
+        if (error) {
+          console.warn('Credits refresh failed, using existing balance');
+          setBalance(existingRow.balance);
+          return existingRow.balance;
+        }
+
+        if (data) {
+          setBalance(data.balance);
+          try {
+            await client.from('credit_transactions').insert({
+              user_id: user.id,
+              amount: dailyCredits,
+              type: 'daily_reset',
+              description: 'Daily credits reset',
+            });
+          } catch {}
+          return data.balance;
+        }
+      } else {
+        // 同一天内：直接使用现有余额
+        setBalance(existingRow.balance);
+        return existingRow.balance;
       }
     } catch (error) {
       console.warn('Credits refresh error, using local value');

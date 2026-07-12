@@ -48,10 +48,17 @@ create policy subscriptions_admin_select on public.subscriptions for select usin
 
 drop policy if exists credits_select_own on public.credits;
 create policy credits_select_own on public.credits for select using (auth.uid() = user_id);
+drop policy if exists credits_insert_own on public.credits;
+create policy credits_insert_own on public.credits for insert with check (auth.uid() = user_id);
 drop policy if exists credits_update_own on public.credits;
 create policy credits_update_own on public.credits for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
 drop policy if exists credits_admin_select on public.credits;
 create policy credits_admin_select on public.credits for select using (exists (select 1 from public.users u where u.id = auth.uid() and u.role = 'admin'));
+
+-- 确保 credits 表每个用户只有一行（去重后加唯一约束）
+delete from public.credits a using public.credits b
+where a.user_id = b.user_id and a.created_at < b.created_at;
+alter table public.credits add constraint credits_user_id_unique unique (user_id);
 
 drop policy if exists videos_insert_own on public.videos;
 create policy videos_insert_own on public.videos for insert with check (auth.uid() = user_id);
