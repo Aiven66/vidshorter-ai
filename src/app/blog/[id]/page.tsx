@@ -162,20 +162,28 @@ export default function BlogDetailPage() {
         const rPosts: BlogPost[] = [];
 
         if (databasePost) {
+          // Exclude the current article's entire group (root + all translations)
+          // by tracking both its id and parent_id
+          const currentId = String(databasePost.id);
+          const currentParentId = String((targetRow as any)?.parent_id || (targetRow as any)?.id || currentId);
+          seenRelated.add(currentId);
+          seenRelated.add(currentParentId);
+
           // 1. Same category posts from database
           try {
             const { data: relatedData } = await client
               .from('blogs')
               .select('id,title,category,cover_image,created_at,locale,parent_id,is_published,view_count,content,summary')
               .eq('is_published', true)
-              .neq('id', databasePost.id)
               .eq('category', databasePost.category)
               .order('created_at', { ascending: false })
-              .limit(50);
+              .limit(60);
 
             const groups = new Map<string, any[]>();
             for (const row of (relatedData || [])) {
               const pid = String(row.parent_id || row.id);
+              // Skip the current article's group
+              if (pid === currentParentId || String(row.id) === currentId) continue;
               if (!groups.has(pid)) groups.set(pid, []);
               groups.get(pid)!.push(row);
             }
@@ -200,14 +208,48 @@ export default function BlogDetailPage() {
                 .from('blogs')
                 .select('id,title,category,cover_image,created_at,locale,parent_id,is_published,view_count,content,summary')
                 .eq('is_published', true)
-                .neq('id', databasePost.id)
                 .neq('category', databasePost.category)
                 .order('created_at', { ascending: false })
-                .limit(50);
+                .limit(60);
 
               const groups = new Map<string, any[]>();
               for (const row of (otherData || [])) {
                 const pid = String(row.parent_id || row.id);
+                // Skip the current article's group
+                if (pid === currentParentId || String(row.id) === currentId) continue;
+                if (!groups.has(pid)) groups.set(pid, []);
+                groups.get(pid)!.push(row);
+              }
+
+              for (const [, group] of groups) {
+                if (rPosts.length >= 6) break;
+                let selected = group.find(r => r.locale === activeLocale);
+                if (!selected) selected = group.find(r => r.locale === 'en' || !r.locale);
+                if (!selected) selected = group[0];
+                const p = normalizeBlogRow(selected);
+                const key = String(selected.parent_id || selected.id);
+                if (!seenRelated.has(key)) {
+                  seenRelated.add(key);
+                  rPosts.push(p);
+                }
+              }
+            } catch {}
+          }
+
+          // 3. Ultimate fallback: if still empty, just grab any published posts
+          if (rPosts.length === 0) {
+            try {
+              const { data: anyData } = await client
+                .from('blogs')
+                .select('id,title,category,cover_image,created_at,locale,parent_id,is_published,view_count,content,summary')
+                .eq('is_published', true)
+                .order('created_at', { ascending: false })
+                .limit(60);
+
+              const groups = new Map<string, any[]>();
+              for (const row of (anyData || [])) {
+                const pid = String(row.parent_id || row.id);
+                if (pid === currentParentId || String(row.id) === currentId) continue;
                 if (!groups.has(pid)) groups.set(pid, []);
                 groups.get(pid)!.push(row);
               }
