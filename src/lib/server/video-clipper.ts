@@ -3452,21 +3452,43 @@ async function downloadYouTubeClip(params: {
   if (params.streamUrl && videoId) {
     try {
       console.log(`[downloadYouTubeClip] using frontend-provided streamUrl for ${videoId}`);
-      const source = await prepareSourceFromResolvedStream({
-        videoId,
-        streamUrl: params.streamUrl,
-        audioUrl: params.audioUrl,
-        userAgent: params.userAgent,
-        visitorData: params.visitorData,
-        xClientName: params.xClientName,
-        clientVersion: params.clientVersion,
-        clientName: params.clientName,
-        endTime: params.endTime,
-      });
+
+      // CRITICAL (v36): Skip the slow pre-download step entirely.
+      // Previously, prepareSourceFromResolvedStream downloaded the ENTIRE video
+      // (67MB for 720p itag=136) to /tmp in 2MB chunks before ffmpeg could cut it.
+      // This took 60-120s on Vercel and caused the "stuck downloading" UX.
+      //
+      // NEW approach: Build a CF Worker /stream URL (with streamUrl param for fast path)
+      // and let ffmpeg read directly from it via HTTP. ffmpeg uses -ss fast seek to
+      // jump to startTime, so it only downloads the bytes it actually needs (~5-10MB
+      // for a 30-50s clip). This cuts the total time from 60-120s down to 10-30s.
+      const videoStreamUrl = wrapInStreamProxyIfNeeded(params.streamUrl, videoId, false);
+
+      // Build the audio stream URL if audioUrl is provided (DASH video-only case).
+      let audioStreamUrl: string | undefined;
+      if (params.audioUrl) {
+        audioStreamUrl = wrapInStreamProxyIfNeeded(params.audioUrl, videoId, true);
+      }
+
+      // Build ffmpeg headers with metadata for CF Worker /stream fast path.
+      // When the URL is a CF Worker /stream URL with streamUrl param, no extra
+      // headers are needed. But if it's a bare googlevideo.com URL, we need
+      // to pass the metadata so /stream can use the fast path.
+      let ffmpegHeaders = '';
+      if (videoStreamUrl.includes('/stream') && !new URL(videoStreamUrl).searchParams.has('streamUrl')) {
+        const u = new URL(videoStreamUrl);
+        if (params.userAgent) u.searchParams.set('userAgent', params.userAgent);
+        if (params.visitorData) u.searchParams.set('visitorData', params.visitorData);
+        if (params.xClientName !== undefined) u.searchParams.set('xClientName', String(params.xClientName));
+        if (params.clientVersion) u.searchParams.set('clientVersion', params.clientVersion);
+        if (params.clientName) u.searchParams.set('clientName', params.clientName);
+        ffmpegHeaders = u.toString();
+      }
+
       return createLocalClip({
-        inputPath: source.inputPath,
-        audioInputPath: source.audioInputPath,
-        inputHeaders: source.ffmpegHeaders,
+        inputPath: videoStreamUrl,
+        audioInputPath: audioStreamUrl,
+        inputHeaders: ffmpegHeaders,
         startTime: params.startTime,
         endTime: params.endTime,
         title: params.title,
