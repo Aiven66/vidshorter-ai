@@ -1532,24 +1532,39 @@ export function stripHtml(html: string): string {
 
 /**
  * Convert a blog title into a URL-safe slug.
- * Used for SEO-friendly blog URLs: /blog/my-article-title.html
+ * Preserves Unicode letters (Chinese, Japanese, etc.) for SEO.
+ * Used for SEO-friendly blog URLs: /blog/my-article-title-4c33ea21.html
  */
 export function slugifyTitle(title: string): string {
   return String(title || '')
     .toLowerCase()
-    .replace(/[^\w\s-]/g, '')      // Remove non-word chars (except spaces, hyphens)
-    .replace(/[\s_]+/g, '-')        // Replace spaces/underscores with hyphens
-    .replace(/-+/g, '-')            // Collapse multiple hyphens
-    .replace(/^-+|-+$/g, '')         // Trim leading/trailing hyphens
-    .slice(0, 80)                   // Limit length
+    .replace(/[^\p{L}\p{N}\s-]/gu, '')  // Remove non-letter/non-number chars (Unicode-aware)
+    .replace(/[\s_]+/g, '-')             // Replace spaces/underscores with hyphens
+    .replace(/-+/g, '-')                // Collapse multiple hyphens
+    .replace(/^-+|-+$/g, '')             // Trim leading/trailing hyphens
+    .slice(0, 80)                        // Limit length
     || 'untitled';
 }
 
 /**
- * Build a SEO-friendly blog URL: /blog/slugified-title.html
+ * Build a SEO-friendly blog URL: /blog/{slug}-{shortId}.html
+ * Includes first 8 chars of UUID for uniqueness when titles are identical
+ * or when title is entirely non-ASCII (slug would be empty → "untitled").
  */
 export function buildBlogUrl(post: { id: string; title: string }): string {
-  return `/blog/${slugifyTitle(post.title)}.html`;
+  const slug = slugifyTitle(post.title);
+  const shortId = String(post.id || '').replace(/-/g, '').slice(0, 8).toLowerCase();
+  return `/blog/${slug}-${shortId}.html`;
+}
+
+/**
+ * Extract the short ID (first 8 hex chars of UUID) from a blog URL slug.
+ * Returns null if no valid short ID is found.
+ */
+export function extractShortIdFromSlug(slug: string): string | null {
+  const cleaned = slug.replace(/\.html?$/i, '');
+  const match = cleaned.match(/-([0-9a-f]{8})$/i);
+  return match ? match[1] : null;
 }
 
 /**

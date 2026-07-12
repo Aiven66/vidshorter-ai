@@ -18,6 +18,7 @@ import {
   slugifyTitle,
   isUuid,
   buildBlogUrl,
+  extractShortIdFromSlug,
 } from '@/lib/blog-content';
 import { detectLanguage } from '@/lib/lang-detect';
 import { Calendar, ArrowLeft, ArrowRight, ChevronRight, Home, FileText } from 'lucide-react';
@@ -65,33 +66,70 @@ export default function BlogDetailPage() {
           if (error) throw error;
           targetRow = data;
         } else {
-          // Slug: strip .html suffix, fetch all posts and match by slugified title
-          const slug = rawParam.replace(/\.html?$/i, '');
-          const { data: allPosts, error: allError } = await client
-            .from('blogs')
-            .select('id,title,category,cover_image,created_at,locale,parent_id,is_published,view_count,content,summary')
-            .eq('is_published', true)
-            .order('created_at', { ascending: false })
-            .limit(60);
+          // SEO slug: extract shortId from the end of the slug for direct lookup
+          // URL format: /blog/{slug}-{shortId}.html
+          const shortId = extractShortIdFromSlug(rawParam);
 
-          if (allError) throw allError;
+          if (shortId) {
+            // Fast path: query by id prefix (first 8 hex chars of UUID)
+            const { data: matches, error: matchError } = await client
+              .from('blogs')
+              .select('*')
+              .like('id', `${shortId}%`)
+              .limit(10);
 
-          if (allPosts && allPosts.length > 0) {
-            // Group by parent_id, pick best version per group, then match slug
-            const groups = new Map<string, any[]>();
-            for (const row of allPosts) {
-              const pid = String(row.parent_id || row.id);
-              if (!groups.has(pid)) groups.set(pid, []);
-              groups.get(pid)!.push(row);
+            if (matchError) throw matchError;
+
+            if (matches && matches.length > 0) {
+              // Pick the best version: prefer current locale, then English, then first
+              const parentId = String(matches[0].parent_id || matches[0].id);
+
+              // Also fetch all translations for this parent
+              const { data: allVersions } = await client
+                .from('blogs')
+                .select('*')
+                .or(`id.eq.${parentId},parent_id.eq.${parentId}`);
+
+              const allRows = [...(allVersions || []), ...(matches.filter(m => !allVersions?.some(av => av.id === m.id)))];
+
+              let selected = allRows.find(r => r.locale === activeLocale && r.is_published);
+              if (!selected) selected = allRows.find(r => (r.locale === 'en' || !r.locale) && r.is_published);
+              if (!selected) selected = allRows.find(r => r.is_published) || matches[0];
+              targetRow = selected;
             }
+          }
 
-            for (const [, group] of groups) {
-              let selected = group.find(r => r.locale === activeLocale);
-              if (!selected) selected = group.find(r => r.locale === 'en' || !r.locale);
-              if (!selected) selected = group[0];
-              if (slugifyTitle(selected.title || '') === slug) {
-                targetRow = selected;
-                break;
+          // Fallback: if shortId extraction failed, try slug matching
+          if (!targetRow) {
+            const slug = rawParam.replace(/\.html?$/i, '');
+            const { data: allPosts, error: allError } = await client
+              .from('blogs')
+              .select('id,title,category,cover_image,created_at,locale,parent_id,is_published,view_count,content,summary')
+              .eq('is_published', true)
+              .order('created_at', { ascending: false })
+              .limit(60);
+
+            if (allError) throw allError;
+
+            if (allPosts && allPosts.length > 0) {
+              const groups = new Map<string, any[]>();
+              for (const row of allPosts) {
+                const pid = String(row.parent_id || row.id);
+                if (!groups.has(pid)) groups.set(pid, []);
+                groups.get(pid)!.push(row);
+              }
+
+              for (const [, group] of groups) {
+                let selected = group.find(r => r.locale === activeLocale);
+                if (!selected) selected = group.find(r => r.locale === 'en' || !r.locale);
+                if (!selected) selected = group[0];
+                // Compare slugified title (without shortId suffix)
+                const titleSlug = slugifyTitle(selected.title || '');
+                const slugWithoutId = slug.replace(/-([0-9a-f]{8})$/i, '');
+                if (titleSlug === slugWithoutId) {
+                  targetRow = selected;
+                  break;
+                }
               }
             }
           }

@@ -187,8 +187,12 @@ export default function BlogPage() {
     );
   }
 
-  // 提取所有唯一分类标签
-  const allTags = Array.from(new Set(posts.map(p => p.category).filter(Boolean)));
+  // 提取所有唯一分类标签，并统计每个标签的文章数
+  const tagCounts = new Map<string, number>();
+  for (const p of posts) {
+    if (p.category) tagCounts.set(p.category, (tagCounts.get(p.category) || 0) + 1);
+  }
+  const allTags = Array.from(tagCounts.keys());
 
   // 按标签筛选
   const filteredPosts = selectedTag
@@ -235,32 +239,70 @@ export default function BlogPage() {
             {t('blog.subtitle')}
           </p>
 
-          {/* 关键词标签筛选 */}
+          {/* 关键词标签筛选 — 美化设计 */}
           {allTags.length > 0 && (
-            <div className="flex flex-wrap gap-2 mb-12">
-              <button
-                onClick={() => { setSelectedTag(null); setCurrentPage(1); }}
-                className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                  selectedTag === null
-                    ? 'bg-primary text-primary-foreground'
-                    : 'bg-muted text-muted-foreground hover:bg-muted/80'
-                }`}
-              >
-                {activeLocale === 'zh' ? '全部' : activeLocale === 'zh-Hant' ? '全部' : 'All'}
-              </button>
-              {allTags.map(tag => (
+            <div className="mb-12">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="h-px flex-1 bg-border" />
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                  {activeLocale === 'zh' ? '分类筛选' : activeLocale === 'zh-Hant' ? '分類篩選' : 'Filter by Category'}
+                </span>
+                <div className="h-px flex-1 bg-border" />
+              </div>
+              <div className="flex flex-wrap gap-2.5">
+                {/* All 按钮 */}
                 <button
-                  key={tag}
-                  onClick={() => handleTagClick(tag)}
-                  className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                    selectedTag === tag
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted text-muted-foreground hover:bg-muted/80'
+                  onClick={() => { setSelectedTag(null); setCurrentPage(1); }}
+                  className={`group inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium border transition-all duration-200 ${
+                    selectedTag === null
+                      ? 'bg-primary text-primary-foreground border-primary shadow-sm scale-105'
+                      : 'bg-background text-muted-foreground border-border hover:border-primary/40 hover:text-foreground hover:shadow-sm'
                   }`}
                 >
-                  {tag}
+                  <svg
+                    className="w-3.5 h-3.5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                  </svg>
+                  {activeLocale === 'zh' ? '全部' : activeLocale === 'zh-Hant' ? '全部' : 'All'}
+                  <span className={`text-xs px-1.5 rounded-full ${
+                    selectedTag === null
+                      ? 'bg-primary-foreground/20 text-primary-foreground'
+                      : 'bg-muted text-muted-foreground group-hover:bg-muted/80'
+                  }`}>
+                    {posts.length}
+                  </span>
                 </button>
-              ))}
+                {/* 分类标签 */}
+                {allTags.map(tag => (
+                  <button
+                    key={tag}
+                    onClick={() => handleTagClick(tag)}
+                    className={`group inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium border transition-all duration-200 ${
+                      selectedTag === tag
+                        ? 'bg-primary text-primary-foreground border-primary shadow-sm scale-105'
+                        : 'bg-background text-muted-foreground border-border hover:border-primary/40 hover:text-foreground hover:shadow-sm'
+                    }`}
+                  >
+                    <span className={`w-1.5 h-1.5 rounded-full transition-colors ${
+                      selectedTag === tag
+                        ? 'bg-primary-foreground'
+                        : 'bg-muted-foreground/40 group-hover:bg-primary/60'
+                    }`} />
+                    {tag}
+                    <span className={`text-xs px-1.5 rounded-full ${
+                      selectedTag === tag
+                        ? 'bg-primary-foreground/20 text-primary-foreground'
+                        : 'bg-muted text-muted-foreground group-hover:bg-muted/80'
+                    }`}>
+                      {tagCounts.get(tag) || 0}
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
