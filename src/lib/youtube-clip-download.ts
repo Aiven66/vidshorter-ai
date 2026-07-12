@@ -90,6 +90,11 @@ export async function resolveYouTubeStream(
   resolveUrl.pathname = `${resolveUrl.pathname.replace(/\/$/, '')}/resolve`;
   resolveUrl.searchParams.set('videoId', videoId);
   resolveUrl.searchParams.set('maxHeight', '360');
+  // muxed=1: request a combined video+audio stream. Without this, /resolve
+  // returns a video-only DASH stream (itag 136) with NO audio track.
+  // All downloaded clips would be silent. This is the root cause of the
+  // "no sound" bug.
+  resolveUrl.searchParams.set('muxed', '1');
 
   let lastErr: Error | null = null;
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
@@ -190,6 +195,8 @@ export function buildStreamProxyUrl(
   streamEndpoint.searchParams.set('xClientName', String(resolved.xClientName));
   streamEndpoint.searchParams.set('clientVersion', resolved.clientVersion);
   streamEndpoint.searchParams.set('clientName', resolved.client);
+  // Ensure /stream re-resolve (if fast path fails) also returns muxed stream
+  streamEndpoint.searchParams.set('muxed', '1');
   return streamEndpoint.toString();
 }
 
@@ -421,10 +428,11 @@ export async function downloadYouTubeClip(params: {
   const duration = Math.max(1, endTime - startTime);
 
   // ── Primary path: server-side ffmpeg clipper ───────────────────────────────
-  // Pass the already-resolved stream metadata from the frontend so the server
-  // does not need to call /resolve again. This is critical because the server's
-  // CF Worker colo may be rate-limited (LOGIN_REQUIRED) while the frontend's
-  // colo successfully resolved the stream.
+  // CRITICAL: Pass the already-resolved stream metadata from the frontend so
+  // the server does NOT need to call /resolve again. The server's CF Worker
+  // colo is often rate-limited (LOGIN_REQUIRED) while the browser's colo
+  // successfully resolved the stream. Without this, the first server attempt
+  // always fails and wastes 120s before falling back.
   const callServerApi = async (streamMeta?: ResolvedStream) => {
     onProgress?.('Preparing server-side clip...');
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
@@ -445,7 +453,7 @@ export async function downloadYouTubeClip(params: {
     }
 
     const res = await fetch(apiUrl.toString(), {
-      signal: AbortSignal.timeout(300_000), // 5 minutes — server may download + transcode
+      signal: AbortSignal.timeout(90_000), // 90s — server may download + transcode
     });
 
     if (!res.ok) {
@@ -477,27 +485,25 @@ export async function downloadYouTubeClip(params: {
     return { blob, extension: 'mp4' };
   };
 
-  try {
-    return await callServerApi();
-  } catch (serverErr) {
-    console.warn('[downloadYouTubeClip] Server-side clip failed, trying with frontend-resolved stream:', serverErr);
-    // The server's CF Worker colo may be blocked while the browser's colo works.
-    // Try to resolve from the browser and pass the stream metadata to the server.
+  // Step 1: Resolve the stream from the browser (uses cache if available).
+  // The browser's CF Worker colo is usually healthy while the server's is rate-limited.
+  let streamMeta = resolved;
+  if (!streamMeta) {
     try {
-      const freshResolved = await resolveYouTubeStream(videoId, 1);
-      return await callServerApi(freshResolved);
+      streamMeta = await resolveYouTubeStream(videoId, 1);
     } catch (resolveErr) {
-      console.warn('[downloadYouTubeClip] Frontend resolve also failed:', resolveErr);
+      console.warn('[downloadYouTubeClip] Frontend resolve failed:', resolveErr instanceof Error ? resolveErr.message : resolveErr);
     }
-    onProgress?.('Server clip unavailable, downloading partial video...');
   }
 
-  // ── Fallback path: fetch real MP4 data via CF Worker /stream (chunked) ───────
-  // Browser-side captureStream/canvas recording is unreliable for cross-origin
-  // YouTube streams: CORS taint produces silent audio and/or empty frames, and
-  // seek often fails so every clip starts at 0:00. Fetching the actual MP4 bytes
-  // from CF Worker /stream avoids both problems and always has audio.
-  onProgress?.('Server clip unavailable, downloading partial video...');
+  // Step 2: Call the server API with the resolved stream metadata.
+  // This is the ONLY server attempt — no retry. If it fails, go to frontend fallback.
+  try {
+    return await callServerApi(streamMeta);
+  } catch (serverErr) {
+    console.warn('[downloadYouTubeClip] Server-side clip failed:', serverErr instanceof Error ? serverErr.message : serverErr);
+    onProgress?.('Server clip unavailable, downloading partial video...');
+  }
   const cfWorkerUrl = String(
     typeof window !== 'undefined' ? window.__CF_WORKER_URL__ : '',
   ).trim();
@@ -580,6 +586,8 @@ export async function downloadFullVideoStream(params: {
   streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
   streamEndpoint.searchParams.set('videoId', videoId);
   streamEndpoint.searchParams.set('maxHeight', '360');
+  // muxed=1: ensure the stream has audio (not video-only DASH)
+  streamEndpoint.searchParams.set('muxed', '1');
 
   onProgress?.(`Downloading video (in 2MB chunks, up to ${(maxBytes / 1024 / 1024).toFixed(0)}MB)...`);
 

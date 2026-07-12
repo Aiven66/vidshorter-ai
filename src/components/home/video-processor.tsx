@@ -1012,20 +1012,13 @@ export default function VideoProcessor() {
   }, [accessToken, error, getLocalMediaBaseUrl, refreshCredits, selectedFile, trimmedVideoUrl, uploadToSupabase, useAgent, user]);
 
   const handleDownload = async (clip: VideoClip) => {
-    // link_only clips: record the clip segment via browser captureStream + MediaRecorder.
+    // link_only / fallback clips: download via server-side ffmpeg or browser-side chunked fetch.
     //
-    // PROBLEM: The old /api/yt-clip-download Edge Runtime route is broken —
-    // Vercel Edge IPs are blocked by YouTube (403). CF Worker /stream without
-    // streamUrl param also fails (502 — InnerTube rate-limited on SJC colo).
-    //
-    // SOLUTION:
-    //   1. Resolve streamUrl via CF Worker /resolve (cached for 5h)
-    //   2. Pass streamUrl to CF Worker /stream (fast path — no InnerTube call)
-    //   3. Use captureVideoClip to record [startTime, endTime] segment (real-time)
-    //   4. Trigger browser download of the recorded blob
-    //
-    // If captureVideoClip fails (e.g., browser doesn't support captureStream),
-    // fall back to downloading the full video stream as a blob.
+    // FLOW:
+    //   1. downloadYouTubeClip: resolve stream → server API (ffmpeg cut) → frontend chunked fallback
+    //   2. downloadFullVideoStream: download full video as blob
+    //   3. downloadPartialMP4: download partial video with begin parameter
+    //   4. window.open(linkOnlyUrl): open YouTube link as last resort
     if (clip.status === 'link_only' || (clip.isFallback === true && !clip.videoUrl)) {
       const ytVideoId = extractYouTubeVideoId(clip.linkOnlyUrl);
       if (!ytVideoId) {
@@ -1042,21 +1035,20 @@ export default function VideoProcessor() {
           title: clip.title,
           onProgress: (msg) => setDownloadProgress(msg),
         });
-      } catch (captureErr) {
-        console.warn('[Download] captureVideoClip failed, trying full video stream:', captureErr instanceof Error ? captureErr.message : captureErr);
-        setDownloadProgress('Trying alternative download...');
+      } catch (clipErr) {
+        console.warn('[Download] Clip download failed, trying full video:', clipErr instanceof Error ? clipErr.message : clipErr);
+        setDownloadProgress('Trying full video download...');
         try {
           await downloadFullVideoStream({
             videoId: ytVideoId,
             title: clip.title,
-            maxBytes: 50 * 1024 * 1024, // 50MB max
+            maxBytes: 50 * 1024 * 1024,
             onProgress: (msg) => setDownloadProgress(msg),
           });
         } catch (fullErr) {
-          console.warn('[Download] Full video stream failed, trying partial MP4:', fullErr instanceof Error ? fullErr.message : fullErr);
+          console.warn('[Download] Full video failed, trying partial:', fullErr instanceof Error ? fullErr.message : fullErr);
           setDownloadProgress('Downloading partial video...');
           try {
-            // Ultimate fallback: download partial MP4 directly (no captureStream)
             await downloadPartialMP4({
               videoId: ytVideoId,
               title: clip.title,
@@ -1065,7 +1057,8 @@ export default function VideoProcessor() {
               onProgress: (msg) => setDownloadProgress(msg),
             });
           } catch (partialErr) {
-            console.error('[Download] All download methods failed:', partialErr);
+            console.error('[Download] All methods failed:', partialErr);
+            setDownloadProgress(null);
             if (clip.linkOnlyUrl) window.open(clip.linkOnlyUrl, '_blank');
           }
         }

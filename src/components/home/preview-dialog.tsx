@@ -213,50 +213,48 @@ export default function PreviewDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl w-[92vw] overflow-hidden">
+      <DialogContent className="sm:max-w-3xl w-[94vw] max-h-[90vh] overflow-y-auto">
         <DialogHeader className="min-w-0">
           <DialogTitle className="flex items-center gap-2">
-            <Play className="h-5 w-5 text-primary" />
-            {clip.title}
+            <Play className="h-5 w-5 text-primary shrink-0" />
+            <span className="truncate">{clip.title}</span>
           </DialogTitle>
-          <DialogDescription>{clip.summary}</DialogDescription>
+          <DialogDescription className="line-clamp-2">{clip.summary}</DialogDescription>
         </DialogHeader>
 
-        {/* Real MP4 video player */}
+        {/* Video player area — fixed aspect ratio to prevent layout overflow */}
         {hasRealMp4 ? (
-          <div className="relative bg-black rounded-lg overflow-hidden min-w-0 w-full">
+          <div className="relative bg-black rounded-lg overflow-hidden w-full aspect-video">
             <video
               key={clip.id}
               src={proxyUrl(clip)}
               controls
               playsInline
               preload="metadata"
-              className="block w-full h-auto aspect-video"
+              className="absolute inset-0 w-full h-full"
             />
           </div>
         ) : useYouTubeEmbed && ytInfo ? (
-          /* YouTube IFrame embed for fallback/link_only clips */
-          <div className="relative bg-black rounded-lg overflow-hidden min-w-0 w-full">
+          <div className="relative bg-black rounded-lg overflow-hidden w-full aspect-video">
             <iframe
               key={`embed-${clip.id}-${ytInfo.startTime}`}
               src={embedUrl}
               title={clip.title}
-              className="block w-full h-auto aspect-video"
+              className="absolute inset-0 w-full h-full"
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
               allowFullScreen
               referrerPolicy="strict-origin-when-cross-origin"
             />
           </div>
         ) : clip.videoUrl ? (
-          /* Fallback video player (zoompan pseudo-video - should rarely show) */
-          <div className="relative bg-black rounded-lg overflow-hidden min-w-0 w-full">
+          <div className="relative bg-black rounded-lg overflow-hidden w-full aspect-video">
             <video
               key={clip.id}
               src={proxyUrl(clip)}
               controls
               playsInline
               preload="metadata"
-              className="block w-full h-auto aspect-video"
+              className="absolute inset-0 w-full h-full"
             />
           </div>
         ) : (

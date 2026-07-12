@@ -2676,6 +2676,9 @@ function wrapInStreamProxyIfNeeded(
     // Pass the googlevideo.com streamUrl for fast path (avoids slow re-resolve).
     // /stream has IP-binding bypass (strips ip= param) to handle colo mismatch.
     endpoint.searchParams.set('streamUrl', streamUrl);
+    // muxed=1: if the fast path fails and /stream needs to re-resolve,
+    // ensure it returns a combined video+audio stream (not video-only DASH).
+    if (!isAudio) endpoint.searchParams.set('muxed', '1');
     if (isAudio) endpoint.searchParams.set('audio', '1');
     return endpoint.toString();
   }
