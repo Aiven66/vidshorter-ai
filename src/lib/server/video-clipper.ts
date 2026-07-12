@@ -3483,10 +3483,16 @@ async function downloadYouTubeClip(params: {
     }
   }
 
-  // No frontend-provided streamUrl — this path is for local dev only.
-  // On Vercel, this will likely fail (yt-dlp unavailable), but we try anyway
-  // since the frontend should always pass streamUrl in production.
-  console.warn(`[downloadYouTubeClip] no frontend streamUrl provided, falling back to downloadSourceVideo (slow)`);
+  // No frontend-provided streamUrl — fail fast on Vercel.
+  // On Vercel, downloadSourceVideo uses yt-dlp (unavailable) + slow proxies
+  // (Piped/Invidious/Cobalt) that take 60-120s to time out. This causes the
+  // "stuck downloading" UX. Instead of hanging, throw immediately so the
+  // frontend opens the YouTube embed fallback.
+  // Local dev can still use downloadSourceVideo (yt-dlp is available there).
+  if (IS_VERCEL) {
+    throw new Error('No streamUrl provided and running on Vercel — yt-dlp fallback unavailable. Frontend should open YouTube embed.');
+  }
+  console.warn(`[downloadYouTubeClip] no frontend streamUrl provided, falling back to downloadSourceVideo (local dev only)`);
   const source = await downloadSourceVideo(params.videoUrl);
   return createLocalClip({
     inputPath: source.inputPath,

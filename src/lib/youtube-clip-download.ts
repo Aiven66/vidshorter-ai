@@ -496,6 +496,17 @@ export async function downloadYouTubeClip(params: {
     }
   }
 
+  // CRITICAL: If we have no streamUrl (CF Worker /resolve failed from browser),
+  // throw immediately. Without streamUrl, the server would fall back to
+  // downloadSourceVideo (yt-dlp + Piped + Invidious proxies), which:
+  //   - Doesn't work on Vercel (yt-dlp unavailable)
+  //   - Takes 60-120s to fail (slow proxy timeouts)
+  //   - Causes the "stuck downloading" UX the user reported
+  // Instead, throw so handleDownload opens the YouTube embed fallback.
+  if (!streamMeta?.streamUrl) {
+    throw new Error('No stream URL available (CF Worker /resolve failed). Opening YouTube embed instead.');
+  }
+
   // Step 2: Call the server API with the resolved stream metadata.
   // This is the ONLY attempt — no frontend chunked fallback.
   // The old chunked fallback downloaded from 0:00 (wrong clip segment) and
