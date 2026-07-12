@@ -1530,6 +1530,35 @@ export function stripHtml(html: string): string {
     .trim();
 }
 
+/**
+ * Convert a blog title into a URL-safe slug.
+ * Used for SEO-friendly blog URLs: /blog/my-article-title.html
+ */
+export function slugifyTitle(title: string): string {
+  return String(title || '')
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, '')      // Remove non-word chars (except spaces, hyphens)
+    .replace(/[\s_]+/g, '-')        // Replace spaces/underscores with hyphens
+    .replace(/-+/g, '-')            // Collapse multiple hyphens
+    .replace(/^-+|-+$/g, '')         // Trim leading/trailing hyphens
+    .slice(0, 80)                   // Limit length
+    || 'untitled';
+}
+
+/**
+ * Build a SEO-friendly blog URL: /blog/slugified-title.html
+ */
+export function buildBlogUrl(post: { id: string; title: string }): string {
+  return `/blog/${slugifyTitle(post.title)}.html`;
+}
+
+/**
+ * Check if a string looks like a UUID (for backward compatibility with old URLs).
+ */
+export function isUuid(str: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+}
+
 const VALID_LOCALES: Locale[] = [
   'en', 'zh', 'zh-Hant', 'ja', 'ko', 'de', 'fr', 'it', 'es', 'pt',
   'hi', 'ar', 'bn', 'id', 'ms', 'th', 'he', 'ru', 'ur', 'tr',

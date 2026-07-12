@@ -18,6 +18,7 @@ import {
   normalizeBlogRow,
   normalizeLocale,
   stripHtml,
+  buildBlogUrl,
 } from '@/lib/blog-content';
 import { detectLanguage } from '@/lib/lang-detect';
 
@@ -27,6 +28,7 @@ export default function BlogPage() {
   const [posts, setPosts] = useState<BlogPost[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
+  const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const pageSize = 10;
 
   useEffect(() => {
@@ -185,11 +187,24 @@ export default function BlogPage() {
     );
   }
 
-  // 分页计算
-  const totalPages = Math.ceil(posts.length / pageSize);
+  // 提取所有唯一分类标签
+  const allTags = Array.from(new Set(posts.map(p => p.category).filter(Boolean)));
+
+  // 按标签筛选
+  const filteredPosts = selectedTag
+    ? posts.filter(p => p.category === selectedTag)
+    : posts;
+
+  // 分页计算（基于筛选后的列表）
+  const totalPages = Math.ceil(filteredPosts.length / pageSize);
   const startIndex = (currentPage - 1) * pageSize;
   const endIndex = startIndex + pageSize;
-  const paginatedPosts = posts.slice(startIndex, endIndex);
+  const paginatedPosts = filteredPosts.slice(startIndex, endIndex);
+
+  const handleTagClick = (tag: string) => {
+    setSelectedTag(selectedTag === tag ? null : tag);
+    setCurrentPage(1);
+  };
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
@@ -216,11 +231,40 @@ export default function BlogPage() {
       <div className="container mx-auto px-4 py-16">
         <div className="max-w-4xl mx-auto">
           <h1 className="text-4xl font-bold mb-4">{t('blog.title')}</h1>
-          <p className="text-muted-foreground mb-12">
+          <p className="text-muted-foreground mb-8">
             {t('blog.subtitle')}
           </p>
 
-          {posts.length === 0 ? (
+          {/* 关键词标签筛选 */}
+          {allTags.length > 0 && (
+            <div className="flex flex-wrap gap-2 mb-12">
+              <button
+                onClick={() => { setSelectedTag(null); setCurrentPage(1); }}
+                className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                  selectedTag === null
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-muted text-muted-foreground hover:bg-muted/80'
+                }`}
+              >
+                {activeLocale === 'zh' ? '全部' : activeLocale === 'zh-Hant' ? '全部' : 'All'}
+              </button>
+              {allTags.map(tag => (
+                <button
+                  key={tag}
+                  onClick={() => handleTagClick(tag)}
+                  className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                    selectedTag === tag
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-muted text-muted-foreground hover:bg-muted/80'
+                  }`}
+                >
+                  {tag}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {filteredPosts.length === 0 ? (
             <div className="text-center py-16">
               <FileText className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
               <p className="text-muted-foreground">{t('blog.noPosts')}</p>
@@ -253,7 +297,7 @@ export default function BlogPage() {
                         </span>
                       </div>
                       <h2 className="text-2xl font-bold mb-3">
-                      <Link href={`/blog/${post.id}`} className="text-primary hover:text-primary/80 transition-colors">
+                      <Link href={buildBlogUrl(post)} className="text-primary hover:text-primary/80 transition-colors">
                         {post.title}
                       </Link>
                     </h2>
@@ -261,7 +305,7 @@ export default function BlogPage() {
                         {(post.summary || stripHtml(post.content)).substring(0, 200)}{post.summary || post.content.length > 200 ? '...' : ''}
                       </p>
                       <Button variant="link" className="p-0 h-auto" asChild>
-                        <Link href={`/blog/${post.id}`} className="flex items-center gap-1">
+                        <Link href={buildBlogUrl(post)} className="flex items-center gap-1">
                           {t('blog.readMore')}
                           <ArrowRight className="h-4 w-4" />
                         </Link>
@@ -310,8 +354,8 @@ export default function BlogPage() {
 
                 <span className="text-sm text-muted-foreground ml-3">
                   {activeLocale === 'zh'
-                    ? `第 ${currentPage}/${totalPages} 页，共 ${posts.length} 篇`
-                    : `Page ${currentPage}/${totalPages}, ${posts.length} articles`}
+                    ? `第 ${currentPage}/${totalPages} 页，共 ${filteredPosts.length} 篇`
+                    : `Page ${currentPage}/${totalPages}, ${filteredPosts.length} articles`}
                 </span>
               </div>
             )}
