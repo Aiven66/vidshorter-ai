@@ -33,6 +33,11 @@ const PreviewDialog = dynamic(
   { ssr: false }
 );
 
+const InsufficientCreditsDialog = dynamic(
+  () => import('@/components/insufficient-credits-dialog').then(m => ({ default: m.InsufficientCreditsDialog })),
+  { ssr: false }
+);
+
 function getAdminAiConfig() {
   if (typeof window === 'undefined') return null;
   try {
@@ -530,6 +535,7 @@ export default function VideoProcessor() {
   const [previewClip, setPreviewClip] = useState<VideoClip | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<string | null>(null);
+  const [insufficientOpen, setInsufficientOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const trimmedVideoUrl = videoUrl.trim();
   const canStart = (!!trimmedVideoUrl && isHttpVideoUrl(trimmedVideoUrl)) || !!selectedFile;
@@ -636,7 +642,11 @@ export default function VideoProcessor() {
       return;
     }
     const latestBalance = await refreshCredits();
-    if (!isAdminUser(user) && latestBalance < 60) { setError('Insufficient credits. You need at least 60 credits.'); return; }
+    if (!isAdminUser(user) && latestBalance < 60) {
+      // 友好的付费引导: 不再显示生硬的错误信息,而是弹出引导对话框
+      setInsufficientOpen(true);
+      return;
+    }
 
     setIsProcessing(true);
     setProgress({ stage: 'init', progress: 0, message: 'Starting...' });
@@ -904,7 +914,12 @@ export default function VideoProcessor() {
                 setClips(prev => mergeClips(prev, [d.data!.clip!]));
               }
               if (d.data?.error) {
-                setError(d.message);
+                // 服务端返回积分不足错误时,触发付费引导对话框而非显示错误
+                if (d.message && /insufficient credits/i.test(d.message)) {
+                  setInsufficientOpen(true);
+                } else {
+                  setError(d.message);
+                }
                 hasError = true;
                 done = true;
               }
@@ -935,7 +950,12 @@ export default function VideoProcessor() {
               setClips(prev => mergeClips(prev, [d.data!.clip!]));
             }
             if (d.data?.error) {
-              setError(d.message);
+              // 服务端返回积分不足错误时,触发付费引导对话框而非显示错误
+              if (d.message && /insufficient credits/i.test(d.message)) {
+                setInsufficientOpen(true);
+              } else {
+                setError(d.message);
+              }
               done = true;
             }
           } catch (e) {
@@ -1503,6 +1523,13 @@ export default function VideoProcessor() {
           fmt={fmt}
         />
       )}
+
+      <InsufficientCreditsDialog
+        open={insufficientOpen}
+        onOpenChange={setInsufficientOpen}
+        currentBalance={balance}
+        requiredCredits={60}
+      />
     </>
   );
 }
