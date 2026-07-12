@@ -14,8 +14,6 @@ import { isAdminUser } from '@/lib/admin-gate';
 import { getSupabaseClient, isSupabaseConfigured } from '@/storage/database/supabase-client';
 import {
   downloadYouTubeClip,
-  downloadFullVideoStream,
-  downloadPartialMP4,
   resolveYouTubeStream,
   cacheResolvedStream,
   buildStreamProxyUrl,
@@ -1051,13 +1049,14 @@ export default function VideoProcessor() {
       },
     });
 
-    // link_only / fallback clips: download via server-side ffmpeg or browser-side chunked fetch.
+    // link_only / fallback clips: download via server-side ffmpeg clipper.
     //
-    // FLOW:
-    //   1. downloadYouTubeClip: resolve stream → server API (ffmpeg cut) → frontend chunked fallback
-    //   2. downloadFullVideoStream: download full video as blob
-    //   3. downloadPartialMP4: download partial video with begin parameter
-    //   4. window.open(linkOnlyUrl): open YouTube link as last resort
+    // FLOW (simplified — old chain had 4 fallbacks taking 10+ min total):
+    //   1. downloadYouTubeClip: resolve stream → server API (ffmpeg cut)
+    //      Server downloads only [0, endTime+buffer] bytes (not full video),
+    //      then ffmpeg cuts [startTime, endTime]. Typically 15-40s.
+    //   2. If server fails: open YouTube embed with start/end times
+    //      (user can watch the exact highlight segment on YouTube)
     if (clip.status === 'link_only' || (clip.isFallback === true && !clip.videoUrl)) {
       const ytVideoId = extractYouTubeVideoId(clip.linkOnlyUrl);
       if (!ytVideoId) {
@@ -1065,7 +1064,7 @@ export default function VideoProcessor() {
         return;
       }
       setDownloadingId(clip.id);
-      setDownloadProgress('Preparing download...');
+      setDownloadProgress('Resolving YouTube stream...');
       try {
         await downloadYouTubeClip({
           videoId: ytVideoId,
@@ -1075,32 +1074,12 @@ export default function VideoProcessor() {
           onProgress: (msg) => setDownloadProgress(msg),
         });
       } catch (clipErr) {
-        console.warn('[Download] Clip download failed, trying full video:', clipErr instanceof Error ? clipErr.message : clipErr);
-        setDownloadProgress('Trying full video download...');
-        try {
-          await downloadFullVideoStream({
-            videoId: ytVideoId,
-            title: clip.title,
-            maxBytes: 50 * 1024 * 1024,
-            onProgress: (msg) => setDownloadProgress(msg),
-          });
-        } catch (fullErr) {
-          console.warn('[Download] Full video failed, trying partial:', fullErr instanceof Error ? fullErr.message : fullErr);
-          setDownloadProgress('Downloading partial video...');
-          try {
-            await downloadPartialMP4({
-              videoId: ytVideoId,
-              title: clip.title,
-              startTime: clip.startTime,
-              endTime: clip.endTime,
-              onProgress: (msg) => setDownloadProgress(msg),
-            });
-          } catch (partialErr) {
-            console.error('[Download] All methods failed:', partialErr);
-            setDownloadProgress(null);
-            if (clip.linkOnlyUrl) window.open(clip.linkOnlyUrl, '_blank');
-          }
-        }
+        const errMsg = clipErr instanceof Error ? clipErr.message : String(clipErr);
+        console.warn('[Download] Server clip failed:', errMsg);
+        // Fallback: open YouTube embed with start/end times so user can watch the highlight
+        setDownloadProgress('Opening highlight on YouTube...');
+        const embedUrl = `https://www.youtube.com/embed/${ytVideoId}?start=${Math.floor(clip.startTime)}&end=${Math.floor(clip.endTime)}&autoplay=1`;
+        window.open(embedUrl, '_blank');
       } finally {
         setDownloadingId(null);
         setDownloadProgress(null);

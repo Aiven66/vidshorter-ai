@@ -22,8 +22,6 @@ import Link from 'next/link';
 import { isSupabaseConfigured } from '@/storage/database/supabase-client';
 import {
   downloadYouTubeClip,
-  downloadFullVideoStream,
-  downloadPartialMP4,
   extractYouTubeVideoId,
 } from '@/lib/youtube-clip-download';
 
@@ -251,46 +249,24 @@ function ClipPlayerDialog({
       return;
     }
     setDownloading(true);
-    setDownloadProgress('Preparing download...');
+    setDownloadProgress('Resolving YouTube stream...');
     try {
-      // Cap endTime at startTime + 15s because captureVideoClip max record duration is 15s.
-      const cappedEnd = Math.min(clip.endTime, clip.startTime + 15);
-      try {
-        await downloadYouTubeClip({
-          videoId: ytVideoId,
-          startTime: clip.startTime,
-          endTime: cappedEnd,
-          title: clip.title,
-          onProgress: (msg) => setDownloadProgress(msg),
-        });
-      } catch (recordErr) {
-        console.warn('[Dashboard Download] captureVideoClip failed, trying full stream download:', recordErr);
-        setDownloadProgress('Trying full stream download...');
-        try {
-          await downloadFullVideoStream({
-            videoId: ytVideoId,
-            title: clip.title,
-            maxBytes: 30 * 1024 * 1024,
-            onProgress: (msg) => setDownloadProgress(msg),
-          });
-        } catch (fullErr) {
-          console.warn('[Dashboard Download] Full stream failed, trying partial MP4:', fullErr);
-          setDownloadProgress('Downloading partial video...');
-          await downloadPartialMP4({
-            videoId: ytVideoId,
-            title: clip.title,
-            endTime: cappedEnd,
-            onProgress: (msg) => setDownloadProgress(msg),
-          });
-        }
-      }
+      await downloadYouTubeClip({
+        videoId: ytVideoId,
+        startTime: clip.startTime,
+        endTime: clip.endTime,
+        title: clip.title,
+        onProgress: (msg) => setDownloadProgress(msg),
+      });
     } catch (e) {
-      console.error('Download (link_only) error:', e);
-      setDownloadProgress(null);
-      window.open(clip.linkOnlyUrl, '_blank');
+      const errMsg = e instanceof Error ? e.message : String(e);
+      console.warn('[Dashboard Download] Server clip failed:', errMsg);
+      // Fallback: open YouTube embed with start/end times
+      setDownloadProgress('Opening highlight on YouTube...');
+      const embedUrl = `https://www.youtube.com/embed/${ytVideoId}?start=${Math.floor(clip.startTime)}&end=${Math.floor(clip.endTime)}&autoplay=1`;
+      window.open(embedUrl, '_blank');
     } finally {
       setDownloading(false);
-      // Keep progress visible briefly so user sees "Download complete!"
       setTimeout(() => setDownloadProgress(null), 1500);
     }
   };

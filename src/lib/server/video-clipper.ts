@@ -3351,6 +3351,7 @@ async function prepareSourceFromResolvedStream(params: {
   xClientName?: string | number;
   clientVersion?: string;
   clientName?: string;
+  endTime?: number;
 }): Promise<PreparedSource> {
   const {
     videoId, streamUrl, audioUrl, userAgent, visitorData,
@@ -3386,8 +3387,18 @@ async function prepareSourceFromResolvedStream(params: {
   const localPath = path.join(workDir, 'source.mp4');
   const audioLocalPath = audioUrl ? path.join(workDir, 'audio.mp4') : undefined;
 
+  // CRITICAL: Limit download to bytes needed for [0, endTime + buffer].
+  // Previously downloaded up to 400MB (the entire video), which took 60-150s
+  // in 2MB chunks and caused the frontend to timeout at 90s ("stuck downloading").
+  // At 360p muxed (~500KB/s), endTime=120s needs ~60MB. Cap at 80MB for safety.
+  const endTime = params.endTime;
+  const maxDownloadBytes = endTime
+    ? Math.min(Math.ceil((endTime + 15) * 550_000), 80 * 1024 * 1024)
+    : 60 * 1024 * 1024;
+
   const videoDownloaded = await downloadStreamToLocalFile(videoFetchUrl, localPath, {
-    maxBudgetMs: IS_VERCEL ? 150_000 : 300_000,
+    maxBudgetMs: IS_VERCEL ? 90_000 : 180_000,
+    maxBytes: maxDownloadBytes,
   });
   if (!videoDownloaded) throw new Error('Frontend-provided video stream download failed');
 
@@ -3408,7 +3419,8 @@ async function prepareSourceFromResolvedStream(params: {
 
     try {
       const audioDownloaded = await downloadStreamToLocalFile(audioFetchUrl, audioLocalPath, {
-        maxBudgetMs: IS_VERCEL ? 150_000 : 300_000,
+        maxBudgetMs: IS_VERCEL ? 60_000 : 120_000,
+        maxBytes: maxDownloadBytes,
       });
       if (audioDownloaded) {
         return { inputPath: localPath, audioInputPath: audioLocalPath, ffmpegHeaders };
@@ -3449,6 +3461,7 @@ async function downloadYouTubeClip(params: {
         xClientName: params.xClientName,
         clientVersion: params.clientVersion,
         clientName: params.clientName,
+        endTime: params.endTime,
       });
       return createLocalClip({
         inputPath: source.inputPath,

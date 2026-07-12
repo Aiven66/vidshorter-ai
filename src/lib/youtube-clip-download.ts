@@ -434,7 +434,7 @@ export async function downloadYouTubeClip(params: {
   // successfully resolved the stream. Without this, the first server attempt
   // always fails and wastes 120s before falling back.
   const callServerApi = async (streamMeta?: ResolvedStream) => {
-    onProgress?.('Preparing server-side clip...');
+    onProgress?.(`Server processing clip (${startTime}s–${endTime}s, up to 90s)...`);
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
     const apiUrl = new URL('/api/download-youtube-clip', origin || undefined);
     apiUrl.searchParams.set('videoId', videoId);
@@ -497,63 +497,17 @@ export async function downloadYouTubeClip(params: {
   }
 
   // Step 2: Call the server API with the resolved stream metadata.
-  // This is the ONLY server attempt — no retry. If it fails, go to frontend fallback.
+  // This is the ONLY attempt — no frontend chunked fallback.
+  // The old chunked fallback downloaded from 0:00 (wrong clip segment) and
+  // took 75+ seconds, causing the "stuck downloading" UX. If the server
+  // fails, we throw so handleDownload can fall back to YouTube embed.
   try {
     return await callServerApi(streamMeta);
   } catch (serverErr) {
-    console.warn('[downloadYouTubeClip] Server-side clip failed:', serverErr instanceof Error ? serverErr.message : serverErr);
-    onProgress?.('Server clip unavailable, downloading partial video...');
+    const msg = serverErr instanceof Error ? serverErr.message : String(serverErr);
+    console.warn('[downloadYouTubeClip] Server-side clip failed:', msg);
+    throw new Error(`Server clip failed: ${msg.slice(0, 200)}`);
   }
-  const cfWorkerUrl = String(
-    typeof window !== 'undefined' ? window.__CF_WORKER_URL__ : '',
-  ).trim();
-  if (!cfWorkerUrl) {
-    throw new Error('CF_WORKER_URL not configured');
-  }
-
-  const streamEndpoint = new URL(cfWorkerUrl);
-  streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
-  streamEndpoint.searchParams.set('videoId', videoId);
-  streamEndpoint.searchParams.set('maxHeight', '360');
-  // muxed=1 forces a combined video+audio stream. Without this, /stream may
-  // return a video-only DASH stream and the downloaded MP4 has no audio.
-  streamEndpoint.searchParams.set('muxed', '1');
-  // begin tells the CF Worker to ask googlevideo.com for data starting near
-  // startTime. YouTube sometimes ignores begin (returns from 0:00), but when
-  // it works the downloaded file covers the requested highlight. When it does
-  // not work, the user still gets a real playable MP4 with audio (unlike the
-  // old canvas recording). This is a best-effort fallback after the server API.
-  streamEndpoint.searchParams.set('begin', String(Math.floor(startTime * 1000)));
-
-  // Budget enough bytes for the clip duration, capped at 10MB to stay within
-  // browser memory and CF Worker per-request limits. Do NOT budget from 0:00.
-  const neededBytes = Math.min(
-    Math.ceil(Math.min(duration + 5, 75) * 500_000),
-    10 * 1024 * 1024,
-  );
-
-  const arrayBuffer = await fetchStreamChunked(
-    streamEndpoint.toString(),
-    neededBytes,
-    (msg) => onProgress?.(msg),
-  );
-
-  if (arrayBuffer.byteLength < 50_000) {
-    throw new Error(`Stream returned too little data: ${arrayBuffer.byteLength} bytes`);
-  }
-
-  onProgress?.('Download complete!');
-  const blob = new Blob([arrayBuffer], { type: 'video/mp4' });
-  const safeName = title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50) || 'clip';
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `${safeName}.mp4`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(a.href);
-
-  return { blob, extension: 'mp4' };
 }
 
 /**
