@@ -44,6 +44,25 @@ const resolveCache = new Map<string, { data: ResolvedStream; expiresAt: number }
 const CACHE_TTL_MS = 5 * 60 * 60 * 1000; // 5 hours
 
 /**
+ * Parse a raw /resolve JSON response into a ResolvedStream.
+ * Shared by resolveYouTubeStream and preview-dialog's on-demand resolve.
+ */
+export function parseResolvedStream(data: any): ResolvedStream {
+  return {
+    streamUrl: data.streamUrl,
+    userAgent: data.userAgent || '',
+    visitorData: data.visitorData || '',
+    xClientName: data.xClientName || '1',
+    clientVersion: data.clientVersion || '',
+    client: data.client || 'direct',
+    audioUrl: data.audioUrl,
+    duration: data.duration,
+    colo: data.colo,
+    quality: data.quality,
+  };
+}
+
+/**
  * Extract YouTube videoId from various URL formats.
  * Supports youtu.be/, youtube.com/watch?v=, /embed/, /shorts/.
  */
@@ -125,18 +144,7 @@ export async function resolveYouTubeStream(
         throw new Error('No streamUrl in /resolve response');
       }
 
-      const resolved: ResolvedStream = {
-        streamUrl: data.streamUrl,
-        userAgent: data.userAgent || '',
-        visitorData: data.visitorData || '',
-        xClientName: data.xClientName || '1',
-        clientVersion: data.clientVersion || '',
-        client: data.client || 'direct',
-        audioUrl: data.audioUrl,
-        duration: data.duration,
-        colo: data.colo,
-        quality: data.quality,
-      };
+      const resolved: ResolvedStream = parseResolvedStream(data);
 
       // Cache for 5 hours (streamUrl expires in ~6 hours)
       resolveCache.set(videoId, {

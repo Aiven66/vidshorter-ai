@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -10,8 +10,9 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Play, Download, AlertCircle, Loader2, Video, ExternalLink, Circle } from 'lucide-react';
+import { Play, Download, AlertCircle, Loader2, ExternalLink, Volume2, VolumeX } from 'lucide-react';
 import { useLocale } from '@/lib/locale-context';
+import { buildStreamProxyUrl, parseResolvedStream } from '@/lib/youtube-clip-download';
 
 interface VideoClip {
   id: string;
@@ -80,10 +81,11 @@ export default function PreviewDialog({
   fmt,
 }: PreviewDialogProps) {
   const { t } = useLocale();
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordStatus, setRecordStatus] = useState<string>('');
-  const recordStreamRef = useRef<MediaStream | null>(null);
-  const recorderRef = useRef<MediaRecorder | null>(null);
+  const [streamLoading, setStreamLoading] = useState(false);
+  const [streamUrl, setStreamUrl] = useState<string | null>(null);
+  const [streamError, setStreamError] = useState<string | null>(null);
+  const [useFallbackEmbed, setUseFallbackEmbed] = useState(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
 
   // Determine if this clip should use YouTube embed
   const useYouTubeEmbed = (clip.isFallback === true || clip.status === 'link_only') && clip.linkOnlyUrl;
@@ -93,121 +95,89 @@ export default function PreviewDialog({
   // Whether the clip has a real downloadable MP4 (not fallback)
   const hasRealMp4 = clip.videoUrl && clip.status === 'completed' && clip.isFallback !== true;
 
-  const handleRecordClip = useCallback(async () => {
-    if (!ytInfo) return;
-    setRecordStatus(t('video.recordAllowCapture'));
-    setIsRecording(true);
-
-    let stream: MediaStream | null = null;
-    let recorder: MediaRecorder | null = null;
-    const chunks: BlobPart[] = [];
-
+  // Build CF Worker /stream URL for link_only clips (with audio!)
+  // This replaces the old YouTube iframe embed (which had no audio due to autoplay policies)
+  const cfWorkerStreamUrl = useMemo(() => {
+    if (!ytInfo) return null;
     try {
-      // 1. 请求屏幕录制权限（让用户选择当前标签页）
-      stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: 30 } as MediaTrackConstraints,
-        audio: true,
-      });
-      recordStreamRef.current = stream;
+      const cfWorkerUrl = typeof window !== 'undefined' ? window.__CF_WORKER_URL__ : '';
+      if (!cfWorkerUrl) return null;
+      // Build /stream URL with muxed=1 to get combined video+audio stream
+      const u = new URL(cfWorkerUrl);
+      u.pathname = `${u.pathname.replace(/\/$/, '')}/stream`;
+      u.searchParams.set('videoId', ytInfo.videoId);
+      u.searchParams.set('maxHeight', '720');
+      u.searchParams.set('muxed', '1');
+      return u.toString();
+    } catch {
+      return null;
+    }
+  }, [ytInfo]);
 
-      // 检测用户是否取消了分享
-      stream.getVideoTracks()[0].addEventListener('ended', () => {
-        if (recorder && recorder.state !== 'inactive') {
-          recorder.stop();
-        }
-      });
+  // Reset state when clip changes or dialog opens
+  useEffect(() => {
+    if (open) {
+      setStreamUrl(null);
+      setStreamError(null);
+      setUseFallbackEmbed(false);
+      setStreamLoading(false);
+    }
+  }, [open, clip.id]);
 
-      // 2. 同时捕获 YouTube iframe 的音频（如果可能）
-      //    注意：我们无法直接捕获 iframe 音频，但 getDisplayMedia 的 audio track
-      //    会捕获整个标签的音频（如果用户选择分享标签）
-      const audioTracks = stream.getAudioTracks();
-      const hasAudio = audioTracks.length > 0;
+  // For link_only clips: load CF Worker /stream URL on demand
+  // This gives us a playable video with AUDIO (unlike YouTube iframe embed)
+  const handleLoadStream = async () => {
+    if (!cfWorkerStreamUrl) {
+      setStreamError('CF Worker not configured');
+      setUseFallbackEmbed(true);
+      return;
+    }
+    setStreamLoading(true);
+    setStreamError(null);
+    try {
+      // First, resolve the stream to get streamUrl (for fast path)
+      const cfWorkerUrl = typeof window !== 'undefined' ? window.__CF_WORKER_URL__ : '';
+      if (!cfWorkerUrl) throw new Error('CF Worker not configured');
 
-      // 3. 创建 MediaRecorder
-      const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
-        ? 'video/webm;codecs=vp9,opus'
-        : MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')
-          ? 'video/webm;codecs=vp8,opus'
-          : 'video/webm';
+      const resolveUrl = new URL(cfWorkerUrl);
+      resolveUrl.pathname = `${resolveUrl.pathname.replace(/\/$/, '')}/resolve`;
+      if (ytInfo) resolveUrl.searchParams.set('videoId', ytInfo.videoId);
+      resolveUrl.searchParams.set('maxHeight', '720');
+      resolveUrl.searchParams.set('muxed', '1');
 
-      recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 2_500_000 });
-      recorderRef.current = recorder;
+      const res = await fetch(resolveUrl.toString(), { signal: AbortSignal.timeout(20_000) });
+      if (!res.ok) throw new Error(`Resolve failed: HTTP ${res.status}`);
+      const data = await res.json();
+      if (!data.streamUrl) throw new Error('No stream URL');
 
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunks.push(e.data);
-      };
-
-      const clipDuration = Math.max(1, clip.endTime - clip.startTime);
-
-      // 4. 开始录制
-      recorder.start(1000);
-      setRecordStatus(t('video.recordPlaying').replace('{duration}', String(clipDuration)));
-
-      // 5. 等待录制完成（clip 时长 + 2 秒缓冲）
-      await new Promise<void>((resolve) => {
-        const totalMs = (clipDuration + 2) * 1000;
-        const timer = setTimeout(() => {
-          if (recorder && recorder.state !== 'inactive') {
-            recorder.stop();
-          }
-          resolve();
-        }, totalMs);
-
-        recorder!.onstop = () => {
-          clearTimeout(timer);
-          resolve();
-        };
-      });
-
-      // 6. 停止屏幕共享
-      stream.getTracks().forEach((track) => track.stop());
-      recordStreamRef.current = null;
-
-      // 7. 创建 blob 并更新 clip
-      const blob = new Blob(chunks, { type: 'video/webm' });
-      if (blob.size < 10_000) {
-        throw new Error('Recording too small');
-      }
-
-      // 8. 转换为 data URL 并更新 clip
-      const reader = new FileReader();
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
-
-      const updatedClip: VideoClip = {
-        ...clip,
-        videoUrl: dataUrl,
-        status: 'completed',
-        isFallback: false,
-      };
-      onClipUpdated?.(updatedClip);
-
-      setRecordStatus(t('video.recordComplete'));
+      // Build /stream URL with the resolved streamUrl (fast path)
+      const resolved = parseResolvedStream(data);
+      const streamProxyUrl = buildStreamProxyUrl(ytInfo!.videoId, resolved);
+      setStreamUrl(streamProxyUrl);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes('Permission denied') || msg.includes('NotAllowedError')) {
-        setRecordStatus(t('video.recordPermissionDenied'));
-      } else {
-        setRecordStatus(t('video.recordFailed') + ': ' + msg.slice(0, 100));
-      }
+      console.warn('[Preview] Failed to load stream:', msg);
+      setStreamError(msg.slice(0, 100));
+      setUseFallbackEmbed(true);
     } finally {
-      setIsRecording(false);
-      if (recordStreamRef.current) {
-        recordStreamRef.current.getTracks().forEach((track) => track.stop());
-        recordStreamRef.current = null;
-      }
+      setStreamLoading(false);
     }
-  }, [clip, ytInfo, onClipUpdated, t]);
+  };
 
-  // 清理：关闭对话框时停止录制
+  // Auto-load stream when dialog opens for link_only clips
   useEffect(() => {
-    if (!open && recordStreamRef.current) {
-      recordStreamRef.current.getTracks().forEach((track) => track.stop());
-      recordStreamRef.current = null;
-      setIsRecording(false);
+    if (open && useYouTubeEmbed && ytInfo && !hasRealMp4 && !streamUrl && !streamLoading && !streamError && !useFallbackEmbed) {
+      handleLoadStream();
+    }
+  }, [open, useYouTubeEmbed, ytInfo, hasRealMp4, streamUrl, streamLoading, streamError, useFallbackEmbed]);
+
+  // 清理
+  useEffect(() => {
+    if (!open) {
+      if (videoRef.current) {
+        videoRef.current.pause();
+        videoRef.current.src = '';
+      }
     }
   }, [open]);
 
@@ -235,16 +205,53 @@ export default function PreviewDialog({
             />
           </div>
         ) : useYouTubeEmbed && ytInfo ? (
+          // link_only clips: use CF Worker /stream (with audio) instead of YouTube iframe embed
           <div className="relative bg-black rounded-lg overflow-hidden w-full aspect-video">
-            <iframe
-              key={`embed-${clip.id}-${ytInfo.startTime}`}
-              src={embedUrl}
-              title={clip.title}
-              className="absolute inset-0 w-full h-full"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-              allowFullScreen
-              referrerPolicy="strict-origin-when-cross-origin"
-            />
+            {streamLoading ? (
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-white">
+                <Loader2 className="h-10 w-10 animate-spin mb-3" />
+                <p className="text-sm">Loading video stream...</p>
+                <p className="text-xs text-white/60 mt-1">Resolving from YouTube...</p>
+              </div>
+            ) : streamUrl && !useFallbackEmbed ? (
+              <video
+                key={`stream-${clip.id}-${streamUrl.slice(-20)}`}
+                ref={videoRef}
+                src={streamUrl}
+                controls
+                playsInline
+                autoPlay
+                className="absolute inset-0 w-full h-full"
+                crossOrigin="anonymous"
+                onError={(e) => {
+                  console.warn('[Preview] Video error:', e);
+                  setStreamError('Video failed to load');
+                  setUseFallbackEmbed(true);
+                }}
+              />
+            ) : useFallbackEmbed ? (
+              <iframe
+                key={`embed-${clip.id}-${ytInfo.startTime}`}
+                src={embedUrl}
+                title={clip.title}
+                className="absolute inset-0 w-full h-full"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                allowFullScreen
+                referrerPolicy="strict-origin-when-cross-origin"
+              />
+            ) : streamError ? (
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-4">
+                <AlertCircle className="h-10 w-10 mb-3 text-yellow-400" />
+                <p className="text-sm font-medium mb-1">Stream unavailable</p>
+                <p className="text-xs text-white/60 mb-3 text-center">{streamError}</p>
+                <Button size="sm" variant="secondary" onClick={handleLoadStream} className="mb-2">
+                  Retry
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setUseFallbackEmbed(true)}>
+                  Use YouTube embed instead
+                </Button>
+              </div>
+            ) : null}
           </div>
         ) : clip.videoUrl ? (
           <div className="relative bg-black rounded-lg overflow-hidden w-full aspect-video">
@@ -265,19 +272,34 @@ export default function PreviewDialog({
           </div>
         )}
 
-        {/* Recording status display */}
-        {isRecording && (
-          <div className="flex items-center gap-2 p-3 bg-red-50 dark:bg-red-950/30 rounded-lg border border-red-200 dark:border-red-800">
-            <Circle className="h-4 w-4 text-red-500 animate-pulse fill-red-500" />
-            <span className="text-sm font-medium text-red-700 dark:text-red-300">{recordStatus}</span>
+        {/* Stream status / loading indicator */}
+        {streamLoading && (
+          <div className="flex items-center gap-2 p-3 bg-blue-50 dark:bg-blue-950/30 rounded-lg border border-blue-200 dark:border-blue-800">
+            <Loader2 className="h-4 w-4 text-blue-500 animate-spin" />
+            <span className="text-sm font-medium text-blue-700 dark:text-blue-300">
+              Loading video stream with audio...
+            </span>
           </div>
         )}
 
-        {/* Error/status message */}
-        {!isRecording && recordStatus && (
-          <div className="flex items-center gap-2 p-3 bg-muted rounded-lg">
-            <Video className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm text-muted-foreground">{recordStatus}</span>
+        {/* Audio availability indicator for link_only clips */}
+        {useYouTubeEmbed && ytInfo && streamUrl && !streamLoading && !useFallbackEmbed && (
+          <div className="flex items-center gap-2 p-3 bg-green-50 dark:bg-green-950/30 rounded-lg border border-green-200 dark:border-green-800">
+            <Volume2 className="h-4 w-4 text-green-500" />
+            <span className="text-sm font-medium text-green-700 dark:text-green-300">
+              Video loaded with audio. Use the player controls to watch the highlight.
+            </span>
+          </div>
+        )}
+
+        {/* Fallback to YouTube embed notice */}
+        {useFallbackEmbed && (
+          <div className="flex items-center gap-2 p-3 bg-yellow-50 dark:bg-yellow-950/30 rounded-lg border border-yellow-200 dark:border-yellow-800">
+            <VolumeX className="h-4 w-4 text-yellow-500" />
+            <span className="text-sm text-yellow-700 dark:text-yellow-300">
+              Using YouTube embed (may not have audio due to browser autoplay policies).
+              Click download to get a video with audio.
+            </span>
           </div>
         )}
 
@@ -296,21 +318,6 @@ export default function PreviewDialog({
                 className="gap-1.5"
               >
                 <ExternalLink className="h-4 w-4" />YouTube
-              </Button>
-            )}
-            {/* Record to MP4 button (for embed/fallback clips) */}
-            {useYouTubeEmbed && ytInfo && !hasRealMp4 && (
-              <Button
-                size="sm"
-                onClick={handleRecordClip}
-                disabled={isRecording}
-                className="gap-1.5"
-              >
-                {isRecording ? (
-                  <><Loader2 className="h-4 w-4 animate-pulse" />{t('video.recording')}</>
-                ) : (
-                  <><Video className="h-4 w-4" />{t('video.recordMp4')}</>
-                )}
               </Button>
             )}
             {/* Download button (for real MP4 clips) */}
@@ -343,13 +350,6 @@ export default function PreviewDialog({
             )}
           </div>
         </div>
-
-        {/* Screen capture instructions */}
-        {useYouTubeEmbed && ytInfo && !hasRealMp4 && !isRecording && !recordStatus && (
-          <div className="text-xs text-muted-foreground bg-muted/50 rounded p-2">
-            {t('video.recordHint')}
-          </div>
-        )}
       </DialogContent>
     </Dialog>
   );
