@@ -34,6 +34,7 @@ export interface ResolvedStream {
   audioUrl?: string;
   duration?: number;
   colo?: string;
+  quality?: string;
 }
 
 // Module-level cache: streamUrl is valid for ~6 hours (YouTube expire param).
@@ -89,7 +90,9 @@ export async function resolveYouTubeStream(
   const resolveUrl = new URL(cfWorkerUrl);
   resolveUrl.pathname = `${resolveUrl.pathname.replace(/\/$/, '')}/resolve`;
   resolveUrl.searchParams.set('videoId', videoId);
-  resolveUrl.searchParams.set('maxHeight', '360');
+  // Use 720 to allow HD muxed streams (itag 22 = 720p muxed)
+  // Falls back to 360p muxed (itag 18) if 720p muxed is unavailable
+  resolveUrl.searchParams.set('maxHeight', '720');
   // muxed=1: request a combined video+audio stream. Without this, /resolve
   // returns a video-only DASH stream (itag 136) with NO audio track.
   // All downloaded clips would be silent. This is the root cause of the
@@ -132,6 +135,7 @@ export async function resolveYouTubeStream(
         audioUrl: data.audioUrl,
         duration: data.duration,
         colo: data.colo,
+        quality: data.quality,
       };
 
       // Cache for 5 hours (streamUrl expires in ~6 hours)
@@ -187,7 +191,8 @@ export function buildStreamProxyUrl(
   const streamEndpoint = new URL(cfWorkerUrl);
   streamEndpoint.pathname = `${streamEndpoint.pathname.replace(/\/$/, '')}/stream`;
   streamEndpoint.searchParams.set('videoId', videoId);
-  streamEndpoint.searchParams.set('maxHeight', '360');
+  // Use 720 to allow HD streams; CF Worker /stream will pick the best available
+  streamEndpoint.searchParams.set('maxHeight', '720');
   // Fast path params: skip InnerTube, fetch streamUrl directly
   streamEndpoint.searchParams.set('streamUrl', resolved.streamUrl);
   streamEndpoint.searchParams.set('userAgent', resolved.userAgent);
@@ -692,7 +697,6 @@ export async function downloadClipViaBrowser(params: {
   onProgress?: (msg: string) => void;
 }): Promise<void> {
   const { videoId, startTime, endTime, title, resolved, onProgress } = params;
-  const clipDuration = Math.min(Math.max(1, endTime - startTime), 90);
 
   // Step 1: Resolve muxed stream via CF Worker /resolve (from browser)
   let streamMeta = resolved;
@@ -704,14 +708,23 @@ export async function downloadClipViaBrowser(params: {
     throw new Error('No stream URL available (CF Worker /resolve failed)');
   }
 
+  // Check if the resolved stream is actually muxed (has audio)
+  // CF Worker returns quality like "360p (muxed)" or "720p (muxed)" for combined streams
+  const isMuxed = streamMeta.quality?.includes('muxed') || !!streamMeta.audioUrl;
+  if (!isMuxed) {
+    console.warn('[downloadClipViaBrowser] Resolved stream is NOT muxed — may have no audio');
+  }
+
   // Step 2: Build /stream URL with the resolved streamUrl (fast path)
   const streamUrl = buildStreamProxyUrl(videoId, streamMeta);
 
-  // Calculate bytes needed: 360p muxed ~350KB/s, download [0, endTime+10s]
-  // Cap at 50MB (≈150s of 360p video) to keep download reasonable
+  // Calculate bytes needed: 360p muxed ~200KB/s, 720p video-only ~500KB/s
+  // Use 500KB/s as upper bound to ensure we download enough data
+  // Download [0, endTime+10s] to ensure we have the full clip
+  // Cap at 60MB (≈120s of 720p or 300s of 360p) to keep download reasonable
   const neededBytes = Math.min(
-    Math.ceil((endTime + 10) * 350_000),
-    50 * 1024 * 1024,
+    Math.ceil((endTime + 10) * 500_000),
+    60 * 1024 * 1024,
   );
 
   onProgress?.(`Downloading video (${(neededBytes / 1024 / 1024).toFixed(1)}MB in 2MB chunks)...`);
@@ -743,6 +756,7 @@ export async function downloadClipViaBrowser(params: {
   };
 
   // Step 5: Use captureVideoClip to cut [startTime, endTime] with audio
+  // captureVideoClip plays the video from startTime and records for clipDuration
   try {
     const { captureVideoClip } = await import('@/lib/ffmpeg-client');
     const result = await captureVideoClip({
@@ -759,11 +773,14 @@ export async function downloadClipViaBrowser(params: {
       throw new Error(`Recording too small: ${result.videoBlob.size} bytes`);
     }
 
-    // Step 6: Download the recorded clip
+    // Step 6: Download the recorded clip with correct extension
+    // MediaRecorder produces webm (VP9/VP8) in most browsers, mp4 only in Safari
+    const blobType = result.videoBlob.type || '';
+    const extension = blobType.includes('mp4') ? 'mp4' : 'webm';
     const safeName = (title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50) || 'clip');
     const a = document.createElement('a');
     a.href = URL.createObjectURL(result.videoBlob);
-    a.download = `${safeName}.mp4`;
+    a.download = `${safeName}.${extension}`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -772,6 +789,21 @@ export async function downloadClipViaBrowser(params: {
     onProgress?.('Download complete!');
   } catch (captureErr) {
     cleanupBlobUrl();
-    throw captureErr;
+    const errMsg = captureErr instanceof Error ? captureErr.message : String(captureErr);
+    console.warn('[downloadClipViaBrowser] captureVideoClip failed:', errMsg);
+
+    // Fallback: directly download the raw video bytes as MP4
+    // This gives the user the full video from 0:00 (not the exact clip segment),
+    // but ensures they always get a downloadable, playable file with audio.
+    onProgress?.('Recording failed — downloading full video instead...');
+    const safeName = (title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50) || 'clip');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${safeName}_full.mp4`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    onProgress?.('Download complete (full video)!');
   }
 }

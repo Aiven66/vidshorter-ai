@@ -751,18 +751,26 @@ async function tryClient(videoId, client, maxHeight, cookieHeader, wantMuxed) {
 
   const visitorData = data.responseContext?.visitorData || '';
 
-  const formats = [
-    ...(data.streamingData?.formats ?? []),
-    ...(data.streamingData?.adaptiveFormats ?? []),
-  ];
+  // YouTube InnerTube API returns:
+  //   - data.streamingData.formats: COMBINED (muxed) video+audio formats (itag 18=360p, 22=720p)
+  //   data.streamingData.adaptiveFormats: DASH formats (video-only or audio-only)
+  // The previous detection (audioQuality || audioChannels || audioBitrate) was unreliable
+  // because some clients omit these fields. The `formats` array is the canonical source
+  // of muxed streams — use it directly.
+  const muxedRaw = data.streamingData?.formats ?? [];
+  const adaptiveRaw = data.streamingData?.adaptiveFormats ?? [];
+  const formats = [...muxedRaw, ...adaptiveRaw];
 
   if (!formats.length) throw new Error('No formats in response');
 
-  // Combined (muxed) formats — usually limited to 360p without auth
+  // Combined (muxed) formats — straight from data.streamingData.formats
+  // (these always have both video and audio tracks)
+  const muxed = muxedRaw.filter((f) =>
+    (f?.url || f?.signatureCipher || f?.cipher) && typeof f.mimeType === 'string' && f.mimeType.startsWith('video/')
+  );
   const videoFormats = formats.filter((f) =>
     (f?.url || f?.signatureCipher || f?.cipher) && typeof f.mimeType === 'string' && f.mimeType.startsWith('video/')
   );
-  const muxed = videoFormats.filter((f) => f.audioQuality || f.audioChannels || f.audioBitrate);
   const muxedFormat = pickBest(muxed, maxHeight);
   const muxedHeight = formatHeight(muxedFormat);
 
@@ -805,8 +813,11 @@ async function tryClient(videoId, client, maxHeight, cookieHeader, wantMuxed) {
     audioResolvedOk: false,
   };
 
-  const videoOnly = videoFormats.filter((f) => !(f.audioQuality || f.audioChannels || f.audioBitrate));
-  const audioOnly = formats.filter((f) =>
+  // video-only formats are in adaptiveFormats (not in formats/muxed)
+  const videoOnly = adaptiveRaw.filter((f) =>
+    (f?.url || f?.signatureCipher || f?.cipher) && typeof f.mimeType === 'string' && f.mimeType.startsWith('video/')
+  );
+  const audioOnly = adaptiveRaw.filter((f) =>
     (f?.url || f?.signatureCipher || f?.cipher) &&
     typeof f.mimeType === 'string' && (f.mimeType.startsWith('audio/mp4') || f.mimeType.includes('audio/'))
   );
