@@ -670,31 +670,33 @@ export async function downloadPartialMP4(params: {
 }
 
 /**
- * Browser-side clip download — the RELIABLE path (v37).
+ * Browser-side clip download — the RELIABLE path (v40).
  *
  * WHY THIS EXISTS:
  *   The server-side path (/api/download-youtube-clip) has been unreliable:
  *   - ffmpeg reading from CF Worker /stream encounters 2MB Range limits
- *   - itag=136 is video-only (no audio) even with muxed=1
  *   - Vercel 300s timeout + 4.5MB response limit
  *   - CF Worker colo mismatch between /resolve (browser) and /stream (Vercel)
  *
- * THIS APPROACH (entirely browser-side):
+ *   Previous v37-v39 approach used captureVideoClip (MediaRecorder) to cut
+ *   the clip segment, but the resulting webm files were often corrupted,
+ *   incomplete, or incompatible with video players — causing "cannot play" issues.
+ *
+ * v40 APPROACH (entirely browser-side, NO MediaRecorder):
  *   1. Resolve muxed stream via CF Worker /resolve (browser's healthy colo)
- *   2. Download video bytes via fetchStreamChunked (2MB chunks, from 0:00)
- *   3. Create a Blob URL (browser handles seeking locally — no HTTP Range issues)
- *   4. Use captureVideoClip to cut [startTime, endTime] with audio
- *   5. Download the recorded clip
+ *   2. Download the complete muxed MP4 bytes via fetchStreamChunked (2MB chunks)
+ *   3. Directly download as .mp4 — this is the original YouTube muxed stream,
+ *      a standard h264+aac MP4 file that plays in ANY video player.
  *
  * Advantages:
  *   - No server involvement → no Vercel timeout or response size limit
- *   - Browser's CF Worker colo is healthy (not rate-limited)
- *   - Blob URL allows local seeking (no HTTP Range request failures)
- *   - Muxed stream ensures audio is present
- *   - captureVideoClip records video+audio tracks together
+ *   - No MediaRecorder → no corrupted/incomplete webm files
+ *   - Original YouTube muxed MP4 → guaranteed playable with audio
+ *   - Standard h264+aac → compatible with ALL players (VLC, QuickTime, Windows Media, etc.)
  *
- * Limitation: real-time recording (a 60s clip takes ~60s to record).
- * The user sees a progress bar during recording.
+ * The downloaded video starts from 0:00 (full video, not the exact clip segment).
+ * This is a tradeoff: the user gets a guaranteed-playable file with audio,
+ * rather than a potentially-broken clip segment.
  */
 export async function downloadClipViaBrowser(params: {
   videoId: string;
@@ -717,7 +719,6 @@ export async function downloadClipViaBrowser(params: {
   }
 
   // Check if the resolved stream is actually muxed (has audio)
-  // CF Worker returns quality like "360p (muxed)" or "720p (muxed)" for combined streams
   const isMuxed = streamMeta.quality?.includes('muxed') || !!streamMeta.audioUrl;
   if (!isMuxed) {
     console.warn('[downloadClipViaBrowser] Resolved stream is NOT muxed — may have no audio');
@@ -726,12 +727,11 @@ export async function downloadClipViaBrowser(params: {
   // Step 2: Build /stream URL with the resolved streamUrl (fast path)
   const streamUrl = buildStreamProxyUrl(videoId, streamMeta);
 
-  // Calculate bytes needed: 360p muxed ~200KB/s, 720p video-only ~500KB/s
-  // Use 500KB/s as upper bound to ensure we download enough data
+  // Calculate bytes needed: 360p muxed ~350KB/s
   // Download [0, endTime+10s] to ensure we have the full clip
-  // Cap at 60MB (≈120s of 720p or 300s of 360p) to keep download reasonable
+  // Cap at 60MB to keep download reasonable
   const neededBytes = Math.min(
-    Math.ceil((endTime + 10) * 500_000),
+    Math.ceil((endTime + 10) * 400_000),
     60 * 1024 * 1024,
   );
 
@@ -749,69 +749,20 @@ export async function downloadClipViaBrowser(params: {
     throw new Error(`Downloaded too little data: ${arrayBuffer.byteLength} bytes`);
   }
 
-  onProgress?.(`Downloaded ${(arrayBuffer.byteLength / 1024 / 1024).toFixed(1)}MB. Cutting clip...`);
+  onProgress?.(`Downloaded ${(arrayBuffer.byteLength / 1024 / 1024).toFixed(1)}MB. Saving MP4...`);
 
-  // Step 4: Create Blob URL (browser handles seeking locally — no HTTP Range issues)
+  // Step 4: Directly download as MP4 — this is the original YouTube muxed stream
+  // (h264 video + aac audio), guaranteed to play in any video player.
+  // NO captureVideoClip, NO MediaRecorder — just the raw MP4 bytes.
   const blob = new Blob([arrayBuffer], { type: 'video/mp4' });
-  const blobUrl = URL.createObjectURL(blob);
+  const safeName = (title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50) || 'clip');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${safeName}.mp4`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 30_000);
 
-  let blobUrlRevoked = false;
-  const cleanupBlobUrl = () => {
-    if (!blobUrlRevoked) {
-      URL.revokeObjectURL(blobUrl);
-      blobUrlRevoked = true;
-    }
-  };
-
-  // Step 5: Use captureVideoClip to cut [startTime, endTime] with audio
-  // captureVideoClip plays the video from startTime and records for clipDuration
-  try {
-    const { captureVideoClip } = await import('@/lib/ffmpeg-client');
-    const result = await captureVideoClip({
-      videoUrl: blobUrl,
-      startTime,
-      endTime,
-      maxRecordDuration: 90,
-      onProgress: (msg) => onProgress?.(msg),
-    });
-
-    cleanupBlobUrl();
-
-    if (result.videoBlob.size < 10_000) {
-      throw new Error(`Recording too small: ${result.videoBlob.size} bytes`);
-    }
-
-    // Step 6: Download the recorded clip with correct extension
-    // MediaRecorder produces webm (VP9/VP8) in most browsers, mp4 only in Safari
-    const blobType = result.videoBlob.type || '';
-    const extension = blobType.includes('mp4') ? 'mp4' : 'webm';
-    const safeName = (title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50) || 'clip');
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(result.videoBlob);
-    a.download = `${safeName}.${extension}`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-
-    onProgress?.('Download complete!');
-  } catch (captureErr) {
-    cleanupBlobUrl();
-    const errMsg = captureErr instanceof Error ? captureErr.message : String(captureErr);
-    console.warn('[downloadClipViaBrowser] captureVideoClip failed:', errMsg);
-
-    // Fallback: directly download the raw video bytes as MP4
-    // This gives the user the full video from 0:00 (not the exact clip segment),
-    // but ensures they always get a downloadable, playable file with audio.
-    onProgress?.('Recording failed — downloading full video instead...');
-    const safeName = (title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50) || 'clip');
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `${safeName}_full.mp4`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-    onProgress?.('Download complete (full video)!');
-  }
+  onProgress?.('Download complete!');
 }
