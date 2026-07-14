@@ -11,18 +11,23 @@
  *   - Server-side ffmpeg on Vercel can't read from CF Worker /stream (262-byte empty MP4)
  *   - v41-v42: pre-downloading 60MB only covers ~150s of video; clips at 500s+ fail
  *
- * SOLUTION (v43):
+ * SOLUTION (v44):
  *   1. /resolve to get muxed streamUrl (video+audio combined, itag=18/22)
  *   2. /stream?streamUrl=... proxies the stream with CORS headers
  *   3. <video> element loads stream URL directly (crossOrigin='anonymous')
- *      — browser handles seeking via Range requests, no pre-download needed
  *   4. video.muted=true → play() works without user activation
  *   5. video.captureStream() returns BOTH video+audio tracks (CORS headers present)
- *   6. MediaRecorder records [startTime, endTime] segment
- *   7. Download the recorded clip
+ *   6. MediaRecorder records [startTime, endTime] segment → fMP4 blob
+ *   7. Upload fMP4 to /api/remux-mp4 → ffmpeg remuxes to standard MP4
+ *   8. Download the standard MP4 (plays in ALL desktop players)
+ *
+ * WHY remux is needed: MediaRecorder produces fMP4 (fragmented MP4 with
+ * moof boxes). Standard desktop players (QuickTime, Windows Media Player)
+ * cannot play fMP4. ffmpeg remuxes to progressive MP4 with +faststart
+ * (moov at file beginning), which ALL players support.
  *
  * FALLBACK CHAIN (in handleDownload):
- *   downloadClipViaBrowser (v43 stream clip) → downloadYouTubeClip (server) → YouTube embed
+ *   downloadClipViaBrowser (v44 stream clip + remux) → downloadYouTubeClip (server) → YouTube embed
  */
 
 export interface ResolvedStream {
@@ -742,11 +747,41 @@ export async function downloadClipViaBrowser(params: {
   // Step 3: Cut the clip directly from the stream (no pre-download)
   const clipBlob = await cutClipFromStream(streamUrl, startTime, clipDuration, onProgress);
 
-  // Step 4: Download the recorded clip
+  // Step 4: Remux fMP4 to standard MP4 via server-side ffmpeg.
+  // MediaRecorder produces fragmented MP4 (fMP4: ftyp + moov/mvex + moof + mdat).
+  // Standard desktop players (QuickTime, Windows Media Player) cannot play fMP4.
+  // Server-side ffmpeg remuxes to progressive MP4 (ftyp + moov + mdat + faststart)
+  // without re-encoding, so it's very fast (~1-2s).
+  let finalBlob = clipBlob;
+  const isMP4 = clipBlob.type.includes('mp4');
+  if (isMP4) {
+    onProgress?.('Converting to standard MP4 (remux)...');
+    try {
+      const formData = new FormData();
+      formData.append('file', clipBlob, 'clip.mp4');
+      const remuxRes = await fetch('/api/remux-mp4', {
+        method: 'POST',
+        body: formData,
+      });
+      if (remuxRes.ok) {
+        const remuxedBuf = await remuxRes.arrayBuffer();
+        if (remuxedBuf.byteLength > 1000) {
+          finalBlob = new Blob([remuxedBuf], { type: 'video/mp4' });
+          onProgress?.('Standard MP4 ready. Downloading...');
+        }
+      } else {
+        console.warn('[downloadClipViaBrowser] Remux failed:', remuxRes.status);
+      }
+    } catch (remuxErr) {
+      console.warn('[downloadClipViaBrowser] Remux error, using original:', remuxErr);
+    }
+  }
+
+  // Step 5: Download the clip
   const safeName = (title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50) || 'clip');
-  const ext = clipBlob.type.includes('mp4') ? 'mp4' : 'webm';
+  const ext = finalBlob.type.includes('mp4') ? 'mp4' : 'webm';
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(clipBlob);
+  a.href = URL.createObjectURL(finalBlob);
   a.download = `${safeName}.${ext}`;
   document.body.appendChild(a);
   a.click();
