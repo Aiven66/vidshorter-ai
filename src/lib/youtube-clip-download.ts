@@ -1,27 +1,26 @@
 'use client';
 
 /**
- * YouTube clip download utility — canvas captureStream + decoded audio buffer.
+ * YouTube clip download utility — browser-side download + captureStream clip cutting.
  *
  * PROBLEM:
  *   - video.captureStream() on cross-origin video may return empty frames
  *   - createMediaElementSource() on cross-origin audio outputs zeros (CORS taint)
  *   - googlevideo.com streamUrls are video-only DASH (itag=136), no audio
  *   - googlevideo.com begin param signature mismatch — can't seek via URL
+ *   - Server-side ffmpeg on Vercel can't read from CF Worker /stream (262-byte empty MP4)
  *
- * SOLUTION (v19):
- *   1. /resolve to get streamUrl (video) + audioUrl (audio)
- *   2. /stream?streamUrl=... proxies both streams with CORS headers
- *   3. <video> plays video stream, seek to startTime
- *   4. requestAnimationFrame draws video frames to <canvas>
- *   5. canvas.captureStream(30) → video track
- *   6. fetch audio ArrayBuffer → decodeAudioData → AudioBufferSourceNode
- *      (bypasses audio element CORS taint)
- *   7. AudioBufferSourceNode.start(0, startTime, duration) → audio track
- *   8. Merge tracks → MediaRecorder → download
+ * SOLUTION (v41):
+ *   1. /resolve to get muxed streamUrl (video+audio combined, itag=18/22)
+ *   2. /stream?streamUrl=... proxies the stream with CORS headers
+ *   3. fetchStreamChunked downloads bytes in 2MB chunks (bypass googlevideo size limit)
+ *   4. Load bytes as blob: URL (same-origin → no CORS taint)
+ *   5. video.captureStream() returns BOTH video+audio tracks
+ *   6. MediaRecorder records [startTime, endTime] segment
+ *   7. Download the recorded clip
  *
  * FALLBACK CHAIN (in handleDownload):
- *   downloadYouTubeClip → downloadFullVideoStream → downloadPartialMP4 → window.open(linkOnlyUrl)
+ *   downloadClipViaBrowser (v41 clip cutting) → full video MP4 → downloadYouTubeClip (server) → YouTube embed
  */
 
 export interface ResolvedStream {
@@ -682,21 +681,22 @@ export async function downloadPartialMP4(params: {
  *   the clip segment, but the resulting webm files were often corrupted,
  *   incomplete, or incompatible with video players — causing "cannot play" issues.
  *
- * v40 APPROACH (entirely browser-side, NO MediaRecorder):
+ * v41 APPROACH (browser-side download + captureStream clip cutting):
  *   1. Resolve muxed stream via CF Worker /resolve (browser's healthy colo)
- *   2. Download the complete muxed MP4 bytes via fetchStreamChunked (2MB chunks)
- *   3. Directly download as .mp4 — this is the original YouTube muxed stream,
- *      a standard h264+aac MP4 file that plays in ANY video player.
+ *   2. Download the muxed MP4 bytes via fetchStreamChunked (2MB chunks)
+ *   3. Load bytes into a hidden <video> element (blob: URL = same-origin)
+ *   4. Seek to startTime, then video.captureStream() → MediaStream
+ *      (same-origin blob: URL → captureStream includes BOTH video+audio)
+ *   5. MediaRecorder records for (endTime - startTime) seconds
+ *   6. Download the recorded clip as .webm or .mp4
  *
- * Advantages:
- *   - No server involvement → no Vercel timeout or response size limit
- *   - No MediaRecorder → no corrupted/incomplete webm files
- *   - Original YouTube muxed MP4 → guaranteed playable with audio
- *   - Standard h264+aac → compatible with ALL players (VLC, QuickTime, Windows Media, etc.)
+ * WHY this works (unlike v37-v39 which used cross-origin streams):
+ *   - blob: URL is same-origin → no CORS taint
+ *   - captureStream() returns native video track + audio track
+ *   - No canvas needed, no separate audio decoding, no sync issues
  *
- * The downloaded video starts from 0:00 (full video, not the exact clip segment).
- * This is a tradeoff: the user gets a guaranteed-playable file with audio,
- * rather than a potentially-broken clip segment.
+ * FALLBACK: If captureStream/recording fails, downloads the full video MP4
+ * (v40 behavior — guaranteed playable, but starts from 0:00).
  */
 export async function downloadClipViaBrowser(params: {
   videoId: string;
@@ -707,6 +707,7 @@ export async function downloadClipViaBrowser(params: {
   onProgress?: (msg: string) => void;
 }): Promise<void> {
   const { videoId, startTime, endTime, title, resolved, onProgress } = params;
+  const clipDuration = Math.max(1, endTime - startTime);
 
   // Step 1: Resolve muxed stream via CF Worker /resolve (from browser)
   let streamMeta = resolved;
@@ -749,20 +750,214 @@ export async function downloadClipViaBrowser(params: {
     throw new Error(`Downloaded too little data: ${arrayBuffer.byteLength} bytes`);
   }
 
-  onProgress?.(`Downloaded ${(arrayBuffer.byteLength / 1024 / 1024).toFixed(1)}MB. Saving MP4...`);
+  onProgress?.(`Downloaded ${(arrayBuffer.byteLength / 1024 / 1024).toFixed(1)}MB. Extracting clip ${Math.floor(startTime)}s–${Math.floor(endTime)}s...`);
 
-  // Step 4: Directly download as MP4 — this is the original YouTube muxed stream
-  // (h264 video + aac audio), guaranteed to play in any video player.
-  // NO captureVideoClip, NO MediaRecorder — just the raw MP4 bytes.
-  const blob = new Blob([arrayBuffer], { type: 'video/mp4' });
-  const safeName = (title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50) || 'clip');
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `${safeName}.mp4`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 30_000);
+  // Step 4: Cut the clip segment using video.captureStream() + MediaRecorder.
+  // The blob: URL is same-origin, so captureStream() returns BOTH video and
+  // audio tracks — no CORS taint, no separate audio decoding needed.
+  try {
+    const clipBlob = await cutClipSegment(arrayBuffer, startTime, clipDuration, onProgress);
+    const safeName = (title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50) || 'clip');
+    const ext = clipBlob.type.includes('mp4') ? 'mp4' : 'webm';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(clipBlob);
+    a.download = `${safeName}.${ext}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 30_000);
+    onProgress?.('Download complete!');
+    return;
+  } catch (cutErr) {
+    console.warn('[downloadClipViaBrowser] Clip cutting failed, falling back to full video:', cutErr);
+    // Fallback: download the full video (v40 behavior)
+    const blob = new Blob([arrayBuffer], { type: 'video/mp4' });
+    const safeName = (title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50) || 'clip');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${safeName}.mp4`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 30_000);
+    onProgress?.('Download complete (full video).');
+  }
+}
 
-  onProgress?.('Download complete!');
+/**
+ * Cut a clip segment from a video ArrayBuffer using video.captureStream().
+ *
+ * The input ArrayBuffer is loaded as a blob: URL (same-origin), so:
+ *   - No CORS taint
+ *   - captureStream() returns BOTH video and audio tracks
+ *   - No need for canvas or separate audio decoding
+ *
+ * Steps:
+ *   1. Create hidden <video> with blob: src
+ *   2. Wait for loadedmetadata, then seek to startTime
+ *   3. On seeked, call video.captureStream() to get MediaStream
+ *   4. MediaRecorder records for `duration` seconds
+ *   5. Return the recorded blob
+ *
+ * @throws Error if captureStream is unsupported, video too short, or recording fails
+ */
+async function cutClipSegment(
+  videoBuffer: ArrayBuffer,
+  startTime: number,
+  duration: number,
+  onProgress?: (msg: string) => void,
+): Promise<Blob> {
+  return new Promise<Blob>((resolve, reject) => {
+    const blobUrl = URL.createObjectURL(new Blob([videoBuffer], { type: 'video/mp4' }));
+    const video = document.createElement('video');
+    video.src = blobUrl;
+    video.crossOrigin = 'anonymous';
+    video.setAttribute('playsinline', '');
+    video.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:640px;height:360px;opacity:0;';
+    document.body.appendChild(video);
+
+    let stream: MediaStream | null = null;
+    let recorder: MediaRecorder | null = null;
+    const chunks: Blob[] = [];
+    let stopTimer: ReturnType<typeof setTimeout> | null = null;
+    let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+    let settled = false;
+
+    const cleanup = () => {
+      if (stopTimer) clearTimeout(stopTimer);
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+      try { if (recorder && recorder.state !== 'inactive') recorder.stop(); } catch {}
+      try { if (stream) stream.getTracks().forEach((t) => t.stop()); } catch {}
+      try { video.pause(); } catch {}
+      try { URL.revokeObjectURL(blobUrl); } catch {}
+      video.remove();
+    };
+
+    const fail = (err: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(err);
+    };
+
+    const succeed = (blob: Blob) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (blob.size < 5_000) {
+        reject(new Error(`Recording too small: ${blob.size} bytes`));
+      } else {
+        resolve(blob);
+      }
+    };
+
+    // Global timeout: if everything takes too long, abort
+    timeoutTimer = setTimeout(() => {
+      fail(new Error('Clip recording timed out'));
+    }, (duration + 20) * 1000);
+
+    video.addEventListener('loadedmetadata', () => {
+      // Check video is long enough for the clip
+      const vidDuration = video.duration;
+      if (!Number.isFinite(vidDuration) || vidDuration < startTime + duration) {
+        // If the video metadata says it's too short, check if we downloaded
+        // enough bytes. Some muxed streams report incorrect duration in metadata.
+        // The actual playable duration may be longer. Try seeking anyway.
+        console.warn(`[cutClipSegment] Video duration=${vidDuration}s, need ${startTime + duration}s — trying anyway`);
+      }
+
+      // Seek to startTime
+      try {
+        video.currentTime = startTime;
+      } catch (err) {
+        fail(new Error(`Seek failed: ${err instanceof Error ? err.message : err}`));
+      }
+    });
+
+    video.addEventListener('seeked', () => {
+      // captureStream() — same-origin blob: URL includes audio track
+      const captureStreamFn = (video as any).captureStream || (video as any).mozCaptureStream;
+      if (!captureStreamFn) {
+        fail(new Error('captureStream not supported in this browser'));
+        return;
+      }
+
+      try {
+        stream = captureStreamFn.call(video);
+      } catch (err) {
+        fail(new Error(`captureStream failed: ${err instanceof Error ? err.message : err}`));
+        return;
+      }
+
+      const hasAudio = stream.getAudioTracks().length > 0;
+      const hasVideo = stream.getVideoTracks().length > 0;
+      if (!hasVideo) {
+        fail(new Error('captureStream returned no video track'));
+        return;
+      }
+      if (!hasAudio) {
+        console.warn('[cutClipSegment] No audio track in captureStream');
+      }
+
+      // Choose best available codec
+      const mimeTypes = [
+        'video/mp4;codecs=h264,aac',
+        'video/mp4',
+        'video/webm;codecs=vp9,opus',
+        'video/webm;codecs=vp8,opus',
+        'video/webm',
+      ];
+      const mimeType = mimeTypes.find((m) => {
+        try { return MediaRecorder.isTypeSupported(m); } catch { return false; }
+      }) || 'video/webm';
+
+      try {
+        recorder = new MediaRecorder(stream, {
+          mimeType,
+          videoBitsPerSecond: 2_000_000,
+          audioBitsPerSecond: 128_000,
+        });
+      } catch (err) {
+        fail(new Error(`MediaRecorder creation failed: ${err instanceof Error ? err.message : err}`));
+        return;
+      }
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) chunks.push(e.data);
+      };
+
+      recorder.onstop = () => {
+        const blob = new Blob(chunks, { type: mimeType.split(';')[0] });
+        succeed(blob);
+      };
+
+      recorder.onerror = (e: any) => {
+        fail(new Error(`MediaRecorder error: ${e?.error?.message || e}`));
+      };
+
+      // Start playback and recording
+      video.play().then(() => {
+        recorder!.start(200); // Collect data every 200ms
+        onProgress?.(`Recording clip (${duration.toFixed(0)}s, ${hasAudio ? 'with audio' : 'no audio'})...`);
+
+        // Stop after clip duration
+        stopTimer = setTimeout(() => {
+          try {
+            if (recorder && recorder.state !== 'inactive') recorder.stop();
+          } catch (err) {
+            fail(new Error(`Recorder stop failed: ${err instanceof Error ? err.message : err}`));
+          }
+        }, duration * 1000);
+      }).catch((playErr) => {
+        fail(new Error(`Video play failed: ${playErr instanceof Error ? playErr.message : playErr}`));
+      });
+    });
+
+    video.addEventListener('error', () => {
+      fail(new Error(`Video element error: ${video.error?.message || 'unknown'}`));
+    });
+
+    // Start loading
+    video.load();
+  });
 }
