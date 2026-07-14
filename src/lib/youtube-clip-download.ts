@@ -812,6 +812,14 @@ async function cutClipSegment(
     const video = document.createElement('video');
     video.src = blobUrl;
     video.crossOrigin = 'anonymous';
+    // CRITICAL: muted=true allows video.play() without user activation.
+    // The download step (fetchStreamChunked) takes 10-30s, by which time the
+    // user's click activation has expired. Without muted, play() throws
+    // "NotAllowedError: play() failed because the user didn't interact with
+    // the document first" — leaving MediaRecorder with no data → empty MP4.
+    // muted only silences local playback audio output; captureStream() still
+    // captures the original audio track (verified: hasAudio=true with muted).
+    video.muted = true;
     video.setAttribute('playsinline', '');
     video.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:640px;height:360px;opacity:0;';
     document.body.appendChild(video);
