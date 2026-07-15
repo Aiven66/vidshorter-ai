@@ -189,8 +189,20 @@ function saveDemoVideoRecord(url: string, title: string | null, clips: VideoClip
         clip.videoUrl = null;
         clip.status = 'link_only';
         if (!clip.linkOnlyUrl) {
-          // 从 clip.id 提取 videoId 构建 YouTube 链接
-          clip.linkOnlyUrl = url;
+          // Build a YouTube link with ?t=<startTime> so the preview embed
+          // can seek to the highlight's start position.
+          // Previously this was just `url` (no ?t= param), so the preview
+          // always played from 0:00 instead of clip.startTime.
+          try {
+            const ytId = extractYouTubeVideoId(url);
+            if (ytId) {
+              clip.linkOnlyUrl = `https://youtu.be/${ytId}?t=${Math.floor(clip.startTime)}s`;
+            } else {
+              clip.linkOnlyUrl = url;
+            }
+          } catch {
+            clip.linkOnlyUrl = url;
+          }
         }
       }
       return clip;

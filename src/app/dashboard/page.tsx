@@ -231,9 +231,12 @@ function ClipPlayerDialog({
   // link_only clips：使用 YouTube IFrame embed 播放（参考 home 页面 preview-dialog.tsx）
   // 保存到 localStorage 时 data URL 被移除以避免超限，clips 变成 link_only 状态。
   // 数据库中的 clips 如果 url 是 youtu.be/youtube.com 也会被标记为 link_only。
+  // IMPORTANT: Use clip.startTime (the actual highlight start), NOT ytInfo.startTime.
+  // linkOnlyUrl is often just the original YouTube URL without a ?t= param,
+  // so ytInfo.startTime would be 0 (video plays from the beginning).
   const useYouTubeEmbed = (clip.status === 'link_only' || clip.isFallback === true) && clip.linkOnlyUrl;
   const ytInfo = useYouTubeEmbed && clip.linkOnlyUrl ? parseYouTubeLink(clip.linkOnlyUrl) : null;
-  const embedUrl = ytInfo ? buildYouTubeEmbedUrl(ytInfo.videoId, ytInfo.startTime, clip.endTime) : '';
+  const embedUrl = ytInfo ? buildYouTubeEmbedUrl(ytInfo.videoId, clip.startTime, clip.endTime) : '';
 
   // On-demand download for link_only clips.
   // Strategy: use shared browser-based download utility that goes through

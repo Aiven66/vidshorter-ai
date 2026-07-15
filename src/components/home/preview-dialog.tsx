@@ -90,7 +90,11 @@ export default function PreviewDialog({
   // Determine if this clip should use YouTube embed
   const useYouTubeEmbed = (clip.isFallback === true || clip.status === 'link_only') && clip.linkOnlyUrl;
   const ytInfo = useYouTubeEmbed && clip.linkOnlyUrl ? parseYouTubeLink(clip.linkOnlyUrl) : null;
-  const embedUrl = ytInfo ? buildYouTubeEmbedUrl(ytInfo.videoId, ytInfo.startTime, clip.endTime) : '';
+  // IMPORTANT: Use clip.startTime (the actual highlight start), NOT ytInfo.startTime.
+  // linkOnlyUrl is often just the original YouTube URL without a ?t= param,
+  // so ytInfo.startTime would be 0 (video plays from the beginning).
+  // clip.startTime is always the correct highlight start time.
+  const embedUrl = ytInfo ? buildYouTubeEmbedUrl(ytInfo.videoId, clip.startTime, clip.endTime) : '';
 
   // Whether the clip has a real downloadable MP4 (not fallback)
   const hasRealMp4 = clip.videoUrl && clip.status === 'completed' && clip.isFallback !== true;
@@ -223,6 +227,19 @@ export default function PreviewDialog({
                 autoPlay
                 className="absolute inset-0 w-full h-full"
                 crossOrigin="anonymous"
+                // SEEK to clip.startTime when metadata loads — without this,
+                // the video plays from 0:00 (the beginning of the full video),
+                // not from the highlight's start position.
+                onLoadedMetadata={(e) => {
+                  const v = e.currentTarget;
+                  if (clip.startTime > 0 && v.currentTime < clip.startTime - 1) {
+                    try {
+                      v.currentTime = clip.startTime;
+                    } catch (err) {
+                      console.warn('[Preview] Seek to startTime failed:', err);
+                    }
+                  }
+                }}
                 onError={(e) => {
                   console.warn('[Preview] Video error:', e);
                   setStreamError('Video failed to load');
