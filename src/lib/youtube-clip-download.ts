@@ -13,21 +13,21 @@
  *
  * SOLUTION (v45):
  *   1. /resolve to get muxed streamUrl (video+audio combined, itag=18/22)
- *   2. POST stream metadata to /api/cut-clip
- *   3. Server ffmpeg reads from CF Worker /stream URL, seeks to startTime
- *      via HTTP Range requests, cuts for duration, outputs standard MP4
- *   4. Download the standard MP4 (plays in ALL desktop players)
+ *   2. Browser HEADs CF Worker /stream → Content-Length
+ *   3. Browser calculates byte range for [startTime, endTime] + buffer
+ *   4. Browser downloads bytes via chunked Range requests (2MB each)
+ *   5. Browser uploads bytes to /api/cut-clip (multipart/form-data)
+ *   6. Server ffmpeg reads from LOCAL file, seeks, cuts → standard MP4
+ *   7. Download the standard MP4 (plays in ALL desktop players)
  *
- * WHY server-side ffmpeg: MediaRecorder (v41-v44) produces fragmented MP4
- * (fMP4 with moof boxes) that desktop players cannot play. v45 eliminates
- * MediaRecorder entirely — ffmpeg outputs a proper progressive MP4 with
- * +faststart (moov at file beginning).
- *
- * FALLBACK: If /api/cut-clip fails, falls back to browser captureStream +
- * MediaRecorder + /api/remux-mp4 (v44 approach).
+ * WHY browser-download + server-cut:
+ *   - Server ffmpeg's TLS is too old (2018 build) to read HTTPS URLs
+ *   - Server-side CF Worker /stream fails (colo-mismatch 403)
+ *   - Browser-side MediaRecorder produces fMP4 (not playable)
+ *   - Browser-download + server-cut avoids ALL these issues
  *
  * FALLBACK CHAIN (in handleDownload):
- *   downloadClipViaBrowser (v45 server ffmpeg cut) → downloadYouTubeClip (server) → YouTube embed
+ *   downloadClipViaBrowser (v45 browser-download + server-cut) → downloadYouTubeClip (server) → YouTube embed
  */
 
 export interface ResolvedStream {
@@ -676,26 +676,28 @@ export async function downloadPartialMP4(params: {
 }
 
 /**
- * Browser-side clip download — v45 (server-side ffmpeg cutting).
+ * Browser-side clip download — v45 (browser-download + server-cut).
  *
  * APPROACH (v45 — completely different from v41-v44):
  *   v41-v44 used browser captureStream + MediaRecorder, which produces
  *   fragmented MP4 (fMP4). Desktop players (QuickTime, Windows Media Player)
- *   cannot play fMP4. v44 added a remux step, but it was fragile.
+ *   cannot play fMP4.
  *
- *   v45 sends the resolved stream metadata to /api/cut-clip, where server-side
- *   ffmpeg reads directly from the CF Worker /stream URL, seeks to startTime
- *   via HTTP Range requests, and outputs a standard progressive MP4
- *   (ftyp + moov + mdat with +faststart). No MediaRecorder, no fMP4.
+ *   v45 downloads video bytes in the BROWSER (modern TLS, same CF Worker
+ *   colo as /resolve) and uploads them to /api/cut-clip. Server ffmpeg
+ *   reads from the LOCAL uploaded file, seeks to startTime, cuts for
+ *   duration, and outputs a standard progressive MP4 (+faststart).
  *
  * Flow:
- *   1. Resolve muxed stream via CF Worker /resolve (browser's healthy colo)
- *   2. POST stream metadata + startTime + endTime to /api/cut-clip
- *   3. Server ffmpeg: -ss <start> -i <streamUrl> -t <dur> -c copy +faststart
- *   4. Receive standard MP4 blob → download
+ *   1. Resolve muxed stream via CF Worker /resolve
+ *   2. HEAD CF Worker /stream → Content-Length
+ *   3. Calculate byte range for [startTime, endTime] + buffer
+ *   4. Download bytes via chunked Range requests (2MB each)
+ *   5. Upload bytes to /api/cut-clip (multipart/form-data)
+ *   6. Server ffmpeg cuts → standard MP4
+ *   7. Download the MP4
  *
- * FALLBACK: If /api/cut-clip fails (e.g., ffmpeg can't read from URL),
- * falls back to browser captureStream + MediaRecorder + remux (v44 approach).
+ * FALLBACK: If download/upload/cut fails, falls back to v44 captureStream + remux.
  */
 export async function downloadClipViaBrowser(params: {
   videoId: string;
@@ -718,42 +720,23 @@ export async function downloadClipViaBrowser(params: {
     throw new Error('No stream URL available (CF Worker /resolve failed)');
   }
 
-  // Step 2: Try server-side ffmpeg cutting (v45 primary path)
-  onProgress?.('Cutting clip via server ffmpeg...');
+  // Step 2: Try browser-download + server-cut (v45 primary path)
   try {
-    const cutRes = await fetch('/api/cut-clip', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        videoId,
-        startTime,
-        endTime,
-        streamUrl: streamMeta.streamUrl,
-        userAgent: streamMeta.userAgent,
-        visitorData: streamMeta.visitorData,
-        xClientName: streamMeta.xClientName,
-        clientVersion: streamMeta.clientVersion,
-        clientName: streamMeta.client,
-        duration: streamMeta.duration,
-      }),
-      signal: AbortSignal.timeout(55_000),
+    const result = await downloadAndCutOnServer({
+      streamMeta,
+      videoId,
+      startTime,
+      endTime,
+      clipDuration,
+      onProgress,
     });
-
-    if (cutRes.ok) {
-      const mp4Buf = await cutRes.arrayBuffer();
-      if (mp4Buf.byteLength > 5_000) {
-        const finalBlob = new Blob([mp4Buf], { type: 'video/mp4' });
-        onProgress?.('Standard MP4 ready. Downloading...');
-        triggerDownload(finalBlob, title);
-        onProgress?.('Download complete!');
-        return;
-      }
+    if (result) {
+      triggerDownload(result, title);
+      onProgress?.('Download complete!');
+      return;
     }
-    console.warn('[downloadClipViaBrowser] /api/cut-clip failed:', cutRes.status);
-    const errBody = await cutRes.text().catch(() => '');
-    console.warn('[downloadClipViaBrowser] Error body:', errBody.slice(0, 200));
-  } catch (serverErr) {
-    console.warn('[downloadClipViaBrowser] /api/cut-clip error:', serverErr instanceof Error ? serverErr.message : serverErr);
+  } catch (err) {
+    console.warn('[downloadClipViaBrowser] v45 download+cut failed:', err instanceof Error ? err.message : err);
   }
 
   // Step 3: Fallback to browser captureStream + MediaRecorder + remux (v44)
@@ -787,6 +770,141 @@ export async function downloadClipViaBrowser(params: {
 
   triggerDownload(finalBlob, title);
   onProgress?.('Download complete!');
+}
+
+/**
+ * v45 core: Download video bytes in the browser, upload to /api/cut-clip,
+ * and return the standard MP4 blob from the server.
+ *
+ * Returns null (not throw) if the HEAD request fails or download is too small,
+ * so the caller can fall through to the v44 fallback.
+ */
+async function downloadAndCutOnServer(params: {
+  streamMeta: ResolvedStream;
+  videoId: string;
+  startTime: number;
+  endTime: number;
+  clipDuration: number;
+  onProgress?: (msg: string) => void;
+}): Promise<Blob | null> {
+  const { streamMeta, videoId, startTime, endTime, clipDuration, onProgress } = params;
+
+  const streamUrl = buildStreamProxyUrl(videoId, streamMeta);
+
+  // Step A: HEAD request to get Content-Length
+  onProgress?.('Checking video stream...');
+  let contentLength = 0;
+  try {
+    const headRes = await fetch(streamUrl, {
+      method: 'HEAD',
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!headRes.ok) {
+      console.warn('[downloadAndCutOnServer] HEAD failed:', headRes.status);
+      return null;
+    }
+    contentLength = parseInt(headRes.headers.get('content-length') || '0', 10);
+    if (!contentLength || contentLength < 10_000) {
+      console.warn('[downloadAndCutOnServer] Invalid Content-Length:', contentLength);
+      return null;
+    }
+  } catch (headErr) {
+    console.warn('[downloadAndCutOnServer] HEAD error:', headErr instanceof Error ? headErr.message : headErr);
+    return null;
+  }
+
+  // Step B: Calculate byte range
+  // Use video duration to estimate bitrate
+  const vidDur = streamMeta.duration || 822;
+  const bytesPerSec = contentLength / vidDur;
+  const bufferBefore = 15; // 15s before for keyframe alignment
+  const bufferAfter = 10; // 10s after
+  const startByte = Math.max(0, Math.floor((startTime - bufferBefore) * bytesPerSec));
+  const endByte = Math.min(contentLength - 1, Math.ceil((endTime + bufferAfter) * bytesPerSec));
+  const downloadBytes = endByte - startByte + 1;
+
+  // Cap download at 80MB to avoid timeout/memory issues
+  if (downloadBytes > 80 * 1024 * 1024) {
+    console.warn('[downloadAndCutOnServer] Download too large:', downloadBytes);
+    return null;
+  }
+
+  onProgress?.(`Downloading ${(downloadBytes / 1024 / 1024).toFixed(1)}MB of video...`);
+
+  // Step C: Download bytes via chunked Range requests (2MB each)
+  const chunks: ArrayBuffer[] = [];
+  let downloaded = 0;
+  const MAX_CHUNK = 2 * 1024 * 1024; // 2MB (googlevideo.com per-request limit)
+  const totalChunks = Math.ceil(downloadBytes / MAX_CHUNK);
+
+  for (let i = 0; i < totalChunks; i++) {
+    const chunkStart = startByte + downloaded;
+    const chunkEnd = Math.min(chunkStart + MAX_CHUNK, endByte);
+
+    const chunkRes = await fetch(streamUrl, {
+      headers: { Range: `bytes=${chunkStart}-${chunkEnd}` },
+      signal: AbortSignal.timeout(30_000),
+    });
+
+    if (!chunkRes.ok && chunkRes.status !== 206) {
+      console.warn(`[downloadAndCutOnServer] Chunk ${i + 1}/${totalChunks} failed: HTTP ${chunkRes.status}`);
+      if (i === 0) return null; // first chunk must succeed
+      break; // use partial data
+    }
+
+    const chunkBuf = await chunkRes.arrayBuffer();
+    if (chunkBuf.byteLength === 0) break;
+
+    chunks.push(chunkBuf);
+    downloaded += chunkBuf.byteLength;
+
+    // Short read = end of file
+    if (chunkBuf.byteLength < (chunkEnd - chunkStart + 1)) break;
+
+    onProgress?.(`Downloaded ${Math.round((downloaded / downloadBytes) * 100)}%...`);
+  }
+
+  if (downloaded < 50_000) {
+    console.warn('[downloadAndCutOnServer] Downloaded too little:', downloaded);
+    return null;
+  }
+
+  const videoBlob = new Blob(chunks, { type: 'video/mp4' });
+
+  // Step D: Upload to /api/cut-clip
+  onProgress?.('Cutting clip via server ffmpeg...');
+
+  // Adjusted start time within the downloaded portion:
+  //   The downloaded file starts at time (startByte / bytesPerSec)
+  //   So the clip starts at (startTime - startByte / bytesPerSec) within the file
+  const fileStartTime = startByte / bytesPerSec;
+  const adjustedStart = Math.max(0, startTime - fileStartTime);
+
+  const formData = new FormData();
+  formData.append('file', videoBlob, 'video.mp4');
+  formData.append('startTime', String(adjustedStart));
+  formData.append('duration', String(clipDuration));
+
+  const cutRes = await fetch('/api/cut-clip', {
+    method: 'POST',
+    body: formData,
+    signal: AbortSignal.timeout(55_000),
+  });
+
+  if (!cutRes.ok) {
+    const errBody = await cutRes.text().catch(() => '');
+    console.warn('[downloadAndCutOnServer] /api/cut-clip failed:', cutRes.status, errBody.slice(0, 200));
+    return null;
+  }
+
+  const mp4Buf = await cutRes.arrayBuffer();
+  if (mp4Buf.byteLength < 5_000) {
+    console.warn('[downloadAndCutOnServer] Output too small:', mp4Buf.byteLength);
+    return null;
+  }
+
+  onProgress?.('Standard MP4 ready. Downloading...');
+  return new Blob([mp4Buf], { type: 'video/mp4' });
 }
 
 /**
