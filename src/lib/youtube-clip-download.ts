@@ -734,6 +734,7 @@ export async function downloadClipViaBrowser(params: {
         xClientName: streamMeta.xClientName,
         clientVersion: streamMeta.clientVersion,
         clientName: streamMeta.client,
+        duration: streamMeta.duration,
       }),
       signal: AbortSignal.timeout(55_000),
     });

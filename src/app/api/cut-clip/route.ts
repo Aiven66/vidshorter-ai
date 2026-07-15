@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { readFile, unlink, access, constants as fsConstants } from 'fs/promises';
+import { readFile, writeFile, unlink, access, constants as fsConstants, stat } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { execFile } from 'child_process';
@@ -11,40 +11,29 @@ export const maxDuration = 60;
 
 const execFileAsync = promisify(execFile);
 
+const MAX_CHUNK_BYTES = 2 * 1024 * 1024; // 2MB (googlevideo.com per-request limit on CF colos)
+const DOWNLOAD_TIMEOUT_MS = 40_000;
+
 /**
- * /api/cut-clip — Server-side ffmpeg clip cutting
+ * /api/cut-clip — Server-side ffmpeg clip cutting (v45)
  *
- * APPROACH (v45 — completely different from v41-v44):
- *   Previous versions used browser-side captureStream + MediaRecorder, which
- *   produces fragmented MP4 (fMP4) that desktop players cannot play.
- *   v44 added a remux step (fMP4 → standard MP4), but ffmpeg path issues
- *   on Vercel caused failures.
- *
- *   v45 eliminates MediaRecorder entirely. ffmpeg reads directly from the
- *   CF Worker /stream URL (which proxies googlevideo.com with CORS headers
- *   and Range support). ffmpeg seeks to startTime via HTTP Range requests,
- *   cuts for the specified duration, and outputs a standard progressive MP4
- *   (ftyp + moov + mdat with +faststart).
+ * APPROACH: Download stream segment via Node.js fetch (modern TLS), then
+ * cut with ffmpeg reading from a LOCAL temp file. This avoids ffmpeg's
+ * outdated TLS stack (2018 johnvansickle.com build cannot connect to
+ * Cloudflare Workers HTTPS endpoints).
  *
  * Flow:
  *   1. Browser resolves streamUrl via CF Worker /resolve
  *   2. Browser POSTs stream metadata + startTime + endTime to this endpoint
- *   3. Server builds CF Worker /stream URL (fast path with streamUrl param)
- *   4. ffmpeg: -ss <startTime> -i <streamUrl> -t <duration> -c copy -movflags +faststart output.mp4
- *   5. Server returns the standard MP4
- *   6. Browser downloads it
- *
- * WHY this is reliable:
- *   - No MediaRecorder → no fMP4
- *   - No captureStream → no CORS issues
- *   - No browser recording → no user activation issues
- *   - ffmpeg handles HTTP seeking via Range requests natively
- *   - CF Worker /stream passes through Content-Length, Accept-Ranges, Content-Range
- *   - Output is guaranteed to be a proper progressive MP4 (+faststart)
- *   - ffmpeg is already proven to work on Vercel (video-clipper.ts uses the same binary)
+ *   3. Server HEADs CF Worker /stream to get Content-Length
+ *   4. Server calculates byte range for [startTime, endTime] segment
+ *   5. Server downloads that byte range via chunked Range requests (2MB each)
+ *   6. ffmpeg reads from local temp file, seeks, cuts, outputs standard MP4
+ *   7. Server returns the standard MP4
  */
 export async function POST(request: NextRequest) {
-  const outputPath = join(tmpdir(), `cut-clip-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp4`);
+  const inputPath = join(tmpdir(), `cut-input-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp4`);
+  const outputPath = join(tmpdir(), `cut-output-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp4`);
 
   try {
     const body = await request.json();
@@ -58,6 +47,7 @@ export async function POST(request: NextRequest) {
       xClientName,
       clientVersion,
       clientName,
+      duration: videoDuration,
     } = body;
 
     if (!videoId || !streamUrl) {
@@ -69,7 +59,7 @@ export async function POST(request: NextRequest) {
 
     const startSec = Math.max(0, Number(startTime) || 0);
     const endSec = Math.max(startSec + 1, Number(endTime) || startSec + 30);
-    const duration = Math.min(endSec - startSec, 90);
+    const clipDuration = Math.min(endSec - startSec, 90);
 
     // Build CF Worker /stream URL (fast path with streamUrl param)
     const cfWorkerUrl = String(process.env.CF_WORKER_URL || '').trim().replace(/\/$/, '');
@@ -94,7 +84,7 @@ export async function POST(request: NextRequest) {
 
     const fullStreamUrl = streamEndpoint.toString();
 
-    // Find ffmpeg binary (same fallback chain as video-clipper.ts)
+    // Find ffmpeg binary
     const ffmpegPath = await findFfmpegBinary();
     if (!ffmpegPath) {
       return NextResponse.json(
@@ -103,40 +93,139 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log(`[cut-clip] ffmpeg=${ffmpegPath}, videoId=${videoId}, start=${startSec}s, duration=${duration}s`);
+    console.log(`[cut-clip] ffmpeg=${ffmpegPath}, videoId=${videoId}, start=${startSec}s, duration=${clipDuration}s`);
 
-    // Run ffmpeg:
-    // -ss before -i: fast seek via HTTP Range (keyframe-based)
-    // -c copy: no re-encoding (fast, lossless)
-    // -movflags +faststart: moov atom at file beginning (desktop player compatible)
-    // -rw_timeout: 30s socket timeout (microseconds)
-    console.log(`[cut-clip] Running ffmpeg with URL length: ${fullStreamUrl.length}`);
+    // Step 1: HEAD request to get Content-Length
+    console.log('[cut-clip] HEAD request to get Content-Length...');
+    const headRes = await fetch(fullStreamUrl, {
+      method: 'HEAD',
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (!headRes.ok) {
+      return NextResponse.json(
+        { error: `CF Worker /stream HEAD failed: HTTP ${headRes.status}` },
+        { status: 502 },
+      );
+    }
+
+    const contentLength = parseInt(headRes.headers.get('content-length') || '0', 10);
+    const acceptRanges = headRes.headers.get('accept-ranges');
+    console.log(`[cut-clip] Content-Length=${contentLength}, Accept-Ranges=${acceptRanges}`);
+
+    if (!contentLength || contentLength < 10_000) {
+      return NextResponse.json(
+        { error: `Invalid Content-Length: ${contentLength}` },
+        { status: 502 },
+      );
+    }
+
+    // Step 2: Calculate byte range for the clip segment
+    // Use video duration to estimate bitrate, then map time to bytes
+    const vidDur = Number(videoDuration) || 822; // fallback to known duration
+    const bytesPerSec = contentLength / vidDur;
+    console.log(`[cut-clip] bitrate estimate: ${bytesPerSec.toFixed(0)} bytes/s (${(bytesPerSec / 1024).toFixed(1)} KB/s)`);
+
+    // Add 15s buffer before startTime (for keyframe alignment) and 10s after endTime
+    const bufferBefore = 15;
+    const bufferAfter = 10;
+    const startByte = Math.max(0, Math.floor((startSec - bufferBefore) * bytesPerSec));
+    const endByte = Math.min(contentLength - 1, Math.ceil((endSec + bufferAfter) * bytesPerSec));
+    const downloadBytes = endByte - startByte + 1;
+
+    console.log(`[cut-clip] Downloading bytes [${startByte}, ${endByte}] = ${(downloadBytes / 1024 / 1024).toFixed(2)} MB`);
+
+    // Step 3: Download the byte range via chunked Range requests (2MB each)
+    // googlevideo.com limits CF Worker to 2MB per request
+    const chunks: Buffer[] = [];
+    let downloaded = 0;
+    const downloadStart = Date.now();
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => abortController.abort(), DOWNLOAD_TIMEOUT_MS);
+
+    try {
+      while (downloaded < downloadBytes) {
+        const chunkStart = startByte + downloaded;
+        const chunkEnd = Math.min(chunkStart + MAX_CHUNK_BYTES, endByte);
+        const chunkRange = `bytes=${chunkStart}-${chunkEnd}`;
+
+        console.log(`[cut-clip] Range ${chunkRange} (${downloaded}/${downloadBytes} bytes, chunk ${chunks.length + 1})`);
+
+        const chunkRes = await fetch(fullStreamUrl, {
+          headers: { Range: chunkRange },
+          signal: abortController.signal,
+        });
+
+        if (!chunkRes.ok && chunkRes.status !== 206) {
+          throw new Error(`Range request failed: HTTP ${chunkRes.status}`);
+        }
+
+        const chunkBuf = Buffer.from(await chunkRes.arrayBuffer());
+        if (chunkBuf.length === 0) {
+          throw new Error('Empty chunk received');
+        }
+
+        chunks.push(chunkBuf);
+        downloaded += chunkBuf.length;
+
+        // If we got less than requested, we've hit the end of the file
+        if (chunkBuf.length < (chunkEnd - chunkStart + 1)) {
+          console.log(`[cut-clip] Short read (${chunkBuf.length} bytes), reached end of file`);
+          break;
+        }
+      }
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    const downloadedBuffer = Buffer.concat(chunks);
+    const downloadMs = Date.now() - downloadStart;
+    console.log(`[cut-clip] Downloaded ${downloadedBuffer.length} bytes in ${(downloadMs / 1000).toFixed(1)}s`);
+
+    if (downloadedBuffer.length < 50_000) {
+      return NextResponse.json(
+        { error: `Downloaded too little data: ${downloadedBuffer.length} bytes` },
+        { status: 502 },
+      );
+    }
+
+    // Step 4: Write downloaded data to temp file
+    await writeFile(inputPath, downloadedBuffer);
+    console.log(`[cut-clip] Written to ${inputPath}`);
+
+    // Step 5: ffmpeg reads from local file, seeks, cuts
+    // Adjusted start time within the downloaded portion:
+    //   The downloaded file starts at time (startByte / bytesPerSec)
+    //   So the clip starts at (startSec - startByte / bytesPerSec) within the file
+    const fileStartTime = startByte / bytesPerSec;
+    const adjustedStart = Math.max(0, startSec - fileStartTime);
+    console.log(`[cut-clip] fileStartTime=${fileStartTime}s, adjustedStart=${adjustedStart}s`);
+
     try {
       await execFileAsync(ffmpegPath, [
         '-y',
-        '-rw_timeout', '30000000',
-        '-ss', String(startSec),
-        '-i', fullStreamUrl,
-        '-t', String(duration),
+        '-ss', String(adjustedStart),
+        '-i', inputPath,
+        '-t', String(clipDuration),
         '-c', 'copy',
         '-movflags', '+faststart',
         '-avoid_negative_ts', 'make_zero',
         outputPath,
       ], {
         maxBuffer: 50 * 1024 * 1024,
-        timeout: 45_000,
+        timeout: 30_000,
         env: { ...process.env, LANG: 'C' },
       });
     } catch (execErr: any) {
       const stderr = execErr?.stderr || '';
       const stdout = execErr?.stdout || '';
-      throw new Error(`ffmpeg exec failed: ${execErr?.message?.slice(0, 200)} || STDERR: ${String(stderr).slice(0, 1500)} || STDOUT: ${String(stdout).slice(0, 300)}`);
+      throw new Error(`ffmpeg exec failed: ${execErr?.message?.slice(0, 200)} || STDERR: ${String(stderr).slice(0, 1000)} || STDOUT: ${String(stdout).slice(0, 200)}`);
     }
 
     const outputData = await readFile(outputPath);
 
     if (outputData.length < 5_000) {
-      throw new Error(`Output file too small: ${outputData.length} bytes (stream may be blocked or unavailable)`);
+      throw new Error(`Output file too small: ${outputData.length} bytes`);
     }
 
     console.log(`[cut-clip] Success: ${outputData.length} bytes`);
@@ -158,6 +247,7 @@ export async function POST(request: NextRequest) {
       { status: 500 },
     );
   } finally {
+    await unlink(inputPath).catch(() => {});
     await unlink(outputPath).catch(() => {});
   }
 }
