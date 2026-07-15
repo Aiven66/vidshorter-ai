@@ -110,21 +110,28 @@ export async function POST(request: NextRequest) {
     // -c copy: no re-encoding (fast, lossless)
     // -movflags +faststart: moov atom at file beginning (desktop player compatible)
     // -rw_timeout: 30s socket timeout (microseconds)
-    await execFileAsync(ffmpegPath, [
-      '-y',
-      '-rw_timeout', '30000000',
-      '-ss', String(startSec),
-      '-i', fullStreamUrl,
-      '-t', String(duration),
-      '-c', 'copy',
-      '-movflags', '+faststart',
-      '-avoid_negative_ts', 'make_zero',
-      outputPath,
-    ], {
-      maxBuffer: 50 * 1024 * 1024,
-      timeout: 45_000,
-      env: { ...process.env, LANG: 'C' },
-    });
+    console.log(`[cut-clip] Running ffmpeg with URL length: ${fullStreamUrl.length}`);
+    try {
+      await execFileAsync(ffmpegPath, [
+        '-y',
+        '-rw_timeout', '30000000',
+        '-ss', String(startSec),
+        '-i', fullStreamUrl,
+        '-t', String(duration),
+        '-c', 'copy',
+        '-movflags', '+faststart',
+        '-avoid_negative_ts', 'make_zero',
+        outputPath,
+      ], {
+        maxBuffer: 50 * 1024 * 1024,
+        timeout: 45_000,
+        env: { ...process.env, LANG: 'C' },
+      });
+    } catch (execErr: any) {
+      const stderr = execErr?.stderr || '';
+      const stdout = execErr?.stdout || '';
+      throw new Error(`ffmpeg exec failed: ${execErr?.message?.slice(0, 200)} || STDERR: ${String(stderr).slice(0, 1500)} || STDOUT: ${String(stdout).slice(0, 300)}`);
+    }
 
     const outputData = await readFile(outputPath);
 
@@ -145,9 +152,9 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    console.error('[cut-clip] Error:', msg.slice(0, 500));
+    console.error('[cut-clip] Error:', msg.slice(0, 1000));
     return NextResponse.json(
-      { error: `Cut clip failed: ${msg.slice(0, 300)}` },
+      { error: `Cut clip failed: ${msg.slice(0, 2000)}` },
       { status: 500 },
     );
   } finally {
