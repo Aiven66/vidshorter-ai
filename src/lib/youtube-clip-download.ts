@@ -11,23 +11,23 @@
  *   - Server-side ffmpeg on Vercel can't read from CF Worker /stream (262-byte empty MP4)
  *   - v41-v42: pre-downloading 60MB only covers ~150s of video; clips at 500s+ fail
  *
- * SOLUTION (v44):
+ * SOLUTION (v45):
  *   1. /resolve to get muxed streamUrl (video+audio combined, itag=18/22)
- *   2. /stream?streamUrl=... proxies the stream with CORS headers
- *   3. <video> element loads stream URL directly (crossOrigin='anonymous')
- *   4. video.muted=true → play() works without user activation
- *   5. video.captureStream() returns BOTH video+audio tracks (CORS headers present)
- *   6. MediaRecorder records [startTime, endTime] segment → fMP4 blob
- *   7. Upload fMP4 to /api/remux-mp4 → ffmpeg remuxes to standard MP4
- *   8. Download the standard MP4 (plays in ALL desktop players)
+ *   2. POST stream metadata to /api/cut-clip
+ *   3. Server ffmpeg reads from CF Worker /stream URL, seeks to startTime
+ *      via HTTP Range requests, cuts for duration, outputs standard MP4
+ *   4. Download the standard MP4 (plays in ALL desktop players)
  *
- * WHY remux is needed: MediaRecorder produces fMP4 (fragmented MP4 with
- * moof boxes). Standard desktop players (QuickTime, Windows Media Player)
- * cannot play fMP4. ffmpeg remuxes to progressive MP4 with +faststart
- * (moov at file beginning), which ALL players support.
+ * WHY server-side ffmpeg: MediaRecorder (v41-v44) produces fragmented MP4
+ * (fMP4 with moof boxes) that desktop players cannot play. v45 eliminates
+ * MediaRecorder entirely — ffmpeg outputs a proper progressive MP4 with
+ * +faststart (moov at file beginning).
+ *
+ * FALLBACK: If /api/cut-clip fails, falls back to browser captureStream +
+ * MediaRecorder + /api/remux-mp4 (v44 approach).
  *
  * FALLBACK CHAIN (in handleDownload):
- *   downloadClipViaBrowser (v44 stream clip + remux) → downloadYouTubeClip (server) → YouTube embed
+ *   downloadClipViaBrowser (v45 server ffmpeg cut) → downloadYouTubeClip (server) → YouTube embed
  */
 
 export interface ResolvedStream {
@@ -676,42 +676,26 @@ export async function downloadPartialMP4(params: {
 }
 
 /**
- * Browser-side clip download — the RELIABLE path (v40).
+ * Browser-side clip download — v45 (server-side ffmpeg cutting).
  *
- * WHY THIS EXISTS:
- *   The server-side path (/api/download-youtube-clip) has been unreliable:
- *   - ffmpeg reading from CF Worker /stream encounters 2MB Range limits
- *   - Vercel 300s timeout + 4.5MB response limit
- *   - CF Worker colo mismatch between /resolve (browser) and /stream (Vercel)
+ * APPROACH (v45 — completely different from v41-v44):
+ *   v41-v44 used browser captureStream + MediaRecorder, which produces
+ *   fragmented MP4 (fMP4). Desktop players (QuickTime, Windows Media Player)
+ *   cannot play fMP4. v44 added a remux step, but it was fragile.
  *
- *   Previous v37-v39 approach used captureVideoClip (MediaRecorder) to cut
- *   the clip segment, but the resulting webm files were often corrupted,
- *   incomplete, or incompatible with video players — causing "cannot play" issues.
+ *   v45 sends the resolved stream metadata to /api/cut-clip, where server-side
+ *   ffmpeg reads directly from the CF Worker /stream URL, seeks to startTime
+ *   via HTTP Range requests, and outputs a standard progressive MP4
+ *   (ftyp + moov + mdat with +faststart). No MediaRecorder, no fMP4.
  *
- * v43 APPROACH (direct stream loading, NO pre-download):
+ * Flow:
  *   1. Resolve muxed stream via CF Worker /resolve (browser's healthy colo)
- *   2. Build CF Worker /stream URL with the resolved streamUrl (fast path)
- *   3. Set video.src = streamUrl (cross-origin, but CORS headers present)
- *   4. Set video.crossOrigin = 'anonymous' + video.muted = true
- *      - crossOrigin='anonymous' → CORS mode, no taint on captureStream
- *      - muted=true → play() doesn't need user activation (critical: user
- *        click activation expires after ~5s, but /resolve takes longer)
- *   5. Wait for loadedmetadata, then seek to startTime
- *   6. On seeked, video.captureStream() → MediaStream (video + audio tracks)
- *   7. MediaRecorder records for (endTime - startTime) seconds
- *   8. Download the recorded clip as .mp4
+ *   2. POST stream metadata + startTime + endTime to /api/cut-clip
+ *   3. Server ffmpeg: -ss <start> -i <streamUrl> -t <dur> -c copy +faststart
+ *   4. Receive standard MP4 blob → download
  *
- * WHY this is better than v41-v42 (pre-download + blob: URL):
- *   - v41-v42 pre-downloads 60MB via fetchStreamChunked, but for long videos
- *     (e.g., 822s = 300MB), 60MB only covers ~150s. If the clip is at 500s,
- *     seek fails → empty MP4.
- *   - v43 lets the <video> element handle seeking natively. The browser
- *     sends Range requests to CF Worker /stream for the exact byte range
- *     at startTime. No need to pre-download the entire prefix.
- *   - Verified: seek to 500s on 822s video → 5s clip, 611KB, hasAudio=true
- *
- * FALLBACK: If captureStream/recording fails, falls back to server-side API,
- * then YouTube embed (handled in handleDownload).
+ * FALLBACK: If /api/cut-clip fails (e.g., ffmpeg can't read from URL),
+ * falls back to browser captureStream + MediaRecorder + remux (v44 approach).
  */
 export async function downloadClipViaBrowser(params: {
   videoId: string;
@@ -734,24 +718,49 @@ export async function downloadClipViaBrowser(params: {
     throw new Error('No stream URL available (CF Worker /resolve failed)');
   }
 
-  const isMuxed = streamMeta.quality?.includes('muxed') || !!streamMeta.audioUrl;
-  if (!isMuxed) {
-    console.warn('[downloadClipViaBrowser] Resolved stream is NOT muxed — may have no audio');
+  // Step 2: Try server-side ffmpeg cutting (v45 primary path)
+  onProgress?.('Cutting clip via server ffmpeg...');
+  try {
+    const cutRes = await fetch('/api/cut-clip', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        videoId,
+        startTime,
+        endTime,
+        streamUrl: streamMeta.streamUrl,
+        userAgent: streamMeta.userAgent,
+        visitorData: streamMeta.visitorData,
+        xClientName: streamMeta.xClientName,
+        clientVersion: streamMeta.clientVersion,
+        clientName: streamMeta.client,
+      }),
+      signal: AbortSignal.timeout(55_000),
+    });
+
+    if (cutRes.ok) {
+      const mp4Buf = await cutRes.arrayBuffer();
+      if (mp4Buf.byteLength > 5_000) {
+        const finalBlob = new Blob([mp4Buf], { type: 'video/mp4' });
+        onProgress?.('Standard MP4 ready. Downloading...');
+        triggerDownload(finalBlob, title);
+        onProgress?.('Download complete!');
+        return;
+      }
+    }
+    console.warn('[downloadClipViaBrowser] /api/cut-clip failed:', cutRes.status);
+    const errBody = await cutRes.text().catch(() => '');
+    console.warn('[downloadClipViaBrowser] Error body:', errBody.slice(0, 200));
+  } catch (serverErr) {
+    console.warn('[downloadClipViaBrowser] /api/cut-clip error:', serverErr instanceof Error ? serverErr.message : serverErr);
   }
 
-  // Step 2: Build /stream URL with the resolved streamUrl (fast path)
+  // Step 3: Fallback to browser captureStream + MediaRecorder + remux (v44)
+  onProgress?.('Falling back to browser recording...');
   const streamUrl = buildStreamProxyUrl(videoId, streamMeta);
-
-  onProgress?.(`Loading video (seeking to ${Math.floor(startTime)}s)...`);
-
-  // Step 3: Cut the clip directly from the stream (no pre-download)
   const clipBlob = await cutClipFromStream(streamUrl, startTime, clipDuration, onProgress);
 
-  // Step 4: Remux fMP4 to standard MP4 via server-side ffmpeg.
-  // MediaRecorder produces fragmented MP4 (fMP4: ftyp + moov/mvex + moof + mdat).
-  // Standard desktop players (QuickTime, Windows Media Player) cannot play fMP4.
-  // Server-side ffmpeg remuxes to progressive MP4 (ftyp + moov + mdat + faststart)
-  // without re-encoding, so it's very fast (~1-2s).
+  // Remux fMP4 → standard MP4
   let finalBlob = clipBlob;
   const isMP4 = clipBlob.type.includes('mp4');
   if (isMP4) {
@@ -769,25 +778,29 @@ export async function downloadClipViaBrowser(params: {
           finalBlob = new Blob([remuxedBuf], { type: 'video/mp4' });
           onProgress?.('Standard MP4 ready. Downloading...');
         }
-      } else {
-        console.warn('[downloadClipViaBrowser] Remux failed:', remuxRes.status);
       }
     } catch (remuxErr) {
       console.warn('[downloadClipViaBrowser] Remux error, using original:', remuxErr);
     }
   }
 
-  // Step 5: Download the clip
+  triggerDownload(finalBlob, title);
+  onProgress?.('Download complete!');
+}
+
+/**
+ * Trigger a browser download of a blob with a sanitized filename.
+ */
+function triggerDownload(blob: Blob, title: string): void {
   const safeName = (title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50) || 'clip');
-  const ext = finalBlob.type.includes('mp4') ? 'mp4' : 'webm';
+  const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(finalBlob);
+  a.href = URL.createObjectURL(blob);
   a.download = `${safeName}.${ext}`;
   document.body.appendChild(a);
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 30_000);
-  onProgress?.('Download complete!');
 }
 
 /**

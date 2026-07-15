@@ -50,16 +50,42 @@ export async function POST(request: NextRequest) {
     const arrayBuffer = await file.arrayBuffer();
     await writeFile(inputPath, Buffer.from(arrayBuffer));
 
-    // Get ffmpeg binary path (same logic as video-clipper)
+    // Get ffmpeg binary path using same multi-level fallback as video-clipper
     let ffmpegPath = '';
+    const { access, constants: fsConstants } = await import('fs/promises');
+
+    // 1. ffmpeg-static binary
     try {
       const ffmpegStatic: string = require('ffmpeg-static');
-      if (ffmpegStatic) ffmpegPath = ffmpegStatic;
+      if (ffmpegStatic) {
+        await access(ffmpegStatic, fsConstants.X_OK);
+        ffmpegPath = ffmpegStatic;
+      }
     } catch { /* fall through */ }
+
+    // 2. @ffmpeg-installer/ffmpeg bundled binary
     if (!ffmpegPath) {
       try {
         const installer = require('@ffmpeg-installer/ffmpeg');
-        if (installer?.path) ffmpegPath = installer.path;
+        if (installer?.path) {
+          await access(installer.path, fsConstants.X_OK);
+          ffmpegPath = installer.path;
+        }
+      } catch { /* fall through */ }
+    }
+
+    // 3. System PATH ffmpeg (works on local dev, not Vercel)
+    if (!ffmpegPath) {
+      try {
+        const { execFile: ef } = await import('child_process');
+        const { promisify } = await import('util');
+        const efAsync = promisify(ef);
+        const { stdout } = await efAsync('which', ['ffmpeg']);
+        const sysPath = stdout.trim();
+        if (sysPath) {
+          await access(sysPath, fsConstants.X_OK);
+          ffmpegPath = sysPath;
+        }
       } catch { /* fall through */ }
     }
 
