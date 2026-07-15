@@ -1,20 +1,28 @@
 'use client';
 
 /**
- * YouTube clip download utility — v46 (browser-download + server-cut + remux fallback).
+ * YouTube clip download utility — v48 (server-download + server-cut).
  *
- * PROBLEM:
+ * PROBLEM HISTORY:
  *   - v41-v43: MediaRecorder produces fMP4 → desktop players can't play
  *   - v44: fMP4 → remux sometimes failed (ffmpeg binary issues)
  *   - v45: Partial byte-range download SKIPPED MP4 header → "moov atom not found"
+ *   - v46: Browser-download capped at 80MB → fallback to fMP4 (still unplayable)
+ *   - v47: Preview start time fix (no download change)
  *
- * SOLUTION (v46):
- *   PRIMARY: Download from byte 0 (includes MP4 header) → /api/cut-clip → standard MP4
- *   FALLBACK: captureStream + MediaRecorder → /api/remux-mp4 → standard MP4
+ * SOLUTION (v48 — server-side download + cut):
+ *   PRIMARY: Browser sends streamUrl + metadata (JSON) to /api/cut-clip.
+ *            Server downloads bytes via CF Worker /stream (Node.js fetch,
+ *            modern TLS), then ffmpeg cuts [startTime, startTime+duration]
+ *            from local file → standard progressive MP4.
+ *   FALLBACK: captureStream + MediaRecorder → /api/remux-mp4 → standard MP4.
+ *             If remux FAILS, throw (do NOT download fMP4 as .mp4).
  *
- * The primary path works for clips <~170s into the video (80MB cap at 360p).
- * The fallback path works at ANY position (browser seeks natively via Range requests).
- * Both paths produce standard progressive MP4 that plays in ALL desktop players.
+ * Why server-download (not browser-download):
+ *   - No 80MB cap (server handles memory better)
+ *   - No browser chunked Range failures (silent partial downloads)
+ *   - No CF Worker /stream colo-mismatch (server uses same /resolve as browser)
+ *   - Works at ANY position in the video (not just <170s)
  */
 
 export interface ResolvedStream {
@@ -663,32 +671,31 @@ export async function downloadPartialMP4(params: {
 }
 
 /**
- * Browser-side clip download — v46 (browser-download + server-cut).
+ * Browser-side clip download — v48 (server-download + server-cut).
  *
- * APPROACH (v46 — fixes v45's "moov atom not found" bug):
- *   v45 downloaded partial bytes starting at (startTime - 15s) * bytesPerSec,
- *   which SKIPPED the MP4 header (ftyp + moov atoms). ffmpeg couldn't read
- *   the headerless file → "moov atom not found" → 500 error → fell back to
- *   captureStream which produced fMP4 (not playable in desktop players).
+ * APPROACH (v48 — server-side download + cut):
+ *   Browser sends the resolved streamUrl + metadata (JSON) to /api/cut-clip.
+ *   Server downloads the video bytes via CF Worker /stream (Node.js fetch,
+ *   modern TLS), then ffmpeg cuts [startTime, startTime+duration] from the
+ *   local file → standard progressive MP4.
  *
- *   v46 ALWAYS downloads from byte 0 (includes MP4 header). ffmpeg can then
- *   seek to startTime and cut the exact segment. If the download would exceed
- *   80MB (clip is >~170s into the video at 360p), falls back to captureStream
- *   + remux (which works at ANY position).
+ *   This eliminates v46's issues:
+ *     - No 80MB browser download cap (server handles memory)
+ *     - No silent partial downloads (browser chunked Range failures)
+ *     - No CF Worker /stream colo-mismatch (server uses same /resolve as browser)
+ *     - Works at ANY position in the video (not just <170s)
  *
- * PRIMARY PATH (early clips, <~170s):
- *   1. Resolve muxed stream via CF Worker /resolve
- *   2. HEAD CF Worker /stream → Content-Length
- *   3. Download from byte 0 to (endTime + 10s) * bytesPerSec (includes MP4 header)
- *   4. Upload to /api/cut-clip (multipart/form-data)
- *   5. Server ffmpeg: -ss <startTime> -i <file> -t <dur> -c copy +faststart
- *   6. Download the standard progressive MP4
+ * PRIMARY PATH (v48):
+ *   1. Resolve muxed stream via CF Worker /resolve (browser-side, cached)
+ *   2. POST JSON { streamUrl, videoId, startTime, duration, ... } → /api/cut-clip
+ *   3. Server downloads via CF Worker /stream → temp file
+ *   4. Server ffmpeg: -ss <startTime> -i <file> -t <dur> -c copy +faststart
+ *   5. Browser downloads the standard progressive MP4 response
  *
- * FALLBACK PATH (late clips, >~170s, or primary fails):
+ * FALLBACK PATH (server endpoint fails):
  *   1. captureStream + MediaRecorder → fMP4 or webm
- *   2. Upload to /api/remux-mp4
- *   3. Server ffmpeg remuxes/transcodes → standard progressive MP4
- *   4. Download the standard MP4
+ *   2. Upload to /api/remux-mp4 → standard progressive MP4
+ *   3. If remux FAILS → throw (do NOT download fMP4 as .mp4)
  */
 export async function downloadClipViaBrowser(params: {
   videoId: string;
@@ -711,7 +718,7 @@ export async function downloadClipViaBrowser(params: {
     throw new Error('No stream URL available (CF Worker /resolve failed)');
   }
 
-  // Step 2: Try browser-download + server-cut (v45 primary path)
+  // Step 2: Try v48 server-side download + cut (PRIMARY path)
   try {
     const result = await downloadAndCutOnServer({
       streamMeta,
@@ -727,19 +734,18 @@ export async function downloadClipViaBrowser(params: {
       return;
     }
   } catch (err) {
-    console.warn('[downloadClipViaBrowser] v45 download+cut failed:', err instanceof Error ? err.message : err);
+    console.warn('[downloadClipViaBrowser] v48 server-download+cut failed:', err instanceof Error ? err.message : err);
   }
 
   // Step 3: Fallback to browser captureStream + MediaRecorder + remux
-  // This path is used when:
-  //   - The clip is too far into the video (>~170s at 360p, download would exceed 80MB)
-  //   - HEAD request fails
-  //   - Byte-range download fails for any reason
+  // Used ONLY when /api/cut-clip server endpoint fails entirely.
   //
   // captureStream + MediaRecorder produces fMP4 (fragmented MP4) or webm.
   // fMP4/webm are NOT playable in standard desktop players (QuickTime, WMP).
   // We MUST remux to standard progressive MP4 via /api/remux-mp4.
-  onProgress?.('Falling back to browser recording...');
+  // If remux fails, we THROW instead of downloading fMP4 as .mp4 (which would
+  // produce a non-playable file — the user's reported issue).
+  onProgress?.('Falling back to browser recording + remux...');
   const streamUrl = buildStreamProxyUrl(videoId, streamMeta);
   const clipBlob = await cutClipFromStream(streamUrl, startTime, clipDuration, onProgress);
 
@@ -747,51 +753,40 @@ export async function downloadClipViaBrowser(params: {
   // /api/remux-mp4 handles both:
   //   - fMP4 input: ffmpeg -c copy (fast, no re-encoding)
   //   - webm input: ffmpeg -c:v libx264 -c:a aac (transcode, slower)
-  let finalBlob = clipBlob;
   onProgress?.('Converting to standard MP4...');
-  try {
-    const formData = new FormData();
-    const ext = clipBlob.type.includes('mp4') ? 'mp4' : 'webm';
-    formData.append('file', clipBlob, `clip.${ext}`);
-    const remuxRes = await fetch('/api/remux-mp4', {
-      method: 'POST',
-      body: formData,
-      signal: AbortSignal.timeout(55_000),
-    });
-    if (remuxRes.ok) {
-      const remuxedBuf = await remuxRes.arrayBuffer();
-      if (remuxedBuf.byteLength > 5000) {
-        finalBlob = new Blob([remuxedBuf], { type: 'video/mp4' });
-        onProgress?.('Standard MP4 ready. Downloading...');
-      } else {
-        console.warn('[downloadClipViaBrowser] Remux output too small:', remuxedBuf.byteLength);
-      }
-    } else {
-      const errBody = await remuxRes.text().catch(() => '');
-      console.warn('[downloadClipViaBrowser] Remux failed:', remuxRes.status, errBody.slice(0, 200));
-    }
-  } catch (remuxErr) {
-    console.warn('[downloadClipViaBrowser] Remux error, using original:', remuxErr);
+  const formData = new FormData();
+  const ext = clipBlob.type.includes('mp4') ? 'mp4' : 'webm';
+  formData.append('file', clipBlob, `clip.${ext}`);
+
+  const remuxRes = await fetch('/api/remux-mp4', {
+    method: 'POST',
+    body: formData,
+    signal: AbortSignal.timeout(55_000),
+  });
+
+  if (!remuxRes.ok) {
+    const errBody = await remuxRes.text().catch(() => '');
+    throw new Error(`Remux failed (HTTP ${remuxRes.status}): ${errBody.slice(0, 200)}. Cannot produce playable MP4.`);
   }
 
+  const remuxedBuf = await remuxRes.arrayBuffer();
+  if (remuxedBuf.byteLength < 5000) {
+    throw new Error(`Remux output too small: ${remuxedBuf.byteLength} bytes. Cannot produce playable MP4.`);
+  }
+
+  const finalBlob = new Blob([remuxedBuf], { type: 'video/mp4' });
+  onProgress?.('Standard MP4 ready. Downloading...');
   triggerDownload(finalBlob, title);
   onProgress?.('Download complete!');
 }
 
 /**
- * v46 core: Download video bytes in the browser, upload to /api/cut-clip,
- * and return the standard MP4 blob from the server.
+ * v48 core: Send streamUrl + metadata (JSON) to /api/cut-clip.
+ * Server downloads the video bytes itself (no browser download), then
+ * ffmpeg cuts [startTime, startTime+duration] from the local file.
  *
- * CRITICAL FIX (v46): Always start downloading from byte 0 to include the
- * MP4 header (ftyp + moov atoms). v45 downloaded from (startTime - 15s) * bytesPerSec,
- * which produced a file WITHOUT the MP4 header → ffmpeg "moov atom not found".
- *
- * Since we start at byte 0, the download size is (endTime + buffer) * bytesPerSec.
- * If this exceeds 80MB (clip is too far into the video), return null to trigger
- * the captureStream + remux fallback (which works at ANY position).
- *
- * Returns null (not throw) if HEAD fails, download is too large, or too small,
- * so the caller can fall through to the captureStream + remux fallback.
+ * Returns Blob (standard progressive MP4) on success, or null on failure
+ * (so the caller can fall through to the captureStream + remux fallback).
  */
 async function downloadAndCutOnServer(params: {
   streamMeta: ResolvedStream;
@@ -801,136 +796,59 @@ async function downloadAndCutOnServer(params: {
   clipDuration: number;
   onProgress?: (msg: string) => void;
 }): Promise<Blob | null> {
-  const { streamMeta, videoId, startTime, endTime, clipDuration, onProgress } = params;
+  const { streamMeta, videoId, startTime, clipDuration, onProgress } = params;
 
-  const streamUrl = buildStreamProxyUrl(videoId, streamMeta);
+  // v48: send JSON body with streamUrl + metadata.
+  // Server downloads via CF Worker /stream (Node.js fetch, modern TLS),
+  // then ffmpeg cuts from local file → standard progressive MP4.
+  onProgress?.('Server downloading & cutting clip (may take 30-60s)...');
 
-  // Step A: HEAD request to get Content-Length
-  onProgress?.('Checking video stream...');
-  let contentLength = 0;
   try {
-    const headRes = await fetch(streamUrl, {
-      method: 'HEAD',
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!headRes.ok) {
-      console.warn('[downloadAndCutOnServer] HEAD failed:', headRes.status);
-      return null;
-    }
-    contentLength = parseInt(headRes.headers.get('content-length') || '0', 10);
-    if (!contentLength || contentLength < 10_000) {
-      console.warn('[downloadAndCutOnServer] Invalid Content-Length:', contentLength);
-      return null;
-    }
-  } catch (headErr) {
-    console.warn('[downloadAndCutOnServer] HEAD error:', headErr instanceof Error ? headErr.message : headErr);
-    return null;
-  }
-
-  // Step B: Calculate byte range — ALWAYS start at byte 0 (include MP4 header)
-  // The MP4 ftyp + moov atoms are at the beginning of the file. Without them,
-  // ffmpeg cannot read the file ("moov atom not found"). v45's bug was starting
-  // at (startTime - 15) * bytesPerSec, which skipped the header.
-  const vidDur = streamMeta.duration || 822;
-  const bytesPerSec = contentLength / vidDur;
-  const bufferAfter = 10; // 10s after endTime for keyframe alignment
-  const startByte = 0; // ALWAYS 0 — must include MP4 header
-  const endByte = Math.min(contentLength - 1, Math.ceil((endTime + bufferAfter) * bytesPerSec));
-  const downloadBytes = endByte - startByte + 1;
-
-  // Cap download at 80MB to avoid timeout/memory issues.
-  // At 360p muxed (~460KB/s), 80MB covers ~170s of video.
-  // For clips beyond 170s, return null → captureStream + remux fallback.
-  if (downloadBytes > 80 * 1024 * 1024) {
-    console.warn(`[downloadAndCutOnServer] Download too large: ${(downloadBytes / 1024 / 1024).toFixed(1)}MB (clip at ${startTime}s, need ${(endTime + bufferAfter)}s of video). Falling back to captureStream+remux.`);
-    return null;
-  }
-
-  onProgress?.(`Downloading ${(downloadBytes / 1024 / 1024).toFixed(1)}MB of video...`);
-
-  // Step C: Download bytes via chunked Range requests (2MB each)
-  // Start at byte 0 to include the MP4 header (ftyp + moov).
-  const chunks: ArrayBuffer[] = [];
-  let downloaded = 0;
-  const MAX_CHUNK = 2 * 1024 * 1024; // 2MB (googlevideo.com per-request limit)
-  const totalChunks = Math.ceil(downloadBytes / MAX_CHUNK);
-
-  for (let i = 0; i < totalChunks; i++) {
-    const chunkStart = startByte + downloaded;
-    const chunkEnd = Math.min(chunkStart + MAX_CHUNK, endByte);
-
-    const chunkRes = await fetch(streamUrl, {
-      headers: { Range: `bytes=${chunkStart}-${chunkEnd}` },
-      signal: AbortSignal.timeout(30_000),
+    const res = await fetch('/api/cut-clip', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        streamUrl: streamMeta.streamUrl,
+        userAgent: streamMeta.userAgent,
+        visitorData: streamMeta.visitorData,
+        videoId,
+        startTime,
+        duration: clipDuration,
+        endTime: params.endTime,
+      }),
+      signal: AbortSignal.timeout(110_000), // 110s — server downloads + cuts
     });
 
-    if (!chunkRes.ok && chunkRes.status !== 206) {
-      console.warn(`[downloadAndCutOnServer] Chunk ${i + 1}/${totalChunks} failed: HTTP ${chunkRes.status}`);
-      if (i === 0) return null; // first chunk must succeed
-      break; // use partial data
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => '');
+      console.warn('[downloadAndCutOnServer] /api/cut-clip failed:', res.status, errBody.slice(0, 300));
+      return null;
     }
 
-    const chunkBuf = await chunkRes.arrayBuffer();
-    if (chunkBuf.byteLength === 0) break;
+    const mp4Buf = await res.arrayBuffer();
+    if (mp4Buf.byteLength < 5_000) {
+      console.warn('[downloadAndCutOnServer] Output too small:', mp4Buf.byteLength);
+      return null;
+    }
 
-    // Validate first chunk includes MP4 header (ftyp box at offset 4)
-    if (i === 0 && chunkBuf.byteLength >= 8) {
-      const view = new DataView(chunkBuf);
+    // Validate output is a real MP4 (ftyp box at offset 4)
+    if (mp4Buf.byteLength >= 8) {
+      const view = new DataView(mp4Buf);
       const boxType = String.fromCharCode(
         view.getUint8(4), view.getUint8(5), view.getUint8(6), view.getUint8(7),
       );
       if (boxType !== 'ftyp') {
-        console.warn(`[downloadAndCutOnServer] First chunk missing ftyp header (got: ${boxType}). Aborting.`);
+        console.warn('[downloadAndCutOnServer] Output missing ftyp header (got:', boxType, ')');
         return null;
       }
     }
 
-    chunks.push(chunkBuf);
-    downloaded += chunkBuf.byteLength;
-
-    // Short read = end of file
-    if (chunkBuf.byteLength < (chunkEnd - chunkStart + 1)) break;
-
-    onProgress?.(`Downloaded ${Math.round((downloaded / downloadBytes) * 100)}%...`);
-  }
-
-  if (downloaded < 50_000) {
-    console.warn('[downloadAndCutOnServer] Downloaded too little:', downloaded);
+    onProgress?.('Standard MP4 ready. Downloading...');
+    return new Blob([mp4Buf], { type: 'video/mp4' });
+  } catch (err) {
+    console.warn('[downloadAndCutOnServer] Error:', err instanceof Error ? err.message : err);
     return null;
   }
-
-  const videoBlob = new Blob(chunks, { type: 'video/mp4' });
-
-  // Step D: Upload to /api/cut-clip
-  onProgress?.('Cutting clip via server ffmpeg...');
-
-  // startTime is the exact position within the downloaded file
-  // (since we downloaded from byte 0, no adjustment needed)
-  const formData = new FormData();
-  formData.append('file', videoBlob, 'video.mp4');
-  formData.append('startTime', String(startTime));
-  formData.append('duration', String(clipDuration));
-
-  const cutRes = await fetch('/api/cut-clip', {
-    method: 'POST',
-    body: formData,
-    signal: AbortSignal.timeout(55_000),
-  });
-
-  if (!cutRes.ok) {
-    const errBody = await cutRes.text().catch(() => '');
-    console.warn('[downloadAndCutOnServer] /api/cut-clip failed:', cutRes.status, errBody.slice(0, 200));
-    return null;
-  }
-
-  const mp4Buf = await cutRes.arrayBuffer();
-  if (mp4Buf.byteLength < 5_000) {
-    console.warn('[downloadAndCutOnServer] Output too small:', mp4Buf.byteLength);
-    return null;
-  }
-
-  onProgress?.('Standard MP4 ready. Downloading...');
-  return new Blob([mp4Buf], { type: 'video/mp4' });
 }
 
 /**
