@@ -12,37 +12,23 @@ export const maxDuration = 60;
 const execFileAsync = promisify(execFile);
 
 /**
- * /api/cut-clip — Server-side ffmpeg clip cutting (v45)
+ * /api/cut-clip — Server-side ffmpeg clip cutting (v46)
  *
- * APPROACH: Browser downloads the video bytes (via CF Worker /stream, same
- * colo as /resolve) and uploads them to this endpoint. Server ffmpeg then
+ * APPROACH: Browser downloads video bytes from byte 0 (includes MP4 header)
+ * via CF Worker /stream and uploads them to this endpoint. Server ffmpeg then
  * reads from the LOCAL uploaded file, seeks to startTime, cuts for duration,
  * and outputs a standard progressive MP4.
  *
- * WHY browser-download + server-cut:
- *   - Server ffmpeg's TLS is too old (2018 build) to read HTTPS URLs directly
- *   - Server-side CF Worker /stream download fails (colo-mismatch 403)
- *   - Server-side googlevideo.com download fails (Vercel IP blocked)
- *   - Browser-side captureStream + MediaRecorder produces fMP4 (not playable)
- *   - Browser-download + server-cut avoids ALL these issues:
- *     ✓ Browser fetch has modern TLS
- *     ✓ Browser and /resolve hit the same CF Worker colo (no mismatch)
- *     ✓ Server ffmpeg reads from LOCAL file (no TLS needed)
- *     ✓ ffmpeg outputs standard progressive MP4 (+faststart)
+ * v46 FIX: v45 downloaded partial bytes starting at (startTime-15)*bytesPerSec,
+ * which SKIPPED the MP4 header (ftyp + moov). ffmpeg couldn't read the file.
+ * v46 always starts at byte 0.
  *
- * Flow:
- *   1. Browser: resolve streamUrl via CF Worker /resolve
- *   2. Browser: HEAD CF Worker /stream → get Content-Length
- *   3. Browser: calculate byte range for [startTime, endTime] + buffer
- *   4. Browser: download bytes via chunked Range requests (2MB each)
- *   5. Browser: upload bytes to this endpoint (multipart/form-data)
- *   6. Server: ffmpeg -ss <adjusted> -i <uploaded_file> -t <dur> -c copy +faststart
- *   7. Server: return standard MP4
- *   8. Browser: download the MP4
+ * FALLBACK: If -c copy fails (bad keyframe alignment, corrupted data),
+ * retries with -c:v libx264 -c:a aac (re-encode, slower but more robust).
  *
  * Input: multipart/form-data
- *   - file: video bytes (Blob)
- *   - startTime: number (seconds, within the uploaded portion)
+ *   - file: video bytes (Blob, MUST start from byte 0 of the MP4 file)
+ *   - startTime: number (seconds, position within the uploaded video)
  *   - duration: number (seconds to cut)
  *
  * Output: video/mp4 (standard progressive MP4 with +faststart)
@@ -105,6 +91,13 @@ export async function POST(request: NextRequest) {
     // -c copy: no re-encoding (fast, lossless)
     // -movflags +faststart: moov atom at file beginning (desktop player compatible)
     // -avoid_negative_ts make_zero: normalize timestamps to start at 0
+    //
+    // If -c copy fails (e.g., corrupted stream, bad keyframe alignment),
+    // fall back to re-encoding with libx264 + aac (slower but more robust).
+    let cutSuccess = false;
+    let lastError = '';
+
+    // Attempt 1: -c copy (fast remux)
     try {
       await execFileAsync(ffmpegPath, [
         '-y',
@@ -120,10 +113,45 @@ export async function POST(request: NextRequest) {
         timeout: 30_000,
         env: { ...process.env, LANG: 'C' },
       });
+      cutSuccess = true;
     } catch (execErr: any) {
-      const stderr = execErr?.stderr || '';
-      const stdout = execErr?.stdout || '';
-      throw new Error(`ffmpeg exec failed: ${execErr?.message?.slice(0, 200)} || STDERR: ${String(stderr).slice(0, 1000)} || STDOUT: ${String(stdout).slice(0, 200)}`);
+      const stderr = String(execErr?.stderr || '');
+      const stdout = String(execErr?.stdout || '');
+      lastError = `copy: ${execErr?.message?.slice(0, 150)} | STDERR: ${stderr.slice(0, 500)}`;
+      console.warn(`[cut-clip] -c copy failed, trying re-encode: ${lastError.slice(0, 200)}`);
+    }
+
+    // Attempt 2: re-encode (fallback, slower but handles edge cases)
+    if (!cutSuccess) {
+      try {
+        await execFileAsync(ffmpegPath, [
+          '-y',
+          '-ss', String(startTime),
+          '-i', inputPath,
+          '-t', String(duration),
+          '-c:v', 'libx264',
+          '-preset', 'ultrafast',
+          '-crf', '28',
+          '-c:a', 'aac',
+          '-b:a', '128k',
+          '-movflags', '+faststart',
+          '-avoid_negative_ts', 'make_zero',
+          outputPath,
+        ], {
+          maxBuffer: 50 * 1024 * 1024,
+          timeout: 45_000,
+          env: { ...process.env, LANG: 'C' },
+        });
+        cutSuccess = true;
+        console.log('[cut-clip] Re-encode fallback succeeded');
+      } catch (execErr2: any) {
+        const stderr2 = String(execErr2?.stderr || '');
+        lastError = `copy+reencode: ${lastError} || reencode: ${execErr2?.message?.slice(0, 150)} | STDERR: ${stderr2.slice(0, 500)}`;
+      }
+    }
+
+    if (!cutSuccess) {
+      throw new Error(`ffmpeg both attempts failed: ${lastError.slice(0, 1000)}`);
     }
 
     const outputData = await readFile(outputPath);

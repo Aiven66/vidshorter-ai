@@ -1,31 +1,36 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { writeFile, readFile, unlink } from 'fs/promises';
+import { writeFile, readFile, unlink, access, constants as fsConstants } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
+const execFileAsync = promisify(execFile);
+
 /**
- * /api/remux-mp4
+ * /api/remux-mp4 — Convert fMP4 or webm to standard progressive MP4.
  *
- * Converts a fragmented MP4 (fMP4) produced by MediaRecorder into a
- * standard MP4 that all desktop players (QuickTime, VLC, Windows Media
- * Player) can play.
+ * MediaRecorder produces either:
+ *   - fMP4 (fragmented MP4): ftyp + moov(mvex) + moof + mdat — NOT playable
+ *   - webm (VP8/VP9 + Opus/Vorbis) — NOT playable in QuickTime/WMP
  *
- * MediaRecorder outputs fMP4 (ftyp + moov with mvex + moof + mdat fragments).
- * Standard players expect a progressive MP4 (ftyp + moov + mdat, with moov
- * placed at the beginning via +faststart).
+ * This endpoint converts both to standard progressive MP4:
+ *   - fMP4 input: ffmpeg -c copy (remux, fast ~1-2s, no re-encoding)
+ *   - webm input: ffmpeg -c:v libx264 -c:a aac (transcode, slower ~5-10s)
  *
- * ffmpeg remuxes without re-encoding (-c copy), so it's very fast (~1-2s).
+ * Output: standard progressive MP4 (ftyp + moov + mdat, +faststart)
+ * Plays in ALL desktop players (QuickTime, VLC, Windows Media Player).
  *
- * Input: multipart/form-data with a "file" field containing the fMP4 blob
+ * Input: multipart/form-data with a "file" field (fMP4 or webm blob)
  * Output: standard MP4 file (video/mp4)
  */
 export async function POST(request: NextRequest) {
-  const inputPath = join(tmpdir(), `remux-input-${Date.now()}.mp4`);
-  const outputPath = join(tmpdir(), `remux-output-${Date.now()}.mp4`);
+  const inputPath = join(tmpdir(), `remux-input-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  const outputPath = join(tmpdir(), `remux-output-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp4`);
 
   try {
     const formData = await request.formData();
@@ -46,82 +51,85 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Determine input format from filename/MIME type
+    const fileName = file.name || '';
+    const mimeType = file.type || '';
+    const isWebm = fileName.endsWith('.webm') || mimeType.includes('webm');
+    const inputExt = isWebm ? 'webm' : 'mp4';
+    const inputPathWithExt = `${inputPath}.${inputExt}`;
+
     // Write input to temp file
     const arrayBuffer = await file.arrayBuffer();
-    await writeFile(inputPath, Buffer.from(arrayBuffer));
+    await writeFile(inputPathWithExt, Buffer.from(arrayBuffer));
 
-    // Get ffmpeg binary path using same multi-level fallback as video-clipper
-    let ffmpegPath = '';
-    const { access, constants: fsConstants } = await import('fs/promises');
+    console.log(`[remux-mp4] Input: ${file.size} bytes, type=${mimeType}, ext=${inputExt}`);
 
-    // 1. ffmpeg-static binary
+    // Find ffmpeg binary
+    const ffmpegPath = await findFfmpegBinary();
+    if (!ffmpegPath) {
+      console.error('[remux-mp4] ffmpeg binary not found');
+      return NextResponse.json(
+        { error: 'ffmpeg binary not found' },
+        { status: 500 },
+      );
+    }
+
+    console.log(`[remux-mp4] ffmpeg=${ffmpegPath}`);
+
+    // Build ffmpeg args based on input format
+    let ffmpegArgs: string[];
+    if (isWebm) {
+      // webm → MP4: must transcode (VP8/VP9 → H264, Opus/Vorbis → AAC)
+      // -c:v libx264: re-encode video to H264
+      // -c:a aac: re-encode audio to AAC
+      // -preset ultrafast: fastest encoding (needed on Vercel's limited CPU)
+      // -crf 28: reasonable quality (lower = better, 23=default, 28=smaller file)
+      // -movflags +faststart: moov atom at beginning (desktop player compatible)
+      ffmpegArgs = [
+        '-y',
+        '-i', inputPathWithExt,
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-crf', '28',
+        '-c:a', 'aac',
+        '-b:a', '128k',
+        '-movflags', '+faststart',
+        '-avoid_negative_ts', 'make_zero',
+        outputPath,
+      ];
+    } else {
+      // fMP4 → standard MP4: remux (no re-encoding, very fast)
+      // -c copy: copy codecs without re-encoding
+      // -movflags +faststart: moov atom at beginning
+      ffmpegArgs = [
+        '-y',
+        '-i', inputPathWithExt,
+        '-c', 'copy',
+        '-movflags', '+faststart',
+        '-avoid_negative_ts', 'make_zero',
+        outputPath,
+      ];
+    }
+
     try {
-      const ffmpegStatic: string = require('ffmpeg-static');
-      if (ffmpegStatic) {
-        await access(ffmpegStatic, fsConstants.X_OK);
-        ffmpegPath = ffmpegStatic;
-      }
-    } catch { /* fall through */ }
-
-    // 2. @ffmpeg-installer/ffmpeg bundled binary
-    if (!ffmpegPath) {
-      try {
-        const installer = require('@ffmpeg-installer/ffmpeg');
-        if (installer?.path) {
-          await access(installer.path, fsConstants.X_OK);
-          ffmpegPath = installer.path;
-        }
-      } catch { /* fall through */ }
-    }
-
-    // 3. System PATH ffmpeg (works on local dev, not Vercel)
-    if (!ffmpegPath) {
-      try {
-        const { execFile: ef } = await import('child_process');
-        const { promisify } = await import('util');
-        const efAsync = promisify(ef);
-        const { stdout } = await efAsync('which', ['ffmpeg']);
-        const sysPath = stdout.trim();
-        if (sysPath) {
-          await access(sysPath, fsConstants.X_OK);
-          ffmpegPath = sysPath;
-        }
-      } catch { /* fall through */ }
-    }
-
-    if (!ffmpegPath) {
-      // No ffmpeg available — return the original file as-is
-      const originalData = await readFile(inputPath);
-      return new NextResponse(originalData, {
-        status: 200,
-        headers: {
-          'Content-Type': 'video/mp4',
-          'Content-Disposition': 'attachment; filename="clip.mp4"',
-        },
+      await execFileAsync(ffmpegPath, ffmpegArgs, {
+        maxBuffer: 50 * 1024 * 1024,
+        timeout: 45_000,
+        env: { ...process.env, LANG: 'C' },
       });
+    } catch (execErr: any) {
+      const stderr = execErr?.stderr || '';
+      const stdout = execErr?.stdout || '';
+      throw new Error(`ffmpeg exec failed: ${execErr?.message?.slice(0, 200)} || STDERR: ${String(stderr).slice(0, 1000)} || STDOUT: ${String(stdout).slice(0, 200)}`);
     }
-
-    const { execFile } = await import('child_process');
-    const { promisify } = await import('util');
-    const execFileAsync = promisify(execFile);
-
-    // Remux fMP4 to standard MP4 (-c copy = no re-encoding, +faststart = moov at beginning)
-    await execFileAsync(ffmpegPath, [
-      '-y',
-      '-i', inputPath,
-      '-c', 'copy',
-      '-movflags', '+faststart',
-      outputPath,
-    ], {
-      maxBuffer: 50 * 1024 * 1024,
-      timeout: 30_000,
-    });
 
     const outputData = await readFile(outputPath);
 
     if (outputData.length < 1000) {
       throw new Error(`Remuxed file too small: ${outputData.length} bytes`);
     }
+
+    console.log(`[remux-mp4] Success: ${outputData.length} bytes (${isWebm ? 'transcoded' : 'remuxed'})`);
 
     return new NextResponse(outputData, {
       status: 200,
@@ -134,14 +142,51 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    console.error('[remux-mp4] Error:', msg);
+    console.error('[remux-mp4] Error:', msg.slice(0, 1000));
     return NextResponse.json(
-      { error: `Remux failed: ${msg.slice(0, 200)}` },
+      { error: `Remux failed: ${msg.slice(0, 2000)}` },
       { status: 500 },
     );
   } finally {
-    // Cleanup temp files
+    // Cleanup temp files (both with and without extension)
     await unlink(inputPath).catch(() => {});
+    await unlink(`${inputPath}.mp4`).catch(() => {});
+    await unlink(`${inputPath}.webm`).catch(() => {});
     await unlink(outputPath).catch(() => {});
   }
+}
+
+/**
+ * Find ffmpeg binary path using the same multi-level fallback as cut-clip.
+ */
+async function findFfmpegBinary(): Promise<string> {
+  // 1. ffmpeg-static binary
+  try {
+    const ffmpegStatic: string = require('ffmpeg-static');
+    if (ffmpegStatic) {
+      await access(ffmpegStatic, fsConstants.X_OK);
+      return ffmpegStatic;
+    }
+  } catch { /* fall through */ }
+
+  // 2. @ffmpeg-installer/ffmpeg bundled binary
+  try {
+    const installer = require('@ffmpeg-installer/ffmpeg');
+    if (installer?.path) {
+      await access(installer.path, fsConstants.X_OK);
+      return installer.path;
+    }
+  } catch { /* fall through */ }
+
+  // 3. System PATH ffmpeg (works on local dev, not Vercel)
+  try {
+    const { stdout } = await execFileAsync('which', ['ffmpeg']);
+    const sysPath = stdout.trim();
+    if (sysPath) {
+      await access(sysPath, fsConstants.X_OK);
+      return sysPath;
+    }
+  } catch { /* fall through */ }
+
+  return '';
 }
