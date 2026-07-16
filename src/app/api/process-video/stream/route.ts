@@ -10,7 +10,7 @@ function sendMessage(controller: ReadableStreamDefaultController, data: object) 
 }
 
 export async function POST(request: NextRequest) {
-  const { videoUrl, userId, sourceType, videoFile, aiConfig } = await request.json();
+  const { videoUrl, userId, sourceType, videoFile, aiConfig, locale } = await request.json();
 
   if (!videoUrl && !videoFile) {
     return new Response(JSON.stringify({ error: 'Missing video URL or file' }), {
@@ -112,6 +112,43 @@ export async function POST(request: NextRequest) {
         
         // Build the analysis prompt
         const targetHighlights = Math.max(3, Math.min(10, Math.round(videoDuration / 90)));
+        // Determine the language for AI output based on user's locale.
+        // Falls back to English if locale is missing or unrecognized.
+        const localeNames: Record<string, string> = {
+          en: 'English',
+          zh: 'Simplified Chinese (简体中文)',
+          'zh-Hant': 'Traditional Chinese (繁體中文)',
+          ja: 'Japanese (日本語)',
+          ko: 'Korean (한국어)',
+          de: 'German (Deutsch)',
+          fr: 'French (Français)',
+          it: 'Italian (Italiano)',
+          es: 'Spanish (Español)',
+          pt: 'Portuguese (Português)',
+          hi: 'Hindi (हिन्दी)',
+          ar: 'Arabic (العربية)',
+          bn: 'Bengali (বাংলা)',
+          id: 'Indonesian (Bahasa Indonesia)',
+          ms: 'Malay (Bahasa Melayu)',
+          th: 'Thai (ไทย)',
+          he: 'Hebrew (עברית)',
+          ru: 'Russian (Русский)',
+          ur: 'Urdu (اردو)',
+          tr: 'Turkish (Türkçe)',
+          vi: 'Vietnamese (Tiếng Việt)',
+          fa: 'Persian (فارسی)',
+          mr: 'Marathi (मराठी)',
+          ta: 'Tamil (தமிழ்)',
+          pl: 'Polish (Polski)',
+          te: 'Telugu (తెలుగు)',
+          ne: 'Nepali (नेपाली)',
+          da: 'Danish (Dansk)',
+          fi: 'Finnish (Suomi)',
+          nl: 'Dutch (Nederlands)',
+          no: 'Norwegian (Norsk)',
+          sv: 'Swedish (Svenska)',
+        };
+        const outputLangName = (typeof locale === 'string' && localeNames[locale]) || 'English';
         const analysisPrompt = `You are an expert video content analyst. Analyze this video and identify the ${targetHighlights} most engaging highlights that would make great 30-60 second short video clips.
 
 Video Information:
@@ -136,6 +173,11 @@ Guidelines:
 - Avoid overlapping segments
 - Prefer moments that work as standalone clips
 
+LANGUAGE REQUIREMENT (CRITICAL):
+- ALL output text (titles and summaries) MUST be written in ${outputLangName}.
+- Do NOT use any other language regardless of the video's spoken language.
+- The title and summary language must match the user's system language.
+
 Respond with ONLY valid JSON in this exact format:
 {
   "highlights": [
@@ -159,7 +201,7 @@ Respond with ONLY valid JSON in this exact format:
 
         try {
           const llmResponse = await llmClient.invoke([
-            { role: 'system', content: 'You are an expert video content analyst. Always respond with valid JSON only, no markdown formatting.' },
+            { role: 'system', content: `You are an expert video content analyst. Always respond with valid JSON only, no markdown formatting. CRITICAL: All titles and summaries MUST be written in ${outputLangName}.` },
             { role: 'user', content: analysisPrompt },
           ], {
             model: llmModel,

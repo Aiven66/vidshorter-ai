@@ -532,7 +532,7 @@ async function regenerateThumbnailClips(params: {
 }
 
 export default function VideoProcessor() {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const { user, accessToken } = useAuth();
   const { balance, refreshCredits, deductCredits } = useCredits();
 
@@ -985,6 +985,7 @@ export default function VideoProcessor() {
         sourceType: selectedFile ? 'upload' : 'url',
         aiConfig: getAdminAiConfig(),
         quality,
+        locale,
         ...(preResolvedStreamUrl ? { streamUrl: preResolvedStreamUrl } : {}),
         ...(preResolvedMetadata ? { streamMetadata: preResolvedMetadata } : {}),
       });
@@ -1005,6 +1006,7 @@ export default function VideoProcessor() {
           jobId,
           videoId,
           quality,
+          locale,
           // Continue passing the pre-resolved stream URL for subsequent batches
           // (same video, same streamUrl is still valid for several minutes).
           ...(preResolvedStreamUrl ? { streamUrl: preResolvedStreamUrl } : {}),

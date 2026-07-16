@@ -46,6 +46,7 @@ interface ProcessVideoRequest {
     client?: string;
     audioUrl?: string;
   };
+  locale?: string;
 }
 
 interface Highlight {

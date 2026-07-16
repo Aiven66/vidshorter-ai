@@ -816,7 +816,7 @@ async function downloadAndCutOnServer(params: {
         duration: clipDuration,
         endTime: params.endTime,
       }),
-      signal: AbortSignal.timeout(110_000), // 110s — server downloads + cuts
+      signal: AbortSignal.timeout(90_000), // 90s — server downloads (80MB cap, ~40s) + cuts (~5s)
     });
 
     if (!res.ok) {

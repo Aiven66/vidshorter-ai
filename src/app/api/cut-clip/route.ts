@@ -7,7 +7,7 @@ import { promisify } from 'util';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+export const maxDuration = 60; // Vercel default; server downloads + cuts in ~50s
 
 const execFileAsync = promisify(execFile);
 
@@ -161,16 +161,28 @@ export async function POST(request: NextRequest) {
     console.log(`[cut-clip] Content-Length: ${contentLength} bytes`);
 
     // Estimate bytes needed: (startTime + duration + 30s buffer) * bytesPerSec
-    // bytesPerSec is hard to know without the video duration. Use a conservative
-    // estimate based on 360p muxed (~55 KB/s).
-    // To be safe, download up to min(contentLength, 150MB).
-    const maxDownloadBytes = Math.min(contentLength, 150 * 1024 * 1024);
+    // For 360p muxed streams, bytesPerSec is typically ~55 KB/s.
+    // To avoid downloading the entire video (which can be 400MB+ for long videos),
+    // we cap at a reasonable upper bound. The CF Worker /stream is rate-limited
+    // (2MB per Range request), so downloading 80MB already takes ~40s.
+    //
+    // Cap at 80MB to keep Vercel function runtime under 60s.
+    // For clips beyond ~170s into the video (80MB / 470KB/s), the server-side
+    // download may not include the clip's keyframe — but ffmpeg can still seek
+    // within the downloaded portion if startTime is within range.
+    //
+    // If the clip is beyond the downloaded range, ffmpeg will fail with
+    // "channel X not found in input" → falls back to captureStream + remux
+    // (browser-side path in downloadClipViaBrowser).
+    const maxDownloadBytes = Math.min(contentLength, 80 * 1024 * 1024);
 
     // Download in 2MB chunks (googlevideo.com per-request limit on CF Worker)
     const chunks: Buffer[] = [];
     let downloaded = 0;
     const MAX_CHUNK = 2 * 1024 * 1024;
     const totalChunks = Math.ceil(maxDownloadBytes / MAX_CHUNK);
+
+    console.log(`[cut-clip] Will download ${totalChunks} chunks (${(maxDownloadBytes / 1024 / 1024).toFixed(1)}MB)`);
 
     for (let i = 0; i < totalChunks; i++) {
       const chunkStart = i * MAX_CHUNK;
