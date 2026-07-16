@@ -22,6 +22,7 @@ import Link from 'next/link';
 import { isSupabaseConfigured } from '@/storage/database/supabase-client';
 import {
   downloadYouTubeClip,
+  downloadClipViaBrowser,
   extractYouTubeVideoId,
 } from '@/lib/youtube-clip-download';
 
@@ -238,40 +239,61 @@ function ClipPlayerDialog({
   const ytInfo = useYouTubeEmbed && clip.linkOnlyUrl ? parseYouTubeLink(clip.linkOnlyUrl) : null;
   const embedUrl = ytInfo ? buildYouTubeEmbedUrl(ytInfo.videoId, clip.startTime, clip.endTime) : '';
 
-  // On-demand download for link_only clips.
-  // Strategy: use shared browser-based download utility that goes through
-  // CF Worker /resolve (get streamUrl) + /stream (fast path with streamUrl param)
-  // + captureStream/MediaRecorder (record clip from video element).
-  // Falls back to direct full-video stream download if recording fails.
-  // This is the same approach used in video-processor.tsx handleDownload.
-  const handleLinkOnlyDownload = async () => {
-    if (!clip.linkOnlyUrl) return;
+  // On-demand download for ALL YouTube clips (v50).
+  // Strategy: use downloadClipViaBrowser which routes through /api/cut-clip
+  // (server-side ffmpeg cut) to produce a standard progressive MP4 that
+  // plays in ALL desktop players (QuickTime, VLC, Windows Media Player).
+  //
+  // v50 fix: previously, completed clips with videoUrl were downloaded directly,
+  // but that videoUrl could be fMP4 (from MediaRecorder) or webm — unplayable
+  // in desktop players. Now ALL YouTube clips go through server-side ffmpeg.
+  const handleDownload = async () => {
     const ytVideoId = extractYouTubeVideoId(clip.linkOnlyUrl);
     if (!ytVideoId) {
-      window.open(clip.linkOnlyUrl, '_blank');
+      if (clip.linkOnlyUrl) window.open(clip.linkOnlyUrl, '_blank');
       return;
     }
     setDownloading(true);
-    setDownloadProgress('Resolving YouTube stream...');
+    setDownloadProgress('Preparing download (server-side ffmpeg cut)...');
+    let success = false;
     try {
-      await downloadYouTubeClip({
+      await downloadClipViaBrowser({
         videoId: ytVideoId,
         startTime: clip.startTime,
         endTime: clip.endTime,
         title: clip.title,
         onProgress: (msg) => setDownloadProgress(msg),
       });
+      success = true;
     } catch (e) {
-      const errMsg = e instanceof Error ? e.message : String(e);
-      console.warn('[Dashboard Download] Server clip failed:', errMsg);
-      // Fallback: open YouTube embed with start/end times
+      console.warn('[Dashboard Download] Server cut failed:', e instanceof Error ? e.message : e);
+    }
+
+    // Fallback 1: downloadYouTubeClip (alternative server path)
+    if (!success) {
+      setDownloadProgress('Trying alternative server path...');
+      try {
+        await downloadYouTubeClip({
+          videoId: ytVideoId,
+          startTime: clip.startTime,
+          endTime: clip.endTime,
+          title: clip.title,
+          onProgress: (msg) => setDownloadProgress(msg),
+        });
+        success = true;
+      } catch (e2) {
+        console.warn('[Dashboard Download] Fallback failed:', e2 instanceof Error ? e2.message : e2);
+      }
+    }
+
+    // Fallback 2: open YouTube embed
+    if (!success) {
       setDownloadProgress('Opening highlight on YouTube...');
       const embedUrl = `https://www.youtube.com/embed/${ytVideoId}?start=${Math.floor(clip.startTime)}&end=${Math.floor(clip.endTime)}&autoplay=1`;
       window.open(embedUrl, '_blank');
-    } finally {
-      setDownloading(false);
-      setTimeout(() => setDownloadProgress(null), 1500);
     }
+    setDownloading(false);
+    setTimeout(() => setDownloadProgress(null), 1500);
   };
 
   return (
@@ -324,27 +346,37 @@ function ClipPlayerDialog({
                 </a>
               </Button>
             )}
-            {downloadUrl && (
-              <Button size="sm" variant="outline" asChild>
-                <a href={downloadUrl} download={`${clip.title}.mp4`}>
-                  <Download className="h-4 w-4 mr-1" />{t('video.download')}
-                </a>
-              </Button>
-            )}
-            {!downloadUrl && useYouTubeEmbed && clip.linkOnlyUrl && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={handleLinkOnlyDownload}
-                disabled={downloading}
-              >
-                {downloading ? (
-                  <><Loader2 className="h-4 w-4 mr-1 animate-pulse" />{downloadProgress || t('common.saving')}</>
-                ) : (
-                  <><Download className="h-4 w-4 mr-1" />{t('video.download')}</>
-                )}
-              </Button>
-            )}
+            {/* v50: YouTube clips always go through server-side ffmpeg cut */}
+            {(() => {
+              const ytId = extractYouTubeVideoId(clip.linkOnlyUrl);
+              if (ytId) {
+                return (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleDownload}
+                    disabled={downloading}
+                  >
+                    {downloading ? (
+                      <><Loader2 className="h-4 w-4 mr-1 animate-pulse" />{downloadProgress || t('common.saving')}</>
+                    ) : (
+                      <><Download className="h-4 w-4 mr-1" />{t('video.download')}</>
+                    )}
+                  </Button>
+                );
+              }
+              // Non-YouTube clip — direct download
+              if (downloadUrl) {
+                return (
+                  <Button size="sm" variant="outline" asChild>
+                    <a href={downloadUrl} download={`${clip.title}.mp4`}>
+                      <Download className="h-4 w-4 mr-1" />{t('video.download')}
+                    </a>
+                  </Button>
+                );
+              }
+              return null;
+            })()}
           </div>
         </div>
       </DialogContent>

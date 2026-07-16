@@ -1084,30 +1084,35 @@ export default function VideoProcessor() {
       },
     });
 
-    // link_only / fallback clips: download via browser-side clip capture.
+    // === v50 unified download path ===
     //
-    // FLOW (v37 — browser-side primary, server-side fallback):
-    //   1. downloadClipViaBrowser: resolve stream → download bytes → captureVideoClip
-    //      Entirely browser-side, no server involvement. Reliable because:
-    //      - Browser's CF Worker colo is healthy (not rate-limited)
-    //      - Blob URL allows local seeking (no HTTP Range failures)
-    //      - Muxed stream ensures audio is present
-    //   2. If browser-side fails: downloadYouTubeClip (server-side ffmpeg)
-    //      May work when captureStream is not supported or download fails.
-    //   3. If server also fails: open YouTube embed with start/end times
-    //      (user can watch the exact highlight segment on YouTube)
-    if (clip.status === 'link_only' || (clip.isFallback === true && !clip.videoUrl)) {
-      const ytVideoId = extractYouTubeVideoId(clip.linkOnlyUrl);
-      if (!ytVideoId) {
-        if (clip.linkOnlyUrl) window.open(clip.linkOnlyUrl, '_blank');
-        return;
-      }
+    // PROBLEM (v49 and earlier):
+    //   - link_only / fallback clips → downloadClipViaBrowser (server-side ffmpeg cut)
+    //     → standard progressive MP4 ✅ playable
+    //   - completed clips with videoUrl → directly download clip.videoUrl
+    //     → this videoUrl may be fMP4 (from captureVideoClip/MediaRecorder)
+    //       or webm → NOT playable in QuickTime/WMP ❌
+    //
+    // SOLUTION (v50):
+    //   For ALL YouTube-sourced clips (linkOnlyUrl contains youtube.com),
+    //   route through downloadClipViaBrowser which uses server-side ffmpeg
+    //   to produce a standard progressive MP4. This guarantees playability
+    //   regardless of how the clip was originally generated.
+    //
+    //   For uploaded local videos (no YouTube link), clip.videoUrl points
+    //   to a real MP4 file in Supabase storage → direct download is fine.
+
+    const ytVideoId = extractYouTubeVideoId(clip.linkOnlyUrl);
+    const isYouTubeClip = !!ytVideoId;
+
+    if (isYouTubeClip) {
+      // YouTube clip — always use server-side ffmpeg cut for guaranteed playability
       setDownloadingId(clip.id);
-      setDownloadProgress('Preparing download...');
+      setDownloadProgress('Preparing download (server-side ffmpeg cut)...');
       let browserSuccess = false;
       try {
         await downloadClipViaBrowser({
-          videoId: ytVideoId,
+          videoId: ytVideoId!,
           startTime: clip.startTime,
           endTime: clip.endTime,
           title: clip.title,
@@ -1116,15 +1121,15 @@ export default function VideoProcessor() {
         browserSuccess = true;
       } catch (browserErr) {
         const errMsg = browserErr instanceof Error ? browserErr.message : String(browserErr);
-        console.warn('[Download] Browser-side clip failed:', errMsg);
+        console.warn('[Download] Server-side cut failed:', errMsg);
         setDownloadProgress('Trying server-side fallback...');
       }
 
-      // Fallback 1: server-side ffmpeg
+      // Fallback 1: downloadYouTubeClip (alternative server path)
       if (!browserSuccess) {
         try {
           await downloadYouTubeClip({
-            videoId: ytVideoId,
+            videoId: ytVideoId!,
             startTime: clip.startTime,
             endTime: clip.endTime,
             title: clip.title,
@@ -1133,11 +1138,50 @@ export default function VideoProcessor() {
           browserSuccess = true;
         } catch (serverErr) {
           const errMsg = serverErr instanceof Error ? serverErr.message : String(serverErr);
-          console.warn('[Download] Server-side clip failed:', errMsg);
+          console.warn('[Download] Server-side fallback failed:', errMsg);
         }
       }
 
-      // Fallback 2: YouTube embed (last resort — watch on YouTube)
+      // Fallback 2: If clip has a videoUrl, try remuxing it to standard MP4
+      if (!browserSuccess && clip.videoUrl) {
+        setDownloadProgress('Converting existing clip to standard MP4...');
+        try {
+          const url = proxyUrl(clip, false);
+          const res = await fetch(url);
+          if (res.ok) {
+            const existingBlob = await res.blob();
+            if (existingBlob.size > 5000) {
+              const formData = new FormData();
+              const ext = existingBlob.type.includes('mp4') ? 'mp4' : 'webm';
+              formData.append('file', existingBlob, `clip.${ext}`);
+              const remuxRes = await fetch('/api/remux-mp4', {
+                method: 'POST',
+                body: formData,
+                signal: AbortSignal.timeout(55_000),
+              });
+              if (remuxRes.ok) {
+                const remuxedBuf = await remuxRes.arrayBuffer();
+                if (remuxedBuf.byteLength > 5000) {
+                  const finalBlob = new Blob([remuxedBuf], { type: 'video/mp4' });
+                  const safeName = clip.title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50) || 'clip';
+                  const dlA = document.createElement('a');
+                  dlA.href = URL.createObjectURL(finalBlob);
+                  dlA.download = `${safeName}.mp4`;
+                  document.body.appendChild(dlA);
+                  dlA.click();
+                  dlA.remove();
+                  setTimeout(() => URL.revokeObjectURL(dlA.href), 5000);
+                  browserSuccess = true;
+                }
+              }
+            }
+          }
+        } catch (remuxErr) {
+          console.warn('[Download] Remux fallback failed:', remuxErr instanceof Error ? remuxErr.message : remuxErr);
+        }
+      }
+
+      // Fallback 3: YouTube embed (last resort — watch on YouTube)
       if (!browserSuccess) {
         setDownloadProgress('Opening highlight on YouTube...');
         const embedUrl = `https://www.youtube.com/embed/${ytVideoId}?start=${Math.floor(clip.startTime)}&end=${Math.floor(clip.endTime)}&autoplay=1`;
@@ -1148,6 +1192,7 @@ export default function VideoProcessor() {
       return;
     }
 
+    // Non-YouTube clip (uploaded local video) — direct download
     if (!clip.videoUrl) return;
     setDownloadingId(clip.id);
     try {
