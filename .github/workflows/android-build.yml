@@ -27,6 +27,7 @@ on:
 
 permissions:
   contents: write   # required to create GitHub Releases & upload assets
+  issues: write     # required to open issues with build failure logs
 
 jobs:
   build:
@@ -118,6 +119,42 @@ jobs:
           git add build.log
           git commit -m "build: capture failed build log from run ${{ github.run_id }}"
           git push origin build-debug --force
+
+      - name: Open issue with build failure log
+        if: failure()
+        working-directory: apps/android-agent
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ ! -f build.log ]; then
+            echo "No build.log file found, skipping"
+            exit 0
+          fi
+          # Build issue body with build log content (truncate to ~60000 chars for GitHub limit)
+          LOG_CONTENT=$(tail -n 200 build.log | head -c 60000)
+          cat > /tmp/issue-body.md <<EOF
+          ## Android Build Failure — Run ${{ github.run_id }}
+
+          Commit: ${{ github.sha }}
+          Workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          Branch: ${{ github.ref_name }}
+
+          ### Build Log (last 200 lines)
+
+          \`\`\`
+          ${LOG_CONTENT}
+          \`\`\`
+
+          ---
+          *Auto-created by GitHub Actions workflow on build failure.*
+          EOF
+          gh issue create \
+            --title "Android build failure: $(date -u +'%Y-%m-%d %H:%M UTC') — run ${{ github.run_id }}" \
+            --body-file /tmp/issue-body.md \
+            --label "build-failure,android" || \
+          gh issue create \
+            --title "Android build failure: $(date -u +'%Y-%m-%d %H:%M UTC') — run ${{ github.run_id }}" \
+            --body-file /tmp/issue-body.md
 
       - name: Upload build log as artifact on failure
         if: failure()
