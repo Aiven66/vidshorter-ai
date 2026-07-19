@@ -9,7 +9,7 @@ android {
 
     defaultConfig {
         applicationId = "com.clipop.agent"
-        minSdk = 24
+        minSdk = 26
         targetSdk = 34
         versionCode = 930
         versionName = "0.9.30"
@@ -67,7 +67,7 @@ android {
         jvmTarget = "17"
     }
     buildFeatures {
-        viewBinding = true
+        viewBinding = false
         buildConfig = true
     }
     packaging {
