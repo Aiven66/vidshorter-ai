@@ -130,31 +130,52 @@ jobs:
             echo "No build.log file found, skipping"
             exit 0
           fi
-          # Build issue body with build log content (truncate to ~60000 chars for GitHub limit)
-          LOG_CONTENT=$(tail -n 200 build.log | head -c 60000)
-          cat > /tmp/issue-body.md <<EOF
-          ## Android Build Failure — Run ${{ github.run_id }}
-
-          Commit: ${{ github.sha }}
-          Workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          Branch: ${{ github.ref_name }}
-
-          ### Build Log (last 200 lines)
-
-          \`\`\`
-          ${LOG_CONTENT}
-          \`\`\`
-
-          ---
-          *Auto-created by GitHub Actions workflow on build failure.*
-          EOF
+          # Extract the most useful parts of the build log:
+          # 1. Lines starting with "e: " (Kotlin compile errors)
+          # 2. Lines around "FAILURE:" / "What went wrong:"
+          # 3. The first 100 lines (configuration / dependency resolution)
+          # 4. The last 100 lines (stack trace + summary)
+          {
+            echo "### Kotlin compile errors (e: file://)"
+            echo ""
+            echo '```'"
+            grep -E '^e: |^w: ' build.log | head -200 || echo "(no compile errors found)"
+            echo '```'
+            echo ""
+            echo "### Around FAILURE / What went wrong"
+            echo ""
+            echo '```'"
+            grep -B 2 -A 50 'FAILURE:\|What went wrong' build.log | head -200 || echo "(no FAILURE section found)"
+            echo '```'
+            echo ""
+            echo "### First 100 lines of build log"
+            echo ""
+            echo '```'"
+            head -n 100 build.log
+            echo '```'
+            echo ""
+            echo "### Last 80 lines of build log"
+            echo ""
+            echo '```'"
+            tail -n 80 build.log
+            echo '```'
+          } > /tmp/issue-body.md
+          # Prepend header
+          {
+            echo "## Android Build Failure — Run ${{ github.run_id }}"
+            echo ""
+            echo "Commit: ${{ github.sha }}"
+            echo "Workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo "Branch: ${{ github.ref_name }}"
+            echo ""
+            cat /tmp/issue-body.md
+            echo ""
+            echo "---"
+            echo "*Auto-created by GitHub Actions workflow on build failure.*"
+          } > /tmp/issue-body-final.md
           gh issue create \
             --title "Android build failure: $(date -u +'%Y-%m-%d %H:%M UTC') — run ${{ github.run_id }}" \
-            --body-file /tmp/issue-body.md \
-            --label "build-failure,android" || \
-          gh issue create \
-            --title "Android build failure: $(date -u +'%Y-%m-%d %H:%M UTC') — run ${{ github.run_id }}" \
-            --body-file /tmp/issue-body.md
+            --body-file /tmp/issue-body-final.md
 
       - name: Upload build log as artifact on failure
         if: failure()
