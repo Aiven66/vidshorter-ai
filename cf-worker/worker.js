@@ -351,16 +351,25 @@ export default {
         // fetch it directly — skips tryClient (60s+ InnerTube call) entirely.
         // This avoids cold-cache latency when /stream and /resolve route to
         // different Cloudflare colos (caches.default is per-colo, not global).
+        //
+        // audioUrl param: when /resolve returned adaptiveFormats (video-only +
+        // separate audio), the caller passes audio=1 AND audioUrl=<url> to
+        // fetch the AUDIO stream instead of video. doFetch() checks wantAudio
+        // and uses resolved.audioUrl when set — so we put audioUrl into the
+        // direct resolved object. Without this, /api/cut-clip cannot download
+        // audio (doFetch falls back to streamUrl which is video-only).
         const errors = [];
         const directStreamUrl = url.searchParams.get('streamUrl');
-        if (directStreamUrl) {
+        const directAudioUrl = url.searchParams.get('audioUrl');
+        if (directStreamUrl || (wantAudio && directAudioUrl)) {
           const directResolved = {
-            streamUrl: directStreamUrl,
+            streamUrl: directStreamUrl || directAudioUrl,
             userAgent: url.searchParams.get('userAgent') || '',
             visitorData: url.searchParams.get('visitorData') || '',
             xClientName: url.searchParams.get('xClientName') || '1',
             clientVersion: url.searchParams.get('clientVersion') || '2.20240101.00.00',
             client: url.searchParams.get('clientName') || 'direct',
+            ...(directAudioUrl ? { audioUrl: directAudioUrl } : {}),
           };
           const upstream = await doFetch(directResolved);
           if (upstream.status === 200 || upstream.status === 206) {
@@ -581,11 +590,17 @@ export default {
     const resolveWantMuxed = url.searchParams.get('muxed') === '1';
 
     for (const h of heights) {
-      const cached = await cacheGetResolved(videoId, h);
+      // Pass resolveWantMuxed so cache key matches (muxed vs non-muxed are cached separately).
+      // Previous bug: cacheGetResolved was called without wantMuxed, causing /resolve?muxed=1
+      // to hit cache entries from prior /resolve (no muxed) calls — which were video-only + audioUrl.
+      const cached = await cacheGetResolved(videoId, h, false, resolveWantMuxed);
       if (cached?.streamUrl) {
-        // When caller explicitly wants muxed but cached entry is video-only without audio,
-        // skip cache and re-resolve so we can return a muxed stream.
-        const cachedMuxed = !!(cached.audioUrl || (cached.quality || '').includes('muxed'));
+        // CRITICAL FIX: cachedMuxed must ONLY be true when the cached entry is a SINGLE
+        // combined video+audio stream. A cache entry with audioUrl is NOT muxed — it's
+        // a video-only stream + separate audio URL. Returning such an entry when the
+        // caller explicitly wants muxed causes the "no audio" bug (server only downloads
+        // the video-only streamUrl, ignoring audioUrl).
+        const cachedMuxed = (cached.quality || '').includes('muxed') || !cached.audioUrl;
         if (!resolveWantMuxed || cachedMuxed) {
           return json({
             title: cached.title || 'YouTube Video',
@@ -598,8 +613,7 @@ export default {
             clientVersion: cached.clientVersion,
             client: cached.client || 'cached',
             // Preserve audioUrl from cache (HD video-only + separate audio path).
-            // Previously this was dropped on cache hit, causing Vercel to receive
-            // a video-only stream without audio and ffmpeg to fail.
+            // Server (/api/cut-clip) will download both and merge with ffmpeg.
             ...(cached.audioUrl ? { audioUrl: cached.audioUrl } : {}),
           });
         }
@@ -609,7 +623,7 @@ export default {
         try {
           const result = await tryClient(videoId, client, h, cookieHeader, resolveWantMuxed);
           if (result) {
-            await cachePutResolved(videoId, h, { ...result, client: client.name });
+            await cachePutResolved(videoId, h, { ...result, client: client.name }, resolveWantMuxed);
             return json({ ...result, client: client.name, colo: request.cf?.colo || '?' });
           }
           errors.push(`${client.name}@${h}: no stream URL`);
@@ -632,7 +646,7 @@ export default {
           clientVersion: '2.20240101.00.00',
           client: 'cobalt',
         };
-        await cachePutResolved(videoId, h, result);
+        await cachePutResolved(videoId, h, result, resolveWantMuxed);
         return json(result);
       } catch (e) {
         const msg = (e instanceof Error ? e.message : String(e)).slice(0, 150);
@@ -644,9 +658,10 @@ export default {
     // Reached when ALL tryClient + cobalt attempts fail across ALL heights.
     // Invidious/Piped return googlevideo.com direct URLs that CF Workers can
     // fetch directly (CF IPs are not blocked by googlevideo.com).
+    // Pass resolveWantMuxed so they prefer combined (muxed) formats when requested.
     for (const fallback of [
-      { name: 'Invidious', fn: () => getYouTubeStreamViaInvidious(videoId, requestedMaxHeight) },
-      { name: 'Piped', fn: () => getYouTubeStreamViaPiped(videoId, requestedMaxHeight) },
+      { name: 'Invidious', fn: () => getYouTubeStreamViaInvidious(videoId, requestedMaxHeight, resolveWantMuxed) },
+      { name: 'Piped', fn: () => getYouTubeStreamViaPiped(videoId, requestedMaxHeight, resolveWantMuxed) },
     ]) {
       try {
         const result = await fallback.fn();
@@ -662,7 +677,7 @@ export default {
           client: result.source,
           ...(result.audioUrl ? { audioUrl: result.audioUrl } : {}),
         };
-        await cachePutResolved(videoId, requestedMaxHeight, resolved);
+        await cachePutResolved(videoId, requestedMaxHeight, resolved, resolveWantMuxed);
         return json({ ...resolved, colo: request.cf?.colo || '?' });
       } catch (e) {
         const msg = (e instanceof Error ? e.message : String(e)).slice(0, 150);
@@ -1215,9 +1230,11 @@ async function getYouTubeStreamViaCobalt(videoId, maxHeight) {
 // Invidious fallback — returns googlevideo.com direct URLs.
 // CF Workers can fetch these directly (CF IPs are not blocked by googlevideo.com).
 // Used when InnerTube API (tryClient) is rate-limited on the current colo.
-// Prefers adaptiveFormats (video-only + audio) for HD quality, since
-// formatStreams (combined/muxed) typically max out at 360p (itag 18).
-async function getYouTubeStreamViaInvidious(videoId, maxHeight) {
+// When wantMuxed=true, prefers formatStreams (combined video+audio) over
+// adaptiveFormats (video-only + audio) — needed because /api/cut-clip may not
+// fetch audioUrl separately. When wantMuxed=false, prefers adaptiveFormats
+// for HD quality (formatStreams typically max out at 360p, itag 18).
+async function getYouTubeStreamViaInvidious(videoId, maxHeight, wantMuxed = false) {
   const maxH = Math.min(parseInt(String(maxHeight || 720), 10) || 720, 1080);
   let lastError = 'no instances tried';
   for (const instance of INVIDIOUS_INSTANCES) {
@@ -1231,6 +1248,23 @@ async function getYouTubeStreamViaInvidious(videoId, maxHeight) {
       if (!data?.formatStreams?.length && !data?.adaptiveFormats?.length) {
         lastError = `${instance}: no streams`;
         continue;
+      }
+
+      // combined (muxed) streams — formatStreams (typically 360p, itag 18)
+      const combined = (data.formatStreams || [])
+        .filter((s) => s?.url && s?.type?.includes('video/mp4'))
+        .map((s) => {
+          const m = /(\d+)p/.exec(s.qualityLabel || s.resolution || '');
+          return { url: s.url, h: m ? parseInt(m[1], 10) : 0 };
+        })
+        .filter((s) => s.h > 0 && s.h <= maxH)
+        .sort((a, b) => b.h - a.h);
+
+      // When wantMuxed=true, return combined stream (single URL with both
+      // video+audio). This is critical for /api/cut-clip which doesn't fetch
+      // audioUrl separately — without this, downloads have no audio.
+      if (wantMuxed && combined.length > 0) {
+        return { url: combined[0].url, audioUrl: null, quality: `${combined[0].h}p (muxed)`, source: 'invidious' };
       }
 
       // adaptiveFormats — pick best video-only mp4 under maxH + best audio mp4
@@ -1255,15 +1289,7 @@ async function getYouTubeStreamViaInvidious(videoId, maxHeight) {
         };
       }
 
-      // Fallback: combined (muxed) stream — typically 360p only
-      const combined = (data.formatStreams || [])
-        .filter((s) => s?.url && s?.type?.includes('video/mp4'))
-        .map((s) => {
-          const m = /(\d+)p/.exec(s.qualityLabel || s.resolution || '');
-          return { url: s.url, h: m ? parseInt(m[1], 10) : 0 };
-        })
-        .filter((s) => s.h > 0 && s.h <= maxH)
-        .sort((a, b) => b.h - a.h);
+      // Final fallback: combined (muxed) stream
       if (combined.length > 0) {
         return { url: combined[0].url, audioUrl: null, quality: `${combined[0].h}p`, source: 'invidious' };
       }
@@ -1277,7 +1303,9 @@ async function getYouTubeStreamViaInvidious(videoId, maxHeight) {
 
 // Piped fallback — returns googlevideo.com direct URLs (often ciphered, but
 // Piped handles deciphering server-side and returns usable URLs).
-async function getYouTubeStreamViaPiped(videoId, maxHeight) {
+// When wantMuxed=true, prefers combined streams (videoOnly === false) over
+// adaptive (video-only + separate audio) to ensure a single muxed URL.
+async function getYouTubeStreamViaPiped(videoId, maxHeight, wantMuxed = false) {
   const maxH = Math.min(parseInt(String(maxHeight || 720), 10) || 720, 1080);
   let lastError = 'no instances tried';
   for (const instance of PIPED_INSTANCES) {
@@ -1292,15 +1320,19 @@ async function getYouTubeStreamViaPiped(videoId, maxHeight) {
         lastError = `${instance}: no streams`;
         continue;
       }
-      // videoStreams: pick best video-only mp4 under maxH
-      const videoOnly = (data.videoStreams || [])
-        .filter((s) => s?.url && s?.mimeType?.includes('video/mp4') && s.videoOnly === true)
+      // combined (muxed) streams — videoOnly === false means both video+audio
+      const combined = (data.videoStreams || [])
+        .filter((s) => s?.url && s?.mimeType?.includes('video/mp4') && s.videoOnly === false)
         .map((s) => ({ url: s.url, h: parseInt(s.quality, 10) || 0 }))
         .filter((s) => s.h > 0 && s.h <= maxH)
         .sort((a, b) => b.h - a.h);
-      // combined (muxed) streams
-      const combined = (data.videoStreams || [])
-        .filter((s) => s?.url && s?.mimeType?.includes('video/mp4') && s.videoOnly === false)
+      // When wantMuxed=true, return combined stream first to ensure audio is present
+      if (wantMuxed && combined.length > 0) {
+        return { url: combined[0].url, audioUrl: null, quality: `${combined[0].h}p (muxed)`, source: 'piped' };
+      }
+      // videoStreams: pick best video-only mp4 under maxH
+      const videoOnly = (data.videoStreams || [])
+        .filter((s) => s?.url && s?.mimeType?.includes('video/mp4') && s.videoOnly === true)
         .map((s) => ({ url: s.url, h: parseInt(s.quality, 10) || 0 }))
         .filter((s) => s.h > 0 && s.h <= maxH)
         .sort((a, b) => b.h - a.h);

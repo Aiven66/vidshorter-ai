@@ -809,6 +809,11 @@ async function downloadAndCutOnServer(params: {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         streamUrl: streamMeta.streamUrl,
+        // Pass audioUrl separately so /api/cut-clip can download audio stream
+        // and merge with ffmpeg when /resolve returned adaptiveFormats (video-only
+        // + separate audio). Without this, downloads from non-muxed /resolve
+        // responses have NO audio.
+        ...(streamMeta.audioUrl ? { audioUrl: streamMeta.audioUrl } : {}),
         userAgent: streamMeta.userAgent,
         visitorData: streamMeta.visitorData,
         videoId,

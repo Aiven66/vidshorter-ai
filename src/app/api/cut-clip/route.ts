@@ -12,31 +12,27 @@ export const maxDuration = 60; // Vercel default; server downloads + cuts in ~50
 const execFileAsync = promisify(execFile);
 
 /**
- * /api/cut-clip — Server-side ffmpeg clip cutting (v48)
+ * /api/cut-clip — Server-side ffmpeg clip cutting (v51 dual-stream merge)
  *
- * APPROACH (v48 — server-side download + cut):
- *   Browser sends the resolved streamUrl + metadata. Server downloads the
- *   video bytes using Node.js fetch (modern TLS, works with Cloudflare Workers),
- *   writes to a temp file, then ffmpeg cuts [startTime, startTime+duration]
- *   from the LOCAL file → standard progressive MP4.
+ * APPROACH (v51 — supports separate audio stream):
+ *   Browser sends streamUrl + optional audioUrl + metadata. Server downloads
+ *   the video bytes (and audio bytes if audioUrl is provided) using Node.js
+ *   fetch via the CF Worker /stream proxy. ffmpeg then cuts and merges:
+ *     - No audioUrl: single input `-i video -c copy` (muxed stream — has audio)
+ *     - With audioUrl: dual input `-i video -i audio -c:v copy -c:a aac`
  *
- * WHY server-download (not browser-download):
- *   v45-v47 tried browser-download + server-cut. Issues:
- *     - Browser download from CF Worker /stream sometimes returns 403 (colo-mismatch)
- *     - Browser chunked Range requests can fail silently
- *     - 80MB download cap forced fallback to MediaRecorder (produces fMP4/webm)
- *   v48 lets the SERVER download from the streamUrl directly. Node.js fetch
- *   has modern TLS and can connect to googlevideo.com directly (the streamUrl
- *   is IP-bound to the /resolve call's IP, which is the CF Worker's IP —
- *   the server can fetch it because the IP binding is per-CF-colo, not per-client).
- *
- *   Actually, the streamUrl is bound to the CF Worker's egress IP. When the
- *   server (Vercel) tries to fetch it, googlevideo.com may reject it (IP mismatch).
- *   So we use the CF Worker /stream endpoint as a proxy — it re-fetches from
- *   googlevideo.com using its own IP (which matches the streamUrl's binding).
+ * WHY dual-stream support:
+ *   v48-v50 assumed /resolve?muxed=1 always returned a combined video+audio
+ *   stream. But YouTube InnerTube API sometimes returns video-only DASH +
+ *   separate audio (adaptiveFormats) even when muxed=1 is requested — the
+ *   IOS client may not have muxed formats for certain videos. The CF Worker
+ *   now passes audioUrl through, and /api/cut-clip must download and merge
+ *   both streams; otherwise the output MP4 has NO AUDIO.
  *
  * Input: JSON body
- *   - streamUrl: string (resolved googlevideo.com URL)
+ *   - streamUrl: string (resolved googlevideo.com URL — video or muxed)
+ *   - audioUrl?: string (separate audio stream URL, when /resolve returned
+ *                  adaptiveFormats)
  *   - userAgent: string (from /resolve response)
  *   - visitorData: string (from /resolve response)
  *   - videoId: string (YouTube video ID)
@@ -47,12 +43,14 @@ const execFileAsync = promisify(execFile);
  */
 export async function POST(request: NextRequest) {
   const inputPath = join(tmpdir(), `cut-input-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp4`);
+  const audioPath = join(tmpdir(), `cut-audio-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.m4a`);
   const outputPath = join(tmpdir(), `cut-output-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp4`);
 
   try {
     const contentType = request.headers.get('content-type') || '';
 
     let streamUrl = '';
+    let audioUrl = '';
     let userAgent = '';
     let visitorData = '';
     let videoId = '';
@@ -63,6 +61,7 @@ export async function POST(request: NextRequest) {
     if (contentType.includes('application/json')) {
       const body = await request.json();
       streamUrl = body.streamUrl || '';
+      audioUrl = body.audioUrl || '';
       userAgent = body.userAgent || '';
       visitorData = body.visitorData || '';
       videoId = body.videoId || '';
@@ -85,9 +84,10 @@ export async function POST(request: NextRequest) {
         duration = Math.min(Number(formData.get('duration')) || 30, 90);
 
         // Skip the download step — file already uploaded
-        return await cutLocalFile(inputPath, outputPath, startTime, duration);
+        return await cutLocalFile(inputPath, outputPath, startTime, duration, null);
       }
       streamUrl = String(formData.get('streamUrl') || '');
+      audioUrl = String(formData.get('audioUrl') || '');
       userAgent = String(formData.get('userAgent') || '');
       visitorData = String(formData.get('visitorData') || '');
       videoId = String(formData.get('videoId') || '');
@@ -99,7 +99,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No streamUrl provided' }, { status: 400 });
     }
 
-    console.log(`[cut-clip] v48 server-download: videoId=${videoId}, startTime=${startTime}s, duration=${duration}s`);
+    console.log(`[cut-clip] v51 server-download: videoId=${videoId}, startTime=${startTime}s, duration=${duration}s, hasAudioUrl=${!!audioUrl}`);
 
     // Build CF Worker /stream URL (acts as a proxy that re-fetches from googlevideo.com
     // using the CF Worker's IP, which matches the streamUrl's IP binding).
@@ -108,141 +108,39 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'CF_WORKER_URL not configured' }, { status: 500 });
     }
 
-    const proxyUrl = new URL(cfWorkerUrl + '/stream');
-    proxyUrl.searchParams.set('videoId', videoId);
-    proxyUrl.searchParams.set('maxHeight', '720');
-    proxyUrl.searchParams.set('muxed', '1');
-    proxyUrl.searchParams.set('streamUrl', streamUrl);
-    if (userAgent) proxyUrl.searchParams.set('userAgent', userAgent);
-    if (visitorData) proxyUrl.searchParams.set('visitorData', visitorData);
-
-    // Download the video bytes via the CF Worker /stream proxy.
-    // Node.js fetch has modern TLS and can connect to Cloudflare Workers.
-    //
-    // We download up to (startTime + duration + 30s buffer) bytes from byte 0.
-    // Without downloading from byte 0, the MP4 header (ftyp + moov) is missing
-    // and ffmpeg cannot read the file.
-    console.log(`[cut-clip] Downloading via CF Worker /stream...`);
-
-    // First HEAD to get content-length
-    const headRes = await fetch(proxyUrl.toString(), {
-      method: 'HEAD',
-      signal: AbortSignal.timeout(15_000),
-    }).catch((err) => {
-      console.warn('[cut-clip] HEAD failed:', err instanceof Error ? err.message : err);
-      return null;
-    });
-
-    let contentLength = 0;
-    if (headRes && headRes.ok) {
-      contentLength = parseInt(headRes.headers.get('content-length') || '0', 10);
-    }
-
-    // If HEAD failed or returned no content-length, fall back to a GET with Range 0-1
-    // to discover the content-length.
-    if (!contentLength) {
-      const probeRes = await fetch(proxyUrl.toString(), {
-        headers: { Range: 'bytes=0-1' },
-        signal: AbortSignal.timeout(15_000),
-      }).catch(() => null);
-      if (probeRes) {
-        const cr = probeRes.headers.get('content-range') || '';
-        const match = cr.match(/\/(\d+)/);
-        if (match) contentLength = parseInt(match[1], 10);
-      }
-    }
-
-    if (!contentLength || contentLength < 10_000) {
+    // Download video stream (streamUrl)
+    const videoBuf = await downloadStreamViaCfWorker(
+      cfWorkerUrl, videoId, streamUrl, userAgent, visitorData, /*audio*/ false, /*audioUrl*/ null,
+    );
+    if (!videoBuf || videoBuf.length < 50_000) {
       return NextResponse.json({
-        error: `Cannot determine content length (HEAD returned ${contentLength}). CF Worker /stream may be down or rate-limited.`,
+        error: `Video download failed or too small: ${videoBuf ? videoBuf.length : 0} bytes`,
       }, { status: 502 });
     }
-
-    console.log(`[cut-clip] Content-Length: ${contentLength} bytes`);
-
-    // Estimate bytes needed: (startTime + duration + 30s buffer) * bytesPerSec
-    // For 360p muxed streams, bytesPerSec is typically ~55 KB/s.
-    // To avoid downloading the entire video (which can be 400MB+ for long videos),
-    // we cap at a reasonable upper bound. The CF Worker /stream is rate-limited
-    // (2MB per Range request), so downloading 80MB already takes ~40s.
-    //
-    // Cap at 80MB to keep Vercel function runtime under 60s.
-    // For clips beyond ~170s into the video (80MB / 470KB/s), the server-side
-    // download may not include the clip's keyframe — but ffmpeg can still seek
-    // within the downloaded portion if startTime is within range.
-    //
-    // If the clip is beyond the downloaded range, ffmpeg will fail with
-    // "channel X not found in input" → falls back to captureStream + remux
-    // (browser-side path in downloadClipViaBrowser).
-    const maxDownloadBytes = Math.min(contentLength, 80 * 1024 * 1024);
-
-    // Download in 2MB chunks (googlevideo.com per-request limit on CF Worker)
-    const chunks: Buffer[] = [];
-    let downloaded = 0;
-    const MAX_CHUNK = 2 * 1024 * 1024;
-    const totalChunks = Math.ceil(maxDownloadBytes / MAX_CHUNK);
-
-    console.log(`[cut-clip] Will download ${totalChunks} chunks (${(maxDownloadBytes / 1024 / 1024).toFixed(1)}MB)`);
-
-    for (let i = 0; i < totalChunks; i++) {
-      const chunkStart = i * MAX_CHUNK;
-      const chunkEnd = Math.min(chunkStart + MAX_CHUNK - 1, maxDownloadBytes - 1);
-
-      const chunkRes = await fetch(proxyUrl.toString(), {
-        headers: { Range: `bytes=${chunkStart}-${chunkEnd}` },
-        signal: AbortSignal.timeout(30_000),
-      });
-
-      if (!chunkRes.ok && chunkRes.status !== 206) {
-        console.warn(`[cut-clip] Chunk ${i + 1}/${totalChunks} failed: HTTP ${chunkRes.status}`);
-        if (i === 0) {
-          return NextResponse.json({
-            error: `First chunk download failed: HTTP ${chunkRes.status}. CF Worker /stream may be down.`,
-          }, { status: 502 });
-        }
-        break;
-      }
-
-      const chunkBuf = Buffer.from(await chunkRes.arrayBuffer());
-      if (chunkBuf.length === 0) {
-        console.log(`[cut-clip] Chunk ${i + 1}: empty (end of file)`);
-        break;
-      }
-
-      // Validate first chunk has ftyp header
-      if (i === 0 && chunkBuf.length >= 8) {
-        const boxType = chunkBuf.slice(4, 8).toString('ascii');
-        if (boxType !== 'ftyp') {
-          return NextResponse.json({
-            error: `First chunk missing ftyp header (got: "${boxType}"). Stream may be invalid.`,
-          }, { status: 502 });
-        }
-        console.log(`[cut-clip] Chunk 1: ftyp header OK`);
-      }
-
-      chunks.push(chunkBuf);
-      downloaded += chunkBuf.length;
-
-      // Short read = end of file
-      if (chunkBuf.length < (chunkEnd - chunkStart + 1)) break;
-
-      if (i % 10 === 0 || i === totalChunks - 1) {
-        console.log(`[cut-clip] Chunk ${i + 1}/${totalChunks}: downloaded ${downloaded} bytes (${Math.round(downloaded / 1024 / 1024)}MB)`);
-      }
-    }
-
-    if (downloaded < 50_000) {
-      return NextResponse.json({
-        error: `Downloaded too little: ${downloaded} bytes. CF Worker /stream may be rate-limited.`,
-      }, { status: 502 });
-    }
-
-    const videoBuf = Buffer.concat(chunks);
     await writeFile(inputPath, videoBuf);
-    console.log(`[cut-clip] Downloaded ${videoBuf.length} bytes (${(videoBuf.length / 1024 / 1024).toFixed(1)}MB), saved to ${inputPath}`);
+    console.log(`[cut-clip] Video downloaded: ${videoBuf.length} bytes (${(videoBuf.length / 1024 / 1024).toFixed(1)}MB)`);
 
-    // Now cut the clip using ffmpeg
-    return await cutLocalFile(inputPath, outputPath, startTime, duration);
+    // Download audio stream (audioUrl) if provided — this is the key v51 change.
+    // When /resolve returned adaptiveFormats (video-only + audio), we MUST fetch
+    // the audio stream separately and merge with ffmpeg. Without this, the cut
+    // clip has video but NO AUDIO.
+    let downloadedAudioPath: string | null = null;
+    if (audioUrl) {
+      console.log(`[cut-clip] Downloading audio stream separately...`);
+      const audioBuf = await downloadStreamViaCfWorker(
+        cfWorkerUrl, videoId, /*streamUrl*/ '', userAgent, visitorData, /*audio*/ true, audioUrl,
+      );
+      if (audioBuf && audioBuf.length > 5_000) {
+        await writeFile(audioPath, audioBuf);
+        downloadedAudioPath = audioPath;
+        console.log(`[cut-clip] Audio downloaded: ${audioBuf.length} bytes (${(audioBuf.length / 1024 / 1024).toFixed(1)}MB)`);
+      } else {
+        console.warn(`[cut-clip] Audio download failed or too small: ${audioBuf ? audioBuf.length : 0} bytes — will use video-only`);
+      }
+    }
+
+    // Now cut the clip using ffmpeg (with optional dual-stream merge)
+    return await cutLocalFile(inputPath, outputPath, startTime, duration, downloadedAudioPath);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error('[cut-clip] Error:', msg.slice(0, 1000));
@@ -252,37 +150,187 @@ export async function POST(request: NextRequest) {
     );
   } finally {
     await unlink(inputPath).catch(() => {});
+    await unlink(audioPath).catch(() => {});
     await unlink(outputPath).catch(() => {});
   }
 }
 
 /**
+ * Download a stream (video or audio) via the CF Worker /stream proxy.
+ * Returns Buffer on success, null on failure.
+ *
+ * For video (audio=false): uses /stream?streamUrl=<url>&muxed=1
+ * For audio (audio=true):  uses /stream?audioUrl=<url>&audio=1
+ *   — The CF Worker's fast path checks audioUrl param when wantAudio=true,
+ *     so we MUST pass audioUrl as a query param (not just streamUrl).
+ */
+async function downloadStreamViaCfWorker(
+  cfWorkerUrl: string,
+  videoId: string,
+  streamUrl: string,
+  userAgent: string,
+  visitorData: string,
+  audio: boolean,
+  audioUrl: string | null,
+): Promise<Buffer | null> {
+  const proxyUrl = new URL(cfWorkerUrl.replace(/\/$/, '') + '/stream');
+  proxyUrl.searchParams.set('videoId', videoId);
+  proxyUrl.searchParams.set('maxHeight', '720');
+  if (audio) {
+    proxyUrl.searchParams.set('audio', '1');
+    if (audioUrl) proxyUrl.searchParams.set('audioUrl', audioUrl);
+    // For audio-only requests, the streamUrl param is not required —
+    // doFetch() in worker.js uses audioUrl when wantAudio=true.
+  } else {
+    proxyUrl.searchParams.set('muxed', '1');
+    if (streamUrl) proxyUrl.searchParams.set('streamUrl', streamUrl);
+  }
+  if (userAgent) proxyUrl.searchParams.set('userAgent', userAgent);
+  if (visitorData) proxyUrl.searchParams.set('visitorData', visitorData);
+
+  console.log(`[cut-clip] Downloading ${audio ? 'audio' : 'video'} via CF Worker /stream...`);
+
+  // First HEAD to get content-length
+  const headRes = await fetch(proxyUrl.toString(), {
+    method: 'HEAD',
+    signal: AbortSignal.timeout(15_000),
+  }).catch((err) => {
+    console.warn(`[cut-clip] HEAD (${audio ? 'audio' : 'video'}) failed:`, err instanceof Error ? err.message : err);
+    return null;
+  });
+
+  let contentLength = 0;
+  if (headRes && headRes.ok) {
+    contentLength = parseInt(headRes.headers.get('content-length') || '0', 10);
+  }
+
+  // If HEAD failed or returned no content-length, fall back to a GET with Range 0-1
+  if (!contentLength) {
+    const probeRes = await fetch(proxyUrl.toString(), {
+      headers: { Range: 'bytes=0-1' },
+      signal: AbortSignal.timeout(15_000),
+    }).catch(() => null);
+    if (probeRes) {
+      const cr = probeRes.headers.get('content-range') || '';
+      const match = cr.match(/\/(\d+)/);
+      if (match) contentLength = parseInt(match[1], 10);
+    }
+  }
+
+  if (!contentLength || contentLength < 5_000) {
+    console.warn(`[cut-clip] Cannot determine ${audio ? 'audio' : 'video'} content length (HEAD returned ${contentLength}).`);
+    return null;
+  }
+
+  console.log(`[cut-clip] ${audio ? 'Audio' : 'Video'} Content-Length: ${contentLength} bytes`);
+
+  // Cap downloads to keep Vercel function under 60s.
+  //   Video: 80MB (360p muxed ~470KB/s covers ~170s of video)
+  //   Audio: 5MB  (audio streams are tiny, ~30KB/s)
+  const maxDownloadBytes = Math.min(contentLength, audio ? 5 * 1024 * 1024 : 80 * 1024 * 1024);
+
+  // Download in 2MB chunks (googlevideo.com per-request limit on CF Worker)
+  const chunks: Buffer[] = [];
+  let downloaded = 0;
+  const MAX_CHUNK = 2 * 1024 * 1024;
+  const totalChunks = Math.ceil(maxDownloadBytes / MAX_CHUNK);
+
+  console.log(`[cut-clip] Will download ${totalChunks} chunks (${(maxDownloadBytes / 1024 / 1024).toFixed(1)}MB) for ${audio ? 'audio' : 'video'}`);
+
+  for (let i = 0; i < totalChunks; i++) {
+    const chunkStart = i * MAX_CHUNK;
+    const chunkEnd = Math.min(chunkStart + MAX_CHUNK - 1, maxDownloadBytes - 1);
+
+    const chunkRes = await fetch(proxyUrl.toString(), {
+      headers: { Range: `bytes=${chunkStart}-${chunkEnd}` },
+      signal: AbortSignal.timeout(30_000),
+    });
+
+    if (!chunkRes.ok && chunkRes.status !== 206) {
+      console.warn(`[cut-clip] ${audio ? 'Audio' : 'Video'} chunk ${i + 1}/${totalChunks} failed: HTTP ${chunkRes.status}`);
+      if (i === 0) return null;
+      break;
+    }
+
+    const chunkBuf = Buffer.from(await chunkRes.arrayBuffer());
+    if (chunkBuf.length === 0) {
+      console.log(`[cut-clip] ${audio ? 'Audio' : 'Video'} chunk ${i + 1}: empty (end of file)`);
+      break;
+    }
+
+    // Validate first chunk has ftyp header (skip for audio — may not start with ftyp)
+    if (i === 0 && chunkBuf.length >= 8 && !audio) {
+      const boxType = chunkBuf.slice(4, 8).toString('ascii');
+      if (boxType !== 'ftyp') {
+        console.warn(`[cut-clip] First video chunk missing ftyp header (got: "${boxType}"). Stream may be invalid.`);
+        return null;
+      }
+      console.log(`[cut-clip] Video chunk 1: ftyp header OK`);
+    }
+
+    chunks.push(chunkBuf);
+    downloaded += chunkBuf.length;
+
+    // Short read = end of file
+    if (chunkBuf.length < (chunkEnd - chunkStart + 1)) break;
+
+    if (i % 10 === 0 || i === totalChunks - 1) {
+      console.log(`[cut-clip] ${audio ? 'Audio' : 'Video'} chunk ${i + 1}/${totalChunks}: downloaded ${downloaded} bytes (${Math.round(downloaded / 1024 / 1024)}MB)`);
+    }
+  }
+
+  if (downloaded < (audio ? 5_000 : 50_000)) {
+    console.warn(`[cut-clip] ${audio ? 'Audio' : 'Video'} downloaded too little: ${downloaded} bytes`);
+    return null;
+  }
+
+  return Buffer.concat(chunks);
+}
+
+/**
  * Cut a clip from a local MP4 file using ffmpeg.
+ *
+ * When audioPath is null: single-input `-i video -c copy` (muxed stream).
+ * When audioPath is provided: dual-input `-i video -i audio -c:v copy -c:a aac`
+ *   (merges video-only stream with separate audio stream).
+ *
  * Tries -c copy first (fast remux); falls back to re-encode if that fails.
  */
-async function cutLocalFile(inputPath: string, outputPath: string, startTime: number, duration: number): Promise<NextResponse> {
+async function cutLocalFile(
+  inputPath: string,
+  outputPath: string,
+  startTime: number,
+  duration: number,
+  audioPath: string | null,
+): Promise<NextResponse> {
   const ffmpegPath = await findFfmpegBinary();
   if (!ffmpegPath) {
     return NextResponse.json({ error: 'ffmpeg binary not found' }, { status: 500 });
   }
 
-  console.log(`[cut-clip] ffmpeg=${ffmpegPath}, startTime=${startTime}s, duration=${duration}s`);
+  console.log(`[cut-clip] ffmpeg=${ffmpegPath}, startTime=${startTime}s, duration=${duration}s, audioPath=${audioPath ? '(set)' : '(none)'}`);
 
   let cutSuccess = false;
   let lastError = '';
 
-  // Attempt 1: -c copy (fast remux)
+  // Attempt 1: -c copy (fast remux) — single or dual input
   try {
-    await execFileAsync(ffmpegPath, [
-      '-y',
-      '-ss', String(startTime),
-      '-i', inputPath,
-      '-t', String(duration),
-      '-c', 'copy',
-      '-movflags', '+faststart',
-      '-avoid_negative_ts', 'make_zero',
-      outputPath,
-    ], {
+    const args: string[] = ['-y', '-ss', String(startTime)];
+    if (audioPath) {
+      // Dual-input: video + separate audio stream
+      // -c:v copy preserves video quality; -c:a aac re-encodes audio (necessary
+      // because the audio stream container may not match the output container).
+      args.push('-i', inputPath, '-i', audioPath, '-t', String(duration));
+      args.push('-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k');
+      args.push('-map', '0:v:0', '-map', '1:a:0'); // explicitly select video + audio
+    } else {
+      // Single input: muxed stream (already has audio)
+      args.push('-i', inputPath, '-t', String(duration));
+      args.push('-c', 'copy');
+    }
+    args.push('-movflags', '+faststart', '-avoid_negative_ts', 'make_zero', outputPath);
+
+    await execFileAsync(ffmpegPath, args, {
       maxBuffer: 50 * 1024 * 1024,
       timeout: 30_000,
       env: { ...process.env, LANG: 'C' },
@@ -297,20 +345,20 @@ async function cutLocalFile(inputPath: string, outputPath: string, startTime: nu
   // Attempt 2: re-encode (fallback, slower but handles edge cases)
   if (!cutSuccess) {
     try {
-      await execFileAsync(ffmpegPath, [
-        '-y',
-        '-ss', String(startTime),
-        '-i', inputPath,
-        '-t', String(duration),
-        '-c:v', 'libx264',
-        '-preset', 'ultrafast',
-        '-crf', '28',
-        '-c:a', 'aac',
-        '-b:a', '128k',
-        '-movflags', '+faststart',
-        '-avoid_negative_ts', 'make_zero',
-        outputPath,
-      ], {
+      const args: string[] = ['-y', '-ss', String(startTime)];
+      if (audioPath) {
+        args.push('-i', inputPath, '-i', audioPath, '-t', String(duration));
+        args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28');
+        args.push('-c:a', 'aac', '-b:a', '128k');
+        args.push('-map', '0:v:0', '-map', '1:a:0');
+      } else {
+        args.push('-i', inputPath, '-t', String(duration));
+        args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28');
+        args.push('-c:a', 'aac', '-b:a', '128k');
+      }
+      args.push('-movflags', '+faststart', '-avoid_negative_ts', 'make_zero', outputPath);
+
+      await execFileAsync(ffmpegPath, args, {
         maxBuffer: 50 * 1024 * 1024,
         timeout: 45_000,
         env: { ...process.env, LANG: 'C' },
