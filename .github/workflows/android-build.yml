@@ -101,6 +101,24 @@ jobs:
           tail -n 200 build.log >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "(no build.log found)"
           echo '```' >> $GITHUB_STEP_SUMMARY
 
+      - name: Commit build log to debug branch on failure
+        if: failure()
+        working-directory: apps/android-agent
+        run: |
+          if [ ! -f build.log ]; then
+            echo "No build.log file found, skipping"
+            exit 0
+          fi
+          cd "${GITHUB_WORKSPACE}"
+          git config --global user.email "actions@github.com"
+          git config --global user.name "GitHub Actions"
+          git checkout -B build-debug
+          mkdir -p apps/android-agent
+          cp apps/android-agent/build.log build.log 2>/dev/null || true
+          git add build.log
+          git commit -m "build: capture failed build log from run ${{ github.run_id }}"
+          git push origin build-debug --force
+
       - name: Upload build log as artifact on failure
         if: failure()
         uses: actions/upload-artifact@v4
