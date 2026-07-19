@@ -86,7 +86,28 @@ jobs:
 
       - name: Build release APK
         working-directory: apps/android-agent
-        run: ./gradlew assembleRelease --no-daemon --stacktrace
+        run: |
+          set -o pipefail
+          ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee build.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Dump build error to step summary on failure
+        if: failure()
+        working-directory: apps/android-agent
+        run: |
+          echo "## Build Failure Log (last 200 lines)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -n 200 build.log >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "(no build.log found)"
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload build log as artifact on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-build-log
+          path: apps/android-agent/build.log
+          retention-days: 7
 
       - name: Locate built APK
         id: locate-apk

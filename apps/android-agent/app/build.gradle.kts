@@ -98,8 +98,8 @@ dependencies {
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
-    // JSON parsing
-    implementation("org.json:json:20240303")
+    // NOTE: org.json is bundled with Android SDK — do NOT add as a dependency
+    // (would cause "Type JSONObject is defined multiple times" build errors).
 
     // Tests
     testImplementation("junit:junit:4.13.2")
