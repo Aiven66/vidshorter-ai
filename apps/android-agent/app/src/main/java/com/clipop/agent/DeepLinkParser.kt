@@ -17,6 +17,15 @@ data class DeepLinkPayload(
     val name: String = "",
 ) {
     fun hasToken(): Boolean = token.isNotEmpty()
+
+    /** Convert to AuthPayload for use with AuthStore / onAuthReceived / injectAuthToWebView. */
+    fun toAuthPayload(): AuthPayload = AuthPayload(
+        token = token,
+        refreshToken = refreshToken,
+        email = email,
+        userId = userId,
+        name = name,
+    )
 }
 
 object DeepLinkParser {

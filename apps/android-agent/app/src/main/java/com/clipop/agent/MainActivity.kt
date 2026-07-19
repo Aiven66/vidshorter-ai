@@ -198,7 +198,7 @@ class MainActivity : AppCompatActivity(), AuthBridge.Callbacks {
             val payload = DeepLinkParser.parse(data)
             if (payload != null) {
                 appendLog("[Intent] Deep link payload received (email=${payload.email})")
-                onAuthReceived(payload, source = "deep-link")
+                onAuthReceived(payload.toAuthPayload(), source = "deep-link")
             } else {
                 appendLog("[Intent] Deep link parse failed for $data")
             }
@@ -297,7 +297,7 @@ class MainActivity : AppCompatActivity(), AuthBridge.Callbacks {
                     if (uri.scheme?.lowercase() == "clipop") {
                         val payload = DeepLinkParser.parse(uri)
                         if (payload != null) {
-                            onAuthReceived(payload, source = "webview-deeplink")
+                            onAuthReceived(payload.toAuthPayload(), source = "webview-deeplink")
                         }
                         return true
                     }
@@ -329,7 +329,7 @@ class MainActivity : AppCompatActivity(), AuthBridge.Callbacks {
                         pendingDeepLink = null
                         val pendingPayload = DeepLinkParser.parse(link)
                         if (pendingPayload != null) {
-                            mainHandler.postDelayed({ injectAuthToWebView(pendingPayload) }, 500)
+                            mainHandler.postDelayed({ injectAuthToWebView(pendingPayload.toAuthPayload()) }, 500)
                         }
                     }
                 }
