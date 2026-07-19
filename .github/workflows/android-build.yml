@@ -138,25 +138,25 @@ jobs:
           {
             echo "### Kotlin compile errors (e: file://)"
             echo ""
-            echo '```'"
+            echo '```'
             grep -E '^e: |^w: ' build.log | head -200 || echo "(no compile errors found)"
             echo '```'
             echo ""
             echo "### Around FAILURE / What went wrong"
             echo ""
-            echo '```'"
+            echo '```'
             grep -B 2 -A 50 'FAILURE:\|What went wrong' build.log | head -200 || echo "(no FAILURE section found)"
             echo '```'
             echo ""
             echo "### First 100 lines of build log"
             echo ""
-            echo '```'"
+            echo '```'
             head -n 100 build.log
             echo '```'
             echo ""
             echo "### Last 80 lines of build log"
             echo ""
-            echo '```'"
+            echo '```'
             tail -n 80 build.log
             echo '```'
           } > /tmp/issue-body.md
