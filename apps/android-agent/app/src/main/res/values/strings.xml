@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Clipop Agent</string>
+    <string name="loading_title">Loading Clipop Agent</string>
+    <string name="loading_status">Starting…</string>
+    <string name="loading_starting_server">Starting local server…</string>
+    <string name="loading_loading_interface">Loading interface…</string>
+    <string name="menu_sign_in">Sign In</string>
+    <string name="menu_sign_out">Sign Out</string>
+    <string name="menu_open_web_login">Open Web Login</string>
+    <string name="menu_open_settings">Settings</string>
+    <string name="menu_copy_logs">Copy Logs</string>
+    <string name="menu_open_logs">Open Logs</string>
+    <string name="auth_login_success">Login successful</string>
+    <string name="auth_close_tab">You can close this tab and return to the app.</string>
+    <string name="error_no_network">No network connection. Please check your internet and try again.</string>
+    <string name="error_load_failed">Failed to load. Tap to retry.</string>
+</resources>
