@@ -816,12 +816,23 @@ async function downloadAndCutOnServer(params: {
         ...(streamMeta.audioUrl ? { audioUrl: streamMeta.audioUrl } : {}),
         userAgent: streamMeta.userAgent,
         visitorData: streamMeta.visitorData,
+        // v55: Pass complete client metadata so /api/cut-clip can build a
+        // correct CF Worker /stream URL for direct ffmpeg read (fast path).
+        // Without these, the server's /stream URL lacks xClientName/clientVersion
+        // and the CF Worker fast path falls back to slow tryClient resolution.
+        xClientName: streamMeta.xClientName,
+        clientVersion: streamMeta.clientVersion,
+        clientName: streamMeta.client,
         videoId,
         startTime,
         duration: clipDuration,
         endTime: params.endTime,
       }),
-      signal: AbortSignal.timeout(90_000), // 90s — server downloads (80MB cap, ~40s) + cuts (~5s)
+      // v55: increased from 90s to 180s to match the server's maxDuration=300s.
+      // The previous 90s timeout was too tight: when the v55 direct-read path
+      // failed and fell back to v51 download+cut, total time could reach 120s+.
+      // 180s gives ample headroom for both paths.
+      signal: AbortSignal.timeout(180_000),
     });
 
     if (!res.ok) {

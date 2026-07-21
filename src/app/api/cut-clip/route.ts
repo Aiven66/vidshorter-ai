@@ -7,27 +7,37 @@ import { promisify } from 'util';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60; // Vercel default; server downloads + cuts in ~50s
+// v55: Increased from 60s to 300s to match vercel.json and allow ffmpeg direct
+// stream read fallback (which can take longer but is more reliable).
+// Previous 60s cap was the root cause of "download failed" — server downloads
+// (80MB ~40s) + ffmpeg cut (~10s) = ~50s, dangerously close to the 60s limit.
+export const maxDuration = 300;
 
 const execFileAsync = promisify(execFile);
 
 /**
- * /api/cut-clip — Server-side ffmpeg clip cutting (v51 dual-stream merge)
+ * /api/cut-clip — Server-side ffmpeg clip cutting (v55 direct-stream-read)
  *
- * APPROACH (v51 — supports separate audio stream):
- *   Browser sends streamUrl + optional audioUrl + metadata. Server downloads
- *   the video bytes (and audio bytes if audioUrl is provided) using Node.js
- *   fetch via the CF Worker /stream proxy. ffmpeg then cuts and merges:
- *     - No audioUrl: single input `-i video -c copy` (muxed stream — has audio)
- *     - With audioUrl: dual input `-i video -i audio -c:v copy -c:a aac`
+ * APPROACH (v55 — direct ffmpeg read from CF Worker /stream):
+ *   Browser sends streamUrl + optional audioUrl + metadata (JSON).
+ *   ffmpeg reads directly from the CF Worker /stream URL using HTTP input,
+ *   with -ss fast seek to jump to startTime. This downloads ONLY the bytes
+ *   ffmpeg needs (~5-10MB for a 30s clip), not the entire video prefix.
  *
- * WHY dual-stream support:
- *   v48-v50 assumed /resolve?muxed=1 always returned a combined video+audio
- *   stream. But YouTube InnerTube API sometimes returns video-only DASH +
- *   separate audio (adaptiveFormats) even when muxed=1 is requested — the
- *   IOS client may not have muxed formats for certain videos. The CF Worker
- *   now passes audioUrl through, and /api/cut-clip must download and merge
- *   both streams; otherwise the output MP4 has NO AUDIO.
+ *   Total time: ~10-15s (was ~50-55s in v51-v54).
+ *
+ * FALLBACK (v51 path — download + cut):
+ *   If direct ffmpeg read fails (e.g., TLS issues, network errors), fall back
+ *   to the v51 approach: download video bytes to local file, then ffmpeg cut.
+ *   This is slower but more robust for edge cases.
+ *
+ * WHY direct stream read:
+ *   v51-v54 pre-downloaded 80MB of video bytes, which:
+ *     1. Takes ~40s (close to the old 60s Vercel limit)
+ *     2. For long videos (>170s), 80MB doesn't cover startTime
+ *     3. Wastes bandwidth downloading bytes ffmpeg doesn't need
+ *   ffmpeg's -ss fast seek sends Range requests to only fetch the bytes
+ *   around startTime, dramatically reducing download time.
  *
  * Input: JSON body
  *   - streamUrl: string (resolved googlevideo.com URL — video or muxed)
@@ -35,6 +45,9 @@ const execFileAsync = promisify(execFile);
  *                  adaptiveFormats)
  *   - userAgent: string (from /resolve response)
  *   - visitorData: string (from /resolve response)
+ *   - xClientName?: string|number
+ *   - clientVersion?: string
+ *   - clientName?: string
  *   - videoId: string (YouTube video ID)
  *   - startTime: number (seconds)
  *   - endTime: number (seconds)
@@ -53,6 +66,9 @@ export async function POST(request: NextRequest) {
     let audioUrl = '';
     let userAgent = '';
     let visitorData = '';
+    let xClientName: string | number = '1';
+    let clientVersion = '';
+    let clientName = 'direct';
     let videoId = '';
     let startTime = 0;
     let duration = 30;
@@ -64,6 +80,9 @@ export async function POST(request: NextRequest) {
       audioUrl = body.audioUrl || '';
       userAgent = body.userAgent || '';
       visitorData = body.visitorData || '';
+      xClientName = body.xClientName || '1';
+      clientVersion = body.clientVersion || '';
+      clientName = body.clientName || 'direct';
       videoId = body.videoId || '';
       startTime = Number(body.startTime) || 0;
       duration = Math.min(Number(body.duration) || (Number(body.endTime) - startTime) || 30, 90);
@@ -99,16 +118,41 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No streamUrl provided' }, { status: 400 });
     }
 
-    console.log(`[cut-clip] v51 server-download: videoId=${videoId}, startTime=${startTime}s, duration=${duration}s, hasAudioUrl=${!!audioUrl}`);
+    console.log(`[cut-clip] v55 videoId=${videoId}, startTime=${startTime}s, duration=${duration}s, hasAudioUrl=${!!audioUrl}`);
 
-    // Build CF Worker /stream URL (acts as a proxy that re-fetches from googlevideo.com
-    // using the CF Worker's IP, which matches the streamUrl's IP binding).
     const cfWorkerUrl = String(process.env.CF_WORKER_URL || '').trim().replace(/\/$/, '');
     if (!cfWorkerUrl) {
       return NextResponse.json({ error: 'CF_WORKER_URL not configured' }, { status: 500 });
     }
 
-    // Download video stream (streamUrl)
+    // ── v55 PRIMARY PATH: direct ffmpeg read from CF Worker /stream ──────
+    // Build CF Worker /stream URL with streamUrl param (fast path).
+    // ffmpeg reads this URL directly via HTTP input, using -ss fast seek
+    // to jump to startTime. Only ~5-10MB of data is downloaded.
+    try {
+      const result = await cutFromStreamUrl({
+        cfWorkerUrl,
+        streamUrl,
+        audioUrl,
+        userAgent,
+        visitorData,
+        xClientName,
+        clientVersion,
+        clientName,
+        videoId,
+        startTime,
+        duration,
+        outputPath,
+      });
+      if (result) return result;
+    } catch (directErr) {
+      const msg = directErr instanceof Error ? directErr.message : String(directErr);
+      console.warn(`[cut-clip] v55 direct stream read failed, falling back to v51 download+cut: ${msg.slice(0, 300)}`);
+    }
+
+    // ── v51 FALLBACK PATH: download + cut ──────────────────────────────────
+    // Download video stream to local file, then ffmpeg cut.
+    // Slower but more robust for edge cases (TLS issues, network errors).
     const videoBuf = await downloadStreamViaCfWorker(
       cfWorkerUrl, videoId, streamUrl, userAgent, visitorData, /*audio*/ false, /*audioUrl*/ null,
     );
@@ -120,10 +164,7 @@ export async function POST(request: NextRequest) {
     await writeFile(inputPath, videoBuf);
     console.log(`[cut-clip] Video downloaded: ${videoBuf.length} bytes (${(videoBuf.length / 1024 / 1024).toFixed(1)}MB)`);
 
-    // Download audio stream (audioUrl) if provided — this is the key v51 change.
-    // When /resolve returned adaptiveFormats (video-only + audio), we MUST fetch
-    // the audio stream separately and merge with ffmpeg. Without this, the cut
-    // clip has video but NO AUDIO.
+    // Download audio stream (audioUrl) if provided
     let downloadedAudioPath: string | null = null;
     if (audioUrl) {
       console.log(`[cut-clip] Downloading audio stream separately...`);
@@ -153,6 +194,193 @@ export async function POST(request: NextRequest) {
     await unlink(audioPath).catch(() => {});
     await unlink(outputPath).catch(() => {});
   }
+}
+
+/**
+ * v55: Cut clip by having ffmpeg read directly from CF Worker /stream URL.
+ *
+ * Builds CF Worker /stream URLs for video (and audio if audioUrl provided),
+ * then runs ffmpeg with -ss fast seek + -c copy. ffmpeg handles Range requests
+ * internally, only downloading the bytes around startTime (~5-10MB).
+ *
+ * Uses ffmpeg-static binary which supports modern TLS (unlike @ffmpeg-installer
+ * which uses a 2018 build with outdated gnutls).
+ *
+ * Returns NextResponse on success, null on failure (caller falls back to v51).
+ */
+async function cutFromStreamUrl(params: {
+  cfWorkerUrl: string;
+  streamUrl: string;
+  audioUrl: string;
+  userAgent: string;
+  visitorData: string;
+  xClientName: string | number;
+  clientVersion: string;
+  clientName: string;
+  videoId: string;
+  startTime: number;
+  duration: number;
+  outputPath: string;
+}): Promise<NextResponse | null> {
+  const {
+    cfWorkerUrl, streamUrl, audioUrl, userAgent, visitorData,
+    xClientName, clientVersion, clientName, videoId,
+    startTime, duration, outputPath,
+  } = params;
+
+  const ffmpegPath = await findFfmpegBinary();
+  if (!ffmpegPath) {
+    console.warn('[cut-clip] v55: ffmpeg binary not found');
+    return null;
+  }
+
+  // Build CF Worker /stream URL for video stream (fast path with streamUrl param)
+  const videoStreamEndpoint = new URL(cfWorkerUrl.replace(/\/$/, '') + '/stream');
+  videoStreamEndpoint.searchParams.set('videoId', videoId);
+  videoStreamEndpoint.searchParams.set('maxHeight', '720');
+  videoStreamEndpoint.searchParams.set('muxed', '1');
+  videoStreamEndpoint.searchParams.set('streamUrl', streamUrl);
+  if (userAgent) videoStreamEndpoint.searchParams.set('userAgent', userAgent);
+  if (visitorData) videoStreamEndpoint.searchParams.set('visitorData', visitorData);
+  videoStreamEndpoint.searchParams.set('xClientName', String(xClientName));
+  if (clientVersion) videoStreamEndpoint.searchParams.set('clientVersion', clientVersion);
+  if (clientName) videoStreamEndpoint.searchParams.set('clientName', clientName);
+
+  // Build CF Worker /stream URL for audio stream (if audioUrl provided)
+  let audioStreamUrl: string | null = null;
+  if (audioUrl) {
+    const audioEndpoint = new URL(cfWorkerUrl.replace(/\/$/, '') + '/stream');
+    audioEndpoint.searchParams.set('videoId', videoId);
+    audioEndpoint.searchParams.set('audio', '1');
+    audioEndpoint.searchParams.set('audioUrl', audioUrl);
+    if (userAgent) audioEndpoint.searchParams.set('userAgent', userAgent);
+    if (visitorData) audioEndpoint.searchParams.set('visitorData', visitorData);
+    audioEndpoint.searchParams.set('xClientName', String(xClientName));
+    if (clientVersion) audioEndpoint.searchParams.set('clientVersion', clientVersion);
+    if (clientName) audioEndpoint.searchParams.set('clientName', clientName);
+    audioStreamUrl = audioEndpoint.toString();
+  }
+
+  const hasAudio = !!audioStreamUrl;
+  console.log(`[cut-clip] v55 direct read: ffmpeg=${ffmpegPath}, hasAudio=${hasAudio}`);
+
+  // HTTP input headers for ffmpeg (CF Worker doesn't need special headers,
+  // but we set Accept and Accept-Encoding for clean Range handling)
+  const httpHeaders = 'Accept: */*\r\nAccept-Encoding: identity\r\n';
+
+  let cutSuccess = false;
+  let lastError = '';
+
+  // Attempt 1: -c copy (fast remux) — single or dual input
+  try {
+    const args: string[] = ['-y'];
+    // -ss BEFORE -i for fast seek (downloads only bytes around startTime)
+    args.push('-ss', String(startTime));
+    // HTTP input flags for robust streaming
+    args.push('-rw_timeout', '30000000', '-reconnect', '1', '-reconnect_at_eof', '1',
+               '-reconnect_streamed', '1', '-reconnect_delay_max', '5');
+    args.push('-headers', httpHeaders);
+    args.push('-i', videoStreamEndpoint.toString());
+
+    if (hasAudio) {
+      // Dual-input: video + separate audio stream
+      args.push('-headers', httpHeaders);
+      args.push('-i', audioStreamUrl!);
+      args.push('-t', String(duration));
+      args.push('-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k');
+      args.push('-map', '0:v:0', '-map', '1:a:0');
+    } else {
+      // Single input: muxed stream (already has audio)
+      args.push('-t', String(duration));
+      args.push('-c', 'copy');
+    }
+    args.push('-movflags', '+faststart', '-avoid_negative_ts', 'make_zero', outputPath);
+
+    console.log(`[cut-clip] v55 attempt 1 (-c copy): ${args.length} args`);
+    await execFileAsync(ffmpegPath, args, {
+      maxBuffer: 50 * 1024 * 1024,
+      timeout: 60_000,
+      env: { ...process.env, LANG: 'C' },
+    });
+    cutSuccess = true;
+    console.log('[cut-clip] v55 -c copy succeeded');
+  } catch (execErr: any) {
+    const stderr = String(execErr?.stderr || '');
+    lastError = `copy: ${execErr?.message?.slice(0, 150)} | STDERR: ${stderr.slice(0, 500)}`;
+    console.warn(`[cut-clip] v55 -c copy failed: ${lastError.slice(0, 300)}`);
+  }
+
+  // Attempt 2: re-encode (fallback, slower but handles edge cases)
+  if (!cutSuccess) {
+    try {
+      const args: string[] = ['-y', '-ss', String(startTime)];
+      args.push('-rw_timeout', '30000000', '-reconnect', '1', '-reconnect_at_eof', '1',
+                 '-reconnect_streamed', '1', '-reconnect_delay_max', '5');
+      args.push('-headers', httpHeaders);
+      args.push('-i', videoStreamEndpoint.toString());
+
+      if (hasAudio) {
+        args.push('-headers', httpHeaders);
+        args.push('-i', audioStreamUrl!);
+        args.push('-t', String(duration));
+        args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28');
+        args.push('-c:a', 'aac', '-b:a', '128k');
+        args.push('-map', '0:v:0', '-map', '1:a:0');
+      } else {
+        args.push('-t', String(duration));
+        args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28');
+        args.push('-c:a', 'aac', '-b:a', '128k');
+      }
+      args.push('-movflags', '+faststart', '-avoid_negative_ts', 'make_zero', outputPath);
+
+      console.log(`[cut-clip] v55 attempt 2 (re-encode): ${args.length} args`);
+      await execFileAsync(ffmpegPath, args, {
+        maxBuffer: 50 * 1024 * 1024,
+        timeout: 120_000,
+        env: { ...process.env, LANG: 'C' },
+      });
+      cutSuccess = true;
+      console.log('[cut-clip] v55 re-encode succeeded');
+    } catch (execErr2: any) {
+      const stderr2 = String(execErr2?.stderr || '');
+      lastError = `copy+reencode: ${lastError} || reencode: ${execErr2?.message?.slice(0, 150)} | STDERR: ${stderr2.slice(0, 500)}`;
+      console.warn(`[cut-clip] v55 re-encode failed: ${lastError.slice(0, 300)}`);
+    }
+  }
+
+  if (!cutSuccess) {
+    console.warn(`[cut-clip] v55 both attempts failed, will fall back to v51 path`);
+    return null;
+  }
+
+  const outputData = await readFile(outputPath);
+  if (outputData.length < 5_000) {
+    console.warn(`[cut-clip] v55 output too small: ${outputData.length} bytes`);
+    return null;
+  }
+
+  // Validate output is a real MP4 (ftyp box at offset 4)
+  if (outputData.length >= 8) {
+    const boxType = String.fromCharCode(
+      outputData[4], outputData[5], outputData[6], outputData[7],
+    );
+    if (boxType !== 'ftyp') {
+      console.warn(`[cut-clip] v55 output missing ftyp header (got: ${boxType})`);
+      return null;
+    }
+  }
+
+  console.log(`[cut-clip] v55 success: ${outputData.length} bytes`);
+
+  return new NextResponse(outputData, {
+    status: 200,
+    headers: {
+      'Content-Type': 'video/mp4',
+      'Content-Disposition': 'attachment; filename="clip.mp4"',
+      'Content-Length': String(outputData.length),
+      'Cache-Control': 'no-store',
+    },
+  });
 }
 
 /**
@@ -401,9 +629,10 @@ async function cutLocalFile(
 
 /**
  * Find ffmpeg binary path using the same multi-level fallback as video-clipper.ts.
+ * Prefers ffmpeg-static (newer build with modern TLS support) over @ffmpeg-installer.
  */
 async function findFfmpegBinary(): Promise<string> {
-  // 1. ffmpeg-static binary
+  // 1. ffmpeg-static binary (newer build with modern TLS support)
   try {
     const ffmpegStatic: string = require('ffmpeg-static');
     if (ffmpegStatic) {
