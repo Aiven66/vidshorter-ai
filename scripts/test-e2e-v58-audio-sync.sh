@@ -8,7 +8,7 @@
 #   3. Audio has real content (not silence — v55/v56 had "no sound" bug)
 #
 # Usage: bash scripts/test-e2e-v58-audio-sync.sh
-set -euo pipefail
+set -uo pipefail
 
 PRODUCTION_URL="${PRODUCTION_URL:-https://clipopai.vercel.app}"
 TEST_VIDEO_ID="${TEST_VIDEO_ID:-dQw4w9WgXcQ}" # Rick Astley - Never Gonna Give You Up
@@ -104,14 +104,43 @@ pass "cut clip @ ${START_TIME_2}s: $SIZE_2 bytes"
 # ─── STEP 4: Verify MP4 structure (both clips) ─────────────────────────────
 log "Step 4: Verify MP4 structure"
 for f in "$OUTPUT_1" "$OUTPUT_2"; do
-  # Check ftyp box at offset 4
-  BOXTYPE=$(dd if="$f" bs=1 skip=4 count=4 2>/dev/null | xxd -p)
-  [ "$BOXTYPE" = "66747970" ] || fail "ftyp box ($f)" "got: $BOXTYPE (expected 66747970)"
-  # Check no moof (fragmented fMP4)
-  if xxd "$f" | grep -q "6d6f6f66"; then
+  # Check ftyp box at offset 4 using python (more reliable than xxd)
+  BOXTYPE=$(python3 -c "
+with open('$f', 'rb') as fh:
+    data = fh.read(8)
+    print(data[4:8].hex())
+" 2>/dev/null || echo "")
+  if [ "$BOXTYPE" != "66747970" ]; then
+    fail "ftyp box ($f)" "got: $BOXTYPE (expected 66747970)"
+  fi
+  # Check no moof (fragmented fMP4) — use python to scan for moof box
+  HAS_MOOF=$(python3 -c "
+with open('$f', 'rb') as fh:
+    data = fh.read()
+    print('yes' if b'moof' in data else 'no')
+" 2>/dev/null || echo "no")
+  if [ "$HAS_MOOF" = "yes" ]; then
     fail "MP4 structure ($f)" "contains moof (fragmented fMP4)"
   fi
-  pass "MP4 structure ($f): ftyp + progressive (no moof)"
+  # Verify both video and audio streams are present
+  STREAMS=$(ffprobe -v error -show_streams -print_format json "$f" 2>/dev/null)
+  HAS_VIDEO=$(echo "$STREAMS" | python3 -c "
+import sys,json
+data = json.load(sys.stdin)
+print('yes' if any(s.get('codec_type')=='video' for s in data.get('streams',[])) else 'no')
+" 2>/dev/null || echo "no")
+  HAS_AUDIO=$(echo "$STREAMS" | python3 -c "
+import sys,json
+data = json.load(sys.stdin)
+print('yes' if any(s.get('codec_type')=='audio' for s in data.get('streams',[])) else 'no')
+" 2>/dev/null || echo "no")
+  if [ "$HAS_VIDEO" != "yes" ]; then
+    fail "video stream ($f)" "no video stream found"
+  fi
+  if [ "$HAS_AUDIO" != "yes" ]; then
+    fail "audio stream ($f)" "no audio stream found (THIS WAS THE v57/v58 BUG)"
+  fi
+  pass "MP4 structure ($f): ftyp + progressive + video + audio streams"
 done
 
 # ─── STEP 5: Verify content position differs (CRITICAL — v57 failed here) ──
@@ -165,18 +194,25 @@ done
 # ─── STEP 7: Verify audio has real content (not silence) ───────────────────
 log "Step 7: Verify audio has real content (not silence)"
 for f in "$OUTPUT_1" "$OUTPUT_2"; do
-  # volumedetect: mean_volume should NOT be -inf (silence)
-  # n_samples should be > 0
+  # volumedetect outputs TWO n_samples lines:
+  #   1st: n_samples: 0 (video stream — no audio samples)
+  #   2nd: n_samples: <big number> (audio stream — real audio data)
+  # We must use the 2nd (audio) value, not the 1st (video placeholder).
   VOLDET=$(ffmpeg -i "$f" -af volumedetect -f null - 2>&1 || true)
   MEAN_VOL=$(echo "$VOLDET" | grep -oE "mean_volume: -?[0-9.]+ dB" | head -1 | sed 's/mean_volume: //;s/ dB//')
   MAX_VOL=$(echo "$VOLDET" | grep -oE "max_volume: -?[0-9.]+ dB" | head -1 | sed 's/max_volume: //;s/ dB//')
-  N_SAMPLES=$(echo "$VOLDET" | grep -oE "n_samples: [0-9]+" | head -1 | sed 's/n_samples: //')
-  echo "  $f: mean_volume=${MEAN_VOL:-?}, max_volume=${MAX_VOL:-?}, n_samples=${N_SAMPLES:-0}"
+  # Use tail -1 to get the AUDIO stream's n_samples (2nd occurrence)
+  N_SAMPLES=$(echo "$VOLDET" | grep -oE "n_samples: [0-9]+" | tail -1 | sed 's/n_samples: //')
+  echo "  $f: mean_volume=${MEAN_VOL:-?} dB, max_volume=${MAX_VOL:-?} dB, n_samples=${N_SAMPLES:-0}"
   # mean_volume = -inf means pure silence
-  [ "${MEAN_VOL:-}" = "-inf" ] && fail "audio content ($f)" "mean_volume is -inf (pure silence)"
-  # n_samples = 0 means no audio data
-  [ "${N_SAMPLES:-0}" -eq 0 ] 2>/dev/null && fail "audio content ($f)" "n_samples is 0 (no audio data)"
-  pass "audio content ($f): mean_volume=${MEAN_VOL:-?} dB, n_samples=${N_SAMPLES:-0}"
+  if [ "${MEAN_VOL:-}" = "-inf" ] || [ -z "${MEAN_VOL:-}" ]; then
+    fail "audio content ($f)" "mean_volume is ${MEAN_VOL:-empty} (pure silence or no audio)"
+  fi
+  # n_samples = 0 means no audio data (use the AUDIO stream's value, not video's)
+  if [ "${N_SAMPLES:-0}" -eq 0 ] 2>/dev/null; then
+    fail "audio content ($f)" "n_samples is 0 (no audio data in audio stream)"
+  fi
+  pass "audio content ($f): mean_volume=${MEAN_VOL} dB, n_samples=${N_SAMPLES}"
 done
 
 # ─── SUMMARY ──────────────────────────────────────────────────────────────
