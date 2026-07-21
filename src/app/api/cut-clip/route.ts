@@ -16,9 +16,9 @@ export const maxDuration = 300;
 const execFileAsync = promisify(execFile);
 
 /**
- * /api/cut-clip — Server-side ffmpeg clip cutting (v56 audio-sync-fix)
+ * /api/cut-clip — Server-side ffmpeg clip cutting (v57 begin-param-audio-sync)
  *
- * APPROACH (v56 — direct ffmpeg read from CF Worker /stream, audio synced):
+ * APPROACH (v57 — CF Worker `begin` param + ffmpeg direct read, audio synced):
  *   Browser sends streamUrl + optional audioUrl + metadata (JSON).
  *   ffmpeg reads directly from the CF Worker /stream URL using HTTP input,
  *   with -ss fast seek to jump to startTime. This downloads ONLY the bytes
@@ -118,14 +118,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No streamUrl provided' }, { status: 400 });
     }
 
-    console.log(`[cut-clip] v56 videoId=${videoId}, startTime=${startTime}s, duration=${duration}s, hasAudioUrl=${!!audioUrl}`);
+    console.log(`[cut-clip] v57 videoId=${videoId}, startTime=${startTime}s, duration=${duration}s, hasAudioUrl=${!!audioUrl}`);
 
     const cfWorkerUrl = String(process.env.CF_WORKER_URL || '').trim().replace(/\/$/, '');
     if (!cfWorkerUrl) {
       return NextResponse.json({ error: 'CF_WORKER_URL not configured' }, { status: 500 });
     }
 
-    // ── v55 PRIMARY PATH: direct ffmpeg read from CF Worker /stream ──────
+    // ── v57 PRIMARY PATH: direct ffmpeg read from CF Worker /stream ──────
     // Build CF Worker /stream URL with streamUrl param (fast path).
     // ffmpeg reads this URL directly via HTTP input, using -ss fast seek
     // to jump to startTime. Only ~5-10MB of data is downloaded.
@@ -147,7 +147,7 @@ export async function POST(request: NextRequest) {
       if (result) return result;
     } catch (directErr) {
       const msg = directErr instanceof Error ? directErr.message : String(directErr);
-      console.warn(`[cut-clip] v56 direct stream read failed, falling back to v51 download+cut: ${msg.slice(0, 300)}`);
+      console.warn(`[cut-clip] v57 direct stream read failed, falling back to v51 download+cut: ${msg.slice(0, 300)}`);
     }
 
     // ── v51 FALLBACK PATH: download + cut ──────────────────────────────────
@@ -230,9 +230,16 @@ async function cutFromStreamUrl(params: {
 
   const ffmpegPath = await findFfmpegBinary();
   if (!ffmpegPath) {
-    console.warn('[cut-clip] v56: ffmpeg binary not found');
+    console.warn('[cut-clip] v57: ffmpeg binary not found');
     return null;
   }
+
+  // v57: Use CF Worker's `begin` parameter (milliseconds) to ask YouTube to
+  // return a fresh MP4 starting from startTime. The returned stream begins
+  // with `ftyp` box and has timestamps starting at 0 — no edit list offset,
+  // no audio/video desync. This is far more reliable than ffmpeg's -ss which
+  // preserves original timestamps and caused 5.4s audio offset in v55/v56.
+  const beginMs = String(Math.floor(startTime * 1000));
 
   // Build CF Worker /stream URL for video stream (fast path with streamUrl param)
   const videoStreamEndpoint = new URL(cfWorkerUrl.replace(/\/$/, '') + '/stream');
@@ -240,6 +247,7 @@ async function cutFromStreamUrl(params: {
   videoStreamEndpoint.searchParams.set('maxHeight', '720');
   videoStreamEndpoint.searchParams.set('muxed', '1');
   videoStreamEndpoint.searchParams.set('streamUrl', streamUrl);
+  videoStreamEndpoint.searchParams.set('begin', beginMs);
   if (userAgent) videoStreamEndpoint.searchParams.set('userAgent', userAgent);
   if (visitorData) videoStreamEndpoint.searchParams.set('visitorData', visitorData);
   videoStreamEndpoint.searchParams.set('xClientName', String(xClientName));
@@ -253,6 +261,7 @@ async function cutFromStreamUrl(params: {
     audioEndpoint.searchParams.set('videoId', videoId);
     audioEndpoint.searchParams.set('audio', '1');
     audioEndpoint.searchParams.set('audioUrl', audioUrl);
+    audioEndpoint.searchParams.set('begin', beginMs);
     if (userAgent) audioEndpoint.searchParams.set('userAgent', userAgent);
     if (visitorData) audioEndpoint.searchParams.set('visitorData', visitorData);
     audioEndpoint.searchParams.set('xClientName', String(xClientName));
@@ -262,7 +271,7 @@ async function cutFromStreamUrl(params: {
   }
 
   const hasAudio = !!audioStreamUrl;
-  console.log(`[cut-clip] v56 direct read: ffmpeg=${ffmpegPath}, hasAudio=${hasAudio}`);
+  console.log(`[cut-clip] v57 direct read: ffmpeg=${ffmpegPath}, hasAudio=${hasAudio}, begin=${beginMs}ms`);
 
   // HTTP input headers for ffmpeg (CF Worker doesn't need special headers,
   // but we set Accept and Accept-Encoding for clean Range handling)
@@ -271,11 +280,13 @@ async function cutFromStreamUrl(params: {
   let cutSuccess = false;
   let lastError = '';
 
+  // v57: NO -ss needed! CF Worker's `begin` param already returns a stream
+  // starting at startTime with timestamps from 0. ffmpeg just reads from byte 0.
+  // This eliminates the timestamp desync that plagued v55/v56.
+
   // Attempt 1: -c copy (fast remux) — single or dual input
   try {
     const args: string[] = ['-y'];
-    // -ss BEFORE -i for fast seek (downloads only bytes around startTime)
-    args.push('-ss', String(startTime));
     // HTTP input flags for robust streaming
     args.push('-rw_timeout', '30000000', '-reconnect', '1', '-reconnect_at_eof', '1',
                '-reconnect_streamed', '1', '-reconnect_delay_max', '5');
@@ -283,14 +294,9 @@ async function cutFromStreamUrl(params: {
     args.push('-i', videoStreamEndpoint.toString());
 
     if (hasAudio) {
-      // v56: Dual-input — apply -ss to the audio input TOO.
-      // v55 bug: -ss only applied to video input → audio started from 0s
-      // while video started from startTime. After muxing, audio's first packet
-      // landed at startTime offset in the output container (e.g. audio
-      // start=5.4s while video start=0.04s), so users heard SILENCE for the
-      // first few seconds and perceived it as "no sound".
-      // Fix: seek BOTH inputs to the same startTime so they stay in sync.
-      args.push('-ss', String(startTime));
+      // Dual-input: video + separate audio stream.
+      // v57: Both inputs use `begin` param → both start at timestamp 0.
+      // No -ss needed → no timestamp drift.
       args.push('-rw_timeout', '30000000', '-reconnect', '1', '-reconnect_at_eof', '1',
                  '-reconnect_streamed', '1', '-reconnect_delay_max', '5');
       args.push('-headers', httpHeaders);
@@ -298,7 +304,6 @@ async function cutFromStreamUrl(params: {
       // -t AFTER both -i = output duration limit (applies to muxed output)
       args.push('-t', String(duration));
       // -c:a copy: audioUrl is already AAC (itag 139/140 = m4a), no re-encode
-      // needed. Re-encoding via 'aac' was slower and introduced sync drift.
       args.push('-c:v', 'copy', '-c:a', 'copy');
       args.push('-map', '0:v:0', '-map', '1:a:0');
     } else {
@@ -308,32 +313,31 @@ async function cutFromStreamUrl(params: {
     }
     args.push('-movflags', '+faststart', '-avoid_negative_ts', 'make_zero', outputPath);
 
-    console.log(`[cut-clip] v56 attempt 1 (-c copy): ${args.length} args`);
+    console.log(`[cut-clip] v57 attempt 1 (-c copy): ${args.length} args`);
     await execFileAsync(ffmpegPath, args, {
       maxBuffer: 50 * 1024 * 1024,
       timeout: 60_000,
       env: { ...process.env, LANG: 'C' },
     });
     cutSuccess = true;
-    console.log('[cut-clip] v56 -c copy succeeded');
+    console.log('[cut-clip] v57 -c copy succeeded');
   } catch (execErr: any) {
     const stderr = String(execErr?.stderr || '');
     lastError = `copy: ${execErr?.message?.slice(0, 150)} | STDERR: ${stderr.slice(0, 500)}`;
-    console.warn(`[cut-clip] v56 -c copy failed: ${lastError.slice(0, 300)}`);
+    console.warn(`[cut-clip] v57 -c copy failed: ${lastError.slice(0, 300)}`);
   }
 
   // Attempt 2: re-encode (fallback, slower but handles edge cases)
   if (!cutSuccess) {
     try {
-      const args: string[] = ['-y', '-ss', String(startTime)];
+      // v57: No -ss (CF Worker's begin param handles seek)
+      const args: string[] = ['-y'];
       args.push('-rw_timeout', '30000000', '-reconnect', '1', '-reconnect_at_eof', '1',
                  '-reconnect_streamed', '1', '-reconnect_delay_max', '5');
       args.push('-headers', httpHeaders);
       args.push('-i', videoStreamEndpoint.toString());
 
       if (hasAudio) {
-        // v56: seek audio input to startTime too (see attempt 1 comment)
-        args.push('-ss', String(startTime));
         args.push('-rw_timeout', '30000000', '-reconnect', '1', '-reconnect_at_eof', '1',
                    '-reconnect_streamed', '1', '-reconnect_delay_max', '5');
         args.push('-headers', httpHeaders);
@@ -349,29 +353,29 @@ async function cutFromStreamUrl(params: {
       }
       args.push('-movflags', '+faststart', '-avoid_negative_ts', 'make_zero', outputPath);
 
-      console.log(`[cut-clip] v56 attempt 2 (re-encode): ${args.length} args`);
+      console.log(`[cut-clip] v57 attempt 2 (re-encode): ${args.length} args`);
       await execFileAsync(ffmpegPath, args, {
         maxBuffer: 50 * 1024 * 1024,
         timeout: 120_000,
         env: { ...process.env, LANG: 'C' },
       });
       cutSuccess = true;
-      console.log('[cut-clip] v56 re-encode succeeded');
+      console.log('[cut-clip] v57 re-encode succeeded');
     } catch (execErr2: any) {
       const stderr2 = String(execErr2?.stderr || '');
       lastError = `copy+reencode: ${lastError} || reencode: ${execErr2?.message?.slice(0, 150)} | STDERR: ${stderr2.slice(0, 500)}`;
-      console.warn(`[cut-clip] v56 re-encode failed: ${lastError.slice(0, 300)}`);
+      console.warn(`[cut-clip] v57 re-encode failed: ${lastError.slice(0, 300)}`);
     }
   }
 
   if (!cutSuccess) {
-    console.warn(`[cut-clip] v56 both attempts failed, will fall back to v51 path`);
+    console.warn(`[cut-clip] v57 both attempts failed, will fall back to v51 path`);
     return null;
   }
 
   const outputData = await readFile(outputPath);
   if (outputData.length < 5_000) {
-    console.warn(`[cut-clip] v56 output too small: ${outputData.length} bytes`);
+    console.warn(`[cut-clip] v57 output too small: ${outputData.length} bytes`);
     return null;
   }
 
@@ -381,7 +385,7 @@ async function cutFromStreamUrl(params: {
       outputData[4], outputData[5], outputData[6], outputData[7],
     );
     if (boxType !== 'ftyp') {
-      console.warn(`[cut-clip] v56 output missing ftyp header (got: ${boxType})`);
+      console.warn(`[cut-clip] v57 output missing ftyp header (got: ${boxType})`);
       return null;
     }
   }
@@ -393,12 +397,12 @@ async function cutFromStreamUrl(params: {
   if (hasAudio) {
     const probeOk = await verifyAudioVideoSync(ffmpegPath, outputPath);
     if (!probeOk) {
-      console.warn(`[cut-clip] v56 audio/video out of sync, falling back to v51 path`);
+      console.warn(`[cut-clip] v57 audio/video out of sync, falling back to v51 path`);
       return null;
     }
   }
 
-  console.log(`[cut-clip] v56 success: ${outputData.length} bytes`);
+  console.log(`[cut-clip] v57 success: ${outputData.length} bytes`);
 
   return new NextResponse(outputData, {
     status: 200,
@@ -433,9 +437,9 @@ async function verifyAudioVideoSync(ffmpegPath: string, outputPath: string): Pro
     const stderr = String(err.stderr || '');
     const hasAudio = /Stream #\d+:\d+.*Audio:/.test(stderr);
     if (!hasAudio) {
-      console.warn(`[cut-clip] v56 sync check: no audio stream in output`);
+      console.warn(`[cut-clip] v57 sync check: no audio stream in output`);
     } else {
-      console.log(`[cut-clip] v56 sync check: audio stream present ✓`);
+      console.log(`[cut-clip] v57 sync check: audio stream present ✓`);
     }
     return hasAudio;
   }
