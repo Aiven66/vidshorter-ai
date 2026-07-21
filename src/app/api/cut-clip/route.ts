@@ -245,26 +245,29 @@ async function cutFromStreamUrl(params: {
   }
 
   // v58: Build a SINGLE muxed (combined video+audio) stream URL.
-  // - muxed=1: CF Worker returns itag 18 (360p) or itag 22 (720p) — combined
-  //   video+audio in one stream. No separate audioUrl needed.
+  // - muxed=1: CF Worker returns itag 18 (360p) — combined video+audio in
+  //   one stream. No separate audioUrl needed.
   // - maxHeight=360: Force itag 18 (360p) for fastest download. 720p muxed
   //   (itag 22) is rarely available from YouTube, so 360p is the default.
   // - NO `begin` param: YouTube IGNORES begin (URL sig/lsig mismatch), so
   //   we use ffmpeg's `-ss` for seeking instead.
-  // - streamUrl: fast path — CF Worker uses the already-resolved URL instead
-  //   of re-resolving.
+  // - NO `streamUrl` param (CRITICAL): The frontend's /api/yt-stream resolves
+  //   VIDEO-ONLY streams (itag 137, 1080p) + separate audioUrl. If we pass
+  //   that video-only streamUrl to CF Worker /stream, the fast path proxies
+  //   it directly (ignoring muxed=1), producing a video-only output with NO
+  //   AUDIO. By NOT passing streamUrl, we force CF Worker to resolve its OWN
+  //   muxed stream URL from YouTube (itag 18, 360p with integrated audio).
   const muxedStreamEndpoint = new URL(cfWorkerUrl.replace(/\/$/, '') + '/stream');
   muxedStreamEndpoint.searchParams.set('videoId', videoId);
   muxedStreamEndpoint.searchParams.set('maxHeight', '360');
   muxedStreamEndpoint.searchParams.set('muxed', '1');
-  muxedStreamEndpoint.searchParams.set('streamUrl', streamUrl);
   if (userAgent) muxedStreamEndpoint.searchParams.set('userAgent', userAgent);
   if (visitorData) muxedStreamEndpoint.searchParams.set('visitorData', visitorData);
   muxedStreamEndpoint.searchParams.set('xClientName', String(xClientName));
   if (clientVersion) muxedStreamEndpoint.searchParams.set('clientVersion', clientVersion);
   if (clientName) muxedStreamEndpoint.searchParams.set('clientName', clientName);
 
-  console.log(`[cut-clip] v58 direct read: ffmpeg=${ffmpegPath}, single muxed input, startTime=${startTime}s, duration=${duration}s (audioUrl IGNORED)`);
+  console.log(`[cut-clip] v58 direct read: ffmpeg=${ffmpegPath}, single muxed input (NO streamUrl — CF Worker resolves fresh muxed), startTime=${startTime}s, duration=${duration}s`);
 
   // HTTP input headers for ffmpeg (CF Worker doesn't need special headers,
   // but we set Accept and Accept-Encoding for clean Range handling)
@@ -290,7 +293,10 @@ async function cutFromStreamUrl(params: {
     console.log(`[cut-clip] v58 attempt 1 (-c copy + -ss): ${args.length} args`);
     await execFileAsync(ffmpegPath, args, {
       maxBuffer: 50 * 1024 * 1024,
-      timeout: 60_000,
+      // v58: Increased from 60s to 180s — CF Worker may need to resolve a fresh
+      // muxed stream URL from YouTube (no streamUrl fast path), which can take
+      // 30-60s on cold cache. Plus ffmpeg -ss seek + -c copy time (~5-10s).
+      timeout: 180_000,
       env: { ...process.env, LANG: 'C' },
     });
     cutSuccess = true;
@@ -434,12 +440,16 @@ async function downloadStreamViaCfWorker(
     // doFetch() in worker.js uses audioUrl when wantAudio=true.
   } else {
     proxyUrl.searchParams.set('muxed', '1');
-    if (streamUrl) proxyUrl.searchParams.set('streamUrl', streamUrl);
+    // v58: Do NOT pass streamUrl — it would trigger CF Worker's fast path,
+    // which proxies the provided URL directly (ignoring muxed=1). The
+    // frontend's streamUrl is video-only (itag 137), so passing it would
+    // produce a video-only download with NO AUDIO. Let CF Worker resolve
+    // its own muxed stream (itag 18, 360p with integrated audio).
   }
   if (userAgent) proxyUrl.searchParams.set('userAgent', userAgent);
   if (visitorData) proxyUrl.searchParams.set('visitorData', visitorData);
 
-  console.log(`[cut-clip] Downloading ${audio ? 'audio' : 'video (muxed 360p)'} via CF Worker /stream...`);
+  console.log(`[cut-clip] Downloading ${audio ? 'audio' : 'video (muxed 360p, CF Worker resolves)'} via CF Worker /stream...`);
 
   // First HEAD to get content-length
   const headRes = await fetch(proxyUrl.toString(), {
