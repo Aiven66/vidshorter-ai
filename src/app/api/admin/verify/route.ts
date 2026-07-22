@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
+// Force dynamic — prevents Next.js from trying to statically generate this API route at build time.
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
 const VERIFIED_ADMINS = new Set([
   'admin@126.com',
   'admin@clipop.ai',

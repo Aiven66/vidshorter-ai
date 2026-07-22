@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+// Force dynamic — prevents Next.js from trying to statically generate this API route at build time.
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
 /**
  * Video Proxy API
  *

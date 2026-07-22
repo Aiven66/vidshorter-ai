@@ -1,0 +1,103 @@
+{
+  "name": "clipop-windows-agent",
+  "private": true,
+  "version": "0.9.30",
+  "main": "main.js",
+  "scripts": {
+    "prepare:runner": "node scripts/prepare-runner.js",
+    "prepare:icon": "node scripts/generate-ico.js",
+    "dev": "pnpm prepare:runner && electron .",
+    "start": "electron .",
+    "dist": "pnpm prepare:icon && pnpm prepare:runner && electron-builder --win --x64",
+    "dist:arm64": "pnpm prepare:runner && electron-builder --win --arm64",
+    "dist:portable": "pnpm prepare:runner && electron-builder --win --x64 --config.win.target=portable",
+    "pack": "electron-builder --win --x64 --dir"
+  },
+  "build": {
+    "appId": "com.clipop.windows-agent",
+    "productName": "Clipop Agent",
+    "directories": {
+      "output": "dist"
+    },
+    "asar": true,
+    "asarUnpack": [
+      "bin/**",
+      "node_modules/@ffmpeg-installer/**"
+    ],
+    "extraResources": [
+      {
+        "from": "embedded-web",
+        "to": "embedded-web",
+        "filter": [
+          "**/*",
+          "!**/.data/**",
+          "!**/generated-clips/**",
+          "!**/*.mp4",
+          "!**/*.map",
+          "!**/node_modules/.pnpm/@ffmpeg-installer+*/**",
+          "!**/node_modules/.pnpm/typescript@*/**",
+          "!**/node_modules/.pnpm/@esbuild+*/**",
+          "!**/node_modules/.pnpm/webpack@*/**",
+          "!**/node_modules/.pnpm/caniuse-lite@*/**",
+          "!**/node_modules/.pnpm/terser@*/**",
+          "!**/node_modules/.pnpm/meriyah@*/**",
+          "!**/node_modules/.pnpm/enhanced-resolve@*/**",
+          "!**/node_modules/.pnpm/@img+sharp-linux*/**",
+          "!**/node_modules/.pnpm/@img+sharp-libvips-linux*/**",
+          "!**/node_modules/.pnpm/@img+sharp-darwin*/**",
+          "!**/node_modules/.pnpm/@img+sharp-libvips-darwin*/**",
+          "!**/node_modules/.pnpm/@img+sharp-win32-ia32*/**",
+          "!**/node_modules/.pnpm/@img+sharp-libvips-win32-ia32*/**",
+          "!**/node_modules/.pnpm/@img+sharp-win32-arm64*/**",
+          "!**/node_modules/.pnpm/@img+sharp-libvips-win32-arm64*/**",
+          "!**/node_modules/.pnpm/@img+sharp-wasm32*/**",
+          "!**/node_modules/.pnpm/@img+sharp-android*/**",
+          "!**/node_modules/.pnpm/@img+sharp-libvips-android*/**"
+        ]
+      }
+    ],
+    "files": [
+      "main.js",
+      "preload.js",
+      "preload-web.js",
+      "ytdlp.js",
+      "runner.js",
+      "local-highlights.js",
+      "media-server.js",
+      "i18n.js",
+      "package.json",
+      "icon.png",
+      "icon.ico",
+      "bin/**",
+      "renderer/**",
+      "node_modules/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "icon.ico",
+      "publisherName": "Clipop AI",
+      "verifyUpdateCodeSignature": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Clipop Agent"
+    }
+  },
+  "devDependencies": {
+    "electron": "^33.4.0",
+    "electron-builder": "^25.1.8"
+  },
+  "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "https-proxy-agent": "^7.0.5"
+  }
+}

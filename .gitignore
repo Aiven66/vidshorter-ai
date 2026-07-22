@@ -117,6 +117,9 @@ test-output*
 apps/macos-agent/dist/
 apps/macos-agent/embedded-web/
 apps/macos-agent/dist-old/
+apps/windows-agent/dist/
+apps/windows-agent/embedded-web/
+babel.config.dev.js
 *.dmg
 config/
 .gstack/

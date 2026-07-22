@@ -2,6 +2,12 @@ import { NextRequest } from 'next/server';
 import { LLMClient, Config, HeaderUtils, VideoEditClient, FrameExtractorClient } from 'coze-coding-dev-sdk';
 import { isSupabaseConfigured } from '@/storage/database/supabase-client';
 
+// Force dynamic — prevents Next.js from trying to statically generate
+// this API route at build time (which fails because crypto.randomUUID
+// is not available during page data collection).
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
 // Helper to send SSE messages
 function sendMessage(controller: ReadableStreamDefaultController, data: object) {
   const encoder = new TextEncoder();

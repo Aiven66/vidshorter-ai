@@ -1538,7 +1538,8 @@ export function stripHtml(html: string): string {
 export function slugifyTitle(title: string): string {
   return String(title || '')
     .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s-]/gu, '')  // Remove non-letter/non-number chars (Unicode-aware)
+    // Remove non-letter/non-number chars (Unicode-aware: CJK, Cyrillic, Latin Extended, Arabic, etc.)
+    .replace(/[^a-z0-9\u00C0-\u024F\u0400-\u04FF\u4E00-\u9FFF\u3040-\u309F\u30A0-\u30FF\uAC00-\uD7AF\u0590-\u05FF\u0600-\u06FF\s-]/g, '')
     .replace(/[\s_]+/g, '-')             // Replace spaces/underscores with hyphens
     .replace(/-+/g, '-')                // Collapse multiple hyphens
     .replace(/^-+|-+$/g, '')             // Trim leading/trailing hyphens

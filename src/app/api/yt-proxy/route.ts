@@ -1,3 +1,7 @@
+// Force dynamic — prevents Next.js from trying to statically generate this API route at build time.
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
 export async function OPTIONS() {
   return new Response(null, {
     status: 204,

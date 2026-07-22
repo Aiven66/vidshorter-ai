@@ -1,0 +1,12 @@
+{
+  "name": "@clipop/auth",
+  "version": "0.1.0",
+  "description": "Universal auth package: email/password, Google OAuth, desktop bridge, admin gate.",
+  "license": "MIT",
+  "main": "index.ts",
+  "types": "index.ts",
+  "peerDependencies": {
+    "@supabase/supabase-js": "^2.0.0",
+    "react": "^18.0.0 || ^19.0.0"
+  }
+}

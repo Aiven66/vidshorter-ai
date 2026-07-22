@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
+// Force dynamic — prevents Next.js from trying to statically generate this API route at build time.
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
 function getServiceRoleKey() {
   return (
     process.env.SUPABASE_SERVICE_ROLE_KEY ||

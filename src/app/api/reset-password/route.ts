@@ -2,6 +2,8 @@ import { NextRequest } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { createHash, createHmac, timingSafeEqual } from 'crypto';
 
+// Force dynamic — prevents Next.js from trying to statically generate this API route at build time.
+export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 const COOKIE_NAME = 'clipop_email_otp';

@@ -3,6 +3,10 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import { applyPlanPurchase } from '@/lib/server/subscriptions';
 import { trackSubscribeSuccess } from '@/lib/server/track-event';
 
+// Force dynamic — prevents Next.js from trying to statically generate this API route at build time.
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
 export async function POST(request: NextRequest) {
   const rawBody = await request.text();
   const webhookSecret = process.env.CREEM_WEBHOOK_SECRET;

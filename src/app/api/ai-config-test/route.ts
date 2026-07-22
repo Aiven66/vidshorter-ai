@@ -6,6 +6,10 @@
 import { NextRequest } from 'next/server';
 import { LLMClient, Config } from 'coze-coding-dev-sdk';
 
+// Force dynamic — prevents Next.js from trying to statically generate this API route at build time.
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
   const { apiKey, baseUrl, modelBaseUrl, model } = body as {

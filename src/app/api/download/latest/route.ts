@@ -1,5 +1,9 @@
 import { NextResponse } from 'next/server';
 
+// Force dynamic — prevents Next.js from trying to statically generate this API route at build time.
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
 const GITHUB_REPO = 'Aiven66/vidshorter-ai';
 // Mac DMG 发布在 0.9.30 标签，Windows NSIS 发布在 win-0.9.30 标签，Android APK 发布在 android-0.9.30 标签（三个独立 release）
 const MAC_RELEASE_TAG = '0.9.30';

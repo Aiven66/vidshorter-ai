@@ -1,5 +1,9 @@
 import { NextRequest } from 'next/server';
 
+// Force dynamic — prevents Next.js from trying to statically generate this API route at build time.
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
 const CREEM_API_BASE = 'https://api.creem.io/v1';
 const CREEM_TEST_API_BASE = 'https://test-api.creem.io/v1';
 

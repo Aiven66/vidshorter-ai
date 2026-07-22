@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { applyPlanPurchase, isPaidPlan } from '@/lib/server/subscriptions';
 import { trackSubscribeSuccess } from '@/lib/server/track-event';
 
+// Force dynamic — prevents Next.js from trying to statically generate this API route at build time.
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
 const PLAN_PRICES: Record<string, string> = {
   starter: '9.90',
   pro: '19.90',

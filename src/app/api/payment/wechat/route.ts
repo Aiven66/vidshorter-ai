@@ -18,6 +18,10 @@ import { NextRequest } from 'next/server';
 import { createDecipheriv, createSign, randomBytes } from 'crypto';
 import { applyPlanPurchase } from '@/lib/server/subscriptions';
 
+// Force dynamic — prevents Next.js from trying to statically generate this API route at build time.
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
 const WECHAT_API = 'https://api.mch.weixin.qq.com';
 
 /** Build the Authorization header for WeChat Pay v3 */

@@ -2,6 +2,10 @@ import { NextRequest } from 'next/server';
 import { readFile, unlink } from 'fs/promises';
 import videoClipper from '@/lib/server/video-clipper';
 
+// Force dynamic — prevents Next.js from trying to statically generate this API route at build time.
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
 export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
   const authHeader = request.headers.get('authorization') || '';
   const bearerToken = authHeader.toLowerCase().startsWith('bearer ') ? authHeader.slice(7).trim() : '';

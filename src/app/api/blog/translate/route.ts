@@ -4,6 +4,10 @@ import { translateBlogPost, TRANSLATION_TARGET_LOCALES } from '@/lib/blog-transl
 import type { Locale } from '@/lib/i18n';
 import { createSingleAdminPost } from '@/lib/blog-content';
 
+// Force dynamic — prevents Next.js from trying to statically generate this API route at build time.
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
 function getServiceRoleKey() {
   return (
     process.env.SUPABASE_SERVICE_ROLE_KEY ||

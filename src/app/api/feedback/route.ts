@@ -1,6 +1,10 @@
 import { NextRequest } from 'next/server';
 import { isSupabaseConfigured } from '@/storage/database/supabase-client';
 
+// Force dynamic — prevents Next.js from trying to statically generate this API route at build time.
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
 export async function POST(request: NextRequest) {
   const authHeader = request.headers.get('authorization') || '';
   const bearerToken = authHeader.toLowerCase().startsWith('bearer ') ? authHeader.slice(7).trim() : '';

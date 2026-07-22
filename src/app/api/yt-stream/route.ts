@@ -14,6 +14,8 @@
  */
 
 export const runtime = 'edge';
+// Force dynamic — prevents Next.js from trying to statically generate this API route at build time.
+export const dynamic = 'force-dynamic';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',

@@ -1,6 +1,8 @@
 import { NextRequest } from 'next/server';
 import { createHmac, createHash, timingSafeEqual } from 'crypto';
 
+// Force dynamic — prevents Next.js from trying to statically generate this API route at build time.
+export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 function generateCode(): string {

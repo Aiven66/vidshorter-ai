@@ -11,6 +11,10 @@ import { access } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { Readable } from 'node:stream';
 
+// Force dynamic — prevents Next.js from trying to statically generate this API route at build time.
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
 const CLIP_DIR = '/tmp/generated-clips';
 
 // Allowed extensions for security

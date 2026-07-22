@@ -57,21 +57,86 @@ async function cleanupEsbuildCopyArtifacts(root) {
   }
 }
 
+/**
+ * Patch linkify.mjs to replace Unicode property escapes (\p{Emoji}, \p{L}, \p{N})
+ * with equivalent character ranges. Babel (used by `next build --webpack`) cannot
+ * handle Unicode property escapes in regex, causing "Unknown property" errors.
+ * Turbopack handles them fine, but standalone mode requires webpack.
+ */
+async function patchLinkifyUnicodeRegex(root) {
+  const pnpmDir = path.join(root, 'node_modules', '.pnpm');
+  if (!fs.existsSync(pnpmDir)) return;
+
+  const entries = await fsp.readdir(pnpmDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith('linkifyjs@')) continue;
+    const mjsPath = path.join(
+      pnpmDir, entry.name, 'node_modules', 'linkifyjs', 'dist', 'linkify.mjs',
+    );
+    if (!fs.existsSync(mjsPath)) continue;
+    let content = await fsp.readFile(mjsPath, 'utf-8');
+    const before = content.split('\\p{').length - 1;
+    if (before === 0) {
+      console.log('[prepare-runner] linkify.mjs already patched, skipping');
+      continue;
+    }
+    // Replace \p{Emoji} with common emoji Unicode ranges
+    content = content.split('\\p{Emoji}').join(
+      '\\uD83C[\\uDF00-\\uDFFF]|\\uD83D[\\uDC00-\\uDE4F\\uDE80-\\uDEFF]|[\\u2600-\\u27BF]'
+    );
+    // Replace \p{L} with Unicode letter ranges
+    content = content.split('\\p{L}').join(
+      'a-zA-Z\\u00C0-\\u024F\\u0400-\\u04FF\\u4E00-\\u9FFF\\u3040-\\u309F\\u30A0-\\u30FF\\uAC00-\\uD7AF\\u0590-\\u05FF\\u0600-\\u06FF'
+    );
+    // Replace \p{N} with Unicode number ranges
+    content = content.split('\\p{N}').join(
+      '0-9\\u0660-\\u0669\\u06F0-\\u06F9\\u0966-\\u096F'
+    );
+    // Remove 'u' flag from regexes that used Unicode property escapes
+    content = content.split('/u;').join(';').split('/u ').join(' ');
+    await fsp.writeFile(mjsPath, content, 'utf-8');
+    console.log(`[prepare-runner] Patched linkify.mjs (${before} Unicode property escapes replaced)`);
+  }
+}
+
 async function main() {
   const root = path.resolve(__dirname, '..', '..', '..');
   const embeddedInRepo = path.join(root, 'apps', 'macos-agent', 'embedded-web');
   await rmDirSafe(embeddedInRepo);
   await rmDirSafe(path.join(root, '.next', 'standalone'));
   await cleanupEsbuildCopyArtifacts(root);
+  // No longer need to patch linkify.mjs — we use SWC instead of Babel for
+  // production builds (SWC natively supports Unicode property escapes).
 
-  run('node', [path.join(__dirname, 'prepare-ytdlp.js')], path.join(root, 'apps', 'macos-agent'));
+  // Temporarily move babel.config.js aside so Next.js uses SWC (not Babel).
+  // SWC natively handles Unicode property escapes (\p{Emoji}, \p{L}) which
+  // Babel cannot parse. @react-dev-inspector/babel-plugin is only needed
+  // during development, not in production builds.
+  const babelConfigPath = path.join(root, 'babel.config.js');
+  const babelConfigBackup = path.join(root, 'babel.config.dev.js');
+  let movedBabelConfig = false;
+  if (fs.existsSync(babelConfigPath)) {
+    await fsp.rename(babelConfigPath, babelConfigBackup);
+    movedBabelConfig = true;
+    console.log('[prepare-runner] Temporarily moved babel.config.js -> babel.config.dev.js (use SWC for prod build)');
+  }
 
-  run('pnpm', ['agent:build'], root);
-  run('pnpm', ['next', 'build', '--webpack'], root, {
-    NEXT_STANDALONE: '1',
-    NEXT_PUBLIC_DESKTOP: '1',
-    NEXT_TELEMETRY_DISABLED: '1',
-  });
+  try {
+    run('node', [path.join(__dirname, 'prepare-ytdlp.js')], path.join(root, 'apps', 'macos-agent'));
+
+    run('pnpm', ['agent:build'], root);
+    run('pnpm', ['next', 'build', '--webpack'], root, {
+      NEXT_STANDALONE: '1',
+      NEXT_PUBLIC_DESKTOP: '1',
+      NEXT_TELEMETRY_DISABLED: '1',
+    });
+  } finally {
+    // Restore babel.config.js for development mode
+    if (movedBabelConfig && fs.existsSync(babelConfigBackup)) {
+      await fsp.rename(babelConfigBackup, babelConfigPath);
+      console.log('[prepare-runner] Restored babel.config.js for development');
+    }
+  }
 
   const src = path.join(root, 'dist', 'agent', 'runner.js');
   const dst = path.join(__dirname, '..', 'runner.js');

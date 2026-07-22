@@ -6,6 +6,16 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
+  webpack: (config) => {
+    // Handle .mjs files from node_modules (e.g., linkifyjs used by @tiptap/extension-link)
+    // Without this, webpack fails to parse ESM .mjs files during --webpack builds
+    config.module.rules.push({
+      test: /\.mjs$/,
+      include: /node_modules/,
+      type: 'javascript/auto',
+    });
+    return config;
+  },
   serverExternalPackages: [
     '@aws-sdk/client-s3',
     '@aws-sdk/lib-storage',
@@ -18,6 +28,18 @@ const nextConfig: NextConfig = {
     'sharp',
     'nodemailer',
     'pg',
+    // uuid@11 native.js accesses crypto.randomUUID at module top-level;
+    // webpack's CJS interop wraps .default incorrectly causing build-time crash.
+    'uuid',
+    'coze-coding-dev-sdk',
+    '@langchain/core',
+    '@langchain/openai',
+    'langsmith',
+    '@smithy/node-config-provider',
+    '@smithy/credential-provider',
+    '@smithy/middleware-retry',
+    '@smithy/util-utf8',
+    '@smithy/util-stream',
   ],
   images: {
     formats: ['image/avif', 'image/webp'],

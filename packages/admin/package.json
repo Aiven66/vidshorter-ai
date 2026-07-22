@@ -1,0 +1,13 @@
+{
+  "name": "@clipop/admin",
+  "version": "0.1.0",
+  "description": "Universal admin dashboard: stats, users, payments, blog, behavior events.",
+  "license": "MIT",
+  "main": "index.ts",
+  "types": "index.ts",
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0",
+    "@supabase/supabase-js": "^2.0.0",
+    "lucide-react": "^0.400.0"
+  }
+}
