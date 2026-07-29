@@ -5,7 +5,7 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useLocale } from '@/lib/locale-context';
-import { Calendar, ArrowRight, FileText, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Calendar, ArrowRight, FileText, ChevronLeft, ChevronRight, ChevronDown } from 'lucide-react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { isSupabaseConfigured } from '@/storage/database/supabase-client';
@@ -29,6 +29,7 @@ export default function BlogPage() {
   const [loading, setLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const [tagsExpanded, setTagsExpanded] = useState(false);
   const pageSize = 10;
 
   useEffect(() => {
@@ -239,7 +240,7 @@ export default function BlogPage() {
             {t('blog.subtitle')}
           </p>
 
-          {/* 关键词标签筛选 — 美化设计 */}
+          {/* 关键词标签筛选 — 可展开/收起 */}
           {allTags.length > 0 && (
             <div className="mb-12">
               <div className="flex items-center gap-2 mb-3">
@@ -249,60 +250,79 @@ export default function BlogPage() {
                 </span>
                 <div className="h-px flex-1 bg-border" />
               </div>
-              <div className="flex flex-wrap gap-2.5">
-                {/* All 按钮 */}
-                <button
-                  onClick={() => { setSelectedTag(null); setCurrentPage(1); }}
-                  className={`group inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium border transition-all duration-200 ${
-                    selectedTag === null
-                      ? 'bg-primary text-primary-foreground border-primary shadow-sm scale-105'
-                      : 'bg-background text-muted-foreground border-border hover:border-primary/40 hover:text-foreground hover:shadow-sm'
-                  }`}
-                >
-                  <svg
-                    className="w-3.5 h-3.5"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                  </svg>
-                  {activeLocale === 'zh' ? '全部' : activeLocale === 'zh-Hant' ? '全部' : 'All'}
-                  <span className={`text-xs px-1.5 rounded-full ${
-                    selectedTag === null
-                      ? 'bg-primary-foreground/20 text-primary-foreground'
-                      : 'bg-muted text-muted-foreground group-hover:bg-muted/80'
-                  }`}>
-                    {posts.length}
-                  </span>
-                </button>
-                {/* 分类标签 */}
-                {allTags.map(tag => (
+              <div
+                className="overflow-hidden transition-all duration-300 ease-in-out"
+                style={{ maxHeight: tagsExpanded ? '1000px' : '120px' }}
+              >
+                <div className="flex flex-wrap gap-2.5">
+                  {/* All 按钮 */}
                   <button
-                    key={tag}
-                    onClick={() => handleTagClick(tag)}
+                    onClick={() => { setSelectedTag(null); setCurrentPage(1); }}
                     className={`group inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium border transition-all duration-200 ${
-                      selectedTag === tag
+                      selectedTag === null
                         ? 'bg-primary text-primary-foreground border-primary shadow-sm scale-105'
                         : 'bg-background text-muted-foreground border-border hover:border-primary/40 hover:text-foreground hover:shadow-sm'
                     }`}
                   >
-                    <span className={`w-1.5 h-1.5 rounded-full transition-colors ${
-                      selectedTag === tag
-                        ? 'bg-primary-foreground'
-                        : 'bg-muted-foreground/40 group-hover:bg-primary/60'
-                    }`} />
-                    {tag}
+                    <svg
+                      className="w-3.5 h-3.5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                    </svg>
+                    {activeLocale === 'zh' ? '全部' : activeLocale === 'zh-Hant' ? '全部' : 'All'}
                     <span className={`text-xs px-1.5 rounded-full ${
-                      selectedTag === tag
+                      selectedTag === null
                         ? 'bg-primary-foreground/20 text-primary-foreground'
                         : 'bg-muted text-muted-foreground group-hover:bg-muted/80'
                     }`}>
-                      {tagCounts.get(tag) || 0}
+                      {posts.length}
                     </span>
                   </button>
-                ))}
+                  {/* 分类标签 — 展开时显示全部，收起时只显示前8个（选中标签始终可见） */}
+                  {(tagsExpanded ? allTags : allTags.slice(0, 8).concat(
+                    selectedTag && !allTags.slice(0, 8).includes(selectedTag) ? [selectedTag] : []
+                  )).map(tag => (
+                    <button
+                      key={tag}
+                      onClick={() => handleTagClick(tag)}
+                      className={`group inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium border transition-all duration-200 ${
+                        selectedTag === tag
+                          ? 'bg-primary text-primary-foreground border-primary shadow-sm scale-105'
+                          : 'bg-background text-muted-foreground border-border hover:border-primary/40 hover:text-foreground hover:shadow-sm'
+                      }`}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full transition-colors ${
+                        selectedTag === tag
+                          ? 'bg-primary-foreground'
+                          : 'bg-muted-foreground/40 group-hover:bg-primary/60'
+                      }`} />
+                      {tag}
+                      <span className={`text-xs px-1.5 rounded-full ${
+                        selectedTag === tag
+                          ? 'bg-primary-foreground/20 text-primary-foreground'
+                          : 'bg-muted text-muted-foreground group-hover:bg-muted/80'
+                      }`}>
+                        {tagCounts.get(tag) || 0}
+                      </span>
+                    </button>
+                  ))}
+                </div>
               </div>
+              {/* 展开/收起按钮 — 仅当标签超过8个时显示 */}
+              {allTags.length > 8 && (
+                <button
+                  onClick={() => setTagsExpanded(!tagsExpanded)}
+                  className="mt-3 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  {tagsExpanded
+                    ? (activeLocale === 'zh' ? '收起' : activeLocale === 'zh-Hant' ? '收起' : 'Collapse')
+                    : (activeLocale === 'zh' ? `展开剩余 ${allTags.length - 8} 个标签` : activeLocale === 'zh-Hant' ? `展開剩餘 ${allTags.length - 8} 個標籤` : `+${allTags.length - 8} more`)}
+                  <ChevronDown className={`h-4 w-4 transition-transform duration-300 ${tagsExpanded ? 'rotate-180' : ''}`} />
+                </button>
+              )}
             </div>
           )}
 
