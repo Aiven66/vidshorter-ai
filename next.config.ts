@@ -16,6 +16,9 @@ const nextConfig: NextConfig = {
     });
     return config;
   },
+  // Silence Next.js 16 "webpack config without turbopack config" error.
+  // Turbopack handles .mjs natively; the webpack config above is only for --webpack builds (desktop client).
+  turbopack: {},
   serverExternalPackages: [
     '@aws-sdk/client-s3',
     '@aws-sdk/lib-storage',
