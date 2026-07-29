@@ -365,11 +365,11 @@ export default function BlogDetailPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <article className="container mx-auto px-4 py-12 md:py-16">
-        <div className="flex gap-8">
+      <article className="max-w-6xl mx-auto px-4 py-12 md:py-16">
+        <div className="flex gap-5">
           {/* Main content */}
           <div className="flex-1 min-w-0">
-            <div className="max-w-3xl">
+            <div>
               {/* Breadcrumb */}
               <nav aria-label="Breadcrumb" className="mb-8 flex items-center gap-1.5 text-sm text-muted-foreground">
                 <Link href="/" className="flex items-center gap-1 hover:text-foreground transition-colors">
@@ -429,16 +429,16 @@ export default function BlogDetailPage() {
 
               {/* Bottom: Related posts — always show */}
               {relatedPosts.length > 0 && (
-                <section className="mt-12">
-                  <h2 className="text-xl font-bold mb-6">
+                <section className="mt-10">
+                  <h2 className="text-lg font-bold mb-4">
                     {activeLocale === 'zh' ? '推荐阅读' : activeLocale === 'zh-Hant' ? '推薦閱讀' : 'Related Posts'}
                   </h2>
-                  <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="grid gap-3 sm:grid-cols-2">
                     {relatedPosts.slice(0, 4).map((relatedPost) => (
                       <Card key={relatedPost.id} className="overflow-hidden hover:shadow-md transition-shadow">
-                        <CardContent className="p-4">
-                          <div className="flex items-start gap-4">
-                            <div className="relative h-20 w-20 flex-shrink-0 overflow-hidden rounded-lg">
+                        <CardContent className="p-3">
+                          <div className="flex items-start gap-3">
+                            <div className="relative h-16 w-16 flex-shrink-0 overflow-hidden rounded-md">
                               <img
                                 src={relatedPost.cover_image || getDefaultCoverImage(relatedPost.category)}
                                 alt={relatedPost.title}
@@ -452,10 +452,10 @@ export default function BlogDetailPage() {
                               />
                             </div>
                             <div className="flex-1 min-w-0">
-              <Badge variant="secondary" className="mb-1.5 text-xs">
+                              <Badge variant="secondary" className="mb-1 text-[10px] px-1.5 py-0.5">
                                 {relatedPost.category}
                               </Badge>
-                              <h3 className="font-semibold mb-1 text-sm leading-snug">
+                              <h3 className="font-semibold mb-0.5 text-sm leading-snug">
                                 <Link href={buildBlogUrl(relatedPost)} className="text-foreground hover:text-primary transition-colors">
                                   {relatedPost.title}
                                 </Link>
@@ -477,15 +477,15 @@ export default function BlogDetailPage() {
 
           {/* Right sidebar: Recommended posts */}
           {relatedPosts.length > 0 && (
-            <aside className="hidden lg:block w-80 flex-shrink-0">
-              <div className="sticky top-8 space-y-4">
-                <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-wider">
+            <aside className="hidden lg:block w-72 flex-shrink-0">
+              <div className="sticky top-8 space-y-3 border-l border-border/60 pl-5">
+                <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-wider mb-1">
                   {activeLocale === 'zh' ? '热门推荐' : activeLocale === 'zh-Hant' ? '熱門推薦' : 'Recommended'}
                 </h3>
                 {relatedPosts.slice(0, 5).map((rp) => (
                   <Link key={rp.id} href={buildBlogUrl(rp)} className="block group">
                     <Card className="overflow-hidden hover:shadow-md transition-shadow">
-                      <div className="relative h-32 overflow-hidden">
+                      <div className="relative h-24 overflow-hidden">
                         <img
                           src={rp.cover_image || getDefaultCoverImage(rp.category)}
                           alt={rp.title}
@@ -497,12 +497,12 @@ export default function BlogDetailPage() {
                             target.src = getDefaultCoverImage(rp.category);
                           }}
                         />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
-                        <div className="absolute bottom-0 left-0 right-0 p-3">
-                          <Badge variant="secondary" className="mb-1.5 text-xs">
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/30 to-transparent" />
+                        <div className="absolute bottom-0 left-0 right-0 p-2.5">
+                          <Badge variant="secondary" className="mb-1 text-[10px] px-1.5 py-0.5">
                             {rp.category}
                           </Badge>
-                          <h4 className="text-white font-semibold text-sm leading-snug line-clamp-2">
+                          <h4 className="text-white font-semibold text-xs leading-snug line-clamp-2">
                             {rp.title}
                           </h4>
                         </div>
