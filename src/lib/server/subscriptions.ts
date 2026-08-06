@@ -19,7 +19,7 @@ export function isPaidPlan(planId: string | null | undefined): planId is PlanId 
 export async function applyPlanPurchase(input: {
   userId: string;
   planId: string;
-  provider: 'wechat' | 'alipay' | 'creem' | 'paypal';
+  provider: 'wechat' | 'alipay' | 'creem' | 'paypal' | 'waffo';
   orderId: string;
 }) {
   if (!isSupabaseConfigured()) return false;

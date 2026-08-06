@@ -44,7 +44,7 @@ function getServiceRoleClient(): ServiceClient | null {
 export async function trackSubscribeSuccess(params: {
   userId: string;
   userEmail?: string;
-  paymentMethod: 'paypal' | 'creem';
+  paymentMethod: 'paypal' | 'creem' | 'waffo';
   planId: string;
   planName?: string;
   amountUsd?: number;

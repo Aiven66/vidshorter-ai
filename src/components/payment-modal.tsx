@@ -36,7 +36,7 @@ interface PaymentModalProps {
   plan: PlanInfo | null;
 }
 
-type PayMethod = 'creem' | 'paypal';
+type PayMethod = 'creem' | 'paypal' | 'waffo';
 type PayState = 'selecting' | 'pending' | 'success' | 'failed';
 
 export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
@@ -44,7 +44,7 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
   const [method, setMethod] = useState<PayMethod>('creem');
   const [payState, setPayState] = useState<PayState>('selecting');
   const [paymentError, setPaymentError] = useState('');
-  const [creemSessionId, setCreemSessionId] = useState('');
+  const [redirectPollUrl, setRedirectPollUrl] = useState('');
   const [pollingPayment, setPollingPayment] = useState(false);
   const [manualCheck, setManualCheck] = useState(false);
 
@@ -53,7 +53,7 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
     setMethod('creem');
     setPayState('selecting');
     setPaymentError('');
-    setCreemSessionId('');
+    setRedirectPollUrl('');
     setPollingPayment(false);
     setManualCheck(false);
   }, [open]);
@@ -78,14 +78,14 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
     });
   }, [plan]);
 
-  const verifyCreemPayment = useCallback(async (sessionId: string, setAsSuccess = true) => {
-    if (!sessionId) return false;
+  const verifyRedirectPayment = useCallback(async (pollUrl: string, setAsSuccess = true) => {
+    if (!pollUrl) return false;
     try {
-      const res = await fetch(`/api/payment/creem?session_id=${sessionId}`);
+      const res = await fetch(pollUrl);
       const data = await res.json();
       if (data.paid) {
         if (setAsSuccess) {
-          trackPaymentCompleted('creem');
+          trackPaymentCompleted(method);
           setPollingPayment(false);
           setPayState('success');
         }
@@ -95,10 +95,10 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
     } catch {
       return false;
     }
-  }, [trackPaymentCompleted]);
+  }, [trackPaymentCompleted, method]);
 
-  const pollCreemPayment = useCallback((sessionId: string) => {
-    if (!sessionId) return undefined;
+  const pollRedirectPayment = useCallback((pollUrl: string) => {
+    if (!pollUrl) return undefined;
     setPollingPayment(true);
     let attempts = 0;
     const maxAttempts = 60;
@@ -111,43 +111,45 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
         return;
       }
 
-      const paid = await verifyCreemPayment(sessionId, true);
+      const paid = await verifyRedirectPayment(pollUrl, true);
       if (paid) clearInterval(interval);
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [verifyCreemPayment]);
+  }, [verifyRedirectPayment]);
 
   useEffect(() => {
-    if (payState !== 'pending' || method !== 'creem' || !creemSessionId) return undefined;
-    return pollCreemPayment(creemSessionId);
-  }, [payState, method, creemSessionId, pollCreemPayment]);
+    if (payState !== 'pending') return undefined;
+    if (method !== 'creem' && method !== 'waffo') return undefined;
+    if (!redirectPollUrl) return undefined;
+    return pollRedirectPayment(redirectPollUrl);
+  }, [payState, method, redirectPollUrl, pollRedirectPayment]);
 
   const handleManualPaymentCheck = useCallback(async () => {
-    if (!creemSessionId) return;
+    if (!redirectPollUrl) return;
     setManualCheck(true);
     setPaymentError('');
-    const paid = await verifyCreemPayment(creemSessionId, false);
+    const paid = await verifyRedirectPayment(redirectPollUrl, false);
     if (paid) {
-      trackPaymentCompleted('creem');
+      trackPaymentCompleted(method);
       setPayState('success');
     } else {
-      setPaymentError('Payment not confirmed. Please complete payment in the Creem window.');
+      setPaymentError('Payment not confirmed. Please complete payment in the checkout window.');
     }
     setManualCheck(false);
-  }, [creemSessionId, trackPaymentCompleted, verifyCreemPayment]);
+  }, [redirectPollUrl, trackPaymentCompleted, verifyRedirectPayment, method]);
 
-  const handlePay = async () => {
+  const handleRedirectPay = async () => {
     setPaymentError('');
     if (!user) {
       window.location.href = '/login';
       return;
     }
-    if (!plan || method !== 'creem') return;
+    if (!plan || (method !== 'creem' && method !== 'waffo')) return;
 
     setPayState('pending');
     try {
-      const res = await fetch('/api/payment/creem', {
+      const res = await fetch(`/api/payment/${method}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -175,7 +177,11 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
         return;
       }
 
-      setCreemSessionId(data.sessionId || '');
+      // Creem polls by session_id; Waffo polls by user_id (subscription status)
+      const pollUrl = method === 'creem'
+        ? `/api/payment/creem?session_id=${encodeURIComponent(data.sessionId || '')}`
+        : `/api/payment/waffo?user_id=${encodeURIComponent(user.id)}`;
+      setRedirectPollUrl(pollUrl);
       window.open(data.checkoutUrl, '_blank', 'noopener,noreferrer');
     } catch {
       setPaymentError('Network error, please try again');
@@ -246,7 +252,7 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
               Try Again
             </Button>
           </div>
-        ) : payState === 'pending' && method === 'creem' ? (
+        ) : payState === 'pending' && (method === 'creem' || method === 'waffo') ? (
           <div className="space-y-6 py-4">
             <Button
               variant="ghost"
@@ -275,7 +281,7 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
               <div className="space-y-3 text-center">
                 <h4 className="text-lg font-semibold">Checkout Page Opened</h4>
                 <p className="text-sm leading-relaxed text-muted-foreground">
-                  Complete your payment in the Creem checkout window.<br />
+                  Complete your payment in the {method === 'waffo' ? 'Waffo' : 'Creem'} checkout window.<br />
                   This dialog will automatically detect when payment is complete.
                 </p>
               </div>
@@ -387,6 +393,37 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
                   </div>
                 </div>
               </button>
+
+              <button
+                onClick={() => setMethod('waffo')}
+                className={`w-full rounded-xl border-2 p-4 text-left transition-all duration-200 ${
+                  method === 'waffo'
+                    ? 'border-primary bg-primary/5 shadow-sm'
+                    : 'border-muted hover:border-muted-foreground/30 hover:bg-muted/50'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 shadow-md">
+                      <CreditCard className="h-6 w-6 text-white" />
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold">Waffo</span>
+                        <Badge variant="secondary" className="bg-amber-100 text-xs text-amber-700">
+                          <CheckCircle className="mr-1 h-3 w-3" />
+                          MoR
+                        </Badge>
+                      </div>
+                      <p className="text-xs text-muted-foreground">Global cards & local payment methods</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="font-semibold text-primary">${plan.price.intl}/{plan.period}</span>
+                    <ChevronRight className={`h-5 w-5 ${method === 'waffo' ? 'text-primary' : 'text-muted-foreground'}`} />
+                  </div>
+                </div>
+              </button>
             </div>
 
             {method === 'paypal' && user && (
@@ -405,9 +442,17 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
             )}
 
             {method === 'creem' && (
-              <Button className="h-12 w-full gap-2 text-base font-medium" onClick={handlePay}>
+              <Button className="h-12 w-full gap-2 text-base font-medium" onClick={handleRedirectPay}>
                 <CreditCard className="h-5 w-5" />
                 Pay with Creem
+                <ChevronRight className="ml-auto h-4 w-4" />
+              </Button>
+            )}
+
+            {method === 'waffo' && (
+              <Button className="h-12 w-full gap-2 text-base font-medium" onClick={handleRedirectPay}>
+                <CreditCard className="h-5 w-5" />
+                Pay with Waffo
                 <ChevronRight className="ml-auto h-4 w-4" />
               </Button>
             )}
@@ -424,6 +469,12 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
                   <span className="text-[8px] font-bold text-white">CR</span>
                 </div>
                 <span className="text-xs text-muted-foreground">Creem</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="flex h-5 w-8 items-center justify-center rounded bg-gradient-to-r from-amber-400 to-orange-500">
+                  <span className="text-[8px] font-bold text-white">WF</span>
+                </div>
+                <span className="text-xs text-muted-foreground">Waffo</span>
               </div>
               <div className="flex items-center gap-1.5">
                 <Lock className="h-3 w-3 text-muted-foreground" />

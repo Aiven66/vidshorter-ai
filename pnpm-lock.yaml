@@ -128,6 +128,9 @@ importers:
       '@tiptap/starter-kit':
         specifier: ^3.26.1
         version: 3.26.1
+      '@waffo/pancake-ts':
+        specifier: ^0.17.0
+        version: 0.17.0
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -3278,6 +3281,10 @@ packages:
     resolution: {integrity: sha512-lrW200hZdbfRtztbygyaq/6jP6AKE8qQN2KvPcJ+x7wiD038YtnYtZ82IMNJ69GJibV7bwL3y9FgK+5w/pYt6g==}
     cpu: [x64]
     os: [win32]
+
+  '@waffo/pancake-ts@0.17.0':
+    resolution: {integrity: sha512-p9qESx5ZHhXbxO8lW6YX4chcq7YEyBin5wp0MAQOzsAd63q1wTa2RRTyhykMr/oBpwgYFfUFVWnA+RffX8aSAg==}
+    engines: {node: '>=20.0.0'}
 
   '@webassemblyjs/ast@1.14.1':
     resolution: {integrity: sha512-nuBEDgQfm1ccRp/8bCQrx1frohyufl4JlbMMZ4P1wpeOfDhF6FQkxZJ1b/e+PLwr6X1Nhw6OLme5usuBWYBvuQ==}
@@ -9927,6 +9934,8 @@ snapshots:
 
   '@unrs/resolver-binding-win32-x64-msvc@1.11.1':
     optional: true
+
+  '@waffo/pancake-ts@0.17.0': {}
 
   '@webassemblyjs/ast@1.14.1':
     dependencies:
