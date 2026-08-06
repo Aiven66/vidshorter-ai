@@ -1,17 +1,20 @@
 'use client';
 
+import { useState } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import { useLocale } from '@/lib/locale-context';
 import { useCredits } from '@/lib/credits-context';
 import { Button } from '@/components/ui/button';
-import { LogOut, CreditCard, LayoutDashboard, Shield } from 'lucide-react';
+import { LogOut, CreditCard, LayoutDashboard, Shield, Gift } from 'lucide-react';
 import Link from 'next/link';
 import { DESKTOP_WEB_APP_URL } from '@/lib/desktop-auth';
+import { ReferralDialog } from '@/components/referral-dialog';
 
 export function MobileUserSection({ mounted, isDesktop, onCloseMobile }: { mounted: boolean; isDesktop: boolean; onCloseMobile: () => void }) {
   const { user, signOut } = useAuth();
   const { t } = useLocale();
   const { balance } = useCredits();
+  const [referralOpen, setReferralOpen] = useState(false);
 
   const showUser = mounted && !!user;
   const isAdmin = user?.role === 'admin';
@@ -80,6 +83,18 @@ export function MobileUserSection({ mounted, isDesktop, onCloseMobile }: { mount
         {t('nav.dashboard')}
       </Link>
 
+      <button
+        type="button"
+        onClick={() => {
+          onCloseMobile();
+          setReferralOpen(true);
+        }}
+        className="flex items-center gap-2 py-2 text-lg font-medium w-full text-left"
+      >
+        <Gift className="h-5 w-5 text-primary" />
+        {t('nav.inviteFriends')}
+      </button>
+
       {isAdmin && (
         <Link
           href="/admin"
@@ -102,6 +117,8 @@ export function MobileUserSection({ mounted, isDesktop, onCloseMobile }: { mount
         <LogOut className="h-4 w-4 mr-2" />
         {t('nav.logout')}
       </Button>
+
+      <ReferralDialog open={referralOpen} onOpenChange={setReferralOpen} />
     </>
   );
 }

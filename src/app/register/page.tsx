@@ -10,7 +10,7 @@ import { useLocale } from '@/lib/locale-context';
 import { useAuth } from '@/lib/auth-context';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { Video, Mail, Lock, User, Loader2, CheckCircle, AlertCircle, KeyRound, Monitor } from 'lucide-react';
+import { Video, Mail, Lock, User, Loader2, CheckCircle, AlertCircle, KeyRound, Monitor, Gift } from 'lucide-react';
 import { Suspense } from 'react';
 import { GoogleLoginButton } from '@/components/google-login-button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -24,6 +24,53 @@ import {
 } from '@/lib/desktop-auth';
 
 type Step = 'info' | 'verify' | 'done';
+
+const REFERRAL_STORAGE_KEY = 'clipop_referral_referrer_id';
+
+function getStoredReferrerId(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return localStorage.getItem(REFERRAL_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function setStoredReferrerId(id: string | null) {
+  if (typeof window === 'undefined') return;
+  try {
+    if (id) localStorage.setItem(REFERRAL_STORAGE_KEY, id);
+    else localStorage.removeItem(REFERRAL_STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+async function claimReferralReward(token: string, referrerId: string): Promise<{ ok: boolean; reward: number; message?: string }> {
+  try {
+    const res = await fetch('/api/referral/reward', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ referrerId }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      console.warn('[Referral] claim failed:', data?.error || res.status);
+      return { ok: false, reward: 0, message: data?.error };
+    }
+    return {
+      ok: !data.alreadyRewarded,
+      reward: data.reward ?? 0,
+      message: data.message,
+    };
+  } catch (err) {
+    console.warn('[Referral] claim error:', err);
+    return { ok: false, reward: 0 };
+  }
+}
 
 function RegisterContent() {
   const { t } = useLocale();
@@ -46,9 +93,19 @@ function RegisterContent() {
   const [desktopEmail, setDesktopEmail] = useState('');
   const [desktopSendStatus, setDesktopSendStatus] = useState<'idle' | 'sending' | 'sent' | 'failed'>('idle');
   const [agreedToTerms, setAgreedToTerms] = useState(false);
+  const [referralBonus, setReferralBonus] = useState<{ amount: number; shown: boolean }>({ amount: 0, shown: false });
 
   const fromDesktop = sp.get('from') === 'desktop' || sp.get('desktop') === '1';
   const callbackUrl = sp.get('callback') || '';
+
+  // Capture ?ref= from URL once, persist to localStorage so it survives the
+  // info → verify step transitions and any page reloads during registration.
+  useEffect(() => {
+    const refFromUrl = sp.get('ref');
+    if (refFromUrl) {
+      setStoredReferrerId(refFromUrl);
+    }
+  }, [sp]);
 
   useEffect(() => {
     if (fromDesktop) {
@@ -148,15 +205,39 @@ function RegisterContent() {
         });
       }
 
+      // Claim referral reward if the user was invited via ?ref=
+      const token = result.token || accessToken;
+      const storedRef = getStoredReferrerId();
+      let bonusAmount = 0;
+      if (storedRef && token) {
+        const claim = await claimReferralReward(token, storedRef);
+        if (claim.ok && claim.reward > 0) {
+          bonusAmount = claim.reward;
+          setReferralBonus({ amount: claim.reward, shown: true });
+          if (posthog) {
+            posthog.capture('referral_reward_claimed', {
+              referrer_id: storedRef,
+              reward: claim.reward,
+            });
+          }
+        }
+        // Clear stored referrer id so re-running register won't claim twice
+        setStoredReferrerId(null);
+      }
+
       if (isDesktopFlow) {
-        const token = result.token || accessToken;
         console.log('[DesktopAuth] Registration complete, token received:', !!token);
         setDesktopToken(token);
         if (result.refreshToken) setDesktopRefreshToken(result.refreshToken);
         setDesktopEmail(email);
         setStep('done');
       } else {
-        window.location.href = '/';
+        // Briefly show the bonus toast before redirecting home (1.5s window)
+        if (bonusAmount > 0) {
+          setTimeout(() => { window.location.href = '/'; }, 1500);
+        } else {
+          window.location.href = '/';
+        }
       }
     } finally {
       setLoading(false);
@@ -215,6 +296,17 @@ function RegisterContent() {
                 {t('register.successMessage')} <strong>{desktopEmail || user?.email || email}</strong>。{t('register.successDesktopHint')}
               </p>
             </div>
+            {referralBonus.shown && referralBonus.amount > 0 && (
+              <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 flex items-center gap-3">
+                <Gift className="h-6 w-6 text-primary flex-shrink-0" />
+                <div>
+                  <p className="font-medium text-primary">{t('referral.bonusUnlockedTitle')}</p>
+                  <p className="text-xs text-muted-foreground">
+                    +{referralBonus.amount} {t('referral.creditsUnit')} · {t('referral.bonusUnlockedDesc')}
+                  </p>
+                </div>
+              </div>
+            )}
             <Button className="w-full h-12 text-lg" onClick={handleReturnToDesktop}>
               <Monitor className="w-5 h-5 mr-2" />
               {t('register.returnToDesktop')}
@@ -235,6 +327,23 @@ function RegisterContent() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-background to-muted/30 py-12 px-4">
+      {/* Referral bonus toast (non-desktop flow) — shown briefly before redirecting home */}
+      {referralBonus.shown && referralBonus.amount > 0 && !isDesktopFlow && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 max-w-sm w-[calc(100%-2rem)] animate-in fade-in slide-in-from-top-4 duration-300">
+          <div className="rounded-lg border border-primary/30 bg-background shadow-lg p-4 flex items-center gap-3">
+            <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+              <Gift className="h-5 w-5 text-primary" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="font-medium text-primary text-sm">{t('referral.bonusUnlockedTitle')}</p>
+              <p className="text-xs text-muted-foreground">
+                +{referralBonus.amount} {t('referral.creditsUnit')} · {t('referral.bonusUnlockedDesc')}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       <Card className="w-full max-w-md shadow-lg border-0">
         <CardHeader className="text-center space-y-1">
           <div className="flex items-center justify-center gap-2 font-bold text-2xl mb-2">

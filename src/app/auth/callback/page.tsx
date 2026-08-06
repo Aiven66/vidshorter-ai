@@ -246,6 +246,32 @@ export default function AuthCallbackPage() {
           if (isDesktopFlow) {
             rememberDesktopAuth(callbackUrl);
           }
+
+          // Claim referral reward if user was invited via ?ref= link
+          // (Google OAuth flow — email/password flow claims in /register)
+          try {
+            const storedRef = localStorage.getItem('clipop_referral_referrer_id');
+            if (storedRef) {
+              // Fire-and-forget — non-blocking. The /api/referral/reward endpoint
+              // is idempotent (unique constraint on referee_id), so duplicate calls
+              // from a second sign-in are safely no-ops.
+              fetch('/api/referral/reward', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${sessionForRedirect.accessToken}`,
+                },
+                body: JSON.stringify({ referrerId: storedRef }),
+              }).catch((err) => {
+                console.warn('[AUTH CALLBACK] referral reward claim failed:', err);
+              }).finally(() => {
+                // Clear stored referrer id — claim is one-shot per invite link
+                localStorage.removeItem('clipop_referral_referrer_id');
+              });
+            }
+          } catch {
+            /* ignore localStorage errors */
+          }
         }
 
         setStatus('success');

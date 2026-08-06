@@ -364,6 +364,43 @@ GRANT DELETE ON credit_transactions TO anon;
 GRANT DELETE ON feedbacks TO anon;
 
 -- ============================================
+-- Referrals table (invite-a-friend growth loop)
+-- ============================================
+CREATE TABLE IF NOT EXISTS referrals (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  referrer_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  referee_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reward_amount INTEGER NOT NULL DEFAULT 100,
+  status VARCHAR(20) NOT NULL DEFAULT 'completed',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT referrals_referee_id_unique UNIQUE (referee_id)
+);
+
+CREATE INDEX IF NOT EXISTS referrals_referrer_id_idx ON referrals(referrer_id);
+CREATE INDEX IF NOT EXISTS referrals_status_idx ON referrals(status);
+
+ALTER TABLE referrals ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS referrals_select_own ON referrals;
+CREATE POLICY referrals_select_own ON referrals
+  FOR SELECT USING (auth.uid() = referrer_id OR auth.uid() = referee_id);
+
+DROP POLICY IF EXISTS referrals_insert_authenticated ON referrals;
+CREATE POLICY referrals_insert_authenticated ON referrals
+  FOR INSERT TO authenticated WITH CHECK (true);
+
+DROP POLICY IF EXISTS referrals_update_own ON referrals;
+CREATE POLICY referrals_update_own ON referrals FOR UPDATE USING (false);
+
+DROP POLICY IF EXISTS referrals_delete_own ON referrals;
+CREATE POLICY referrals_delete_own ON referrals FOR DELETE USING (false);
+
+GRANT SELECT ON referrals TO anon;
+GRANT INSERT ON referrals TO anon;
+GRANT SELECT ON referrals TO authenticated;
+GRANT INSERT ON referrals TO authenticated;
+
+-- ============================================
 -- Migration completed
 -- ============================================
 SELECT 'Database migration completed successfully' AS status;

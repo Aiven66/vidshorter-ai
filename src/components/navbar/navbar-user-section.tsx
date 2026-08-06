@@ -1,18 +1,21 @@
 'use client';
 
+import { useState } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import { useLocale } from '@/lib/locale-context';
 import { useCredits } from '@/lib/credits-context';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { User, LogOut, CreditCard, LayoutDashboard, Shield } from 'lucide-react';
+import { User, LogOut, CreditCard, LayoutDashboard, Shield, Gift } from 'lucide-react';
 import Link from 'next/link';
 import { DESKTOP_WEB_APP_URL } from '@/lib/desktop-auth';
+import { ReferralDialog } from '@/components/referral-dialog';
 
 export function NavbarUserSection({ mounted, isDesktop }: { mounted: boolean; isDesktop: boolean }) {
   const { user, signOut } = useAuth();
   const { t } = useLocale();
   const { balance } = useCredits();
+  const [referralOpen, setReferralOpen] = useState(false);
 
   const showUser = mounted && !!user;
   const isAdmin = user?.role === 'admin';
@@ -66,6 +69,17 @@ export function NavbarUserSection({ mounted, isDesktop }: { mounted: boolean; is
         <span>{balance} {t('nav.credits')}</span>
       </div>
 
+      <Button
+        variant="outline"
+        size="sm"
+        className="gap-2"
+        onClick={() => setReferralOpen(true)}
+        title={t('nav.inviteFriends')}
+      >
+        <Gift className="h-4 w-4 text-primary" />
+        <span className="hidden md:inline">{t('nav.inviteFriends')}</span>
+      </Button>
+
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" className="gap-2">
@@ -94,6 +108,10 @@ export function NavbarUserSection({ mounted, isDesktop }: { mounted: boolean; is
               {t('nav.dashboard')}
             </Link>
           </DropdownMenuItem>
+          <DropdownMenuItem onSelect={(e) => { e.preventDefault(); setReferralOpen(true); }}>
+            <Gift className="h-4 w-4 mr-2" />
+            {t('nav.inviteFriends')}
+          </DropdownMenuItem>
           {isAdmin && (
             <DropdownMenuItem asChild>
               <Link href="/admin" className="flex items-center gap-2">
@@ -108,6 +126,8 @@ export function NavbarUserSection({ mounted, isDesktop }: { mounted: boolean; is
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+
+      <ReferralDialog open={referralOpen} onOpenChange={setReferralOpen} />
     </>
   );
 }
