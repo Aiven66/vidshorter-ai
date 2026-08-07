@@ -5,6 +5,9 @@ import { isSupabaseConfigured } from '@/storage/database/supabase-client';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+// Hard cap on the number of friends a single user can successfully invite.
+export const MAX_REFERRALS = 5;
+
 /**
  * GET /api/referral/link
  *
@@ -46,10 +49,14 @@ export async function GET(request: NextRequest) {
       .eq('referrer_id', user.id)
       .eq('status', 'completed');
 
+    const referralCount = count || 0;
+
     return Response.json({
       referralLink,
       referralCode: user.id,
-      referralCount: count || 0,
+      referralCount,
+      maxReferrals: MAX_REFERRALS,
+      limitReached: referralCount >= MAX_REFERRALS,
       rewardPerReferral: 100,
     });
   } catch (err) {

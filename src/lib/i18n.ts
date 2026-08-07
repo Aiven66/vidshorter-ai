@@ -109,6 +109,9 @@ export const commonTranslations = {
     refresh: 'Refresh',
     bonusUnlockedTitle: 'Bonus Unlocked!',
     bonusUnlockedDesc: 'Welcome bonus credited to your account.',
+    progressLabel: 'Invitation progress',
+    limitReachedTitle: 'Invitation cap reached',
+    limitReachedDesc: 'You have invited the maximum number of friends. Thank you for sharing!',
   },
   common: {
     error: 'Error',
@@ -442,6 +445,9 @@ export const translations: Record<Locale, Record<string, string>> = {
       refresh: '刷新',
       bonusUnlockedTitle: '积分到账！',
       bonusUnlockedDesc: '欢迎奖励已发放至你的账户。',
+      progressLabel: '邀请进度',
+      limitReachedTitle: '邀请已达上限',
+      limitReachedDesc: '你已成功邀请 5 位好友，达到邀请上限。感谢分享与支持！',
     },
     common: {
       error: '错误', ready: '就绪', failed: '失败', saving: '保存中...', score: '评分', user: '用户',
@@ -621,6 +627,9 @@ export const translations: Record<Locale, Record<string, string>> = {
       refresh: '重新整理',
       bonusUnlockedTitle: '積分到帳！',
       bonusUnlockedDesc: '歡迎獎勵已發放至你的帳戶。',
+      progressLabel: '邀請進度',
+      limitReachedTitle: '邀請已達上限',
+      limitReachedDesc: '你已成功邀請 5 位好友，達到邀請上限。感謝分享與支持！',
     },
     common: {
       error: '發生錯誤', ready: '就緒', failed: '失敗', saving: '儲存中...', score: '評分', user: '使用者',

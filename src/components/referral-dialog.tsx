@@ -23,6 +23,8 @@ interface ReferralData {
   referralLink: string;
   referralCode: string;
   referralCount: number;
+  maxReferrals: number;
+  limitReached: boolean;
   rewardPerReferral: number;
 }
 
@@ -61,6 +63,8 @@ export function ReferralDialog({ open, onOpenChange }: ReferralDialogProps) {
         referralLink: json.referralLink,
         referralCode: json.referralCode,
         referralCount: json.referralCount ?? 0,
+        maxReferrals: json.maxReferrals ?? 5,
+        limitReached: !!json.limitReached,
         rewardPerReferral: json.rewardPerReferral ?? 100,
       });
     } catch (err) {
@@ -196,7 +200,14 @@ export function ReferralDialog({ open, onOpenChange }: ReferralDialogProps) {
               {t('referral.statsLabel')}
             </div>
             <div className="text-2xl font-bold">
-              {loading ? '…' : (data?.referralCount ?? 0)}
+              {loading ? '…' : (
+                <span className="tabular-nums">
+                  {data?.referralCount ?? 0}
+                  <span className="text-base text-muted-foreground">
+                    /{data?.maxReferrals ?? 5}
+                  </span>
+                </span>
+              )}
             </div>
             <div className="text-[10px] text-muted-foreground mt-0.5">
               {t('referral.friendsUnit')}
@@ -215,6 +226,38 @@ export function ReferralDialog({ open, onOpenChange }: ReferralDialogProps) {
             </div>
           </div>
         </div>
+
+        {/* Progress bar toward 5-friend cap */}
+        {!loading && !error && data && (
+          <div className="mt-2">
+            <div className="flex items-center justify-between text-[11px] text-muted-foreground mb-1">
+              <span>{t('referral.progressLabel')}</span>
+              <span className="tabular-nums">
+                {data.referralCount}/{data.maxReferrals}
+              </span>
+            </div>
+            <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all ${
+                  data.limitReached ? 'bg-emerald-500' : 'bg-primary'
+                }`}
+                style={{
+                  width: `${Math.min(100, (data.referralCount / Math.max(1, data.maxReferrals)) * 100)}%`,
+                }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Limit-reached banner */}
+        {!loading && !error && data?.limitReached && (
+          <div className="mt-2 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 flex items-start gap-2">
+            <CheckCircle className="h-4 w-4 text-emerald-500 mt-0.5 flex-shrink-0" />
+            <p className="text-xs text-emerald-700 dark:text-emerald-400 leading-relaxed">
+              {t('referral.limitReachedDesc')}
+            </p>
+          </div>
+        )}
 
         {/* Invite link */}
         <div className="space-y-2 mt-1">
@@ -250,6 +293,7 @@ export function ReferralDialog({ open, onOpenChange }: ReferralDialogProps) {
               <Button
                 onClick={handleCopy}
                 size="sm"
+                disabled={data?.limitReached}
                 className={copied ? 'bg-green-600 hover:bg-green-600' : ''}
               >
                 {copied ? (
@@ -286,6 +330,7 @@ export function ReferralDialog({ open, onOpenChange }: ReferralDialogProps) {
                   variant="outline"
                   size="sm"
                   onClick={() => handleShare('native')}
+                  disabled={data.limitReached}
                   className="flex flex-col items-center gap-1 h-auto py-2"
                   title="Share"
                 >
@@ -297,6 +342,7 @@ export function ReferralDialog({ open, onOpenChange }: ReferralDialogProps) {
                 variant="outline"
                 size="sm"
                 onClick={() => handleShare('twitter')}
+                disabled={data.limitReached}
                 className="flex flex-col items-center gap-1 h-auto py-2"
                 title="X (Twitter)"
               >
@@ -309,6 +355,7 @@ export function ReferralDialog({ open, onOpenChange }: ReferralDialogProps) {
                 variant="outline"
                 size="sm"
                 onClick={() => handleShare('whatsapp')}
+                disabled={data.limitReached}
                 className="flex flex-col items-center gap-1 h-auto py-2"
                 title="WhatsApp"
               >
@@ -319,6 +366,7 @@ export function ReferralDialog({ open, onOpenChange }: ReferralDialogProps) {
                 variant="outline"
                 size="sm"
                 onClick={() => handleShare('telegram')}
+                disabled={data.limitReached}
                 className="flex flex-col items-center gap-1 h-auto py-2"
                 title="Telegram"
               >

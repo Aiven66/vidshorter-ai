@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { isSupabaseConfigured } from '@/storage/database/supabase-client';
+import { MAX_REFERRALS } from '@/app/api/referral/link/route';
 
 // Force dynamic — prevents Next.js from trying to statically generate this API route at build time.
 export const dynamic = 'force-dynamic';
@@ -95,6 +96,21 @@ export async function POST(request: NextRequest) {
       .maybeSingle();
     if (existing) {
       return Response.json({ alreadyRewarded: true, reward: 0, message: 'Referral already claimed' });
+    }
+
+    // Referrer quota check — each inviter can be credited for at most MAX_REFERRALS friends.
+    const { count: referrerCount } = await client
+      .from('referrals')
+      .select('*', { count: 'exact', head: true })
+      .eq('referrer_id', referrerId)
+      .eq('status', 'completed');
+
+    if ((referrerCount ?? 0) >= MAX_REFERRALS) {
+      return Response.json({
+        error: 'Referrer has reached the invitation limit',
+        code: 'referrer_limit_reached',
+        maxReferrals: MAX_REFERRALS,
+      }, { status: 422 });
     }
 
     // Grant the reward via service-role client (bypasses RLS on credits).
