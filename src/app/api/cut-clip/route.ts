@@ -125,7 +125,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No streamUrl provided' }, { status: 400 });
     }
 
-    console.log(`[cut-clip] v58 videoId=${videoId}, startTime=${startTime}s, duration=${duration}s, hasAudioUrl=${!!audioUrl} (IGNORED — v58 always uses muxed single input)`);
+    console.log(`[cut-clip] v59 videoId=${videoId}, startTime=${startTime}s, duration=${duration}s, hasAudioUrl=${!!audioUrl} (IGNORED — v59 uses muxed single input + streamUrl fast path)`);
 
     const cfWorkerUrl = String(process.env.CF_WORKER_URL || '').trim().replace(/\/$/, '');
     if (!cfWorkerUrl) {
@@ -244,30 +244,33 @@ async function cutFromStreamUrl(params: {
     return null;
   }
 
-  // v58: Build a SINGLE muxed (combined video+audio) stream URL.
-  // - muxed=1: CF Worker returns itag 18 (360p) — combined video+audio in
-  //   one stream. No separate audioUrl needed.
-  // - maxHeight=360: Force itag 18 (360p) for fastest download. 720p muxed
-  //   (itag 22) is rarely available from YouTube, so 360p is the default.
+  // v59: Build a SINGLE muxed (combined video+audio) stream URL.
+  // - streamUrl (CRITICAL): Pass the frontend-resolved streamUrl as the
+  //   fast-path param. The frontend's resolveYouTubeStream() calls
+  //   CF Worker /resolve?muxed=1, which returns a MUXED stream (itag 18,
+  //   360p with integrated audio). Passing streamUrl enables the CF Worker
+  //   /stream fast path (direct proxy, no re-resolution) — this is the ONLY
+  //   reliable way. Without it, /stream tries to re-resolve from YouTube
+  //   InnerTube API which TIMES OUT (30s+) on rate-limited CF colos.
+  // - muxed=1: Kept for the re-resolve fallback path (if fast path fails).
+  // - maxHeight=360: Force itag 18 (360p) for fastest download.
   // - NO `begin` param: YouTube IGNORES begin (URL sig/lsig mismatch), so
   //   we use ffmpeg's `-ss` for seeking instead.
-  // - NO `streamUrl` param (CRITICAL): The frontend's /api/yt-stream resolves
-  //   VIDEO-ONLY streams (itag 137, 1080p) + separate audioUrl. If we pass
-  //   that video-only streamUrl to CF Worker /stream, the fast path proxies
-  //   it directly (ignoring muxed=1), producing a video-only output with NO
-  //   AUDIO. By NOT passing streamUrl, we force CF Worker to resolve its OWN
-  //   muxed stream URL from YouTube (itag 18, 360p with integrated audio).
+  // v58 comment claiming "frontend resolves VIDEO-ONLY streams" was WRONG —
+  // the frontend requests muxed=1 from /resolve, so streamUrl is combined.
   const muxedStreamEndpoint = new URL(cfWorkerUrl.replace(/\/$/, '') + '/stream');
   muxedStreamEndpoint.searchParams.set('videoId', videoId);
   muxedStreamEndpoint.searchParams.set('maxHeight', '360');
   muxedStreamEndpoint.searchParams.set('muxed', '1');
+  // v59: Pass streamUrl to enable fast path (avoids 30s+ re-resolution timeout)
+  if (streamUrl) muxedStreamEndpoint.searchParams.set('streamUrl', streamUrl);
   if (userAgent) muxedStreamEndpoint.searchParams.set('userAgent', userAgent);
   if (visitorData) muxedStreamEndpoint.searchParams.set('visitorData', visitorData);
   muxedStreamEndpoint.searchParams.set('xClientName', String(xClientName));
   if (clientVersion) muxedStreamEndpoint.searchParams.set('clientVersion', clientVersion);
   if (clientName) muxedStreamEndpoint.searchParams.set('clientName', clientName);
 
-  console.log(`[cut-clip] v58 direct read: ffmpeg=${ffmpegPath}, single muxed input (NO streamUrl — CF Worker resolves fresh muxed), startTime=${startTime}s, duration=${duration}s`);
+  console.log(`[cut-clip] v59 direct read: ffmpeg=${ffmpegPath}, streamUrl fast-path (muxed itag 18), startTime=${startTime}s, duration=${duration}s`);
 
   // HTTP input headers for ffmpeg (CF Worker doesn't need special headers,
   // but we set Accept and Accept-Encoding for clean Range handling)
@@ -440,11 +443,11 @@ async function downloadStreamViaCfWorker(
     // doFetch() in worker.js uses audioUrl when wantAudio=true.
   } else {
     proxyUrl.searchParams.set('muxed', '1');
-    // v58: Do NOT pass streamUrl — it would trigger CF Worker's fast path,
-    // which proxies the provided URL directly (ignoring muxed=1). The
-    // frontend's streamUrl is video-only (itag 137), so passing it would
-    // produce a video-only download with NO AUDIO. Let CF Worker resolve
-    // its own muxed stream (itag 18, 360p with integrated audio).
+    // v59: Pass streamUrl to enable the fast path. The frontend's streamUrl
+    // comes from /resolve?muxed=1 (itag 18, 360p with integrated audio),
+    // so the fast path produces a correct video+audio download. Without
+    // streamUrl, /stream re-resolves from InnerTube API which TIMES OUT.
+    if (streamUrl) proxyUrl.searchParams.set('streamUrl', streamUrl);
   }
   if (userAgent) proxyUrl.searchParams.set('userAgent', userAgent);
   if (visitorData) proxyUrl.searchParams.set('visitorData', visitorData);
