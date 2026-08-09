@@ -1,8 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { Providers } from './providers';
-import { Navbar } from '@/components/navbar';
-import { Footer } from '@/components/footer';
+import { AppShell } from '@/components/app-shell';
 import { DevInspector } from '@/components/dev-inspector';
 import LazyPostHog from '@/components/lazy-posthog';
 import { defaultLocale, flattenTranslations, commonTranslations } from '@/lib/i18n/index';
@@ -96,12 +95,10 @@ export default function RootLayout({
         <link rel="dns-prefetch" href="https://us-assets.i.posthog.com" />
         <link rel="dns-prefetch" href="https://api.github.com" />
       </head>
-      <body className="antialiased min-h-screen flex flex-col" suppressHydrationWarning>
+      <body className="antialiased min-h-screen" suppressHydrationWarning>
         {isDev && <DevInspector />}
         <Providers initialLocale={serverLocale} initialTranslations={serverTranslations}>
-          <Navbar />
-          <main className="flex-1">{children}</main>
-          <Footer />
+          <AppShell>{children}</AppShell>
         </Providers>
         <LazyPostHog />
       </body>

@@ -9,6 +9,7 @@ import {
   serial,
   index,
   numeric,
+  jsonb,
 } from "drizzle-orm/pg-core";
 
 // System table - DO NOT DELETE
@@ -193,3 +194,30 @@ export type ShortVideo = typeof shortVideos.$inferSelect;
 export type Blog = typeof blogs.$inferSelect;
 export type Subscription = typeof subscriptions.$inferSelect;
 export type CreditTransaction = typeof creditTransactions.$inferSelect;
+export type VideoNote = typeof videoNotes.$inferSelect;
+
+// Video Notes table - AI 生成的视频高光笔记
+export const videoNotes = pgTable(
+  "video_notes",
+  {
+    id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+    userId: varchar("user_id", { length: 36 })
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    videoUrl: varchar("video_url", { length: 1000 }).notNull(),
+    sourceType: varchar("source_type", { length: 20 }).notNull(), // youtube, bilibili, local
+    videoTitle: varchar("video_title", { length: 500 }),
+    thumbnailUrl: varchar("thumbnail_url", { length: 1000 }),
+    // 兼容 UUID 类型：实际 DB 列为 UUID，drizzle 这里用 varchar 作类型映射
+    // 结构化笔记内容 JSON: { summary, highlights:[{timestamp,text,level}], takeaways:[] }
+    contentJson: jsonb("content_json").notNull(),
+    rawMarkdown: text("raw_markdown"), // 预渲染 Markdown，方便复制导出
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+  },
+  (table) => [
+    index("video_notes_user_id_idx").on(table.userId),
+    index("video_notes_source_type_idx").on(table.sourceType),
+    index("video_notes_created_at_idx").on(table.createdAt),
+  ]
+);

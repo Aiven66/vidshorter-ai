@@ -103,6 +103,7 @@ export function Navbar() {
         { href: '/', label: t('nav.home') },
         { href: '/pricing', label: t('nav.pricing') },
         { href: '/download', label: t('nav.download') },
+        { href: '/notes', label: 'My Notes' },
         { href: '/blog', label: t('nav.blog') },
         { href: '/about', label: t('nav.about') },
       ];

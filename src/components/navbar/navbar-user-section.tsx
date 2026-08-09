@@ -63,36 +63,36 @@ export function NavbarUserSection({ mounted, isDesktop }: { mounted: boolean; is
   }
 
   return (
-    <>
-      <div className="flex items-center gap-2 px-3 py-1.5 bg-muted rounded-lg text-sm">
-        <CreditCard className="h-4 w-4 text-primary" />
-        <span>{balance} {t('nav.credits')}</span>
+    <div className="flex items-center gap-1.5 flex-nowrap shrink-0">
+      <div className="flex items-center gap-1 px-2 py-0.5 bg-muted rounded-md text-xs whitespace-nowrap shrink-0">
+        <CreditCard className="h-3 w-3 text-primary shrink-0" />
+        <span className="font-medium tabular-nums">{balance}</span>
       </div>
 
       <Button
         variant="outline"
-        size="sm"
-        className="gap-2"
+        size="icon"
+        className="h-7 w-7 shrink-0"
         onClick={() => setReferralOpen(true)}
         title={t('nav.inviteFriends')}
+        aria-label={t('nav.inviteFriends')}
       >
-        <Gift className="h-4 w-4 text-primary" />
-        <span className="hidden md:inline">{t('nav.inviteFriends')}</span>
+        <Gift className="h-3.5 w-3.5 text-primary" />
       </Button>
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" className="gap-2">
+          <Button variant="ghost" className="gap-1.5 h-9 px-1.5 shrink-0">
             {user?.avatarUrl ? (
               <img
                 src={user.avatarUrl}
                 alt={user.name || user.email}
-                className="h-8 w-8 rounded-full object-cover"
+                className="h-7 w-7 rounded-full object-cover"
               />
             ) : (
               <User className="h-5 w-5" />
             )}
-            <span className="text-sm font-medium hidden md:inline">
+            <span className="text-sm font-medium hidden lg:inline max-w-[120px] truncate">
               {user?.name || user.email?.split('@')[0] || t('common.user')}
             </span>
           </Button>
@@ -128,6 +128,6 @@ export function NavbarUserSection({ mounted, isDesktop }: { mounted: boolean; is
       </DropdownMenu>
 
       <ReferralDialog open={referralOpen} onOpenChange={setReferralOpen} />
-    </>
+    </div>
   );
 }

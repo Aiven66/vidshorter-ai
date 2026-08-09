@@ -134,6 +134,44 @@
   }
 }
 
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+  }
+  .print\:hidden {
+    display: none !important;
+  }
+  .print\:block {
+    display: block !important;
+  }
+  .print\:border-0 {
+    border: 0 !important;
+  }
+  .print\:shadow-none {
+    box-shadow: none !important;
+  }
+  .print\:max-h-none {
+    max-height: none !important;
+  }
+  .print\:overflow-visible {
+    overflow: visible !important;
+  }
+  .print\:overflow-hidden {
+    overflow: hidden !important;
+  }
+  .print\:text-white,
+  .print\:text-red-900,
+  .print\:text-amber-950 {
+    color: black !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  @page {
+    margin: 1.5cm;
+  }
+}
+
 /* ============================================
    Blog Article Typography System
    统一的博客文章排版样式，保证所有文章一致的视觉体验
