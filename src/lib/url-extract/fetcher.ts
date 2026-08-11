@@ -9,6 +9,10 @@
  *   4. <title> + <article>/<p> 文本聚合
  */
 
+import * as http from 'http';
+import * as https from 'https';
+import * as zlib from 'zlib';
+
 export interface FetchedPage {
   url: string;
   html: string;
@@ -45,50 +49,167 @@ export interface NewsInfo {
 const DEFAULT_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
-/**
- * 抓取页面 HTML，处理重定向、编码、基本容错。
- */
-export async function fetchPage(url: string, timeoutMs = 15000): Promise<FetchedPage> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+const BROWSER_HEADERS: Record<string, string> = {
+  'User-Agent': DEFAULT_UA,
+  Accept:
+    'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+  'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+  'Accept-Encoding': 'gzip, deflate, br',
+  'Cache-Control': 'no-cache',
+  Pragma: 'no-cache',
+  'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+  'sec-ch-ua-mobile': '?0',
+  'sec-ch-ua-platform': '"macOS"',
+  'sec-fetch-dest': 'document',
+  'sec-fetch-mode': 'navigate',
+  'sec-fetch-site': 'none',
+  'sec-fetch-user': '?1',
+  'upgrade-insecure-requests': '1',
+};
 
-  try {
-    const resp = await fetch(url, {
-      headers: {
-        'User-Agent': DEFAULT_UA,
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      },
-      redirect: 'follow',
-      signal: controller.signal,
-    });
-
-    if (!resp.ok) {
-      throw new Error(`HTTP ${resp.status}`);
-    }
-
-    const contentType = resp.headers.get('content-type') || '';
-    if (!contentType.includes('text/html') && !contentType.includes('xml')) {
-      throw new Error(`Unsupported content-type: ${contentType}`);
-    }
-
-    // 检测编码并解码
-    const buffer = await resp.arrayBuffer();
-    const charset = extractCharset(contentType) || 'utf-8';
-    const decoder = new TextDecoder(charset as BufferEncoding);
-    const html = decoder.decode(buffer);
-
-    return { url, html, finalUrl: resp.url || url };
-  } finally {
-    clearTimeout(timer);
-  }
+interface RawFetchResult {
+  buffer: Buffer;
+  finalUrl: string;
+  contentType: string;
+  statusCode: number;
 }
 
+/**
+ * 用 Node.js 原生 https/http 模块抓取（绕过 undici fetch 的 TLS 指纹检测）。
+ * 自动处理重定向（最多 5 次）和 gzip/deflate/br 压缩。
+ */
+function nativeGet(
+  targetUrl: string,
+  headers: Record<string, string>,
+  timeoutMs: number,
+  redirectCount = 0,
+): Promise<RawFetchResult> {
+  return new Promise((resolve, reject) => {
+    let parsed: URL;
+    try {
+      parsed = new URL(targetUrl);
+    } catch {
+      reject(new Error(`Invalid URL: ${targetUrl}`));
+      return;
+    }
+
+    const lib = parsed.protocol === 'https:' ? https : http;
+    const req = lib.get(
+      targetUrl,
+      {
+        headers,
+        timeout: timeoutMs,
+      },
+      (res) => {
+        // 处理重定向
+        if (
+          [301, 302, 303, 307, 308].includes(res.statusCode ?? 0) &&
+          res.headers.location &&
+          redirectCount < 5
+        ) {
+          const nextUrl = new URL(res.headers.location, targetUrl).toString();
+          res.resume(); // 释放当前响应
+          resolve(nativeGet(nextUrl, headers, timeoutMs, redirectCount + 1));
+          return;
+        }
+
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => chunks.push(c));
+        res.on('end', () => {
+          const rawBuf = Buffer.concat(chunks);
+          const encoding = (res.headers['content-encoding'] || '').toLowerCase();
+          const finalUrl = res.headers.location || targetUrl;
+
+          const finish = (buf: Buffer) => {
+            resolve({
+              buffer: buf,
+              finalUrl,
+              contentType: res.headers['content-type'] || '',
+              statusCode: res.statusCode ?? 0,
+            });
+          };
+
+          if (encoding.includes('br')) {
+            zlib.brotliDecompress(rawBuf, (err, decoded) => {
+              if (err) finish(rawBuf);
+              else finish(decoded);
+            });
+          } else if (encoding.includes('gzip')) {
+            zlib.gunzip(rawBuf, (err, decoded) => {
+              if (err) finish(rawBuf);
+              else finish(decoded);
+            });
+          } else if (encoding.includes('deflate')) {
+            zlib.inflate(rawBuf, (err, decoded) => {
+              if (err) finish(rawBuf);
+              else finish(decoded);
+            });
+          } else {
+            finish(rawBuf);
+          }
+        });
+        res.on('error', reject);
+      },
+    );
+
+    req.on('error', reject);
+    req.on('timeout', () => {
+      req.destroy(new Error(`Request timeout after ${timeoutMs}ms`));
+    });
+  });
+}
+
+/**
+ * 抓取页面 HTML，处理重定向、压缩、编码、基本容错。
+ * 使用 Node.js 原生 https 模块（绕过 undici fetch 的 TLS 指纹检测）。
+ */
+export async function fetchPage(url: string, timeoutMs = 20000): Promise<FetchedPage> {
+  const result = await nativeGet(url, BROWSER_HEADERS, timeoutMs);
+
+  if (result.statusCode >= 400) {
+    throw new Error(`HTTP ${result.statusCode}`);
+  }
+
+  const contentType = result.contentType || '';
+  // 部分服务器返回多个 Content-Type（如 "text/html;charset=utf-8, text/html"），
+  // 这里宽松判断只要包含 html/xml 即可。
+  if (
+    contentType &&
+    !contentType.includes('text/html') &&
+    !contentType.includes('xml')
+  ) {
+    throw new Error(`Unsupported content-type: ${contentType}`);
+  }
+
+  // 检测编码并解码（TextDecoder 不支持的编码降级到 utf-8）
+  const charset = extractCharset(contentType) || 'utf-8';
+  let html: string;
+  try {
+    const decoder = new TextDecoder(charset as BufferEncoding);
+    html = decoder.decode(result.buffer);
+  } catch {
+    // 编码不支持时降级到 utf-8
+    const decoder = new TextDecoder('utf-8');
+    html = decoder.decode(result.buffer);
+  }
+
+  return { url, html, finalUrl: result.finalUrl };
+}
+
+/**
+ * 从 Content-Type 中提取 charset。
+ * 用严格正则只匹配字母数字+连字符，避免吃进 ", text/html" 等噪声。
+ * 仅返回 Node.js TextDecoder 支持的常见编码，未知则返回 null（外层降级 utf-8）。
+ */
 function extractCharset(contentType: string): string | null {
-  const match = contentType.match(/charset=([^;]+)/i);
+  const match = contentType.match(/charset\s*=\s*([a-zA-Z0-9_-]+)/i);
   if (!match) return null;
   const cs = match[1].trim().toLowerCase();
-  if (cs === 'gb2312' || cs === 'gbk') return 'gbk';
+  // 已知支持的编码白名单
+  const supported = ['utf-8', 'utf8', 'ascii', 'latin1', 'gbk', 'gb2312', 'gb18030', 'big5', 'shift_jis', 'euc-jp', 'euc-kr', 'windows-1252', 'iso-8859-1'];
+  if (!supported.includes(cs)) return null;
+  if (cs === 'utf8') return 'utf-8';
+  if (cs === 'gb2312') return 'gbk';
   return cs;
 }
 
@@ -182,22 +303,87 @@ function asString(v: unknown): string | undefined {
 /* 文章解析                                                            */
 /* ------------------------------------------------------------------ */
 
+/**
+ * 从指定起始位置提取一个完整的 <div> 块（解决嵌套 div 正则无法正确匹配的问题）。
+ * 用 div 开闭标签计数法：遇到 `<div` 计数 +1，遇到 `</div>` 计数 -1，归零时停止。
+ */
+function extractDivBlock(html: string, startSearchFrom: number): string | null {
+  // 从 startSearchFrom 往前找最近的 <div 开始标签
+  const divOpenRe = /<div\b[^>]*>/gi;
+  divOpenRe.lastIndex = startSearchFrom;
+  const openMatch = divOpenRe.exec(html);
+  if (!openMatch) return null;
+
+  const blockStart = openMatch.index;
+  const closeRe = /<\/?div\b/gi;
+  closeRe.lastIndex = divOpenRe.lastIndex;
+
+  let depth = 1;
+  let m: RegExpExecArray | null;
+  while ((m = closeRe.exec(html)) !== null) {
+    if (m[0].startsWith('</')) {
+      depth--;
+      if (depth === 0) {
+        return html.slice(blockStart, closeRe.lastIndex);
+      }
+    } else {
+      depth++;
+    }
+  }
+  return null;
+}
+
 function extractArticleBody(html: string): string {
   // 1. <article>...</article>
   const articleMatch = html.match(/<article[\s\S]*?<\/article>/i);
   let raw = articleMatch?.[0] || '';
 
-  // 2. 常见正文容器
+  // 2. 主流正文容器（按 id 或 class 定位，再用 div 平衡计数提取完整块）
   if (!raw) {
-    const candidates = [
-      /<main[\s\S]*?<\/main>/i,
-      /<div[^>]+class=["'][^"']*(?:post-content|article-content|entry-content|content-body|article-body|rich-text)[^"']*["'][^>]*>[\s\S]*?<\/div>/i,
+    // id 选择器（微信用 id="js_content"）
+    const idCandidates = [
+      'js_content', 'article-content', 'post-content', 'entry-content',
+      'content-body', 'article-body', 'main-content', 'article',
     ];
-    for (const re of candidates) {
+    for (const id of idCandidates) {
+      const re = new RegExp(`id=["']${id}["']`, 'i');
       const m = html.match(re);
-      if (m) {
-        raw = m[0];
-        break;
+      if (m && m.index !== undefined) {
+        const block = extractDivBlock(html, m.index);
+        if (block && block.length > 200) {
+          raw = block;
+          break;
+        }
+      }
+    }
+
+    // class 选择器（rich_media_content 是微信正文 class）
+    if (!raw) {
+      const classCandidates = [
+        'rich_media_content', 'post-content', 'article-content', 'entry-content',
+        'content-body', 'article-body', 'rich-text', 'markdown-body',
+      ];
+      for (const cls of classCandidates) {
+        const re = new RegExp(
+          `<div[^>]+class=["'][^"']*(?:${cls})[^"']*["'][^>]*>`,
+          'i',
+        );
+        const m = html.match(re);
+        if (m && m.index !== undefined) {
+          const block = extractDivBlock(html, m.index);
+          if (block && block.length > 200) {
+            raw = block;
+            break;
+          }
+        }
+      }
+    }
+
+    // <main> 容器
+    if (!raw) {
+      const mainMatch = html.match(/<main[\s\S]*?<\/main>/i);
+      if (mainMatch && mainMatch[0].length > 200) {
+        raw = mainMatch[0];
       }
     }
   }
