@@ -20,3 +20,5 @@ export type {
   KeyPointSceneProps,
   QuoteSceneProps,
 } from './scene-templates';
+
+export { UrlExtractor } from './url-extractor';

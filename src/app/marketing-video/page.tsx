@@ -1,17 +1,18 @@
 'use client';
 
 import { useState, useCallback, useMemo } from 'react';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import { TemplateRenderer } from '@/components/video-templates';
+import { Card } from '@/components/ui/card';
 import {
+  TemplateRenderer,
+  UrlExtractor,
   BrandIntroScene,
   ProductShowcaseScene,
   CTAScene,
+  type Scene,
 } from '@/components/video-templates';
-import type { Scene } from '@/components/video-templates';
 import { useLocale } from '@/lib/locale-context';
 import {
   ShoppingBag,
@@ -19,10 +20,10 @@ import {
   UtensilsCrossed,
   Home,
   Cpu,
-  ChevronLeft,
-  ChevronRight,
-  Download,
+  ChevronDown,
+  ChevronUp,
   Wand2,
+  Link as LinkIcon,
 } from 'lucide-react';
 
 type TemplateId = 'fashion' | 'beauty' | 'food' | 'home' | 'tech';
@@ -31,37 +32,80 @@ interface TemplateOption {
   id: TemplateId;
   nameKey: string;
   icon: React.ComponentType<{ className?: string }>;
-  gradient: string;
 }
 
 const TEMPLATES: TemplateOption[] = [
-  { id: 'fashion', nameKey: 'marketing.templateFashion', icon: ShoppingBag, gradient: 'from-primary/30 to-primary/5' },
-  { id: 'beauty', nameKey: 'marketing.templateBeauty', icon: Sparkles, gradient: 'from-primary/25 to-primary/10' },
-  { id: 'food', nameKey: 'marketing.templateFood', icon: UtensilsCrossed, gradient: 'from-primary/20 to-primary/8' },
-  { id: 'home', nameKey: 'marketing.templateHome', icon: Home, gradient: 'from-primary/30 to-primary/15' },
-  { id: 'tech', nameKey: 'marketing.templateTech', icon: Cpu, gradient: 'from-primary/15 to-primary/5' },
+  { id: 'fashion', nameKey: 'marketing.templateFashion', icon: ShoppingBag },
+  { id: 'beauty', nameKey: 'marketing.templateBeauty', icon: Sparkles },
+  { id: 'food', nameKey: 'marketing.templateFood', icon: UtensilsCrossed },
+  { id: 'home', nameKey: 'marketing.templateHome', icon: Home },
+  { id: 'tech', nameKey: 'marketing.templateTech', icon: Cpu },
 ];
 
-const TOTAL_STEPS = 3;
+interface ProductApiResponse {
+  ok: boolean;
+  product?: {
+    name: string;
+    price?: string;
+    currency?: string;
+    image?: string;
+    description?: string;
+    brand?: string;
+  };
+  error?: string;
+}
 
 export default function MarketingVideoPage() {
   const { t } = useLocale();
-  const [step, setStep] = useState(1);
-  const [selectedTemplate, setSelectedTemplate] = useState<TemplateId | null>(null);
+  const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>('fashion');
   const [productName, setProductName] = useState('');
   const [productPrice, setProductPrice] = useState('');
   const [promoText, setPromoText] = useState('');
   const [brandName, setBrandName] = useState('');
   const [productImage, setProductImage] = useState('');
   const [ctaText, setCtaText] = useState('');
+  const [autoDetected, setAutoDetected] = useState(false);
+  const [previewReady, setPreviewReady] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
-  // Translation helper with fallback when key is missing (t returns the key).
   const tr = useCallback(
     (key: string, fallback: string) => {
       const val = t(key);
       return val === key ? fallback : val;
     },
     [t],
+  );
+
+  const handleExtractFromUrl = useCallback(
+    async (url: string): Promise<{ ok: boolean }> => {
+      try {
+        const resp = await fetch('/api/extract-product', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url }),
+        });
+        const data: ProductApiResponse = await resp.json();
+        if (!resp.ok || !data.ok || !data.product) {
+          return { ok: false };
+        }
+        const p = data.product;
+        if (p.name) setProductName(p.name);
+        if (p.price) {
+          const prefix = p.currency && !p.price.startsWith(p.currency) ? p.currency : '';
+          setProductPrice(`${prefix}${p.price}`);
+        }
+        if (p.description) setPromoText(p.description);
+        if (p.brand) setBrandName(p.brand);
+        if (p.image) setProductImage(p.image);
+        if (!ctaText) setCtaText(t('marketing.ctaTextPlaceholder'));
+        setAutoDetected(true);
+        setPreviewReady(true);
+        return { ok: true };
+      } catch {
+        return { ok: false };
+      }
+    },
+    [t, ctaText],
   );
 
   const scenes: Scene[] = useMemo(
@@ -102,30 +146,24 @@ export default function MarketingVideoPage() {
     [brandName, productName, productPrice, promoText, productImage, ctaText, tr],
   );
 
-  const canProceed = useCallback(() => {
-    if (step === 1) return selectedTemplate !== null;
-    return true;
-  }, [step, selectedTemplate]);
+  const handleExport = (blob: Blob) => {
+    const u = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = u;
+    a.download = `marketing-${productName.slice(0, 20) || 'video'}.webm`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(u);
+  };
 
-  const handleNext = useCallback(() => {
-    setStep((prev) => Math.min(TOTAL_STEPS, prev + 1));
-  }, []);
-
-  const handlePrev = useCallback(() => {
-    setStep((prev) => Math.max(1, prev - 1));
-  }, []);
-
-  const steps = [
-    { num: 1, label: tr('marketing.step1', 'Choose Template') },
-    { num: 2, label: tr('marketing.step2', 'Product Info') },
-    { num: 3, label: tr('marketing.step3', 'Preview & Export') },
-  ];
+  const hasAnyContent = productName || productPrice || brandName;
 
   return (
     <div className="min-h-screen bg-background">
       <section className="relative overflow-hidden bg-gradient-to-b from-background via-background to-muted/30">
-        <div className="container mx-auto px-4 py-10 md:py-16">
-          <div className="mx-auto max-w-5xl">
+        <div className="container mx-auto px-4 py-8 md:py-12">
+          <div className="mx-auto max-w-6xl">
             {/* Hero */}
             <div className="mb-8 flex flex-col items-center text-center">
               <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/50 px-3 py-1 text-xs font-medium text-muted-foreground">
@@ -136,49 +174,37 @@ export default function MarketingVideoPage() {
                 {tr('marketing.title', 'Marketing Video Generator')}
               </h1>
               <p className="mt-3 max-w-2xl text-sm text-muted-foreground md:text-base">
-                {tr(
-                  'marketing.subtitle',
-                  'Batch-generate branded short videos for e-commerce, local businesses, and multi-account matrices.',
-                )}
+                {tr('marketing.subtitle', 'Paste a product link — we extract everything and render a branded short video instantly.')}
               </p>
             </div>
 
-            {/* Step indicator */}
-            <div className="mb-8 flex items-center justify-center gap-2 md:gap-4">
-              {steps.map((s, idx) => (
-                <div key={s.num} className="flex items-center gap-2 md:gap-4">
-                  <div className="flex items-center gap-2">
-                    <div
-                      className={`flex h-8 w-8 items-center justify-center rounded-full border text-sm font-semibold transition-colors ${
-                        step === s.num
-                          ? 'border-primary bg-primary text-primary-foreground'
-                          : step > s.num
-                            ? 'border-primary bg-primary/10 text-primary'
-                            : 'border-border bg-background text-muted-foreground'
-                      }`}
-                    >
-                      {s.num}
-                    </div>
-                    <span
-                      className={`hidden text-sm font-medium md:inline ${
-                        step === s.num ? 'text-foreground' : 'text-muted-foreground'
-                      }`}
-                    >
-                      {s.label}
-                    </span>
-                  </div>
-                  {idx < steps.length - 1 && (
-                    <div className={`h-px w-8 md:w-12 ${step > s.num ? 'bg-primary' : 'bg-border'}`} />
-                  )}
-                </div>
-              ))}
-            </div>
+            {/* URL 输入栏 */}
+            <Card className="mb-6 p-4 md:p-6 shadow-sm">
+              <UrlExtractor
+                labels={{
+                  urlLabel: t('marketing.urlLabel'),
+                  urlPlaceholder: t('marketing.urlPlaceholder'),
+                  button: t('marketing.autoFillBtn'),
+                  fetching: t('marketing.fetching'),
+                  failedHint: t('marketing.fetchFailed'),
+                }}
+                onExtract={handleExtractFromUrl}
+              />
 
-            {/* Step content */}
-            <div className="rounded-xl border border-border bg-card p-4 md:p-6">
-              {/* Step 1: Templates */}
-              {step === 1 && (
-                <div className="grid grid-cols-2 gap-3 md:grid-cols-3 md:gap-4">
+              {autoDetected && (
+                <div className="mt-3 flex items-center gap-2 text-xs text-primary">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  {t('marketing.smartDetected')}
+                </div>
+              )}
+
+              {/* 模板选择 - 内嵌于URL栏下方 */}
+              <div className="mt-4 border-t border-border pt-4">
+                <div className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">
+                  <Sparkles className="h-4 w-4 text-primary" />
+                  {t('marketing.templateRowLabel')}
+                </div>
+                <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
                   {TEMPLATES.map((tpl) => {
                     const Icon = tpl.icon;
                     const selected = selectedTemplate === tpl.id;
@@ -187,149 +213,117 @@ export default function MarketingVideoPage() {
                         key={tpl.id}
                         type="button"
                         onClick={() => setSelectedTemplate(tpl.id)}
-                        className={`group relative flex flex-col items-center justify-center gap-3 overflow-hidden rounded-lg border p-6 transition-all hover:shadow-md ${
+                        className={`flex flex-col items-center gap-1.5 rounded-lg border p-3 text-xs font-medium transition-all ${
                           selected
-                            ? 'border-primary ring-2 ring-primary/30'
-                            : 'border-border hover:border-primary/50'
+                            ? 'border-primary bg-primary/5 text-primary ring-1 ring-primary'
+                            : 'border-border bg-card text-muted-foreground hover:bg-accent'
                         }`}
                       >
-                        <div
-                          className={`absolute inset-0 bg-gradient-to-br ${tpl.gradient} opacity-60 transition-opacity group-hover:opacity-100`}
-                        />
-                        <div className="relative z-10 flex flex-col items-center gap-3">
-                          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-background/80 text-primary shadow-sm backdrop-blur">
-                            <Icon className="size-7" />
-                          </div>
-                          <span className="text-sm font-medium text-foreground">
-                            {tr(tpl.nameKey, tpl.id)}
-                          </span>
-                        </div>
+                        <Icon className="h-5 w-5" />
+                        <span className="truncate">{tr(tpl.nameKey, tpl.id)}</span>
                       </button>
                     );
                   })}
                 </div>
-              )}
+              </div>
 
-              {/* Step 2: Product info form */}
-              {step === 2 && (
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="productName">
-                      {tr('marketing.productName', 'Product Name')}
-                    </Label>
-                    <Input
-                      id="productName"
-                      value={productName}
-                      onChange={(e) => setProductName(e.target.value)}
-                      placeholder={tr('marketing.productNamePlaceholder', 'e.g., Premium Cotton T-Shirt')}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="productPrice">
-                      {tr('marketing.productPrice', 'Price')}
-                    </Label>
-                    <Input
-                      id="productPrice"
-                      value={productPrice}
-                      onChange={(e) => setProductPrice(e.target.value)}
-                      placeholder={tr('marketing.productPricePlaceholder', 'e.g., ¥99')}
-                    />
-                  </div>
-                  <div className="space-y-2 md:col-span-2">
-                    <Label htmlFor="promoText">
-                      {tr('marketing.promoText', 'Promo Copy')}
-                    </Label>
-                    <Textarea
-                      id="promoText"
-                      value={promoText}
-                      onChange={(e) => setPromoText(e.target.value)}
-                      placeholder={tr('marketing.promoTextPlaceholder', 'e.g., Limited time offer - 30% off today only!')}
-                      rows={3}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="brandName">
-                      {tr('marketing.brandName', 'Brand Name')}
-                    </Label>
-                    <Input
-                      id="brandName"
-                      value={brandName}
-                      onChange={(e) => setBrandName(e.target.value)}
-                      placeholder={tr('marketing.brandNamePlaceholder', 'e.g., YourBrand')}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="productImage">
-                      {tr('marketing.productImage', 'Product Image URL')}
-                    </Label>
-                    <Input
-                      id="productImage"
-                      value={productImage}
-                      onChange={(e) => setProductImage(e.target.value)}
-                      placeholder={tr('marketing.productImagePlaceholder', 'https://...')}
-                    />
-                  </div>
-                  <div className="space-y-2 md:col-span-2">
-                    <Label htmlFor="ctaText">
-                      {tr('marketing.ctaText', 'Call to Action')}
-                    </Label>
-                    <Input
-                      id="ctaText"
-                      value={ctaText}
-                      onChange={(e) => setCtaText(e.target.value)}
-                      placeholder={tr('marketing.ctaTextPlaceholder', 'e.g., Shop Now')}
-                    />
-                  </div>
-                </div>
-              )}
+              {/* 高级选项 - 折叠 */}
+              <div className="mt-4 border-t border-border pt-4">
+                <button
+                  type="button"
+                  onClick={() => setShowAdvanced((v) => !v)}
+                  className="flex w-full items-center justify-between text-sm font-medium text-muted-foreground hover:text-foreground"
+                >
+                  <span>{t('marketing.advancedOptions')}</span>
+                  {showAdvanced ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                </button>
 
-              {/* Step 3: Preview & Export */}
-              {step === 3 && (
-                <div className="grid gap-6 md:grid-cols-2">
-                  <div className="space-y-3">
-                    <h3 className="text-sm font-semibold text-foreground">
-                      {tr('marketing.preview', 'Preview')}
-                    </h3>
-                    <div className="min-h-[500px]">
-                      <TemplateRenderer scenes={scenes} />
+                {showAdvanced && (
+                  <div className="mt-4 grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="productName">{t('marketing.productName')}</Label>
+                      <Input
+                        id="productName"
+                        value={productName}
+                        onChange={(e) => setProductName(e.target.value)}
+                        placeholder={t('marketing.productNamePlaceholder')}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="productPrice">{t('marketing.productPrice')}</Label>
+                      <Input
+                        id="productPrice"
+                        value={productPrice}
+                        onChange={(e) => setProductPrice(e.target.value)}
+                        placeholder={t('marketing.productPricePlaceholder')}
+                      />
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <Label htmlFor="promoText">{t('marketing.promoText')}</Label>
+                      <Textarea
+                        id="promoText"
+                        value={promoText}
+                        onChange={(e) => setPromoText(e.target.value)}
+                        placeholder={t('marketing.promoTextPlaceholder')}
+                        rows={3}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="brandName">{t('marketing.brandName')}</Label>
+                      <Input
+                        id="brandName"
+                        value={brandName}
+                        onChange={(e) => setBrandName(e.target.value)}
+                        placeholder={t('marketing.brandNamePlaceholder')}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="productImage">{t('marketing.productImage')}</Label>
+                      <Input
+                        id="productImage"
+                        value={productImage}
+                        onChange={(e) => setProductImage(e.target.value)}
+                        placeholder={t('marketing.productImagePlaceholder')}
+                      />
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <Label htmlFor="ctaText">{t('marketing.ctaText')}</Label>
+                      <Input
+                        id="ctaText"
+                        value={ctaText}
+                        onChange={(e) => setCtaText(e.target.value)}
+                        placeholder={t('marketing.ctaTextPlaceholder')}
+                      />
                     </div>
                   </div>
-                  <div className="space-y-4">
-                    <h3 className="text-sm font-semibold text-foreground">
-                      {tr('marketing.export', 'Export Video')}
-                    </h3>
-                    <p className="text-sm text-muted-foreground">
-                      {tr(
-                        'marketing.exportTip',
-                        'Rendering uses browser Canvas capture — no upload required.',
-                      )}
-                    </p>
-                    <Button className="w-full" size="lg">
-                      <Download className="size-4" />
-                      {tr('marketing.export', 'Export Video')}
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
+            </Card>
 
-            {/* Nav buttons */}
-            <div className="mt-6 flex items-center justify-between">
-              <Button variant="outline" onClick={handlePrev} disabled={step === 1}>
-                <ChevronLeft className="size-4" />
-                {tr('common.back', 'Back')}
-              </Button>
-              {step < TOTAL_STEPS ? (
-                <Button onClick={handleNext} disabled={!canProceed()}>
-                  {tr('common.next', 'Next')}
-                  <ChevronRight className="size-4" />
-                </Button>
-              ) : (
-                <Button disabled>
-                  {tr('marketing.generate', 'Generate Video')}
-                </Button>
-              )}
-            </div>
+            {/* 预览区 */}
+            {previewReady && hasAnyContent ? (
+              <Card className="p-4 md:p-6 shadow-sm">
+                <div className="mb-4 flex items-center justify-between">
+                  <h2 className="flex items-center gap-2 text-lg font-semibold">
+                    <Wand2 className="h-5 w-5 text-primary" />
+                    {t('marketing.preview')}
+                  </h2>
+                  <p className="text-xs text-muted-foreground">{t('marketing.exportTip')}</p>
+                </div>
+                <div className="min-h-[500px]">
+                  <TemplateRenderer scenes={scenes} onExport={handleExport} />
+                </div>
+              </Card>
+            ) : (
+              <Card className="border-dashed p-12 text-center">
+                <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+                  <LinkIcon className="h-6 w-6 text-muted-foreground" />
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {tr('marketing.urlPlaceholder', 'Paste a product link to start')}
+                </p>
+              </Card>
+            )}
           </div>
         </div>
       </section>
