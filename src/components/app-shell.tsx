@@ -17,6 +17,12 @@ import {
   Menu,
   CreditCard,
   Gift,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Download,
+  ShoppingBag,
+  TrendingUp,
+  BookOpen,
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { DESKTOP_WEB_APP_URL } from '@/lib/desktop-auth';
@@ -51,7 +57,7 @@ const LanguageSwitcher = dynamic(
 type NavItem = {
   href: string;
   // 通过 useLocale().t('nav.xxx') 读取翻译
-  labelKey: 'clips' | 'notes' | 'blog' | 'pricing' | 'about';
+  labelKey: 'clips' | 'notes' | 'blog' | 'pricing' | 'about' | 'download' | 'marketing' | 'news' | 'article';
   icon: typeof Scissors;
   badge?: 'NEW';
 };
@@ -59,8 +65,12 @@ type NavItem = {
 const NAV_ITEMS: NavItem[] = [
   { href: '/video-clips', labelKey: 'clips', icon: Scissors },
   { href: '/video-notes', labelKey: 'notes', icon: FileText, badge: 'NEW' },
+  { href: '/marketing-video', labelKey: 'marketing', icon: ShoppingBag, badge: 'NEW' },
+  { href: '/news-video', labelKey: 'news', icon: TrendingUp, badge: 'NEW' },
+  { href: '/article-to-video', labelKey: 'article', icon: BookOpen, badge: 'NEW' },
   { href: '/blog', labelKey: 'blog', icon: Newspaper },
   { href: '/pricing', labelKey: 'pricing', icon: Tag },
+  { href: '/download', labelKey: 'download', icon: Download },
   { href: '/about', labelKey: 'about', icon: Info },
 ];
 
@@ -78,27 +88,46 @@ function AppSidebarContent({
   pathname,
   isDesktop,
   onNavigate,
+  collapsed = false,
+  onToggleCollapse,
 }: {
   pathname: string | null;
   isDesktop: boolean;
   onNavigate?: () => void;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
 }) {
   const isActive = (path: string) => path === '/' ? pathname === '/' : pathname?.startsWith(path);
 
   return (
     <nav className="flex flex-col h-full">
-      {/* Logo 区 */}
-      <Link
-        href="/video-clips"
-        className="flex items-center gap-2 px-3 py-4 mb-2 border-b border-border"
-        onClick={onNavigate}
-      >
-        <SidebarLogo />
-        <span className="font-bold text-lg leading-tight">Clipop AI</span>
-      </Link>
+      {/* Logo + 收起按钮 区 */}
+      <div className={`flex items-center border-b border-border ${collapsed ? 'justify-center px-1 py-3' : 'justify-between px-3 py-3'}`}>
+        <Link
+          href="/video-clips"
+          className="flex items-center gap-2"
+          onClick={onNavigate}
+          title={collapsed ? 'Clipop AI' : undefined}
+        >
+          <SidebarLogo />
+          {!collapsed && <span className="font-bold text-lg leading-tight">Clipop AI</span>}
+        </Link>
+        {/* 收起按钮 — 紧邻 Logo 右侧 */}
+        {!collapsed && onToggleCollapse && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onToggleCollapse}
+            className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-accent"
+            title="Collapse sidebar"
+          >
+            <PanelLeftClose className="h-4 w-4" />
+          </Button>
+        )}
+      </div>
 
       {/* 主导航入口 */}
-      <div className="flex flex-col gap-1 px-2 flex-1">
+      <div className={`flex flex-col gap-1 flex-1 ${collapsed ? 'px-1' : 'px-2'}`}>
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon;
           const href = isDesktop
@@ -108,12 +137,13 @@ function AppSidebarContent({
 
           const content = (
             <>
-              <Icon className={`h-5 w-5 ${active ? 'text-primary' : 'text-muted-foreground'}`} />
-              <span className={`text-sm font-medium ${active ? 'text-primary' : 'text-muted-foreground'}`}>
-                {/* 翻译 key 在 navbar-user-section 中通过 useLocale 读取；这里直接用 useLocale 的 t */}
-                <SidebarLabel labelKey={item.labelKey} />
-              </span>
-              {item.badge === 'NEW' && (
+              <Icon className={`h-5 w-5 flex-shrink-0 ${active ? 'text-primary' : 'text-muted-foreground'}`} />
+              {!collapsed && (
+                <span className={`text-sm font-medium ${active ? 'text-primary' : 'text-muted-foreground'}`}>
+                  <SidebarLabel labelKey={item.labelKey} />
+                </span>
+              )}
+              {item.badge === 'NEW' && !collapsed && (
                 <span className="ml-auto text-[10px] font-bold bg-destructive text-white px-1.5 py-0.5 rounded">
                   NEW
                 </span>
@@ -121,9 +151,9 @@ function AppSidebarContent({
             </>
           );
 
-          const className = `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors hover:bg-accent ${
-            active ? 'bg-primary/10 text-primary' : ''
-          }`;
+          const className = `flex items-center gap-3 rounded-lg transition-colors hover:bg-accent ${
+            collapsed ? 'justify-center px-1 py-2.5' : 'px-3 py-2.5'
+          } ${active ? 'bg-primary/10 text-primary' : ''}`;
 
           if (isDesktop) {
             return (
@@ -134,6 +164,7 @@ function AppSidebarContent({
                 rel="noopener noreferrer"
                 onClick={onNavigate}
                 className={className}
+                title={collapsed ? item.labelKey : undefined}
               >
                 {content}
               </a>
@@ -145,6 +176,7 @@ function AppSidebarContent({
               href={href}
               onClick={onNavigate}
               className={className}
+              title={collapsed ? item.labelKey : undefined}
             >
               {content}
             </Link>
@@ -164,8 +196,12 @@ function SidebarLabel({ labelKey }: { labelKey: NavItem['labelKey'] }) {
   const fallback: Record<NavItem['labelKey'], string> = {
     clips: '高光剪辑',
     notes: '高光笔记',
+    marketing: '营销视频',
+    news: '资讯视频',
+    article: '文章转视频',
     blog: '博客',
     pricing: '定价',
+    download: '下载客户端',
     about: '关于我们',
   };
   const translated = t(key);
@@ -174,11 +210,21 @@ function SidebarLabel({ labelKey }: { labelKey: NavItem['labelKey'] }) {
   return <>{label || fallback[labelKey]}</>;
 }
 
-function SidebarCreditsCard({ mounted }: { mounted: boolean }) {
+function SidebarCreditsCard({ mounted, collapsed = false }: { mounted: boolean; collapsed?: boolean }) {
   const { user } = useAuth();
   const { balance } = useCredits();
   const { t } = useLocale();
   if (!mounted || !user) return null;
+  if (collapsed) {
+    return (
+      <div className="px-1 pb-3">
+        <div className="rounded-lg bg-primary/5 border border-primary/20 p-2 flex flex-col items-center gap-1">
+          <CreditCard className="h-3.5 w-3.5 text-primary/80" />
+          <span className="text-sm font-bold text-primary">{balance}</span>
+        </div>
+      </div>
+    );
+  }
   // 翻译兜底
   const creditsLabel = t('nav.creditsBalance') === 'nav.creditsBalance' ? 'Credits' : t('nav.creditsBalance');
   const upgradeLabel = t('nav.upgradePro') === 'nav.upgradePro' ? 'Upgrade' : t('nav.upgradePro');
@@ -209,6 +255,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [isDesktop, setIsDesktop] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+
+  // 恢复侧边栏折叠状态
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('sidebar_collapsed');
+      if (saved === 'true') setCollapsed(true);
+    } catch {}
+  }, []);
+
+  // 持久化折叠状态
+  useEffect(() => {
+    try {
+      localStorage.setItem('sidebar_collapsed', String(collapsed));
+    } catch {}
+  }, [collapsed]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -219,16 +281,37 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, []);
 
   const toggleTheme = () => setTheme(theme === 'dark' ? 'light' : 'dark');
+  const toggleSidebar = () => setCollapsed((v) => !v);
 
   return (
     <div className="min-h-screen flex">
       {/* 桌面端左侧栏 */}
-      <aside className="hidden md:flex w-[200px] flex-shrink-0 flex-col border-r border-border bg-background sticky top-0 h-screen">
+      <aside
+        className={`hidden md:flex flex-shrink-0 flex-col border-r border-border bg-background sticky top-0 h-screen transition-all duration-300 ease-in-out ${
+          collapsed ? 'w-[56px]' : 'w-[200px]'
+        }`}
+      >
         <AppSidebarContent
           pathname={pathname}
           isDesktop={isDesktop}
+          collapsed={collapsed}
+          onToggleCollapse={toggleSidebar}
         />
-        <SidebarCreditsCard mounted={mounted} />
+        {/* 收起状态下，在 Logo 下方放一个展开按钮 */}
+        {collapsed && (
+          <div className="px-1 py-1 flex justify-center border-b border-border">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={toggleSidebar}
+              className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-accent"
+              title="Expand sidebar"
+            >
+              <PanelLeftOpen className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
+        <SidebarCreditsCard mounted={mounted} collapsed={collapsed} />
       </aside>
 
       {/* 主内容区 */}

@@ -22,12 +22,21 @@ import {
   Quote,
   Target,
   PlayCircle,
+  Share2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
 const VideoPlayer = dynamic(() => import('@/components/video-notes/video-player'), {
   ssr: false,
 });
+const CorePointsAnnotator = dynamic(
+  () => import('@/components/video-notes/core-points-annotator'),
+  { ssr: false, loading: () => null },
+);
+const SharePosterModal = dynamic(
+  () => import('@/components/video-notes/share-poster-modal'),
+  { ssr: false, loading: () => null },
+);
 
 type HighlightItem = {
   timestamp: string;
@@ -36,10 +45,26 @@ type HighlightItem = {
   level: 'critical' | 'important';
 };
 
+type CorePoint = {
+  index: number;
+  title: string;
+  detail: string;
+  sourceTimestamps?: string[];
+  weight?: number;
+};
+type AnnotationColor = 'yellow' | 'pink' | 'blue' | 'green' | 'purple';
+type CorePointAnnotation = {
+  index: number;
+  color?: AnnotationColor | null;
+  note?: string;
+};
+
 type VideoNoteContent = {
   summary: string;
   highlights: HighlightItem[];
   takeaways: string[];
+  corePoints: CorePoint[];
+  annotations?: CorePointAnnotation[];
   hasTranscript?: boolean;
   totalDuration?: number;
 };
@@ -67,6 +92,8 @@ export default function NoteDetailPage() {
   const [playerCurrentTime, setPlayerCurrentTime] = useState(0);
   const [playerDuration, setPlayerDuration] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [annotations, setAnnotations] = useState<CorePointAnnotation[]>([]);
+  const [posterOpen, setPosterOpen] = useState(false);
 
   const playerRef = useRef<{
     seekTo: (t: number, autoplay?: boolean) => void;
@@ -103,7 +130,10 @@ export default function NoteDetailPage() {
         throw new Error('Failed to load note');
       }
       const data = (await res.json()) as NoteDetail;
+      if (!data.content_json.corePoints) data.content_json.corePoints = [];
+      if (!data.content_json.annotations) data.content_json.annotations = [];
       setNote(data);
+      setAnnotations(data.content_json.annotations);
     } catch (e: any) {
       toast.error(e.message || 'Failed to load note');
     } finally {
@@ -141,6 +171,21 @@ export default function NoteDetailPage() {
     }
   }, [note]);
 
+  const handleJumpTimestamp = useCallback(
+    (timestamp: string) => {
+      const sec = parseTimestampToSeconds(timestamp);
+      if (playerRef.current) {
+        playerRef.current.seekTo(sec, true);
+        toast.success(`Playing at ${timestamp}`);
+      }
+    },
+    [],
+  );
+
+  const handleAnnotationChange = useCallback((next: CorePointAnnotation[]) => {
+    setAnnotations(next);
+  }, []);
+
   const handleDownloadMarkdown = useCallback(() => {
     if (!note) return;
     const md = note.raw_markdown || renderFromJson(note.content_json, note.video_title);
@@ -174,6 +219,35 @@ export default function NoteDetailPage() {
   const { content_json: content } = note;
   const totalDuration = playerDuration || content.totalDuration || estimateDuration(content.highlights);
 
+  const tr = (key: string) => {
+    const v = t(key);
+    // fall back to key if no translation (since this page still has hard-coded en)
+    return typeof v === 'string' ? v : key;
+  };
+
+  const corePointsAnnotator = (content.corePoints && content.corePoints.length > 0 && CorePointsAnnotator) ? (
+    <CorePointsAnnotator
+      corePoints={content.corePoints}
+      annotations={annotations}
+      onAnnotationChange={handleAnnotationChange}
+      onJumpTimestamp={handleJumpTimestamp}
+      t={tr}
+      noteId={note.id}
+      accessToken={accessToken}
+      onSaved={() => {
+        // optimistic refresh
+        setNote((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            content_json: { ...prev.content_json, annotations },
+          };
+        });
+        toast.success('Annotations saved');
+      }}
+    />
+  ) : null;
+
   return (
     <div className="container mx-auto px-4 py-6 md:py-8">
       <div className="mx-auto max-w-7xl">
@@ -203,6 +277,10 @@ export default function NoteDetailPage() {
               </p>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
+              <Button variant="outline" size="sm" onClick={() => setPosterOpen(true)} title={tr('notes.sharePosterDesc')}>
+                <Share2 className="h-3.5 w-3.5 mr-1.5" />
+                Share
+              </Button>
               <Button variant="outline" size="sm" onClick={handleCopyMarkdown}>
                 <Copy className="h-3.5 w-3.5 mr-1.5" />
                 Copy
@@ -311,7 +389,7 @@ export default function NoteDetailPage() {
               )}
 
               {content.takeaways?.length > 0 && (
-                <section className="mb-2">
+                <section className="mb-5">
                   <h3 className="text-sm font-semibold text-muted-foreground mb-3 flex items-center gap-1.5">
                     <Quote className="h-3.5 w-3.5" />
                     Quotes
@@ -329,6 +407,9 @@ export default function NoteDetailPage() {
                 </section>
               )}
 
+              {/* 核心讲义要点（含颜色标注 & 笔记） */}
+              {corePointsAnnotator}
+
               <div className="hidden print:block mt-8 pt-4 border-t text-xs text-muted-foreground">
                 <p>Source: {note.video_url}</p>
                 <p>Generated: {new Date(note.created_at).toLocaleString()}</p>
@@ -336,6 +417,22 @@ export default function NoteDetailPage() {
             </div>
           </div>
         </div>
+
+        {/* 分享海报模态框 */}
+        {SharePosterModal && (
+          <SharePosterModal
+            open={posterOpen}
+            onClose={() => setPosterOpen(false)}
+            videoTitle={note.video_title}
+            sourceType={note.source_type}
+            videoUrl={note.video_url}
+            summary={content.summary}
+            corePoints={content.corePoints || []}
+            annotations={annotations}
+            t={tr}
+            shareUrl={typeof window !== 'undefined' ? window.location.href : ''}
+          />
+        )}
       </div>
     </div>
   );

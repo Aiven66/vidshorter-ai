@@ -18,6 +18,19 @@ export type TranscriptSegment = {
   text: string;
 };
 
+export type CorePoint = {
+  /** 序号 1-based */
+  index: number;
+  /** 核心点标题（一句话总结） */
+  title: string;
+  /** 详细阐述（1-2 段） */
+  detail: string;
+  /** 引用的高光时间戳列表 */
+  sourceTimestamps?: string[];
+  /** 预估重要性：0-1 */
+  weight?: number;
+};
+
 export type LocalVideoNote = {
   summary: string;
   highlights: Array<{
@@ -27,6 +40,8 @@ export type LocalVideoNote = {
     level: 'critical' | 'important';
   }>;
   takeaways: string[];
+  /** 核心讲义要点（基于字幕聚类/分段提炼出的编号列表） */
+  corePoints: CorePoint[];
   /** 是否使用字幕生成（false 表示降级到元数据） */
   hasTranscript: boolean;
   /** 估算/解析出的视频总时长（秒），用于前端时间轴 */
@@ -510,10 +525,14 @@ export function generateNoteFromTranscript(
   // 3. 金句：取评分最高的 3-6 句
   const takeaways = extractTakeaways(segments, locale);
 
+  // 4. 核心讲义要点（编号形式，5-8 条）
+  const corePoints = extractCorePoints(segments, highlights, videoTitle, locale);
+
   return {
     summary,
     highlights,
     takeaways,
+    corePoints,
     hasTranscript: true,
     totalDuration,
   };
@@ -655,6 +674,133 @@ function extractTakeaways(segments: TranscriptSegment[], locale: string | undefi
   return result;
 }
 
+// ============================
+// 核心讲义要点提取（核心价值点编号 1、2、3…）
+// ============================
+
+/**
+ * 把字幕按时间切片为 5-8 个阶段，对每个阶段聚合出：
+ *  - title: 该阶段的一句话核心
+ *  - detail: 2-4 句详细阐述
+ *  - sourceTimestamps: 相关高光时刻的时间戳
+ *
+ * 避免简单罗列，采用"主题段 -> 中心句 + 细节句 + 引用高光"的讲义结构。
+ */
+function extractCorePoints(
+  segments: TranscriptSegment[],
+  highlights: Array<{ timestamp: string; startSeconds: number; text: string; level: string }>,
+  videoTitle: string | undefined,
+  locale: string | undefined,
+): CorePoint[] {
+  const isZh = locale && locale.toLowerCase().startsWith('zh');
+  const freq = computeWordFrequency(segments);
+  const total = segments.length;
+  if (total === 0) return [];
+
+  // 1) 按内容量分成 5-8 段（越多内容越细）
+  const chunkCount = Math.min(8, Math.max(5, Math.floor(total / 15)));
+  const chunkSize = Math.max(1, Math.floor(total / chunkCount));
+  const chunks: TranscriptSegment[][] = [];
+  for (let i = 0; i < chunkCount; i++) {
+    const s = i * chunkSize;
+    const e = Math.min(total, i === chunkCount - 1 ? total : s + chunkSize);
+    if (s >= e) break;
+    chunks.push(segments.slice(s, e));
+  }
+  if (chunks.length === 0) return [];
+
+  // 2) 对每个 chunk 选出：中心句 + 细节句集合
+  const points: CorePoint[] = [];
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const firstStart = chunk[0].start;
+    const lastStart = chunk[chunk.length - 1].start;
+
+    // 把该 chunk 所有句子打分
+    const chunkSentences: Array<{ text: string; seg: TranscriptSegment; score: number }> = [];
+    for (const seg of chunk) {
+      const sents = splitSentences(seg.text);
+      for (const s of sents) {
+        const score = scoreSentence(s, freq, total, Math.max(0, Math.floor((firstStart + lastStart) / 2)));
+        chunkSentences.push({ text: s, seg, score });
+      }
+    }
+    if (chunkSentences.length === 0) continue;
+
+    chunkSentences.sort((a, b) => b.score - a.score);
+
+    // Title = 评分最高的一句（精简）
+    const title = truncate(chunkSentences[0].text, isZh ? 40 : 70);
+
+    // Detail = 评分 2~6 名的句子拼成 120-200 字阐述
+    const detailSentences = chunkSentences.slice(1, 6).map(cs => cs.text);
+    const rawDetail = detailSentences.join(isZh ? '。' : '. ') + (isZh ? '。' : '.');
+    const detail = truncate(rawDetail, isZh ? 220 : 380);
+
+    // 关联该时间区间的高光时间戳
+    const related = highlights.filter(h => {
+      return h.startSeconds >= firstStart - 3 && h.startSeconds <= lastStart + 5;
+    }).map(h => h.timestamp);
+    const sourceTimestamps = related.slice(0, 3);
+
+    // 重要性：最高分 + 位置加权
+    const weight = Math.min(1, chunkSentences[0].score / 1000) * (i < 2 || i >= chunks.length - 2 ? 1.2 : 1);
+
+    points.push({
+      index: i + 1,
+      title,
+      detail,
+      sourceTimestamps,
+      weight,
+    });
+  }
+
+  // 3) 若 points 数量不足 5，补充"总结/行动建议"等结构化项
+  if (points.length < 5) {
+    const remainder = 5 - points.length;
+    for (let k = 0; k < remainder; k++) {
+      const nextIdx = points.length + 1;
+      const titleSrc = isZh
+        ? [
+            '核心方法论总结',
+            '常见误区与避坑指南',
+            '实践建议与下一步行动',
+          ]
+        : [
+            'Core methodology',
+            'Common pitfalls & mistakes to avoid',
+            'Action items & next steps',
+          ];
+      points.push({
+        index: nextIdx,
+        title: titleSrc[k % titleSrc.length],
+        detail: isZh
+          ? '请结合视频内容及上方高光时刻，把本讲义要点进一步细化为可执行的行动清单。'
+          : 'Combine the highlights above and refine this point into actionable items.',
+        sourceTimestamps: [],
+        weight: 0.4,
+      });
+    }
+  }
+
+  // 4) 补充开场/收尾的"导入/总结"包装（若标题存在）
+  if (videoTitle && points.length >= 2) {
+    // 仅保留微调，不篡改已提炼内容
+    points[0].title = (isZh ? `① 背景导入：` : `1. Setup: `) + points[0].title.replace(/^[①②③④⑤⑥⑦⑧]\s*/, '').replace(/^[0-9]+\.\s*/, '');
+    if (points.length >= 3) {
+      const last = points[points.length - 1];
+      last.title = (isZh ? `${numberToZhCircle(points.length)} 总结与启示：` : `${points.length}. Conclusion: `) + last.title.replace(/^[①②③④⑤⑥⑦⑧]\s*/, '').replace(/^[0-9]+\.\s*/, '');
+    }
+  }
+
+  return points;
+}
+
+function numberToZhCircle(n: number): string {
+  const mapping = ['①','②','③','④','⑤','⑥','⑦','⑧','⑨','⑩'];
+  return mapping[n - 1] || `${n}`;
+}
+
 function truncate(s: string, n: number): string {
   if (s.length <= n) return s;
   return s.slice(0, n - 1) + '…';
@@ -712,10 +858,69 @@ function generateFallbackNote(
     ? `视频《${title}》暂未提供可自动获取的字幕，AI 已基于视频标题和时长生成占位笔记结构。建议手动观看视频后填充实际内容。`
     : `No transcript available for "${title}". AI generated a placeholder note structure based on the video title and estimated duration. Please watch the video and fill in the actual content.`;
 
+  // 核心要点：6 条讲义结构，避免"罗列"而是给用户可填充的讲义骨架
+  const corePoints: CorePoint[] = [];
+  const coreCount = 6;
+  for (let i = 0; i < coreCount; i++) {
+    const idx = i + 1;
+    let pointTitle: string;
+    let pointDetail: string;
+    if (isZh) {
+      const titles = [
+        `① 背景导入：为什么关注《${title}》`,
+        `② 主题范围：本期视频核心主题界定`,
+        `③ 关键原理：视频中的核心方法论或公式`,
+        `④ 实践案例：视频中给出的具体案例或数据`,
+        `⑤ 误区提醒：视频里指出的踩坑或注意点`,
+        `⑥ 总结启示：看完后的行动清单与复盘要点`,
+      ];
+      pointTitle = titles[i];
+      const details = [
+        '视频开场铺垫的背景、问题陈述、以及为什么今天要聊这个主题。请结合 00:30 前的内容手动补充。',
+        '视频中真正要解决的问题范围，边界界定是什么，避免过度延伸。',
+        '核心的方法步骤、公式或思考模型，通常是视频最值得做笔记的部分。',
+        '主讲人给出的真实案例、数据支撑或反例，帮助理解抽象原理。',
+        '视频中明确提醒的常见错误、反模式或容易忽略的点。',
+        '结尾给出的行动建议、可执行清单（Checklist）、以及你自己的复盘。',
+      ];
+      pointDetail = details[i];
+    } else {
+      const titles = [
+        `1. Context: Why "${title}" matters`,
+        `2. Scope: The exact topics this video covers`,
+        `3. Core Model: Key methodology / framework`,
+        `4. Evidence: Real examples & data`,
+        `5. Pitfalls: Mistakes & what to avoid`,
+        `6. Takeaways: Action items & recap`,
+      ];
+      pointTitle = titles[i];
+      const details = [
+        'What background, problem, or trend opens the video? Fill in from the first 10%.',
+        'The exact scope and boundaries of the topic — what is in vs. out of scope.',
+        'The core framework, formula, or step-by-step method — the most valuable section.',
+        'Concrete examples, case studies, or data points the presenter uses as evidence.',
+        'Explicit warnings the speaker gives about common mistakes or anti-patterns.',
+        'Closing call-to-action, checklists you can reuse, and personal notes.',
+      ];
+      pointDetail = details[i];
+    }
+    corePoints.push({
+      index: idx,
+      title: pointTitle,
+      detail: pointDetail,
+      sourceTimestamps:
+        highlights.length > 0
+          ? [highlights[Math.min(i, highlights.length - 1)].timestamp]
+          : [],
+      weight: 1 / (i + 1),
+    });
+  }
+
   return {
     summary,
     highlights,
     takeaways,
+    corePoints,
     hasTranscript: false,
     totalDuration: estimatedDurationSec,
   };

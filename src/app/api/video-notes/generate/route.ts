@@ -13,6 +13,26 @@ export const maxDuration = 180;
 
 const NOTE_COST = 30;
 
+interface CorePoint {
+  index: number;
+  title: string;
+  detail: string;
+  sourceTimestamps?: string[];
+  weight?: number;
+}
+
+type AnnotationColor = 'yellow' | 'pink' | 'blue' | 'green' | 'purple';
+
+/** 用户针对某核心要点做的颜色高亮或文本笔记 */
+export interface CorePointAnnotation {
+  /** 对应 corePoints 的 index */
+  index: number;
+  /** 选中的颜色 */
+  color?: AnnotationColor | null;
+  /** 用户对该条要点补充的文本笔记 */
+  note?: string;
+}
+
 interface VideoNoteContent {
   summary: string;
   highlights: Array<{
@@ -22,6 +42,10 @@ interface VideoNoteContent {
     level: 'critical' | 'important';
   }>;
   takeaways: string[];
+  /** 编号 1、2、3… 的核心讲义要点 */
+  corePoints: CorePoint[];
+  /** 用户添加的颜色标注与文本笔记（可选，保存时写入） */
+  annotations?: CorePointAnnotation[];
   hasTranscript?: boolean;
   totalDuration?: number;
 }
@@ -205,6 +229,8 @@ export async function POST(request: NextRequest) {
       summary: localNote.summary,
       highlights: localNote.highlights.slice(0, 15),
       takeaways: localNote.takeaways.slice(0, 8),
+      corePoints: localNote.corePoints || [],
+      annotations: [],
       hasTranscript: localNote.hasTranscript,
       totalDuration: localNote.totalDuration,
     };

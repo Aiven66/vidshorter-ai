@@ -24,11 +24,20 @@ import {
   Sparkles,
   Quote,
   Target,
+  Share2,
 } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 
 const VideoPlayer = dynamic(() => import('@/components/video-notes/video-player'), { ssr: false });
+const CorePointsAnnotator = dynamic(
+  () => import('@/components/video-notes/core-points-annotator'),
+  { ssr: false, loading: () => null },
+);
+const SharePosterModal = dynamic(
+  () => import('@/components/video-notes/share-poster-modal'),
+  { ssr: false, loading: () => null },
+);
 
 type HighlightLevel = 'critical' | 'important';
 
@@ -39,10 +48,27 @@ type HighlightItem = {
   level: HighlightLevel;
 };
 
+type CorePoint = {
+  index: number;
+  title: string;
+  detail: string;
+  sourceTimestamps?: string[];
+  weight?: number;
+};
+
+type AnnotationColor = 'yellow' | 'pink' | 'blue' | 'green' | 'purple';
+type CorePointAnnotation = {
+  index: number;
+  color?: AnnotationColor | null;
+  note?: string;
+};
+
 type VideoNote = {
   summary: string;
   highlights: HighlightItem[];
   takeaways: string[];
+  corePoints: CorePoint[];
+  annotations?: CorePointAnnotation[];
   hasTranscript?: boolean;
   totalDuration?: number;
 };
@@ -140,6 +166,8 @@ export default function VideoNotesPage() {
   const [playerCurrentTime, setPlayerCurrentTime] = useState(0);
   const [playerDuration, setPlayerDuration] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [annotations, setAnnotations] = useState<CorePointAnnotation[]>([]);
+  const [posterOpen, setPosterOpen] = useState(false);
 
   const playerRef = useRef<{
     seekTo: (t: number, autoplay?: boolean) => void;
@@ -184,6 +212,7 @@ export default function VideoNotesPage() {
     setSavedId(null);
     setActiveHighlightIndex(null);
     setActiveTakeawayIndex(null);
+    setAnnotations([]);
     try {
       const res = await fetch('/api/video-notes/generate', {
         method: 'POST',
@@ -202,7 +231,13 @@ export default function VideoNotesPage() {
         throw new Error(err.error || tr('notes.errorGenerateFailed'));
       }
       const data = (await res.json()) as GenerateResponse;
+      // 确保 corePoints 有默认值
+      if (!data.note.corePoints || !Array.isArray(data.note.corePoints)) {
+        data.note.corePoints = [];
+      }
+      if (!data.note.annotations) data.note.annotations = [];
       setResult(data);
+      setAnnotations(data.note.annotations);
       toast.success(tr('notes.successGenerated'));
     } catch (e: any) {
       toast.error(e?.message || tr('notes.errorGenerateFailed'));
@@ -215,7 +250,14 @@ export default function VideoNotesPage() {
     if (!result || !accessToken) return;
     setSaving(true);
     try {
-      const rawMarkdown = renderMarkdown(result, t);
+      const noteToSave: VideoNote = {
+        ...result.note,
+        annotations,
+      };
+      const rawMarkdown = renderMarkdown(
+        { ...result, note: noteToSave } as GenerateResponse,
+        t,
+      );
       const res = await fetch('/api/video-notes', {
         method: 'POST',
         headers: {
@@ -226,7 +268,7 @@ export default function VideoNotesPage() {
           videoUrl: result.videoUrl,
           sourceType: result.sourceType,
           videoTitle: result.videoTitle,
-          contentJson: result.note,
+          contentJson: noteToSave,
           rawMarkdown,
         }),
       });
@@ -242,7 +284,34 @@ export default function VideoNotesPage() {
     } finally {
       setSaving(false);
     }
-  }, [result, accessToken, t]);
+  }, [result, accessToken, t, annotations]);
+
+  const handleJumpTimestamp = useCallback(
+    (timestamp: string) => {
+      const sec = parseTimestampToSeconds(timestamp);
+      if (playerRef.current) {
+        playerRef.current.seekTo(sec, true);
+        toast.success(tr('notes.jumpToast', { t: timestamp }));
+      } else if (result) {
+        // Fallback: 找最近的 highlight
+        const h = result.note.highlights.reduce<HighlightItem | null>((acc, cur) => {
+          const diff = Math.abs((cur.startSeconds ?? 0) - sec);
+          const accDiff = Math.abs(((acc as HighlightItem)?.startSeconds ?? 0) - sec);
+          return !acc || diff < accDiff ? cur : acc;
+        }, null);
+        if (h) {
+          const idx = result.note.highlights.indexOf(h);
+          setActiveHighlightIndex(idx);
+          setActiveTakeawayIndex(null);
+        }
+      }
+    },
+    [result, t],
+  );
+
+  const handleAnnotationChange = useCallback((next: CorePointAnnotation[]) => {
+    setAnnotations(next);
+  }, []);
 
   const handleCopyMarkdown = useCallback(() => {
     if (!result) return;
@@ -416,34 +485,59 @@ export default function VideoNotesPage() {
 
         {/* 结果区：新 UI */}
         {result && (
-          <NoteResultView
-            result={result}
-            saving={saving}
-            savedId={savedId}
-            onSave={handleSave}
-            onCopyMarkdown={handleCopyMarkdown}
-            onDownloadMarkdown={handleDownloadMarkdown}
-            onDownloadText={handleDownloadText}
-            onPrintPDF={handlePrintPDF}
-            onRegenerate={handleGenerate}
-            sourceEmbedUrl={sourceEmbedUrl}
-            sourceVideoId={sourceVideoId}
-            onPlayerReady={(api) => { playerRef.current = api; }}
-            onTimeUpdate={(t, d, playing) => {
-              setPlayerCurrentTime(t);
-              if (d > 0) setPlayerDuration(d);
-              setIsPlaying(playing);
-            }}
-            activeHighlightIndex={activeHighlightIndex}
-            activeTakeawayIndex={activeTakeawayIndex}
-            onJumpToHighlight={handleJumpToHighlight}
-            onJumpToTakeaway={handleJumpToTakeaway}
-            playerCurrentTime={playerCurrentTime}
-            playerDuration={totalDuration}
-            isPlaying={isPlaying}
-            t={t}
-            tr={tr}
-          />
+          <>
+            <NoteResultView
+              result={result}
+              annotations={annotations}
+              saving={saving}
+              savedId={savedId}
+              onSave={handleSave}
+              onCopyMarkdown={handleCopyMarkdown}
+              onDownloadMarkdown={handleDownloadMarkdown}
+              onDownloadText={handleDownloadText}
+              onPrintPDF={handlePrintPDF}
+              onRegenerate={handleGenerate}
+              onSharePoster={() => setPosterOpen(true)}
+              sourceEmbedUrl={sourceEmbedUrl}
+              sourceVideoId={sourceVideoId}
+              onPlayerReady={(api) => { playerRef.current = api; }}
+              onTimeUpdate={(t, d, playing) => {
+                setPlayerCurrentTime(t);
+                if (d > 0) setPlayerDuration(d);
+                setIsPlaying(playing);
+              }}
+              activeHighlightIndex={activeHighlightIndex}
+              activeTakeawayIndex={activeTakeawayIndex}
+              onJumpToHighlight={handleJumpToHighlight}
+              onJumpToTakeaway={handleJumpToTakeaway}
+              onJumpTimestamp={handleJumpTimestamp}
+              onAnnotationChange={handleAnnotationChange}
+              playerCurrentTime={playerCurrentTime}
+              playerDuration={totalDuration}
+              isPlaying={isPlaying}
+              t={t}
+              tr={tr}
+              accessToken={accessToken}
+              noteId={savedId}
+              onAnnotationsSaved={() => {
+                toast.success(tr('notes.corePointSaved'));
+              }}
+            />
+            {SharePosterModal && (
+              <SharePosterModal
+                open={posterOpen}
+                onClose={() => setPosterOpen(false)}
+                videoTitle={result.videoTitle}
+                sourceType={result.sourceType}
+                videoUrl={result.videoUrl}
+                summary={result.note.summary}
+                corePoints={result.note.corePoints || []}
+                annotations={annotations}
+                t={t}
+                shareUrl={savedId ? (typeof window !== 'undefined' ? `${window.location.origin}/notes/${savedId}` : '') : ''}
+              />
+            )}
+          </>
         )}
       </div>
     </div>
@@ -453,6 +547,7 @@ export default function VideoNotesPage() {
 // ==================== 结果视图 ====================
 function NoteResultView({
   result,
+  annotations,
   saving,
   savedId,
   onSave,
@@ -461,6 +556,7 @@ function NoteResultView({
   onDownloadText,
   onPrintPDF,
   onRegenerate,
+  onSharePoster,
   sourceEmbedUrl,
   sourceVideoId,
   onPlayerReady,
@@ -469,13 +565,19 @@ function NoteResultView({
   activeTakeawayIndex,
   onJumpToHighlight,
   onJumpToTakeaway,
+  onJumpTimestamp,
+  onAnnotationChange,
   playerCurrentTime,
   playerDuration,
   isPlaying,
   t,
   tr,
+  accessToken,
+  noteId,
+  onAnnotationsSaved,
 }: {
   result: GenerateResponse;
+  annotations: CorePointAnnotation[];
   saving: boolean;
   savedId: string | null;
   onSave: () => void;
@@ -484,6 +586,7 @@ function NoteResultView({
   onDownloadText: () => void;
   onPrintPDF: () => void;
   onRegenerate: () => void;
+  onSharePoster: () => void;
   sourceEmbedUrl: string | null;
   sourceVideoId: string | null;
   onPlayerReady: (api: any) => void;
@@ -492,13 +595,31 @@ function NoteResultView({
   activeTakeawayIndex: number | null;
   onJumpToHighlight: (i: number) => void;
   onJumpToTakeaway: (i: number) => void;
+  onJumpTimestamp: (timestamp: string) => void;
+  onAnnotationChange: (next: CorePointAnnotation[]) => void;
   playerCurrentTime: number;
   playerDuration: number;
   isPlaying: boolean;
   t: (key: string) => string;
   tr: (key: string, vars?: Record<string, string | number>) => string;
+  accessToken: string | null;
+  noteId: string | null;
+  onAnnotationsSaved?: () => void;
 }) {
   const { note, videoTitle, videoUrl, sourceType } = result;
+
+  const corePointsAnnotator = (note.corePoints && note.corePoints.length > 0 && CorePointsAnnotator) ? (
+    <CorePointsAnnotator
+      corePoints={note.corePoints}
+      annotations={annotations}
+      onAnnotationChange={onAnnotationChange}
+      onJumpTimestamp={onJumpTimestamp}
+      t={t}
+      noteId={noteId}
+      accessToken={accessToken}
+      onSaved={onAnnotationsSaved}
+    />
+  ) : null;
 
   return (
     <div className="bg-background border border-border rounded-xl shadow-sm overflow-hidden print:shadow-none print:border-0">
@@ -514,6 +635,10 @@ function NoteResultView({
           </h2>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <Button variant="outline" size="sm" onClick={onSharePoster} title={t('notes.sharePosterDesc')}>
+            <Share2 className="h-3.5 w-3.5 mr-1.5" />
+            {t('notes.share')}
+          </Button>
           <Button variant="outline" size="sm" onClick={onCopyMarkdown}>
             <Copy className="h-3.5 w-3.5 mr-1.5" />
             {t('notes.copyMarkdown')}
@@ -650,7 +775,7 @@ function NoteResultView({
 
           {/* 金句 / Takeaways */}
           {note.takeaways?.length > 0 && (
-            <section className="mb-2">
+            <section className="mb-5">
               <h3 className="text-sm font-semibold text-muted-foreground mb-3 flex items-center gap-1.5">
                 <Quote className="h-3.5 w-3.5" />
                 {t('notes.sectionTakeaways')}
@@ -672,6 +797,11 @@ function NoteResultView({
                 ))}
               </div>
             </section>
+          )}
+
+          {/* 核心讲义要点（含颜色标注 & 笔记） */}
+          {note.corePoints && note.corePoints.length > 0 && corePointsAnnotator !== null && corePointsAnnotator !== undefined && (
+            corePointsAnnotator
           )}
 
           {/* 打印时显示的元信息（只在打印时展示） */}
@@ -863,6 +993,15 @@ function renderMarkdown(result: GenerateResponse, t: (key: string) => string): s
   if (note.summary) {
     md += `## ${t('notes.sectionSummary')}\n\n${note.summary}\n\n`;
   }
+  if (note.corePoints?.length) {
+    md += `## ${t('notes.sectionCorePoints')}\n\n`;
+    note.corePoints.forEach((cp) => {
+      md += `### ${cp.index}. ${cp.title}\n\n${cp.detail}\n\n`;
+      if (cp.sourceTimestamps?.length) {
+        md += `*${t('notes.corePointSourceLabel')}: ${cp.sourceTimestamps.join(', ')}*\n\n`;
+      }
+    });
+  }
   if (note.highlights?.length) {
     md += `## ${t('notes.sectionHighlights')}\n\n`;
     note.highlights.forEach((h) => {
@@ -877,6 +1016,15 @@ function renderMarkdown(result: GenerateResponse, t: (key: string) => string): s
       md += `- 🔴 ${q}\n`;
     });
   }
+  if (note.annotations?.length) {
+    md += `## ${t('notes.saveAnnotations') || 'Annotations'}\n\n`;
+    note.annotations.forEach((ann) => {
+      if (!ann.color && !ann.note) return;
+      const colorTag = ann.color ? `[${ann.color.toUpperCase()}] ` : '';
+      md += `- ${colorTag}Point #${ann.index}${ann.note ? `: ${ann.note}` : ''}\n`;
+    });
+    md += `\n`;
+  }
   return md;
 }
 
@@ -886,6 +1034,12 @@ function renderPlainText(result: GenerateResponse, t: (key: string) => string): 
   txt += `Source: ${videoUrl}\n\n`;
   if (note.summary) {
     txt += `== ${t('notes.sectionSummary')} ==\n\n${note.summary}\n\n`;
+  }
+  if (note.corePoints?.length) {
+    txt += `== ${t('notes.sectionCorePoints')} ==\n\n`;
+    note.corePoints.forEach((cp) => {
+      txt += `${cp.index}. ${cp.title}\n   ${cp.detail}\n\n`;
+    });
   }
   if (note.highlights?.length) {
     txt += `== ${t('notes.sectionHighlights')} ==\n\n`;

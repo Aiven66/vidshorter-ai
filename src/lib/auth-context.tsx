@@ -243,7 +243,7 @@ async function getSignInProviderHint(email: string): Promise<'google' | 'passwor
 }
 
 function generateDemoToken(user: User): string {
-  const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT', demo: true }));
+  const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
   const payload = btoa(JSON.stringify({
     sub: user.id,
     email: user.email,
@@ -251,6 +251,7 @@ function generateDemoToken(user: User): string {
     role: user.role,
     avatar_url: user.avatarUrl,
     iss: 'clipop-demo',
+    demo: true,
     exp: Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60,
   }));
   const signature = 'demo-signature';
