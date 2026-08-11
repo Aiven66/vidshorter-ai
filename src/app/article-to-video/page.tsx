@@ -173,17 +173,6 @@ export default function ArticleToVideoPage() {
     return [titleScene, ...pointScenes, closingScene];
   }, [keyPoints, template, pasteTitle]);
 
-  const handleExport = (blob: Blob) => {
-    const u = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = u;
-    a.download = `article-${pasteTitle.slice(0, 20) || 'video'}.webm`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(u);
-  };
-
   /* ------------------------------- Render -------------------------------- */
 
   return (
@@ -324,7 +313,7 @@ export default function ArticleToVideoPage() {
                   {t('article.pointCount').replace('{n}', String(keyPoints.length))}
                 </span>
               </div>
-              <TemplateRenderer scenes={scenes} onExport={handleExport} />
+              <TemplateRenderer scenes={scenes} />
             </Card>
 
             {/* 要点编辑 - 侧栏折叠 */}

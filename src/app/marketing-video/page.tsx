@@ -146,17 +146,6 @@ export default function MarketingVideoPage() {
     [brandName, productName, productPrice, promoText, productImage, ctaText, tr],
   );
 
-  const handleExport = (blob: Blob) => {
-    const u = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = u;
-    a.download = `marketing-${productName.slice(0, 20) || 'video'}.webm`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(u);
-  };
-
   const hasAnyContent = productName || productPrice || brandName;
 
   return (
@@ -311,7 +300,7 @@ export default function MarketingVideoPage() {
                   <p className="text-xs text-muted-foreground">{t('marketing.exportTip')}</p>
                 </div>
                 <div className="min-h-[500px]">
-                  <TemplateRenderer scenes={scenes} onExport={handleExport} />
+                  <TemplateRenderer scenes={scenes} />
                 </div>
               </Card>
             ) : (

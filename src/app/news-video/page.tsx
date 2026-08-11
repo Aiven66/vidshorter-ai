@@ -182,17 +182,6 @@ export default function NewsVideoPage() {
     setDataPoints(next);
   };
 
-  const handleExport = (blob: Blob) => {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `news-${headline.slice(0, 20) || 'video'}.webm`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
   if (!mounted) {
     return <div className="container mx-auto min-h-[60vh] px-4 py-8 md:py-12" />;
   }
@@ -370,7 +359,7 @@ export default function NewsVideoPage() {
               <p className="text-xs text-muted-foreground">{t('news.exportHint')}</p>
             </div>
             {scenes.length > 0 ? (
-              <TemplateRenderer scenes={scenes} onExport={handleExport} />
+              <TemplateRenderer scenes={scenes} />
             ) : (
               <div className="rounded-lg border border-dashed bg-muted/40 p-8 text-center text-sm text-muted-foreground">
                 {t('news.previewEmpty')}
