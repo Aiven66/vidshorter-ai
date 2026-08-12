@@ -29,6 +29,8 @@ import { DESKTOP_WEB_APP_URL } from '@/lib/desktop-auth';
 import { useCredits } from '@/lib/credits-context';
 import { useAuth } from '@/lib/auth-context';
 import { useLocale } from '@/lib/locale-context';
+import { AnnouncementBanner } from '@/components/announcement-banner';
+import { RegistrationBanner } from '@/components/registration-banner';
 
 const NavbarUserSection = dynamic(
   () => import('@/components/navbar/navbar-user-section').then(m => ({ default: m.NavbarUserSection })),
@@ -284,7 +286,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const toggleSidebar = () => setCollapsed((v) => !v);
 
   return (
-    <div className="min-h-screen flex">
+    <div className="min-h-screen flex flex-col">
+      {/* 顶部公告 Banner */}
+      <AnnouncementBanner />
+
+      <div className="flex flex-1">
       {/* 桌面端左侧栏 */}
       <aside
         className={`hidden md:flex flex-shrink-0 flex-col border-r border-border bg-background sticky top-0 h-screen transition-all duration-300 ease-in-out ${
@@ -368,6 +374,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {/* 主内容 */}
         <main className="flex-1 min-w-0">{children}</main>
       </div>
+      </div>
+
+      {/* 右下角注册引导 Banner */}
+      <RegistrationBanner />
     </div>
   );
 }

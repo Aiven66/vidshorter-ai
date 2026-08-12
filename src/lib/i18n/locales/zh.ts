@@ -11,6 +11,20 @@ const translations = {
   error: '错误', ready: '就绪', failed: '失败', saving: '保存中...', score: '评分', user: '用户',
   loading: '加载中...', success: '成功', cancel: '取消', save: '保存', delete: '删除', edit: '编辑', search: '搜索',
   },
+  announcement: {
+  text: '新功能：文章转视频支持微信公众号 & B站链接，立即体验 →',
+  cta: '立即体验',
+  },
+  registerBanner: {
+  title: '注册领取',
+  credits: '200 积分',
+  value: '价值 $6',
+  subtitle: '立即开始创作爆款短视频',
+  feature1: '注册即刻到账 200 积分',
+  feature2: '免费 AI 视频处理',
+  feature3: '无需信用卡',
+  cta: '免费注册',
+  },
   footer: {
   desc: 'AI驱动的视频剪辑，将长视频自动转化为精彩短视频片段。',
   quickLinks: '快速链接', legal: '法律条款', privacy: '隐私政策', terms: '服务条款', contact: '联系我们', rights: '保留所有权利。',

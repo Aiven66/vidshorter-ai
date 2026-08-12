@@ -40,6 +40,20 @@ export const commonTranslations = {
     edit: 'Edit',
     search: 'Search',
   },
+  announcement: {
+    text: 'New: Article-to-Video now supports WeChat articles & Bilibili links. Try it free →',
+    cta: 'Try Now',
+  },
+  registerBanner: {
+    title: 'Register & Get',
+    credits: '200 Credits',
+    value: '$6 Value',
+    subtitle: 'Start creating viral shorts today',
+    feature1: 'Instant 200 credits on signup',
+    feature2: 'Free AI video processing',
+    feature3: 'No credit card required',
+    cta: 'Register Free',
+  },
   footer: {
     desc: 'Transform your long videos into engaging short clips with AI-powered analysis and editing.',
     quickLinks: 'Quick Links',
