@@ -83,6 +83,7 @@ export default function ArticleToVideoPage() {
   const [showPointEditor, setShowPointEditor] = useState(false);
   const [autoExtracted, setAutoExtracted] = useState(false);
   const [previewReady, setPreviewReady] = useState(false);
+  const [extractKey, setExtractKey] = useState(0);
 
   const tr = useCallback(
     (key: string, fallback: string) => {
@@ -109,6 +110,7 @@ export default function ArticleToVideoPage() {
       setKeyPoints(extractKeyPoints(pasteTitle, pasteContent));
       setExtracting(false);
       setPreviewReady(true);
+      setExtractKey((k) => k + 1);
     }, 500);
   }, [pasteTitle, pasteContent]);
 
@@ -129,6 +131,7 @@ export default function ArticleToVideoPage() {
         setKeyPoints(extractKeyPoints(data.article.title, data.article.content));
         setAutoExtracted(true);
         setPreviewReady(true);
+        setExtractKey((k) => k + 1);
         return { ok: true };
       } catch {
         return { ok: false };
@@ -320,7 +323,7 @@ export default function ArticleToVideoPage() {
                   {t('article.pointCount').replace('{n}', String(keyPoints.length))}
                 </span>
               </div>
-              <TemplateRenderer scenes={scenes} />
+              <TemplateRenderer scenes={scenes} resetKey={extractKey} />
             </Card>
 
             {/* 要点编辑 - 侧栏折叠 */}

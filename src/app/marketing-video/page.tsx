@@ -70,6 +70,7 @@ export default function MarketingVideoPage() {
   const [autoDetected, setAutoDetected] = useState(false);
   const [previewReady, setPreviewReady] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [extractKey, setExtractKey] = useState(0);
 
   const tr = useCallback(
     (key: string, fallback: string) => {
@@ -103,6 +104,7 @@ export default function MarketingVideoPage() {
         if (!ctaText) setCtaText(t('marketing.ctaTextPlaceholder'));
         setAutoDetected(true);
         setPreviewReady(true);
+        setExtractKey((k) => k + 1);
         return { ok: true };
       } catch {
         return { ok: false };
@@ -313,7 +315,7 @@ export default function MarketingVideoPage() {
                   <p className="text-xs text-muted-foreground">{t('marketing.exportTip')}</p>
                 </div>
                 <div className="min-h-[500px]">
-                  <TemplateRenderer scenes={scenes} />
+                  <TemplateRenderer scenes={scenes} resetKey={extractKey} />
                 </div>
               </Card>
             ) : (

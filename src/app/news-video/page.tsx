@@ -79,6 +79,7 @@ export default function NewsVideoPage() {
   const [autoDetected, setAutoDetected] = useState(false);
   const [previewReady, setPreviewReady] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [extractKey, setExtractKey] = useState(0);
 
   useEffect(() => {
     setMounted(true);
@@ -121,6 +122,7 @@ export default function NewsVideoPage() {
         }
         setAutoDetected(true);
         setPreviewReady(true);
+        setExtractKey((k) => k + 1);
         return { ok: true };
       } catch {
         return { ok: false };
@@ -370,7 +372,7 @@ export default function NewsVideoPage() {
               <p className="text-xs text-muted-foreground">{t('news.exportHint')}</p>
             </div>
             {scenes.length > 0 ? (
-              <TemplateRenderer scenes={scenes} />
+              <TemplateRenderer scenes={scenes} resetKey={extractKey} />
             ) : (
               <div className="rounded-lg border border-dashed bg-muted/40 p-8 text-center text-sm text-muted-foreground">
                 {t('news.previewEmpty')}

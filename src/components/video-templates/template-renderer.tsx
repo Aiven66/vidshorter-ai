@@ -31,6 +31,13 @@ export interface TemplateRendererProps {
   scenes: Scene[];
   onExport?: (blob: Blob) => void;
   className?: string;
+  /**
+   * When this value changes, all internal state (exported video URL, playback
+   * position, export progress) is reset. Pass a value that changes whenever a
+   * NEW article/product/news is extracted so the stale video from a previous
+   * extraction does not block the live preview.
+   */
+  resetKey?: string | number;
 }
 
 export type ExportFormat = 'mp4' | 'webm';
@@ -179,7 +186,7 @@ function getWebmRecorderType(): string | null {
 /* Component                                                          */
 /* ------------------------------------------------------------------ */
 
-export function TemplateRenderer({ scenes, onExport, className }: TemplateRendererProps) {
+export function TemplateRenderer({ scenes, onExport, className, resetKey }: TemplateRendererProps) {
   const [currentSceneIndex, setCurrentSceneIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -222,6 +229,28 @@ export function TemplateRenderer({ scenes, onExport, className }: TemplateRender
       setVideoUrl(null);
     }
   }, []);
+
+  /* ----- reset internal state when resetKey changes (new article extracted) -----
+   * This is the critical fix: when a user extracts a second article after
+   * already exporting a video from the first, the old `videoUrl` must be
+   * cleared so the live preview (not the stale video player) is shown.
+   * The parent passes a `resetKey` that changes on each new extraction.
+   */
+  const resetKeyRef = useRef<string | number | undefined>(resetKey);
+  useEffect(() => {
+    if (resetKeyRef.current !== resetKey) {
+      resetKeyRef.current = resetKey;
+      clearVideoUrl();
+      setCurrentSceneIndex(0);
+      setProgress(0);
+      setIsPlaying(false);
+      setIsExporting(false);
+      setExportProgress(0);
+      setExportError(null);
+      sceneElapsedRef.current = 0;
+      lastTimeRef.current = 0;
+    }
+  }, [resetKey, clearVideoUrl]);
 
   /* ----- playback loop ----- */
   useEffect(() => {
