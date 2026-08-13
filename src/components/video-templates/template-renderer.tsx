@@ -2,13 +2,29 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
+import type { DrawContext } from './canvas-utils';
 
+/**
+ * HyperFrames-style Scene interface.
+ *
+ * Each scene provides:
+ *  - `render()`     : React node for live preview (DOM-based)
+ *  - `draw(ctx, progress, w, h)` : deterministic per-frame canvas drawing
+ *
+ * The export pipeline uses `draw` directly on a canvas — no DOM capture —
+ * which is reliable and matches HyperFrames' per-frame rendering model.
+ */
 export interface Scene {
   id: string;
   render: () => React.ReactNode;
   duration: number;
   transition?: 'fade' | 'slide' | 'none';
   backgroundColor?: string;
+  /**
+   * HyperFrames-style deterministic canvas renderer.
+   * Receives scene-local progress (0..1) and draws to the given 2D context.
+   */
+  draw?: (dc: DrawContext) => void;
 }
 
 export interface TemplateRendererProps {
@@ -17,8 +33,10 @@ export interface TemplateRendererProps {
   className?: string;
 }
 
+export type ExportFormat = 'mp4' | 'webm';
+
 /* ------------------------------------------------------------------ */
-/* Helpers                                                            */
+/* Helpers                                                             */
 /* ------------------------------------------------------------------ */
 
 function getTransitionAnimation(transition: string): string {
@@ -33,120 +51,44 @@ function getTransitionAnimation(transition: string): string {
   }
 }
 
-/**
- * Deep-clones a DOM node while inlining every computed style onto the clone.
- */
-function cloneWithInlineStyles(source: Node): Node {
-  if (source.nodeType === Node.TEXT_NODE) {
-    return source.cloneNode(true);
-  }
-  if (source.nodeType !== Node.ELEMENT_NODE) {
-    return source.cloneNode(true);
-  }
-
-  const element = source as HTMLElement;
-  const clone = element.cloneNode(false) as HTMLElement;
-  const computed = window.getComputedStyle(element);
-
-  for (let i = 0; i < computed.length; i++) {
-    const prop = computed.item(i);
-    if (prop === null) continue;
-    clone.style.setProperty(prop, computed.getPropertyValue(prop));
-  }
-
-  for (const child of element.childNodes) {
-    clone.appendChild(cloneWithInlineStyles(child));
-  }
-
-  return clone;
-}
-
-/**
- * 将 DOM 元素绘制到 Canvas：通过 SVG foreignObject data-URL 序列化后绘制。
- * 带超时保护，失败时绘制降级内容（纯色背景 + 场景文字）。
- */
-async function captureDomToCanvas(
-  element: HTMLElement | null,
+/** Draw a single scene at the given progress to the canvas. */
+function drawSceneToCanvas(
   canvas: HTMLCanvasElement,
   ctx: CanvasRenderingContext2D,
-  fallbackText?: string,
-): Promise<void> {
-  if (!element) {
-    drawFallback(ctx, canvas, fallbackText);
-    return;
-  }
+  scene: Scene,
+  progress: number,
+): boolean {
+  const width = canvas.width;
+  const height = canvas.height;
 
-  try {
-    const rect = element.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) {
-      drawFallback(ctx, canvas, fallbackText);
-      return;
+  // Clear & default background
+  ctx.fillStyle = scene.backgroundColor ?? '#0f1020';
+  ctx.fillRect(0, 0, width, height);
+  ctx.globalAlpha = 1;
+
+  if (scene.draw) {
+    try {
+      scene.draw({ ctx, progress, width, height });
+      return true;
+    } catch (err) {
+      console.warn('[drawSceneToCanvas] scene.draw failed:', err);
+      // fall through to fallback drawing
     }
-
-    const clone = cloneWithInlineStyles(element) as HTMLElement;
-    clone.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
-    clone.style.width = `${rect.width}px`;
-    clone.style.height = `${rect.height}px`;
-
-    const svg =
-      `<svg xmlns="http://www.w3.org/2000/svg" width="${canvas.width}" height="${canvas.height}" viewBox="0 0 ${rect.width} ${rect.height}">` +
-      `<foreignObject width="100%" height="100%" x="0" y="0">` +
-      new XMLSerializer().serializeToString(clone) +
-      `</foreignObject></svg>`;
-
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-
-    // 超时保护：3 秒内加载不完就降级
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('SVG load timeout')), 3000);
-      img.onload = () => { clearTimeout(timer); resolve(); };
-      img.onerror = () => { clearTimeout(timer); reject(new Error('SVG image load failed')); };
-      img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
-    });
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-  } catch (err) {
-    console.warn('[captureDomToCanvas] failed, drawing fallback:', err);
-    drawFallback(ctx, canvas, fallbackText);
   }
-}
 
-function drawFallback(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, text?: string) {
-  // 降级：绘制深色渐变背景 + 文字
-  const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
-  gradient.addColorStop(0, '#1a1a2e');
-  gradient.addColorStop(1, '#16213e');
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  if (text) {
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 48px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    // 自动换行
-    const maxWidth = canvas.width - 120;
-    const words = text.split('');
-    let line = '';
-    let y = canvas.height / 2;
-    for (const word of words) {
-      const testLine = line + word;
-      if (ctx.measureText(testLine).width > maxWidth && line) {
-        ctx.fillText(line, canvas.width / 2, y);
-        line = word;
-        y += 60;
-      } else {
-        line = testLine;
-      }
-    }
-    if (line) ctx.fillText(line, canvas.width / 2, y);
-  }
+  // Fallback: draw a labelled solid background so we never produce a blank frame.
+  ctx.fillStyle = '#1a1b2e';
+  ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = `bold ${Math.floor(width * 0.05)}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(scene.id || 'scene', width / 2, height / 2);
+  return false;
 }
 
 /* ------------------------------------------------------------------ */
-/* WebCodecs 配置检测                                                  */
+/* WebCodecs configuration probing                                    */
 /* ------------------------------------------------------------------ */
 
 interface WebCodecsConfig {
@@ -159,9 +101,9 @@ interface WebCodecsConfig {
 }
 
 const H264_CODEC_CANDIDATES = [
-  'avc1.420028', // Main Profile, Level 4.0（1080p）
+  'avc1.420028', // Main Profile, Level 4.0 (1080p)
   'avc1.4D0028', // High Profile, Level 4.0
-  'avc1.42001F', // Baseline Profile, Level 3.1（720p 级别，兼容性最好）
+  'avc1.42001F', // Baseline Profile, Level 3.1 (720p)
   'avc1.42E028', // Constrained Baseline, Level 4.0
 ];
 
@@ -189,14 +131,14 @@ async function pickSupportedWebCodecsConfig(
         return { ...config, latencyMode: 'quality' };
       }
     } catch {
-      // 继续尝试下一个 codec
+      // continue probing next codec
     }
   }
   return null;
 }
 
 /* ------------------------------------------------------------------ */
-/* MediaRecorder 格式检测                                              */
+/* MediaRecorder format probing                                       */
 /* ------------------------------------------------------------------ */
 
 function getMp4RecorderType(): string | null {
@@ -234,58 +176,7 @@ function getWebmRecorderType(): string | null {
 }
 
 /* ------------------------------------------------------------------ */
-/* 帧渲染管道（共享逻辑）                                              */
-/* ------------------------------------------------------------------ */
-
-interface FrameRenderContext {
-  canvas: HTMLCanvasElement;
-  ctx: CanvasRenderingContext2D;
-  previewRef: React.RefObject<HTMLDivElement | null>;
-  scenes: Scene[];
-  fps: number;
-  totalFrames: number;
-  setCurrentSceneIndex: (idx: number) => void;
-  setProgress: (p: number) => void;
-  setExportProgress: (p: number) => void;
-}
-
-async function renderAllFrames(
-  fctx: FrameRenderContext,
-  onFrame: (frameIndex: number) => Promise<void>,
-): Promise<void> {
-  let frameIndex = 0;
-  for (let sceneIdx = 0; sceneIdx < fctx.scenes.length; sceneIdx++) {
-    const scene = fctx.scenes[sceneIdx];
-    const sceneFrames = Math.max(1, Math.ceil(scene.duration * fctx.fps));
-
-    for (let frame = 0; frame < sceneFrames; frame++) {
-      const frameProgress = sceneFrames > 1 ? frame / (sceneFrames - 1) : 1;
-
-      fctx.setCurrentSceneIndex(sceneIdx);
-      fctx.setProgress(frameProgress);
-      fctx.setExportProgress(frameIndex / fctx.totalFrames);
-
-      // 等待 React flush + 浏览器绘制
-      await new Promise<void>((r) => requestAnimationFrame(() => r()));
-      await new Promise<void>((r) => requestAnimationFrame(() => r()));
-
-      await captureDomToCanvas(
-        fctx.previewRef.current,
-        fctx.canvas,
-        fctx.ctx,
-        scene.id,
-      );
-
-      await onFrame(frameIndex);
-      frameIndex++;
-    }
-  }
-}
-
-export type ExportFormat = 'mp4' | 'webm';
-
-/* ------------------------------------------------------------------ */
-/* Component                                                           */
+/* Component                                                          */
 /* ------------------------------------------------------------------ */
 
 export function TemplateRenderer({ scenes, onExport, className }: TemplateRendererProps) {
@@ -304,7 +195,6 @@ export function TemplateRenderer({ scenes, onExport, className }: TemplateRender
   const lastTimeRef = useRef<number>(0);
   const sceneElapsedRef = useRef<number>(0);
   const videoUrlRef = useRef<string | null>(null);
-  const encoderErrorRef = useRef<boolean>(false);
 
   const totalDuration = scenes.reduce((sum, s) => sum + s.duration, 0);
   const currentScene = scenes[currentSceneIndex];
@@ -314,7 +204,7 @@ export function TemplateRenderer({ scenes, onExport, className }: TemplateRender
   const overallProgress =
     elapsedBefore + (currentScene?.duration ?? 0) * progress;
 
-  /* ----- 浏览器兼容性检测 ----- */
+  /* ----- browser capability detection ----- */
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const hasWebCodecs =
@@ -324,7 +214,7 @@ export function TemplateRenderer({ scenes, onExport, className }: TemplateRender
     setBrowserSupport({ webCodecs: hasWebCodecs, mediaRecorder: hasMediaRecorder });
   }, []);
 
-  /* ----- 释放 video URL ----- */
+  /* ----- revoke video URL ----- */
   const clearVideoUrl = useCallback(() => {
     if (videoUrlRef.current) {
       URL.revokeObjectURL(videoUrlRef.current);
@@ -333,7 +223,7 @@ export function TemplateRenderer({ scenes, onExport, className }: TemplateRender
     }
   }, []);
 
-  /* ----- 播放循环 ----- */
+  /* ----- playback loop ----- */
   useEffect(() => {
     if (!isPlaying || scenes.length === 0) return;
 
@@ -376,7 +266,7 @@ export function TemplateRenderer({ scenes, onExport, className }: TemplateRender
     };
   }, [isPlaying, currentSceneIndex, scenes]);
 
-  /* ----- 控制器 ----- */
+  /* ----- controllers ----- */
   const handlePlayPause = useCallback(() => {
     if (isPlaying) {
       setIsPlaying(false);
@@ -421,51 +311,61 @@ export function TemplateRenderer({ scenes, onExport, className }: TemplateRender
     [scenes, totalDuration],
   );
 
-  /* ----- 导出：三级降级 ----- */
+  /* ----- Export: HyperFrames-style per-frame rendering, then encode ----- */
   const handleExport = useCallback(async () => {
-    if (!previewRef.current || isExporting || scenes.length === 0) return;
+    if (isExporting || scenes.length === 0) return;
 
     clearVideoUrl();
     setExportError(null);
     setIsExporting(true);
     setIsPlaying(false);
-    encoderErrorRef.current = false;
 
     const width = 1080;
     const height = 1920;
     const fps = 30;
 
+    // Offscreen canvas — every frame is drawn via scene.draw() directly
     const canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
     const ctx = canvas.getContext('2d', { alpha: false });
     if (!ctx) {
       setIsExporting(false);
-      setExportError('Canvas 2D 上下文不可用，请更换浏览器重试。');
+      setExportError('Canvas 2D context unavailable. Please try a different browser.');
       return;
     }
     ctx.fillStyle = '#000000';
     ctx.fillRect(0, 0, width, height);
 
-    const totalFrames = scenes.reduce(
-      (sum, s) => sum + Math.max(1, Math.ceil(s.duration * fps)),
-      0,
+    // Pre-compute scene→frame mapping
+    const sceneFrames: number[] = scenes.map((s) =>
+      Math.max(1, Math.ceil(s.duration * fps)),
     );
+    const totalFrames = sceneFrames.reduce((a, b) => a + b, 0);
 
-    const frameCtx: FrameRenderContext = {
-      canvas,
-      ctx,
-      previewRef,
-      scenes,
-      fps,
-      totalFrames,
-      setCurrentSceneIndex,
-      setProgress,
-      setExportProgress,
+    /** Draw frame N (0-indexed) to the canvas using the scene's draw function. */
+    const renderFrame = (frameIndex: number) => {
+      let consumed = 0;
+      for (let i = 0; i < scenes.length; i++) {
+        const sf = sceneFrames[i];
+        if (frameIndex < consumed + sf) {
+          const localFrame = frameIndex - consumed;
+          const localProgress = sf > 1 ? localFrame / (sf - 1) : 1;
+          drawSceneToCanvas(canvas, ctx, scenes[i], localProgress);
+          return;
+        }
+        consumed += sf;
+      }
+      // Fallback: last frame
+      const lastScene = scenes[scenes.length - 1];
+      if (lastScene) drawSceneToCanvas(canvas, ctx, lastScene, 1);
     };
 
-    /* ===== 路径 1：WebCodecs + mp4-muxer（真正的 H.264 MP4）===== */
-    const config = await pickSupportedWebCodecsConfig(width, height, fps, 4_000_000);
+    let exportOk = false;
+    let exportErr: Error | null = null;
+
+    /* ===== Path 1: WebCodecs + mp4-muxer (true H.264 MP4) ===== */
+    const config = await pickSupportedWebCodecsConfig(width, height, fps, 6_000_000);
     if (config) {
       try {
         const muxer = new Muxer({
@@ -475,15 +375,15 @@ export function TemplateRenderer({ scenes, onExport, className }: TemplateRender
         });
 
         const w = window as unknown as { VideoEncoder: typeof VideoEncoder };
+        let encoderFailed = false;
+
         const encoder = new w.VideoEncoder({
           output: (chunk, meta) => {
-            if (!encoderErrorRef.current) {
-              muxer.addVideoChunk(chunk, meta);
-            }
+            if (!encoderFailed) muxer.addVideoChunk(chunk, meta);
           },
           error: (e: unknown) => {
             console.error('[VideoEncoder] error:', e);
-            encoderErrorRef.current = true;
+            encoderFailed = true;
           },
         });
 
@@ -496,61 +396,38 @@ export function TemplateRenderer({ scenes, onExport, className }: TemplateRender
           latencyMode: config.latencyMode,
         });
 
-        // 先测试编码一帧，确保管道正常
-        await captureDomToCanvas(previewRef.current, canvas, ctx, scenes[0]?.id);
-        const testFrame = new (window as unknown as { VideoFrame: typeof VideoFrame }).VideoFrame(canvas, {
-          timestamp: 0,
-          duration: Math.floor(1_000_000 / fps),
-        });
-        encoder.encode(testFrame, { keyFrame: true });
-        testFrame.close();
+        const w2 = window as unknown as { VideoFrame: typeof VideoFrame };
 
-        // 等待编码器处理测试帧
-        let testWait = 0;
-        while (encoder.encodeQueueSize > 0 && testWait < 50) {
-          await new Promise<void>((r) => setTimeout(r, 100));
-          testWait++;
-          if (encoderErrorRef.current) break;
-        }
+        for (let i = 0; i < totalFrames; i++) {
+          if (encoderFailed) throw new Error('Encoder reported an error');
 
-        if (encoderErrorRef.current) {
-          throw new Error('VideoEncoder test frame failed');
-        }
+          renderFrame(i);
 
-        // 正式编码所有帧
-        let frameIndex = 0;
-        await renderAllFrames(frameCtx, async (idx) => {
-          if (encoderErrorRef.current) {
-            throw new Error('VideoEncoder encountered an error during encoding');
-          }
-
-          const videoFrame = new (window as unknown as { VideoFrame: typeof VideoFrame }).VideoFrame(canvas, {
-            timestamp: Math.floor(idx * 1_000_000 / fps),
+          const videoFrame = new w2.VideoFrame(canvas, {
+            timestamp: Math.floor((i * 1_000_000) / fps),
             duration: Math.floor(1_000_000 / fps),
           });
 
-          const isKeyFrame = idx % fps === 0;
+          const isKeyFrame = i % fps === 0;
           encoder.encode(videoFrame, { keyFrame: isKeyFrame });
           videoFrame.close();
 
+          // Backpressure: keep encode queue bounded
           while (encoder.encodeQueueSize > 8) {
             await new Promise<void>((r) => setTimeout(r, 10));
-            if (encoderErrorRef.current) break;
+            if (encoderFailed) break;
           }
-          frameIndex++;
-        });
 
-        if (encoderErrorRef.current) {
-          throw new Error('VideoEncoder error during encoding');
+          setExportProgress((i + 1) / totalFrames);
         }
+
+        if (encoderFailed) throw new Error('Encoder failed during encoding');
 
         await encoder.flush();
         muxer.finalize();
 
         const buffer = muxer.target.buffer;
-        if (!buffer || buffer.byteLength === 0) {
-          throw new Error('Muxer produced empty buffer');
-        }
+        if (!buffer || buffer.byteLength === 0) throw new Error('Muxer produced empty buffer');
 
         const blob = new Blob([buffer], { type: 'video/mp4' });
         const url = URL.createObjectURL(blob);
@@ -559,112 +436,110 @@ export function TemplateRenderer({ scenes, onExport, className }: TemplateRender
         setExportFormat('mp4');
         onExport?.(blob);
 
-        setIsExporting(false);
-        setExportProgress(1);
-        setCurrentSceneIndex(0);
-        setProgress(0);
-        sceneElapsedRef.current = 0;
+        exportOk = true;
         console.log('[Export] WebCodecs MP4 success:', blob.size, 'bytes');
-        return;
       } catch (err) {
-        console.warn('[WebCodecs MP4] failed, falling back:', err);
-        encoderErrorRef.current = false;
-        // 重置进度，准备降级
+        console.warn('[WebCodecs MP4] failed, will fall back:', err);
+        exportErr = err instanceof Error ? err : new Error(String(err));
         setExportProgress(0);
       }
     } else {
-      console.log('[Export] WebCodecs not available or no supported codec, trying MediaRecorder');
+      console.log('[Export] WebCodecs not available — falling back to MediaRecorder');
     }
 
-    /* ===== 路径 2：MediaRecorder + canvas.captureStream ===== */
-    const useMp4 = !!getMp4RecorderType();
-    const useWebm = !!getWebmRecorderType();
-    const recorderType = useMp4 ? getMp4RecorderType()! : useWebm ? getWebmRecorderType()! : null;
+    /* ===== Path 2: MediaRecorder + canvas.captureStream ===== */
+    if (!exportOk) {
+      const useMp4 = !!getMp4RecorderType();
+      const useWebm = !useMp4 && !!getWebmRecorderType();
+      const recorderType = useMp4 ? getMp4RecorderType()! : useWebm ? getWebmRecorderType()! : null;
 
-    if (!recorderType) {
-      setIsExporting(false);
-      setExportError('当前浏览器不支持视频导出（需要 MediaRecorder API）。请使用 Chrome 90+ / Edge / Safari 16+ 浏览器。');
-      return;
-    }
+      if (!recorderType) {
+        setIsExporting(false);
+        setExportError(
+          'This browser does not support video export (MediaRecorder API required). Please use Chrome 90+ / Edge / Safari 16+.',
+        );
+        return;
+      }
 
-    try {
-      // 重置 canvas
-      ctx.fillStyle = '#000000';
-      ctx.fillRect(0, 0, width, height);
+      try {
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, width, height);
 
-      const stream = canvas.captureStream(fps);
-      const recorder = new MediaRecorder(stream, {
-        mimeType: recorderType,
-        videoBitsPerSecond: 4_000_000,
-      });
-      const chunks: Blob[] = [];
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunks.push(e.data);
-      };
-
-      const stopped = new Promise<Blob>((resolve, reject) => {
-        recorder.onstop = () => {
-          if (chunks.length === 0) {
-            reject(new Error('No data recorded'));
-          } else {
-            const type = useMp4 ? 'video/mp4' : 'video/webm';
-            resolve(new Blob(chunks, { type }));
-          }
+        const stream = canvas.captureStream(fps);
+        const recorder = new MediaRecorder(stream, {
+          mimeType: recorderType,
+          videoBitsPerSecond: 6_000_000,
+        });
+        const chunks: Blob[] = [];
+        recorder.ondataavailable = (e) => {
+          if (e.data.size > 0) chunks.push(e.data);
         };
-        recorder.onerror = (e) => reject(e);
-      });
 
-      recorder.start(1000); // 每秒出一个 chunk
+        const stopped = new Promise<Blob>((resolve, reject) => {
+          recorder.onstop = () => {
+            if (chunks.length === 0) {
+              reject(new Error('No data recorded'));
+            } else {
+              const type = useMp4 ? 'video/mp4' : 'video/webm';
+              resolve(new Blob(chunks, { type }));
+            }
+          };
+          recorder.onerror = () => reject(new Error('MediaRecorder error'));
+        });
 
-      // 重置进度
-      setExportProgress(0);
+        recorder.start(1000);
+        setExportProgress(0);
 
-      await renderAllFrames(frameCtx, async () => {
-        // 控制帧率，让 MediaRecorder 有时间捕获
-        await new Promise<void>((r) => setTimeout(r, 1000 / fps));
-      });
+        for (let i = 0; i < totalFrames; i++) {
+          renderFrame(i);
+          // Give MediaRecorder time to capture each painted frame.
+          await new Promise<void>((r) => setTimeout(r, 1000 / fps));
+          setExportProgress((i + 1) / totalFrames);
+        }
 
-      // 等待最后一帧被录制
-      await new Promise<void>((r) => setTimeout(r, 500));
+        // Let the last frame be captured before stopping.
+        await new Promise<void>((r) => setTimeout(r, 500));
+        if (recorder.state !== 'inactive') recorder.stop();
 
-      if (recorder.state !== 'inactive') {
-        recorder.stop();
+        const blob = await stopped;
+        if (blob.size === 0) throw new Error('Recorded blob is empty');
+
+        const url = URL.createObjectURL(blob);
+        videoUrlRef.current = url;
+        setVideoUrl(url);
+        setExportFormat(useMp4 ? 'mp4' : 'webm');
+        onExport?.(blob);
+
+        exportOk = true;
+        console.log('[Export] MediaRecorder success:', blob.size, 'bytes, format:', useMp4 ? 'mp4' : 'webm');
+      } catch (err) {
+        console.error('[Export] MediaRecorder path failed:', err);
+        exportErr = err instanceof Error ? err : new Error(String(err));
       }
+    }
 
-      const blob = await stopped;
-      if (blob.size === 0) {
-        throw new Error('Recorded blob is empty');
-      }
+    setIsExporting(false);
 
-      const url = URL.createObjectURL(blob);
-      videoUrlRef.current = url;
-      setVideoUrl(url);
-      setExportFormat(useMp4 ? 'mp4' : 'webm');
-      onExport?.(blob);
-
-      setIsExporting(false);
+    if (exportOk) {
       setExportProgress(1);
       setCurrentSceneIndex(0);
       setProgress(0);
       sceneElapsedRef.current = 0;
-      console.log('[Export] MediaRecorder success:', blob.size, 'bytes, format:', useMp4 ? 'mp4' : 'webm');
-    } catch (err) {
-      console.error('[Export] all paths failed:', err);
-      setIsExporting(false);
+    } else {
       setExportProgress(0);
-      const errMsg = err instanceof Error ? err.message : String(err);
-      setExportError(`视频导出失败：${errMsg}。请尝试使用最新版 Chrome 浏览器。`);
+      const reason = exportErr?.message ?? 'Unknown error';
+      setExportError(`Video export failed: ${reason}. Please try the latest Chrome browser.`);
     }
   }, [scenes, isExporting, onExport, clearVideoUrl]);
 
-  /* ----- 卸载时释放 URL ----- */
+  /* ----- revoke URL on unmount ----- */
   useEffect(() => {
     return () => {
       if (videoUrlRef.current) URL.revokeObjectURL(videoUrlRef.current);
     };
   }, []);
 
-  /* ----- 渲染 ----- */
+  /* ----- render ----- */
   if (scenes.length === 0) {
     return (
       <div
@@ -685,7 +560,7 @@ export function TemplateRenderer({ scenes, onExport, className }: TemplateRender
         @keyframes vs-tr-slide { from { opacity: 0; transform: translateX(60px); } to { opacity: 1; transform: translateX(0); } }
       `}</style>
 
-      {/* ----- 视频播放器（导出后显示） ----- */}
+      {/* ----- Exported video player ----- */}
       {videoUrl && (
         <div className="relative mx-auto mb-4 w-full" style={{ maxWidth: 400 }}>
           <video
@@ -712,15 +587,14 @@ export function TemplateRenderer({ scenes, onExport, className }: TemplateRender
             onClick={clearVideoUrl}
             className="mt-2 w-full text-xs text-muted-foreground hover:text-foreground underline underline-offset-2"
           >
-            返回实时预览
+            Back to live preview
           </button>
         </div>
       )}
 
-      {/* ----- 实时预览区 ----- */}
+      {/* ----- Live preview area ----- */}
       {!videoUrl && (
         <div className="relative mx-auto w-full" style={{ maxWidth: 400 }}>
-          {/* previewRef 只包含场景内容，不包含遮罩 - 确保 captureDomToCanvas 不会捕获到遮罩 */}
           <div
             ref={previewRef}
             className="relative w-full overflow-hidden rounded-xl bg-background shadow-lg"
@@ -729,7 +603,6 @@ export function TemplateRenderer({ scenes, onExport, className }: TemplateRender
               backgroundColor: currentScene?.backgroundColor,
             }}
           >
-            {/* 使用 key 触发场景切换动画，但在导出时关闭动画以避免捕获到中间状态 */}
             <div
               key={currentScene?.id}
               className="absolute inset-0 h-full w-full"
@@ -741,10 +614,10 @@ export function TemplateRenderer({ scenes, onExport, className }: TemplateRender
             </div>
           </div>
 
-          {/* 导出进度遮罩 - 在 previewRef 外部，不会被 captureDomToCanvas 捕获 */}
+          {/* Export progress overlay (outside previewRef so it is never captured) */}
           {isExporting && (
-            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 rounded-xl bg-background/90">
-              <div className="font-medium text-foreground">导出中…</div>
+            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 rounded-xl bg-background/90 backdrop-blur-sm">
+              <div className="font-medium text-foreground">Exporting…</div>
               <div className="h-2 w-3/4 overflow-hidden rounded-full bg-muted">
                 <div
                   className="h-full bg-primary transition-all duration-150"
@@ -759,9 +632,8 @@ export function TemplateRenderer({ scenes, onExport, className }: TemplateRender
         </div>
       )}
 
-      {/* ----- 控制器 ----- */}
+      {/* ----- Controllers ----- */}
       <div className="mt-4 space-y-3">
-        {/* 进度条 */}
         {!videoUrl && (
           <div
             className="relative h-2 cursor-pointer overflow-hidden rounded-full bg-muted"
@@ -776,7 +648,6 @@ export function TemplateRenderer({ scenes, onExport, className }: TemplateRender
           </div>
         )}
 
-        {/* 按钮行 */}
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <button
@@ -806,12 +677,11 @@ export function TemplateRenderer({ scenes, onExport, className }: TemplateRender
               disabled={isExporting || !!videoUrl}
               className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             >
-              {isExporting ? '导出中…' : '导出 MP4'}
+              {isExporting ? 'Exporting…' : 'Export MP4'}
             </button>
           </div>
         </div>
 
-        {/* 场景指示器 */}
         {!videoUrl && (
           <div className="flex items-center gap-1.5">
             {scenes.map((scene, idx) => (
@@ -825,17 +695,13 @@ export function TemplateRenderer({ scenes, onExport, className }: TemplateRender
           </div>
         )}
 
-        {/* 浏览器兼容性提示 */}
         {browserSupport && !browserSupport.webCodecs && !browserSupport.mediaRecorder && (
           <p className="text-sm text-destructive">
-            当前浏览器不支持视频导出。请使用 Chrome 90+ / Edge / Safari 16+ 浏览器。
+            This browser does not support video export. Please use Chrome 90+ / Edge / Safari 16+.
           </p>
         )}
 
-        {/* 错误提示 */}
-        {exportError && (
-          <p className="text-sm text-destructive">{exportError}</p>
-        )}
+        {exportError && <p className="text-sm text-destructive">{exportError}</p>}
       </div>
     </div>
   );

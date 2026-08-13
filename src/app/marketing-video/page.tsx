@@ -11,6 +11,9 @@ import {
   BrandIntroScene,
   ProductShowcaseScene,
   CTAScene,
+  drawBrandIntro,
+  drawProductShowcase,
+  drawCTA,
   type Scene,
 } from '@/components/video-templates';
 import { useLocale } from '@/lib/locale-context';
@@ -109,40 +112,50 @@ export default function MarketingVideoPage() {
   );
 
   const scenes: Scene[] = useMemo(
-    () => [
-      {
-        id: 'intro',
-        duration: 2,
-        transition: 'fade',
-        render: () => (
-          <BrandIntroScene brandName={brandName || tr('marketing.brandName', 'Brand')} />
-        ),
-      },
-      {
-        id: 'product',
-        duration: 3,
-        transition: 'fade',
-        render: () => (
-          <ProductShowcaseScene
-            productName={productName || tr('marketing.productName', 'Product')}
-            price={productPrice}
-            description={promoText}
-            imageUrl={productImage}
-          />
-        ),
-      },
-      {
-        id: 'cta',
-        duration: 2,
-        transition: 'slide',
-        render: () => (
-          <CTAScene
-            ctaText={ctaText || tr('marketing.ctaText', 'Shop Now')}
-            brandName={brandName || tr('marketing.brandName', 'Brand')}
-          />
-        ),
-      },
-    ],
+    () => {
+      const introBrand = brandName || tr('marketing.brandName', 'Brand');
+      const pName = productName || tr('marketing.productName', 'Product');
+      const ctaBrand = brandName || tr('marketing.brandName', 'Brand');
+      const ctaLabel = ctaText || tr('marketing.ctaText', 'Shop Now');
+      return [
+        {
+          id: 'intro',
+          duration: 2,
+          transition: 'fade',
+          render: () => <BrandIntroScene brandName={introBrand} />,
+          draw: (dc) => drawBrandIntro(dc, { brandName: introBrand }),
+        },
+        {
+          id: 'product',
+          duration: 3,
+          transition: 'fade',
+          render: () => (
+            <ProductShowcaseScene
+              productName={pName}
+              price={productPrice}
+              description={promoText}
+              imageUrl={productImage}
+            />
+          ),
+          draw: (dc) =>
+            drawProductShowcase(dc, {
+              productName: pName,
+              price: productPrice || '',
+              description: promoText,
+              imageUrl: productImage,
+            }),
+        },
+        {
+          id: 'cta',
+          duration: 2,
+          transition: 'slide',
+          render: () => (
+            <CTAScene ctaText={ctaLabel} brandName={ctaBrand} />
+          ),
+          draw: (dc) => drawCTA(dc, { ctaText: ctaLabel, brandName: ctaBrand }),
+        },
+      ];
+    },
     [brandName, productName, productPrice, promoText, productImage, ctaText, tr],
   );
 

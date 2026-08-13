@@ -8,6 +8,9 @@ import {
   DataChartScene,
   NewsHeadlineScene,
   KeyPointScene,
+  drawDataChart,
+  drawNewsHeadline,
+  drawKeyPoint,
   type Scene,
 } from '@/components/video-templates';
 import { Button } from '@/components/ui/button';
@@ -131,6 +134,9 @@ export default function NewsVideoPage() {
     const chartData = dataPoints
       .map((d) => ({ label: d.label, value: parseFloat(d.value) }))
       .filter((d) => !Number.isNaN(d.value) && d.label.trim() !== '');
+    const headlineSource = dataSource || t('news.defaultSource');
+    const summaryText = summary || t('news.summaryPlaceholder');
+    const summaryTitle = t('news.summary');
     return [
       {
         id: 'headline',
@@ -139,10 +145,16 @@ export default function NewsVideoPage() {
         render: () => (
           <NewsHeadlineScene
             headline={headline}
-            source={dataSource || t('news.defaultSource')}
+            source={headlineSource}
             category={styleLabel}
           />
         ),
+        draw: (dc) =>
+          drawNewsHeadline(dc, {
+            headline,
+            source: headlineSource,
+            category: styleLabel,
+          }),
       },
       ...(chartData.length > 0
         ? [{
@@ -150,6 +162,7 @@ export default function NewsVideoPage() {
             duration: 3,
             transition: 'slide' as const,
             render: () => <DataChartScene title={headline} data={chartData} />,
+            draw: (dc) => drawDataChart(dc, { title: headline, data: chartData }),
           }]
         : []),
       {
@@ -157,12 +170,10 @@ export default function NewsVideoPage() {
         duration: 2.5,
         transition: 'fade',
         render: () => (
-          <KeyPointScene
-            number={1}
-            title={t('news.summary')}
-            content={summary || t('news.summaryPlaceholder')}
-          />
+          <KeyPointScene number={1} title={summaryTitle} content={summaryText} />
         ),
+        draw: (dc) =>
+          drawKeyPoint(dc, { number: 1, title: summaryTitle, content: summaryText }),
       },
     ];
   }, [headline, dataSource, dataPoints, summary, styleLabel, t]);

@@ -12,6 +12,9 @@ import {
   QuoteScene,
   NewsHeadlineScene,
   UrlExtractor,
+  drawKeyPoint,
+  drawQuote,
+  drawNewsHeadline,
   type Scene,
 } from '@/components/video-templates';
 import {
@@ -150,6 +153,7 @@ export default function ArticleToVideoPage() {
     const titleScene: Scene = {
       id: 'title', duration: 2, transition: 'fade',
       render: () => <NewsHeadlineScene headline={headline} source="Clipop AI" category={category} />,
+      draw: (dc) => drawNewsHeadline(dc, { headline, source: 'Clipop AI', category }),
     };
 
     const pointScenes: Scene[] = keyPoints.map((kp, i) => {
@@ -157,17 +161,20 @@ export default function ArticleToVideoPage() {
         return {
           id: `point-${i}`, duration: 3, transition: 'fade' as const,
           render: () => <QuoteScene quote={kp.title} author={`Point ${i + 1}`} />,
+          draw: (dc) => drawQuote(dc, { quote: kp.title, author: `Point ${i + 1}` }),
         };
       }
       return {
         id: `point-${i}`, duration: 3, transition: 'slide' as const,
         render: () => <KeyPointScene number={i + 1} title={kp.title} content={kp.detail} />,
+        draw: (dc) => drawKeyPoint(dc, { number: i + 1, title: kp.title, content: kp.detail }),
       };
     });
 
     const closingScene: Scene = {
       id: 'quote', duration: 2, transition: 'fade',
       render: () => <QuoteScene quote={keyPoints[0]?.title || headline} author="Clipop AI" />,
+      draw: (dc) => drawQuote(dc, { quote: keyPoints[0]?.title || headline, author: 'Clipop AI' }),
     };
 
     return [titleScene, ...pointScenes, closingScene];
