@@ -12,8 +12,8 @@ const translations = {
   loading: '加载中...', success: '成功', cancel: '取消', save: '保存', delete: '删除', edit: '编辑', search: '搜索',
   },
   announcement: {
-  text: '新功能：文章转视频支持微信公众号 & B站链接，立即体验 →',
-  cta: '立即体验',
+  text: '升级 Pro 会员 — 无限 AI 视频处理、优先队列 & 4K 超清导出',
+  cta: '查看套餐',
   },
   registerBanner: {
   title: '注册领取',

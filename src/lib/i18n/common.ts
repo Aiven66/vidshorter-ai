@@ -41,8 +41,8 @@ export const commonTranslations = {
     search: 'Search',
   },
   announcement: {
-    text: 'New: Article-to-Video now supports WeChat articles & Bilibili links. Try it free →',
-    cta: 'Try Now',
+    text: 'Upgrade to Pro — Unlimited AI video processing, priority queue & 4K exports',
+    cta: 'View Plans',
   },
   registerBanner: {
     title: 'Register & Get',
