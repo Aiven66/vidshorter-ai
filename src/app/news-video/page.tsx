@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useLocale } from '@/lib/locale-context';
+import { useCredits } from '@/lib/credits-context';
 import {
   TemplateRenderer,
   UrlExtractor,
@@ -69,7 +70,7 @@ const MAX_DATA_POINTS = 10;
 
 export default function NewsVideoPage() {
   const { t } = useLocale();
-
+  const { deductCredits } = useCredits();
   const [mounted, setMounted] = useState(false);
   const [style, setStyle] = useState<string>('styleReport');
   const [headline, setHeadline] = useState('');
@@ -142,7 +143,7 @@ export default function NewsVideoPage() {
     return [
       {
         id: 'headline',
-        duration: 2.5,
+        duration: 3,
         transition: 'fade',
         render: () => (
           <NewsHeadlineScene
@@ -161,7 +162,7 @@ export default function NewsVideoPage() {
       ...(chartData.length > 0
         ? [{
             id: 'chart',
-            duration: 3,
+            duration: 4,
             transition: 'slide' as const,
             render: () => <DataChartScene title={headline} data={chartData} />,
             draw: (dc) => drawDataChart(dc, { title: headline, data: chartData }),
@@ -169,7 +170,7 @@ export default function NewsVideoPage() {
         : []),
       {
         id: 'summary',
-        duration: 2.5,
+        duration: 3,
         transition: 'fade',
         render: () => (
           <KeyPointScene number={1} title={summaryTitle} content={summaryText} />
@@ -179,6 +180,11 @@ export default function NewsVideoPage() {
       },
     ];
   }, [headline, dataSource, dataPoints, summary, styleLabel, t]);
+
+  /** Deduct 30 credits when a video is successfully exported. */
+  const handleExportSuccess = useCallback(() => {
+    deductCredits(30);
+  }, [deductCredits]);
 
   const addDataPoint = () => {
     if (dataPoints.length >= MAX_DATA_POINTS) return;
@@ -372,7 +378,12 @@ export default function NewsVideoPage() {
               <p className="text-xs text-muted-foreground">{t('news.exportHint')}</p>
             </div>
             {scenes.length > 0 ? (
-              <TemplateRenderer scenes={scenes} resetKey={extractKey} />
+              <TemplateRenderer
+                scenes={scenes}
+                resetKey={extractKey}
+                videoTitle={headline || 'News Video'}
+                onExportSuccess={handleExportSuccess}
+              />
             ) : (
               <div className="rounded-lg border border-dashed bg-muted/40 p-8 text-center text-sm text-muted-foreground">
                 {t('news.previewEmpty')}

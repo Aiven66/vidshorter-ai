@@ -45,3 +45,5 @@ export {
 } from './canvas-utils';
 
 export { UrlExtractor } from './url-extractor';
+export { SocialShare } from './social-share';
+export { default as SocialShareDefault } from './social-share';

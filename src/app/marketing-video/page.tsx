@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Card } from '@/components/ui/card';
+import { useCredits } from '@/lib/credits-context';
 import {
   TemplateRenderer,
   UrlExtractor,
@@ -60,6 +61,7 @@ interface ProductApiResponse {
 
 export default function MarketingVideoPage() {
   const { t } = useLocale();
+  const { deductCredits } = useCredits();
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>('fashion');
   const [productName, setProductName] = useState('');
   const [productPrice, setProductPrice] = useState('');
@@ -122,14 +124,14 @@ export default function MarketingVideoPage() {
       return [
         {
           id: 'intro',
-          duration: 2,
+          duration: 3,
           transition: 'fade',
           render: () => <BrandIntroScene brandName={introBrand} />,
           draw: (dc) => drawBrandIntro(dc, { brandName: introBrand }),
         },
         {
           id: 'product',
-          duration: 3,
+          duration: 4,
           transition: 'fade',
           render: () => (
             <ProductShowcaseScene
@@ -149,7 +151,7 @@ export default function MarketingVideoPage() {
         },
         {
           id: 'cta',
-          duration: 2,
+          duration: 3,
           transition: 'slide',
           render: () => (
             <CTAScene ctaText={ctaLabel} brandName={ctaBrand} />
@@ -160,6 +162,11 @@ export default function MarketingVideoPage() {
     },
     [brandName, productName, productPrice, promoText, productImage, ctaText, tr],
   );
+
+  /** Deduct 30 credits when a video is successfully exported. */
+  const handleExportSuccess = useCallback(() => {
+    deductCredits(30);
+  }, [deductCredits]);
 
   const hasAnyContent = productName || productPrice || brandName;
 
@@ -315,7 +322,12 @@ export default function MarketingVideoPage() {
                   <p className="text-xs text-muted-foreground">{t('marketing.exportTip')}</p>
                 </div>
                 <div className="min-h-[500px]">
-                  <TemplateRenderer scenes={scenes} resetKey={extractKey} />
+                  <TemplateRenderer
+                    scenes={scenes}
+                    resetKey={extractKey}
+                    videoTitle={productName || 'Marketing Video'}
+                    onExportSuccess={handleExportSuccess}
+                  />
                 </div>
               </Card>
             ) : (

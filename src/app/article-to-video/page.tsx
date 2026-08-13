@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useCallback } from 'react';
 import { useLocale } from '@/lib/locale-context';
+import { useCredits } from '@/lib/credits-context';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -27,17 +28,36 @@ import {
 
 interface KeyPoint { title: string; detail: string; }
 
+/**
+ * Extract key points from article content.
+ * Filters out navigation/noise, keeps substantive paragraphs, and generates
+ * clean short titles. Returns up to 6 points for a complete video narrative.
+ */
 function extractKeyPoints(title: string, content: string): KeyPoint[] {
-  const paragraphs = content.split(/\n\n+|\n+/).filter((p) => p.trim().length > 20);
+  const paragraphs = content
+    .split(/\n\n+|\n+/)
+    .map((p) => p.trim())
+    .filter((p) => {
+      if (p.length < 30) return false;
+      // Filter out noise: navigation, copyright, subscribe prompts
+      const lower = p.toLowerCase();
+      if (/^(关注|订阅|分享|点赞|在看|阅读原文|免责声明|版权声明)/.test(p)) return false;
+      if (/^(长按|扫描|二维码|点击)/.test(p)) return false;
+      if (lower.startsWith('copyright') || lower.startsWith('all rights reserved')) return false;
+      return true;
+    });
+
   const points = paragraphs.map((p) => {
     const sentences = p.split(/[。！？.!?]/).filter((s) => s.trim().length > 5);
-    const firstSentence = sentences[0]?.trim() || p.trim().slice(0, 50);
+    const firstSentence = sentences[0]?.trim() || p.trim().slice(0, 60);
     return {
-      title: firstSentence.slice(0, 30) + (firstSentence.length > 30 ? '...' : ''),
-      detail: p.trim(),
+      title: firstSentence.slice(0, 40) + (firstSentence.length > 40 ? '...' : ''),
+      detail: p.trim().slice(0, 200),
     };
   });
-  return points.slice(0, 8);
+
+  // Up to 6 key points for a richer, more complete video
+  return points.slice(0, 6);
 }
 
 /* ------------------------------- Templates -------------------------------- */
@@ -74,6 +94,7 @@ interface ArticleApiResponse {
 
 export default function ArticleToVideoPage() {
   const { t } = useLocale();
+  const { deductCredits } = useCredits();
   const [pasteTitle, setPasteTitle] = useState('');
   const [pasteContent, setPasteContent] = useState('');
   const [extracting, setExtracting] = useState(false);
@@ -154,7 +175,7 @@ export default function ArticleToVideoPage() {
     const headline = pasteTitle.trim() || 'Untitled Article';
 
     const titleScene: Scene = {
-      id: 'title', duration: 2, transition: 'fade',
+      id: 'title', duration: 3, transition: 'fade',
       render: () => <NewsHeadlineScene headline={headline} source="Clipop AI" category={category} />,
       draw: (dc) => drawNewsHeadline(dc, { headline, source: 'Clipop AI', category }),
     };
@@ -162,26 +183,31 @@ export default function ArticleToVideoPage() {
     const pointScenes: Scene[] = keyPoints.map((kp, i) => {
       if (template === 'quote') {
         return {
-          id: `point-${i}`, duration: 3, transition: 'fade' as const,
+          id: `point-${i}`, duration: 4, transition: 'fade' as const,
           render: () => <QuoteScene quote={kp.title} author={`Point ${i + 1}`} />,
           draw: (dc) => drawQuote(dc, { quote: kp.title, author: `Point ${i + 1}` }),
         };
       }
       return {
-        id: `point-${i}`, duration: 3, transition: 'slide' as const,
+        id: `point-${i}`, duration: 4, transition: 'slide' as const,
         render: () => <KeyPointScene number={i + 1} title={kp.title} content={kp.detail} />,
         draw: (dc) => drawKeyPoint(dc, { number: i + 1, title: kp.title, content: kp.detail }),
       };
     });
 
     const closingScene: Scene = {
-      id: 'quote', duration: 2, transition: 'fade',
+      id: 'quote', duration: 3, transition: 'fade',
       render: () => <QuoteScene quote={keyPoints[0]?.title || headline} author="Clipop AI" />,
       draw: (dc) => drawQuote(dc, { quote: keyPoints[0]?.title || headline, author: 'Clipop AI' }),
     };
 
     return [titleScene, ...pointScenes, closingScene];
   }, [keyPoints, template, pasteTitle]);
+
+  /** Deduct 30 credits when a video is successfully exported. */
+  const handleExportSuccess = useCallback(() => {
+    deductCredits(30);
+  }, [deductCredits]);
 
   /* ------------------------------- Render -------------------------------- */
 
@@ -323,7 +349,12 @@ export default function ArticleToVideoPage() {
                   {t('article.pointCount').replace('{n}', String(keyPoints.length))}
                 </span>
               </div>
-              <TemplateRenderer scenes={scenes} resetKey={extractKey} />
+              <TemplateRenderer
+                scenes={scenes}
+                resetKey={extractKey}
+                videoTitle={pasteTitle || 'Article to Video'}
+                onExportSuccess={handleExportSuccess}
+              />
             </Card>
 
             {/* 要点编辑 - 侧栏折叠 */}

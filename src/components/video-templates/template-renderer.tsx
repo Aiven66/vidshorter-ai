@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 import type { DrawContext } from './canvas-utils';
+import { SocialShare } from './social-share';
 
 /**
  * HyperFrames-style Scene interface.
@@ -38,6 +39,13 @@ export interface TemplateRendererProps {
    * extraction does not block the live preview.
    */
   resetKey?: string | number;
+  /** Title shown in the share section (defaults to "Clipop AI Video"). */
+  videoTitle?: string;
+  /**
+   * Called when a video has been successfully exported. Use this to trigger
+   * credits deduction or other side effects.
+   */
+  onExportSuccess?: () => void;
 }
 
 export type ExportFormat = 'mp4' | 'webm';
@@ -186,7 +194,7 @@ function getWebmRecorderType(): string | null {
 /* Component                                                          */
 /* ------------------------------------------------------------------ */
 
-export function TemplateRenderer({ scenes, onExport, className, resetKey }: TemplateRendererProps) {
+export function TemplateRenderer({ scenes, onExport, className, resetKey, videoTitle, onExportSuccess }: TemplateRendererProps) {
   const [currentSceneIndex, setCurrentSceneIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -464,6 +472,7 @@ export function TemplateRenderer({ scenes, onExport, className, resetKey }: Temp
         setVideoUrl(url);
         setExportFormat('mp4');
         onExport?.(blob);
+        onExportSuccess?.();
 
         exportOk = true;
         console.log('[Export] WebCodecs MP4 success:', blob.size, 'bytes');
@@ -538,6 +547,7 @@ export function TemplateRenderer({ scenes, onExport, className, resetKey }: Temp
         setVideoUrl(url);
         setExportFormat(useMp4 ? 'mp4' : 'webm');
         onExport?.(blob);
+        onExportSuccess?.();
 
         exportOk = true;
         console.log('[Export] MediaRecorder success:', blob.size, 'bytes, format:', useMp4 ? 'mp4' : 'webm');
@@ -559,7 +569,7 @@ export function TemplateRenderer({ scenes, onExport, className, resetKey }: Temp
       const reason = exportErr?.message ?? 'Unknown error';
       setExportError(`Video export failed: ${reason}. Please try the latest Chrome browser.`);
     }
-  }, [scenes, isExporting, onExport, clearVideoUrl]);
+  }, [scenes, isExporting, onExport, onExportSuccess, clearVideoUrl]);
 
   /* ----- revoke URL on unmount ----- */
   useEffect(() => {
@@ -612,6 +622,14 @@ export function TemplateRenderer({ scenes, onExport, className, resetKey }: Temp
               Download {exportFormat.toUpperCase()}
             </a>
           </div>
+
+          {/* Social media share */}
+          <SocialShare
+            videoUrl={videoUrl}
+            videoTitle={videoTitle ?? 'Clipop AI Video'}
+            format={exportFormat}
+          />
+
           <button
             onClick={clearVideoUrl}
             className="mt-2 w-full text-xs text-muted-foreground hover:text-foreground underline underline-offset-2"

@@ -47,7 +47,7 @@ export function Providers({ children, initialLocale, initialTranslations }: { ch
   return (
     <ThemeProvider
       attribute="class"
-      defaultTheme="system"
+      defaultTheme="dark"
       enableSystem
       disableTransitionOnChange
     >
