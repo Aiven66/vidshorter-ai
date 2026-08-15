@@ -27,6 +27,11 @@ export interface ArticleInfo {
   description?: string;
 }
 
+export interface ProductHighlight {
+  title: string;
+  detail: string;
+}
+
 export interface ProductInfo {
   name: string;
   price?: string;
@@ -35,6 +40,12 @@ export interface ProductInfo {
   image?: string;
   description?: string;
   brand?: string;
+  /** 核心卖点（如 Amazon feature bullets），用于种草视频要点场景 */
+  highlights?: ProductHighlight[];
+  /** 评分，如 "3.8" 或 "4.5" */
+  rating?: string;
+  /** 评分数，如 "20,324" */
+  reviewCount?: string;
 }
 
 export interface NewsInfo {
@@ -507,6 +518,229 @@ function extractProductDescription(html: string): string | undefined {
     }
   }
   return undefined;
+}
+
+/* ------------------------------------------------------------------ */
+/* Amazon 商品专用解析                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 检测是否为 Amazon 商品页 URL。
+ */
+export function isAmazonUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname;
+    return /(^|\.)amazon\.[a-z.]{2,6}$|(^|\.)amzn\.to$|(^|\.)a\.co$/i.test(host);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 解析价格字符串，如 "CNY134.17"、"$19.99"、"€25,00"。
+ * 返回纯数字价格 + 货币标识（符号或 ISO 代码）。
+ */
+function parseAmazonPriceText(text: string | undefined): { price?: string; currency?: string } {
+  if (!text) return {};
+  const clean = decodeHtmlEntities(text).trim();
+  const m = clean.match(/^\s*(CNY|USD|EUR|GBP|INR|JPY|CAD|AUD|¥|￥|\$|€|£|₹)?\s*([\d,]+(?:\.\d{1,2})?)\s*(CNY|USD|EUR|GBP|INR|JPY|CAD|AUD)?\s*$/i);
+  if (!m) return {};
+  const currency = (m[1] || m[3] || '').trim();
+  return { price: m[2].replace(/,/g, ''), currency: currency || undefined };
+}
+
+/**
+ * 清洗 Amazon byline 品牌文本（中英文兼容）：
+ *   "Visit the medicube Store" / "Brand: medicube" / "访问 medicube 品牌旗舰店" → "medicube"
+ */
+function cleanAmazonBrand(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  let s = decodeHtmlEntities(raw).replace(/<[^>]+>/g, '').trim();
+  s = s
+    .replace(/^visit\s+the\s+/i, '')
+    .replace(/\s+store$/i, '')
+    .replace(/^brand:\s*/i, '')
+    .replace(/^品牌[：:]\s*/, '')
+    .replace(/^访问\s*/, '')
+    .replace(/^浏览\s*/, '')
+    .replace(/\s*品牌旗舰店$/, '')
+    .replace(/\s*品牌商店$/, '')
+    .replace(/\s*旗舰店$/, '')
+    .trim();
+  return s || undefined;
+}
+
+/**
+ * 解析 Amazon feature bullets（`[TITLE] detail` 格式）为卖点列表。
+ */
+function parseAmazonHighlights(html: string): ProductHighlight[] {
+  const section = html.match(/id=["']feature-bullets["']([\s\S]{0,8000})/i);
+  if (!section) return [];
+
+  const liMatches = [...section[1].matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)];
+  const highlights: ProductHighlight[] = [];
+
+  for (const m of liMatches) {
+    const text = decodeHtmlEntities(m[1].replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
+    if (text.length < 10) continue;
+
+    // Amazon 卖点格式：[ALL-IN-ONE VOLUME & GLOW BALM] Bring back the look of...
+    const bracket = text.match(/^\[([^\]]{3,60})\]\s*([\s\S]+)$/);
+    if (bracket) {
+      highlights.push({ title: bracket[1].trim(), detail: bracket[2].trim().slice(0, 220) });
+      continue;
+    }
+
+    // 无方括号前缀：前 6 个词作标题，整句作详情
+    const words = text.split(/\s+/);
+    const title = words.slice(0, 6).join(' ');
+    highlights.push({ title: title.slice(0, 60), detail: text.slice(0, 220) });
+    if (highlights.length >= 6) break;
+  }
+
+  return highlights.slice(0, 6);
+}
+
+/**
+ * Amazon 商品页专用解析器。
+ *
+ * Amazon 页面没有 JSON-LD Product 和 og: meta（服务端渲染版本），
+ * 需要从页面固定 DOM 结构提取：
+ *   - 名称: #productTitle
+ *   - 价格: 首个 .a-offscreen
+ *   - 原价: data-a-strike="true" 内的 .a-offscreen
+ *   - 图片: #landingImage 的 data-old-hires / data-a-dynamic-image
+ *   - 卖点: #feature-bullets 下的 <li>
+ *   - 品牌: #bylineInfo
+ *   - 评分: "X.X out of 5 stars"
+ *   - 评分数: "N,NNN ratings"（取最大值，即 global ratings）
+ */
+export function parseAmazonProduct(html: string, finalUrl: string): ProductInfo {
+  // ---- 名称 ----
+  const titleMatch = html.match(/id=["']productTitle["'][^>]*>([^<]+)</i);
+  let name = titleMatch
+    ? decodeHtmlEntities(titleMatch[1]).trim()
+    : (getTitleTag(html) || '').replace(/^Amazon\.[a-z.]+:\s*/i, '').split(/\s*[|–-]\s*Amazon\.com/i)[0].trim();
+
+  // ---- 价格（首个非空 a-offscreen 为主价）----
+  const offscreenPrices = [...html.matchAll(/class=["'][^"']*a-offscreen[^"']*["'][^>]*>([^<]{1,40})</gi)]
+    .map((m) => m[1].trim())
+    .filter((s) => /[\d]/.test(s));
+  const { price, currency } = parseAmazonPriceText(offscreenPrices[0]);
+
+  // ---- 原价（划线价）----
+  let originalPrice: string | undefined;
+  const strikeBlock = html.match(/data-a-strike=["']true["'][^>]*>[\s\S]{0,400}?class=["'][^"']*a-offscreen[^"']*["'][^>]*>([^<]{1,40})</i);
+  if (strikeBlock) {
+    const parsed = parseAmazonPriceText(strikeBlock[1]);
+    if (parsed.price && parsed.price !== price) originalPrice = parsed.price;
+  }
+  if (!originalPrice && offscreenPrices.length > 1) {
+    // "Typical: CNY 208.80" 类型的参考原价
+    const typical = offscreenPrices.find((p) => /^typical:/i.test(decodeHtmlEntities(p)));
+    if (typical) {
+      const parsed = parseAmazonPriceText(decodeHtmlEntities(typical).replace(/^typical:\s*/i, ''));
+      if (parsed.price && parsed.price !== price) originalPrice = parsed.price;
+    }
+  }
+
+  // ---- 高清主图 ----
+  let image: string | undefined;
+  const oldHires = html.match(/data-old-hires=["']([^"']+)["']/i);
+  if (oldHires) {
+    image = decodeHtmlEntities(oldHires[1]);
+  } else {
+    const dyn = html.match(/id=["']landingImage["'][^>]*data-a-dynamic-image=["']([^"']+)["']/i);
+    if (dyn) {
+      const decoded = decodeHtmlEntities(dyn[1]);
+      const firstUrl = decoded.match(/(https?:[^",]+)/i);
+      if (firstUrl) image = firstUrl[1].trim();
+    }
+    if (!image) {
+      const src = html.match(/id=["']landingImage["'][^>]*src=["']([^"']+)["']/i);
+      if (src) image = decodeHtmlEntities(src[1]);
+    }
+  }
+
+  // ---- 卖点 ----
+  const highlights = parseAmazonHighlights(html);
+
+  // ---- 描述：优先用卖点拼接，其次 meta description ----
+  const metaDesc = getMetaContent(html, 'description');
+  const description = highlights.length > 0
+    ? highlights.map((h) => h.title).join(' · ')
+    : (metaDesc || extractProductDescription(html) || '');
+
+  // ---- 品牌 ----
+  const byline = html.match(/id=["']bylineInfo["'][^>]*>([\s\S]{0,200}?)<\/(?:a|span)>/i);
+  const brand = cleanAmazonBrand(byline?.[1]);
+
+  // ---- 评分 & 评分数（中英文格式兼容，覆盖多种 Amazon 页面版本）----
+  // 主评分优先（acrPopover / reviewCountTextLinkedHistogram / aria-label），
+  // 再退到第一个通用评分文本；评论直方图评分（3.8 类）作为最后兜底。
+  const ratingPatterns: RegExp[] = [
+    // 中文: title="4.6 颗星，最多 5 颗星" / aria-label 同格式
+    /(?:acrPopover|acrCustomerReviewText|Histogram)[^>]*title=["']([\d.]+)\s*颗星/i,
+    /aria-label=["']([\d.]+)\s*颗星，最多\s*5\s*颗星，?/i,
+    /([\d.]+)\s*颗星，最多\s*5\s*颗星/,
+    // 英文: "4.6 out of 5 stars" / title="4.6 out of 5 stars"
+    /(?:acrPopover|acrCustomerReviewText|Histogram)[^>]*title=["']([\d.]+)\s+out/i,
+    /([\d.]+)\s+out\s+of\s+5\s+stars/i,
+    /aria-label=["']([\d.]+)\s+out\s+of\s+5\s+stars/i,
+    /([\d.]+)\s+out\s+of\s+5/i,
+  ];
+  let rating: string | undefined;
+  for (const re of ratingPatterns) {
+    const m = html.match(re);
+    if (m) { rating = m[1]; break; }
+  }
+
+  // 评分数：优先 acrCustomerReviewText aria-label（商品标题旁的标准评论数），
+  // 再试 aria-label 完整格式，最后取各格式最大值（global ratings）。
+  // 中文: "1,829 评论" / "4.6 颗星，最多 5 颗星，20,324 个评级"
+  // 英文: "1,829 ratings" / "20,324 global ratings"
+  let reviewCount: string | undefined;
+  const reviewTextCount = html.match(
+    /id=["']acrCustomerReviewText["'][^>]*aria-label=["']([\d,]+)\s*(?:评论|ratings|reviews)/i,
+  );
+  const ariaCount = html.match(
+    /aria-label=["'][\d.]+\s*(?:颗星，最多\s*5\s*颗星|out of 5 stars)[，,]?\s*([\d,]+)\s*(?:个评级|ratings)/i,
+  );
+  if (reviewTextCount) {
+    reviewCount = reviewTextCount[1];
+  } else if (ariaCount) {
+    reviewCount = ariaCount[1];
+  } else {
+    let maxCount = 0;
+    const ratingCountPatterns = [
+      /([\d,]+)\s*个评级/g,
+      /([\d,]+)\s+global\s+ratings/gi,
+      /([\d,]+)\s+ratings/gi,
+      /([\d,]+)\s*个评分/g,
+    ];
+    for (const pattern of ratingCountPatterns) {
+      for (const m of html.matchAll(pattern)) {
+        const n = parseInt(m[1].replace(/,/g, ''), 10);
+        if (n > maxCount) { maxCount = n; reviewCount = m[1]; }
+      }
+    }
+  }
+
+  // 品牌兜底：从商品名第一词提取（如 "medicube PDRN..." → "medicube"）
+  const finalBrand = brand || name.split(/\s+/)[0]?.replace(/[^A-Za-z0-9&-]/g, '') || undefined;
+
+  return {
+    name: (name || 'Amazon Product').trim().slice(0, 200),
+    price,
+    originalPrice,
+    currency,
+    image,
+    description: description?.trim().slice(0, 600),
+    brand: finalBrand,
+    highlights: highlights.length > 0 ? highlights : undefined,
+    rating,
+    reviewCount,
+  };
 }
 
 /* ------------------------------------------------------------------ */

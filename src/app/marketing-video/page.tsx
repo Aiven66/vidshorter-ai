@@ -5,15 +5,18 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { useCredits } from '@/lib/credits-context';
 import {
   TemplateRenderer,
   UrlExtractor,
   BrandIntroScene,
   ProductShowcaseScene,
+  KeyPointScene,
   CTAScene,
   drawBrandIntro,
   drawProductShowcase,
+  drawKeyPoint,
   drawCTA,
   type Scene,
 } from '@/components/video-templates';
@@ -27,6 +30,8 @@ import {
   ChevronDown,
   ChevronUp,
   Wand2,
+  Trash2,
+  Star,
   Link as LinkIcon,
 } from 'lucide-react';
 
@@ -46,15 +51,24 @@ const TEMPLATES: TemplateOption[] = [
   { id: 'tech', nameKey: 'marketing.templateTech', icon: Cpu },
 ];
 
+interface ProductHighlight {
+  title: string;
+  detail: string;
+}
+
 interface ProductApiResponse {
   ok: boolean;
   product?: {
     name: string;
     price?: string;
+    originalPrice?: string;
     currency?: string;
     image?: string;
     description?: string;
     brand?: string;
+    highlights?: ProductHighlight[];
+    rating?: string;
+    reviewCount?: string;
   };
   error?: string;
 }
@@ -65,10 +79,14 @@ export default function MarketingVideoPage() {
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>('fashion');
   const [productName, setProductName] = useState('');
   const [productPrice, setProductPrice] = useState('');
+  const [originalPrice, setOriginalPrice] = useState('');
   const [promoText, setPromoText] = useState('');
   const [brandName, setBrandName] = useState('');
   const [productImage, setProductImage] = useState('');
   const [ctaText, setCtaText] = useState('');
+  const [highlights, setHighlights] = useState<ProductHighlight[]>([]);
+  const [rating, setRating] = useState('');
+  const [reviewCount, setReviewCount] = useState('');
   const [autoDetected, setAutoDetected] = useState(false);
   const [previewReady, setPreviewReady] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -100,9 +118,13 @@ export default function MarketingVideoPage() {
           const prefix = p.currency && !p.price.startsWith(p.currency) ? p.currency : '';
           setProductPrice(`${prefix}${p.price}`);
         }
+        if (p.originalPrice) setOriginalPrice(p.originalPrice);
         if (p.description) setPromoText(p.description);
         if (p.brand) setBrandName(p.brand);
         if (p.image) setProductImage(p.image);
+        setHighlights(Array.isArray(p.highlights) ? p.highlights : []);
+        if (p.rating) setRating(p.rating);
+        if (p.reviewCount) setReviewCount(p.reviewCount);
         if (!ctaText) setCtaText(t('marketing.ctaTextPlaceholder'));
         setAutoDetected(true);
         setPreviewReady(true);
@@ -115,20 +137,31 @@ export default function MarketingVideoPage() {
     [t, ctaText],
   );
 
+  const updateHighlight = (idx: number, field: keyof ProductHighlight, value: string) => {
+    setHighlights((prev) => prev.map((h, i) => (i === idx ? { ...h, [field]: value } : h)));
+  };
+
+  const removeHighlight = (idx: number) => {
+    setHighlights((prev) => prev.filter((_, i) => i !== idx));
+  };
+
   const scenes: Scene[] = useMemo(
     () => {
       const introBrand = brandName || tr('marketing.brandName', 'Brand');
       const pName = productName || tr('marketing.productName', 'Product');
       const ctaBrand = brandName || tr('marketing.brandName', 'Brand');
       const ctaLabel = ctaText || tr('marketing.ctaText', 'Shop Now');
-      return [
+
+      // 1. 品牌开场
+      const sceneList: Scene[] = [
         {
           id: 'intro',
           duration: 3,
           transition: 'fade',
-          render: () => <BrandIntroScene brandName={introBrand} />,
-          draw: (dc) => drawBrandIntro(dc, { brandName: introBrand }),
+          render: () => <BrandIntroScene brandName={introBrand} tagline="Product Pick" />,
+          draw: (dc) => drawBrandIntro(dc, { brandName: introBrand, tagline: 'Product Pick' }),
         },
+        // 2. 商品展示（名称 + 价格 + 主图）
         {
           id: 'product',
           duration: 4,
@@ -137,6 +170,7 @@ export default function MarketingVideoPage() {
             <ProductShowcaseScene
               productName={pName}
               price={productPrice}
+              originalPrice={originalPrice || undefined}
               description={promoText}
               imageUrl={productImage}
             />
@@ -145,22 +179,53 @@ export default function MarketingVideoPage() {
             drawProductShowcase(dc, {
               productName: pName,
               price: productPrice || '',
+              originalPrice: originalPrice || undefined,
               description: promoText,
               imageUrl: productImage,
             }),
         },
-        {
-          id: 'cta',
-          duration: 3,
-          transition: 'slide',
-          render: () => (
-            <CTAScene ctaText={ctaLabel} brandName={ctaBrand} />
-          ),
-          draw: (dc) => drawCTA(dc, { ctaText: ctaLabel, brandName: ctaBrand }),
-        },
       ];
+
+      // 3. 卖点逐条展示（种草视频核心内容）
+      highlights.forEach((h, i) => {
+        sceneList.push({
+          id: `highlight-${i}`,
+          duration: 4,
+          transition: 'slide',
+          render: () => <KeyPointScene number={i + 1} title={h.title} content={h.detail} />,
+          draw: (dc) => drawKeyPoint(dc, { number: i + 1, title: h.title, content: h.detail }),
+        });
+      });
+
+      // 4. 评分背书（社交证明）
+      if (rating || reviewCount) {
+        const starFull = Math.round(parseFloat(rating || '0'));
+        const stars = '★'.repeat(Math.min(5, Math.max(0, starFull))) + '☆'.repeat(Math.min(5, Math.max(0, 5 - starFull)));
+        const ratingTitle = rating ? `${stars}  ${rating}/5` : tr('marketing.customerLove', 'Loved by Customers');
+        const ratingContent = reviewCount
+          ? `${reviewCount} global ratings`
+          : tr('marketing.ratingContent', 'Verified customer reviews');
+        sceneList.push({
+          id: 'rating',
+          duration: 3,
+          transition: 'fade',
+          render: () => <KeyPointScene number={highlights.length + 1} title={ratingTitle} content={ratingContent} />,
+          draw: (dc) => drawKeyPoint(dc, { number: highlights.length + 1, title: ratingTitle, content: ratingContent }),
+        });
+      }
+
+      // 5. CTA 收尾
+      sceneList.push({
+        id: 'cta',
+        duration: 3,
+        transition: 'slide',
+        render: () => <CTAScene ctaText={ctaLabel} brandName={ctaBrand} />,
+        draw: (dc) => drawCTA(dc, { ctaText: ctaLabel, brandName: ctaBrand }),
+      });
+
+      return sceneList;
     },
-    [brandName, productName, productPrice, promoText, productImage, ctaText, tr],
+    [brandName, productName, productPrice, originalPrice, promoText, productImage, ctaText, highlights, rating, reviewCount, tr],
   );
 
   /** Deduct 30 credits when a video is successfully exported. */
@@ -306,6 +371,70 @@ export default function MarketingVideoPage() {
                         placeholder={t('marketing.ctaTextPlaceholder')}
                       />
                     </div>
+
+                    {highlights.length > 0 && (
+                      <div className="space-y-2 md:col-span-2">
+                        <div className="flex items-center justify-between">
+                          <Label className="flex items-center gap-1.5">
+                            <Sparkles className="h-3.5 w-3.5 text-primary" />
+                            {tr('marketing.highlights', 'Product Highlights')}
+                          </Label>
+                          <span className="text-xs text-muted-foreground">{highlights.length} scenes</span>
+                        </div>
+                        <div className="space-y-2">
+                          {highlights.map((h, i) => (
+                            <div key={i} className="rounded-lg border bg-card p-3 space-y-2">
+                              <div className="flex items-center gap-2">
+                                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+                                  {i + 1}
+                                </span>
+                                <Input
+                                  value={h.title}
+                                  onChange={(e) => updateHighlight(i, 'title', e.target.value)}
+                                  placeholder="Highlight title"
+                                  className="h-8"
+                                />
+                                <Button variant="ghost" size="icon-sm" onClick={() => removeHighlight(i)} aria-label="Remove highlight">
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                              <Textarea
+                                value={h.detail}
+                                onChange={(e) => updateHighlight(i, 'detail', e.target.value)}
+                                placeholder="Highlight detail"
+                                className="min-h-[56px] resize-y text-sm"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {(rating || reviewCount) && (
+                      <div className="grid gap-4 md:grid-cols-2 md:col-span-2">
+                        <div className="space-y-2">
+                          <Label htmlFor="rating" className="flex items-center gap-1.5">
+                            <Star className="h-3.5 w-3.5 text-yellow-500" />
+                            {tr('marketing.rating', 'Rating')}
+                          </Label>
+                          <Input
+                            id="rating"
+                            value={rating}
+                            onChange={(e) => setRating(e.target.value)}
+                            placeholder="4.5"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="reviewCount">{tr('marketing.reviewCount', 'Review Count')}</Label>
+                          <Input
+                            id="reviewCount"
+                            value={reviewCount}
+                            onChange={(e) => setReviewCount(e.target.value)}
+                            placeholder="20,324"
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

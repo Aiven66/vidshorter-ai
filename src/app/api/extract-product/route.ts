@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { fetchPage, parseProduct } from '@/lib/url-extract/fetcher';
+import { fetchPage, parseProduct, parseAmazonProduct, isAmazonUrl } from '@/lib/url-extract/fetcher';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -33,7 +33,10 @@ export async function POST(request: NextRequest) {
 
   try {
     const page = await fetchPage(url);
-    const product = parseProduct(page.html, page.finalUrl);
+    // Amazon 页面无 JSON-LD / og meta，走专用 DOM 解析器
+    const product = isAmazonUrl(url)
+      ? parseAmazonProduct(page.html, page.finalUrl)
+      : parseProduct(page.html, page.finalUrl);
 
     if (!product.name || product.name === 'Unknown Product') {
       return NextResponse.json(
