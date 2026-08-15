@@ -42,6 +42,8 @@ export {
   wrapText,
   fillRoundRect,
   withAlpha,
+  preloadImage,
+  getCachedImage,
 } from './canvas-utils';
 
 export { UrlExtractor } from './url-extractor';

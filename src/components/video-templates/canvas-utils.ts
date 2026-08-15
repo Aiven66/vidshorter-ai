@@ -248,3 +248,83 @@ export function withAlpha(color: string, alpha: number): string {
   }
   return color;
 }
+
+/* ----------------------------- Remote image cache ----------------------------- */
+/*
+ * 导出视频时 canvas 需要绘制商品主图等远程图片。
+ * 由于 canvas 导出管线同步逐帧绘制，图片必须提前以 crossOrigin='anonymous'
+ * 加载并缓存，否则 canvas 会被跨域图片污染（tainted）导致导出失败。
+ */
+
+const loadedImageCache = new Map<string, HTMLImageElement>();
+const inFlightPreloads = new Map<string, Promise<HTMLImageElement | null>>();
+
+/**
+ * 预载远程图片（CORS 模式）并缓存。
+ * 失败或超时返回 null（调用方应降级到占位符，不阻塞导出）。
+ */
+export function preloadImage(
+  url: string,
+  timeoutMs = 8000,
+): Promise<HTMLImageElement | null> {
+  if (typeof window === 'undefined' || !url) return Promise.resolve(null);
+  const cached = loadedImageCache.get(url);
+  if (cached) return Promise.resolve(cached);
+  const inFlight = inFlightPreloads.get(url);
+  if (inFlight) return inFlight;
+
+  const p = new Promise<HTMLImageElement | null>((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    const timer = setTimeout(() => {
+      img.src = '';
+      resolve(null);
+    }, timeoutMs);
+    img.onload = () => {
+      clearTimeout(timer);
+      if (img.naturalWidth > 0) {
+        loadedImageCache.set(url, img);
+        resolve(img);
+      } else {
+        resolve(null);
+      }
+    };
+    img.onerror = () => {
+      clearTimeout(timer);
+      resolve(null);
+    };
+    img.src = url;
+  }).finally(() => {
+    inFlightPreloads.delete(url);
+  });
+
+  inFlightPreloads.set(url, p);
+  return p;
+}
+
+/** 获取已缓存的图片（未加载或加载失败返回 null） */
+export function getCachedImage(url?: string): HTMLImageElement | null {
+  if (!url || typeof window === 'undefined') return null;
+  return loadedImageCache.get(url) ?? null;
+}
+
+/**
+ * 在指定矩形内 contain 绘制图片（保持宽高比，居中）。
+ * 返回实际绘制的矩形，便于外层裁剪/描边。
+ */
+export function drawImageContain(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+): { x: number; y: number; w: number; h: number } {
+  const scale = Math.min(w / img.naturalWidth, h / img.naturalHeight);
+  const dw = img.naturalWidth * scale;
+  const dh = img.naturalHeight * scale;
+  const dx = x + (w - dw) / 2;
+  const dy = y + (h - dh) / 2;
+  ctx.drawImage(img, dx, dy, dw, dh);
+  return { x: dx, y: dy, w: dw, h: dh };
+}

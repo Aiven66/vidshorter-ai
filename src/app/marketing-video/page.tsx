@@ -18,6 +18,7 @@ import {
   drawProductShowcase,
   drawKeyPoint,
   drawCTA,
+  preloadImage,
   type Scene,
 } from '@/components/video-templates';
 import { useLocale } from '@/lib/locale-context';
@@ -63,6 +64,9 @@ interface ProductApiResponse {
     price?: string;
     originalPrice?: string;
     currency?: string;
+    /** 组合好的展示价格，如 "$21.99" / "¥134.21" */
+    priceDisplay?: string;
+    originalPriceDisplay?: string;
     image?: string;
     description?: string;
     brand?: string;
@@ -73,8 +77,15 @@ interface ProductApiResponse {
   error?: string;
 }
 
+/** 精简过长的商品名（Amazon 标题常带 200+ 字符的规格后缀），用于视频画面展示 */
+function shortProductName(name: string): string {
+  const firstSegment = name.split(/\s+[-–|]\s+/)[0].trim();
+  const base = firstSegment.length >= 12 ? firstSegment : name.trim();
+  return base.length > 90 ? base.slice(0, 90).replace(/\s+\S*$/, '') + '…' : base;
+}
+
 export default function MarketingVideoPage() {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const { deductCredits } = useCredits();
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>('fashion');
   const [productName, setProductName] = useState('');
@@ -106,7 +117,7 @@ export default function MarketingVideoPage() {
         const resp = await fetch('/api/extract-product', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url }),
+          body: JSON.stringify({ url, locale }),
         });
         const data: ProductApiResponse = await resp.json();
         if (!resp.ok || !data.ok || !data.product) {
@@ -114,14 +125,25 @@ export default function MarketingVideoPage() {
         }
         const p = data.product;
         if (p.name) setProductName(p.name);
-        if (p.price) {
+        // 优先使用后端组合好的展示价格（"$21.99"/"¥134.21"），否则前端拼接
+        if (p.priceDisplay) {
+          setProductPrice(p.priceDisplay);
+        } else if (p.price) {
           const prefix = p.currency && !p.price.startsWith(p.currency) ? p.currency : '';
           setProductPrice(`${prefix}${p.price}`);
         }
-        if (p.originalPrice) setOriginalPrice(p.originalPrice);
+        if (p.originalPriceDisplay) {
+          setOriginalPrice(p.originalPriceDisplay);
+        } else if (p.originalPrice) {
+          setOriginalPrice(p.originalPrice);
+        }
         if (p.description) setPromoText(p.description);
         if (p.brand) setBrandName(p.brand);
-        if (p.image) setProductImage(p.image);
+        if (p.image) {
+          setProductImage(p.image);
+          // 提前预载商品主图（CORS 模式），导出视频时 canvas 可直接绘制
+          void preloadImage(p.image);
+        }
         setHighlights(Array.isArray(p.highlights) ? p.highlights : []);
         if (p.rating) setRating(p.rating);
         if (p.reviewCount) setReviewCount(p.reviewCount);
@@ -134,7 +156,7 @@ export default function MarketingVideoPage() {
         return { ok: false };
       }
     },
-    [t, ctaText],
+    [t, ctaText, locale],
   );
 
   const updateHighlight = (idx: number, field: keyof ProductHighlight, value: string) => {
@@ -148,7 +170,7 @@ export default function MarketingVideoPage() {
   const scenes: Scene[] = useMemo(
     () => {
       const introBrand = brandName || tr('marketing.brandName', 'Brand');
-      const pName = productName || tr('marketing.productName', 'Product');
+      const pName = shortProductName(productName || tr('marketing.productName', 'Product'));
       const ctaBrand = brandName || tr('marketing.brandName', 'Brand');
       const ctaLabel = ctaText || tr('marketing.ctaText', 'Shop Now');
 
@@ -183,6 +205,8 @@ export default function MarketingVideoPage() {
               description: promoText,
               imageUrl: productImage,
             }),
+          // 导出前确保商品主图已预载（CORS 模式），canvas 才能绘制真实商品图
+          prepare: productImage ? () => preloadImage(productImage).then(() => undefined) : undefined,
         },
       ];
 

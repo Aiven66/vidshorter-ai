@@ -6,13 +6,28 @@ export const runtime = 'nodejs';
 export const maxDuration = 30;
 
 /**
+ * locale → Accept-Language（抓取对应语言版本的电商页面，让卖点语言匹配用户 UI 语言）
+ */
+function localeToAcceptLanguage(locale: string | undefined): string | undefined {
+  if (!locale) return undefined;
+  const l = locale.trim();
+  if (!l) return undefined;
+  if (/^zh$/i.test(l)) return 'zh-CN,zh;q=0.9,en;q=0.8';
+  if (/^zh-(tw|hk|hant)/i.test(l)) return 'zh-TW,zh;q=0.9,en;q=0.8';
+  if (/^([a-z]{2,3})(-[A-Za-z]{2,4})?$/.test(l)) {
+    return `${l},${l.split('-')[0]};q=0.9,en;q=0.8`;
+  }
+  return undefined;
+}
+
+/**
  * POST /api/extract-product
- * body: { url: string }
+ * body: { url: string, locale?: string }
  *
- * 抓取商品页面并返回商品名、价格、图片、描述、品牌。
+ * 抓取商品页面并返回商品名、价格、图片、描述、品牌、卖点、评分。
  */
 export async function POST(request: NextRequest) {
-  let body: { url?: string };
+  let body: { url?: string; locale?: string };
   try {
     body = await request.json();
   } catch {
@@ -32,7 +47,8 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const page = await fetchPage(url);
+    const acceptLanguage = localeToAcceptLanguage(body.locale);
+    const page = await fetchPage(url, 20000, acceptLanguage ? { acceptLanguage } : undefined);
     // Amazon 页面无 JSON-LD / og meta，走专用 DOM 解析器
     const product = isAmazonUrl(url)
       ? parseAmazonProduct(page.html, page.finalUrl)

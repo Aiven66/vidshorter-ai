@@ -12,7 +12,10 @@ import {
   drawWrappedText,
   wrapText,
   fillRoundRect,
+  roundRect,
   withAlpha,
+  getCachedImage,
+  drawImageContain,
 } from './canvas-utils';
 
 /* ------------------------------------------------------------------ */
@@ -672,7 +675,7 @@ export function drawProductShowcase(
 
   const padding = width * 0.08;
 
-  // Product placeholder block (top half) — scale-in
+  // Product image / placeholder block (top half) — scale-in
   const phT = stagger(progress, 0, 0.5);
   const scale = easeOutBack(phT);
   const phW = width * 0.6;
@@ -680,50 +683,76 @@ export function drawProductShowcase(
   const phX = (width - phW) / 2;
   const phY = height * 0.1;
 
+  const img = getCachedImage(props.imageUrl);
+
   ctx.save();
   ctx.translate(width / 2, phY + phH / 2);
   ctx.scale(scale, scale);
   ctx.translate(-(phX + phW / 2), -(phY + phH / 2));
-  const grad = ctx.createLinearGradient(phX, phY, phX + phW, phY + phH);
-  grad.addColorStop(0, withAlpha(PRIMARY, 0.4));
-  grad.addColorStop(1, withAlpha(PRIMARY, 0.1));
-  ctx.fillStyle = grad;
-  ctx.beginPath();
-  ctx.roundRect(phX, phY, phW, phW, width * 0.04);
-  ctx.fill();
-  // emoji placeholder
-  setFont(ctx, { size: width * 0.18 });
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('\uD83D\uDCE6', phX + phW / 2, phY + phH / 2);
+
+  if (img) {
+    // 白色圆角卡片衬托商品主图（多数电商图为白底，深色视频背景下卡片观感更好）
+    const cardPad = width * 0.02;
+    fillRoundRect(
+      ctx,
+      phX - cardPad,
+      phY - cardPad,
+      phW + cardPad * 2,
+      phH + cardPad * 2,
+      width * 0.035,
+      '#ffffff',
+    );
+    // 圆角裁剪 + contain 绘制
+    ctx.save();
+    roundRect(ctx, phX - cardPad, phY - cardPad, phW + cardPad * 2, phH + cardPad * 2, width * 0.035);
+    ctx.clip();
+    drawImageContain(ctx, img, phX, phY, phW, phH);
+    ctx.restore();
+  } else {
+    const grad = ctx.createLinearGradient(phX, phY, phX + phW, phY + phH);
+    grad.addColorStop(0, withAlpha(PRIMARY, 0.4));
+    grad.addColorStop(1, withAlpha(PRIMARY, 0.1));
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.roundRect(phX, phY, phW, phW, width * 0.04);
+    ctx.fill();
+    // emoji placeholder
+    setFont(ctx, { size: width * 0.18 });
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('\uD83D\uDCE6', phX + phW / 2, phY + phH / 2);
+  }
   ctx.restore();
 
   // Info section — fade-in-up over 0.3 → 0.8
   const infoT = stagger(progress, 0.3, 0.5);
   ctx.globalAlpha = easeOutCubic(infoT);
   const infoY = height * 0.6;
-  setFont(ctx, { size: width * 0.07, weight: 800 });
+
+  // 商品名（最多 2 行，超出截断）— 换行绘制避免溢出画布
+  setFont(ctx, { size: width * 0.062, weight: 800 });
   ctx.fillStyle = '#ffffff';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
-  ctx.fillText(props.productName, padding, infoY);
-
-  let cursorY = infoY + width * 0.1;
-  if (props.description) {
-    setFont(ctx, { size: width * 0.038, weight: 400 });
-    ctx.fillStyle = '#cbd5e1';
-    cursorY = drawWrappedText(
-      ctx,
-      props.description,
-      padding,
-      cursorY,
-      width - padding * 2,
-      width * 0.055,
-      'left',
-      'top',
-    );
-    cursorY += width * 0.03;
+  const nameLines = wrapText(ctx, props.productName, width - padding * 2).slice(0, 2);
+  let cursorY = infoY;
+  for (const line of nameLines) {
+    ctx.fillText(line, padding, cursorY);
+    cursorY += width * 0.085;
   }
+
+  if (props.description) {
+    setFont(ctx, { size: width * 0.034, weight: 400 });
+    ctx.fillStyle = '#cbd5e1';
+    const descLines = wrapText(ctx, props.description, width - padding * 2).slice(0, 3);
+    cursorY += width * 0.015;
+    for (const line of descLines) {
+      ctx.fillText(line, padding, cursorY);
+      cursorY += width * 0.052;
+    }
+  }
+
+  cursorY += width * 0.03;
 
   // Price
   setFont(ctx, { size: width * 0.085, weight: 800 });

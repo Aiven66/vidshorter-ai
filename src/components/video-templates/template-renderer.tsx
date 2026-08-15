@@ -26,6 +26,11 @@ export interface Scene {
    * Receives scene-local progress (0..1) and draws to the given 2D context.
    */
   draw?: (dc: DrawContext) => void;
+  /**
+   * 导出前资源准备钩子（如预载商品图片）。在导出管线开始逐帧渲染前调用，
+   * 失败不应抛出（资源加载失败时场景应自行降级绘制）。
+   */
+  prepare?: () => Promise<void>;
 }
 
 export interface TemplateRendererProps {
@@ -356,6 +361,9 @@ export function TemplateRenderer({ scenes, onExport, className, resetKey, videoT
     setExportError(null);
     setIsExporting(true);
     setIsPlaying(false);
+
+    // 等待场景资源就绪（商品图预载等），失败不阻塞导出
+    await Promise.all(scenes.map((s) => s.prepare?.().catch(() => undefined)));
 
     const width = 1080;
     const height = 1920;

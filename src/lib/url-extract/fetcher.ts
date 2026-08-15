@@ -37,6 +37,10 @@ export interface ProductInfo {
   price?: string;
   originalPrice?: string;
   currency?: string;
+  /** 组合好的展示价格，如 "$21.99" / "¥134.21"（前端可直接使用） */
+  priceDisplay?: string;
+  /** 组合好的划线价展示，如 "$29.99" */
+  originalPriceDisplay?: string;
   image?: string;
   description?: string;
   brand?: string;
@@ -174,8 +178,21 @@ function nativeGet(
  * 抓取页面 HTML，处理重定向、压缩、编码、基本容错。
  * 使用 Node.js 原生 https 模块（绕过 undici fetch 的 TLS 指纹检测）。
  */
-export async function fetchPage(url: string, timeoutMs = 20000): Promise<FetchedPage> {
-  const result = await nativeGet(url, BROWSER_HEADERS, timeoutMs);
+export interface FetchPageOptions {
+  /** 覆盖 Accept-Language（用于按用户 UI 语言抓取对应语言版本页面） */
+  acceptLanguage?: string;
+}
+
+export async function fetchPage(
+  url: string,
+  timeoutMs = 20000,
+  opts?: FetchPageOptions,
+): Promise<FetchedPage> {
+  const headers: Record<string, string> = { ...BROWSER_HEADERS };
+  if (opts?.acceptLanguage) {
+    headers['Accept-Language'] = opts.acceptLanguage;
+  }
+  const result = await nativeGet(url, headers, timeoutMs);
 
   if (result.statusCode >= 400) {
     throw new Error(`HTTP ${result.statusCode}`);
@@ -448,22 +465,111 @@ export function parseArticle(html: string, finalUrl: string): ArticleInfo {
 }
 
 /* ------------------------------------------------------------------ */
-/* 商品解析                                                            */
+/* 价格通用工具（多平台、多币种、多格式）                              */
 /* ------------------------------------------------------------------ */
 
-function extractPrice(text: string | undefined): { price?: string; currency?: string } {
+/** ISO 货币代码 → 展示符号 */
+const CURRENCY_SYMBOLS: Record<string, string> = {
+  USD: '$', CNY: '¥', EUR: '€', GBP: '£', JPY: '¥', KRW: '₩',
+  INR: '₹', CAD: 'CA$', AUD: 'A$', NZD: 'NZ$', HKD: 'HK$', SGD: 'S$',
+  MXN: 'MX$', BRL: 'R$', RUB: '₽', TRY: '₺', SEK: 'kr', NOK: 'kr',
+  DKK: 'kr', PLN: 'zł', THB: '฿', TWD: 'NT$', VND: '₫', IDR: 'Rp',
+  PHP: '₱', MYR: 'RM', ILS: '₪', CHF: 'Fr ',
+};
+
+/** 符号型货币前缀 → ISO 代码 */
+const SYMBOL_TO_ISO: Record<string, string> = {
+  '$': 'USD', 'US$': 'USD', '€': 'EUR', '£': 'GBP',
+  '¥': 'CNY', '￥': 'CNY', '₩': 'KRW', '₹': 'INR', '₽': 'RUB',
+  '₺': 'TRY', '฿': 'THB', '₫': 'VND', '₱': 'PHP', 'R$': 'BRL',
+  'CA$': 'CAD', 'CDN$': 'CAD', 'A$': 'AUD', 'AU$': 'AUD',
+  'NZ$': 'NZD', 'HK$': 'HKD', 'S$': 'SGD', 'MX$': 'MXN', 'NT$': 'TWD',
+};
+
+/** 千分位/小数归一化：1,234.56 / 1.234,56 / 21,99 → 纯数字字符串 */
+function normalizePriceNumber(num: string): string {
+  const hasC = num.includes(',');
+  const hasD = num.includes('.');
+  if (hasC && hasD) {
+    return num.lastIndexOf(',') > num.lastIndexOf('.')
+      ? num.replace(/\./g, '').replace(',', '.') // 欧式 1.234,56
+      : num.replace(/,/g, ''); // 美式 1,234.56
+  }
+  if (hasC) {
+    return /,\d{1,2}$/.test(num) && (num.match(/,/g) || []).length === 1
+      ? num.replace(',', '.') // 欧式小数 21,99
+      : num.replace(/,/g, ''); // 千分位 1,234
+  }
+  if (hasD) {
+    return /\.\d{3}$/.test(num) && (num.match(/\./g) || []).length > 1
+      ? num.replace(/\./g, '') // 千分位 1.234.567
+      : num; // 小数 134.21
+  }
+  return num;
+}
+
+/**
+ * 宽松价格解析：支持 "$21.99"、"US$21.99"、"CNY 134.21"、"134,21 €"、"R$89,90" 等。
+ * 返回纯数字价格 + ISO 货币代码。
+ */
+function parseLoosePrice(text: string | undefined): { price?: string; currency?: string } {
   if (!text) return {};
-  const m = text.match(/(?:¥|￥|\$|€|£|₹)?\s*([\d,]+(?:\.\d{1,2})?)/);
-  if (!m) return {};
-  const currencyMatch = text.match(/(¥|￥|\$|€|£|₹|CNY|USD|EUR|GBP|INR)/i);
-  return {
-    price: m[1].replace(/,/g, ''),
-    currency: currencyMatch?.[1],
-  };
+  const s = decodeHtmlEntities(text).replace(/<[^>]+>/g, '').trim();
+  if (!s) return {};
+
+  const currencyAlt = [...Object.keys(SYMBOL_TO_ISO).sort((a, b) => b.length - a.length).map((k) => k.replace(/\$/g, '\\$')),
+    ...Object.keys(CURRENCY_SYMBOLS)].join('|');
+  const m = s.match(
+    new RegExp(`(${currencyAlt})?\\s*([\\d]+(?:[.,]\\d{1,3})*)\\s*(?:(${currencyAlt}))?`),
+  );
+  if (!m || !m[2]) return {};
+  const price = normalizePriceNumber(m[2]);
+  if (!price || price === '0') return {};
+  const rawCurrency = (m[1] || m[3] || '').trim();
+  const currency = SYMBOL_TO_ISO[rawCurrency] || rawCurrency.toUpperCase();
+  return { price, currency: currency || undefined };
+}
+
+/** price + currency → 展示字符串，如 "$21.99" / "¥134.21" */
+function toDisplayPrice(currency: string | undefined, price: string | undefined): string | undefined {
+  if (!price) return undefined;
+  if (!currency) return price;
+  const sym = CURRENCY_SYMBOLS[currency.toUpperCase()] ?? currency;
+  const sep = sym.trim().length > 2 ? ' ' : ''; // 文字型货币代码后加空格
+  return `${sym}${sep}${price}`;
+}
+
+/** 从长描述拆句生成卖点（中英兼容），用于无结构化 bullets 的平台 */
+function splitDescriptionHighlights(desc: string | undefined): ProductHighlight[] {
+  if (!desc) return [];
+  const parts = desc
+    .replace(/([.!?。！？])\s+/g, '$1\u0001')
+    .split(/[\u0001;；•·\n]+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 15 && s.length <= 400);
+  const seen = new Set<string>();
+  const highlights: ProductHighlight[] = [];
+  for (const p of parts) {
+    const key = p.slice(0, 40).toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const title = p.length <= 44 ? p : p.slice(0, 44).replace(/\s+\S*$/, '') + '…';
+    highlights.push({ title, detail: p.slice(0, 220) });
+    if (highlights.length >= 6) break;
+  }
+  return highlights;
+}
+
+function formatCount(v: string | number | undefined): string | undefined {
+  if (v === undefined || v === null || v === '') return undefined;
+  const n = typeof v === 'number' ? v : parseInt(String(v).replace(/[^\d]/g, ''), 10);
+  if (Number.isNaN(n)) return undefined;
+  return n.toLocaleString('en-US');
 }
 
 /**
  * 解析商品页面，输出商品名、价格、图片、描述、品牌。
+ * 覆盖 Shopify / eBay / AliExpress / Walmart 等带 JSON-LD Product 的主流电商平台。
  */
 export function parseProduct(html: string, finalUrl: string): ProductInfo {
   const jsonLd = findJsonLdByType(html, ['Product']);
@@ -482,7 +588,13 @@ export function parseProduct(html: string, finalUrl: string): ProductInfo {
     | { price?: string; priceCurrency?: string; lowPrice?: string; highPrice?: string }
     | undefined;
   const priceRaw = offers?.price || offers?.lowPrice;
-  const { price, currency } = extractPrice(priceRaw);
+  const parsedPrice = parseLoosePrice(
+    offers?.priceCurrency && priceRaw
+      ? `${offers.priceCurrency} ${priceRaw}`
+      : priceRaw,
+  );
+  const price = parsedPrice.price || (priceRaw ? normalizePriceNumber(priceRaw.replace(/[^\d.,]/g, '')) : undefined);
+  const currency = parsedPrice.currency || offers?.priceCurrency;
 
   const description =
     asString(jsonLd?.description) || ogDesc || extractProductDescription(html);
@@ -490,17 +602,32 @@ export function parseProduct(html: string, finalUrl: string): ProductInfo {
   const brand =
     asString(jsonLd?.brand && (jsonLd.brand as { name?: string }).name) ||
     getMetaContent(html, 'product:brand') ||
+    getMetaContent(html, 'og:brand') ||
     undefined;
 
   const image = asString(jsonLd?.image) || ogImage || undefined;
+
+  // aggregateRating → 种草视频社交证明场景
+  const agg = jsonLd?.aggregateRating as
+    | { ratingValue?: string | number; reviewCount?: string | number; ratingCount?: string | number }
+    | undefined;
+  const rating = agg?.ratingValue !== undefined ? String(agg.ratingValue) : undefined;
+  const reviewCount = formatCount(agg?.reviewCount ?? agg?.ratingCount);
+
+  // 无结构化 bullets 时从描述拆句生成卖点，保证种草视频有内容
+  const highlights = splitDescriptionHighlights(description);
 
   return {
     name: name.trim().slice(0, 200),
     price,
     currency,
+    priceDisplay: toDisplayPrice(currency, price),
     description: description?.trim().slice(0, 600),
     brand,
     image: Array.isArray(image) ? image[0] : image,
+    highlights: highlights.length > 0 ? highlights : undefined,
+    rating,
+    reviewCount,
   };
 }
 
@@ -537,16 +664,11 @@ export function isAmazonUrl(url: string): boolean {
 }
 
 /**
- * 解析价格字符串，如 "CNY134.17"、"$19.99"、"€25,00"。
- * 返回纯数字价格 + 货币标识（符号或 ISO 代码）。
+ * 解析 Amazon 价格文本，如 "CNY134.21"、"$19.99"、"US$21.99"、"134,21 €"。
+ * （多格式宽松解析，兼容各站点/语言版本的页面）
  */
 function parseAmazonPriceText(text: string | undefined): { price?: string; currency?: string } {
-  if (!text) return {};
-  const clean = decodeHtmlEntities(text).trim();
-  const m = clean.match(/^\s*(CNY|USD|EUR|GBP|INR|JPY|CAD|AUD|¥|￥|\$|€|£|₹)?\s*([\d,]+(?:\.\d{1,2})?)\s*(CNY|USD|EUR|GBP|INR|JPY|CAD|AUD)?\s*$/i);
-  if (!m) return {};
-  const currency = (m[1] || m[3] || '').trim();
-  return { price: m[2].replace(/,/g, ''), currency: currency || undefined };
+  return parseLoosePrice(text);
 }
 
 /**
@@ -602,13 +724,120 @@ function parseAmazonHighlights(html: string): ProductHighlight[] {
 }
 
 /**
+ * 判断 a-offscreen 价格候选是否有效主价候选。
+ * 排除划线价前缀（List:/Typical:/Was:/Save:）、占位符（$00/null）等噪声。
+ */
+function isValidAmazonPriceText(s: string): boolean {
+  if (!s || !/\d/.test(s)) return false;
+  if (/^(list|typical|was|save|清单|典型|原价|建议价)\s*[:：]/i.test(s)) return false;
+  if (/^\s*(?:null|undefined)\s*$/i.test(s)) return false;
+  return true;
+}
+
+/** 提取 html 中所有 a-offscreen 文本（Amazon 无障碍价格文本） */
+function extractAmazonOffscreenPrices(html: string): string[] {
+  return [...html.matchAll(/class=["'][^"']*a-offscreen[^"']*["'][^>]*>([^<]{1,60})</gi)]
+    .map((m) => decodeHtmlEntities(m[1]).replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+}
+
+/**
+ * Amazon 主价提取（多级降级，兼容不同站点/语言/页面版本的 DOM 差异）：
+ *   1. 核心价格容器（corePriceDisplay / corePrice / apexPriceToPay / apex_desktop）内的 a-offscreen
+ *   2. class="a-price" 精确匹配元素内的 a-offscreen（买框主价标准结构）
+ *   3. symbol + whole + fraction 组合（无 a-offscreen 的新版页面）
+ *   4. 全局首个有效 a-offscreen
+ * 返回容器位置 idx（供划线价在主价附近提取，避免误取推荐位价格）。
+ */
+function extractAmazonMainPrice(html: string): {
+  price?: string;
+  currency?: string;
+  containerIdx?: number;
+} {
+  // 1) 核心价格容器内查找
+  const containerIds = [
+    'corePriceDisplay_desktop_feature_div', 'corePriceDisplay',
+    'corePrice_feature_div', 'corePrice', 'apexPriceToPay', 'apex_desktop',
+  ];
+  for (const id of containerIds) {
+    const idx = html.indexOf(`id="${id}"`);
+    if (idx === -1) continue;
+    const segment = html.slice(idx, idx + 2500);
+    const candidates = extractAmazonOffscreenPrices(segment).filter(isValidAmazonPriceText);
+    if (candidates.length > 0) {
+      const parsed = parseAmazonPriceText(candidates[0]);
+      if (parsed.price) return { ...parsed, containerIdx: idx };
+    }
+  }
+
+  // 2) class="a-price ..." 精确元素内的 a-offscreen
+  const priceElMatches = [...html.matchAll(
+    /class=["']a-price(?:\s[^"']*)?["'][^>]*>\s*<span[^>]*class=["'][^"']*a-offscreen[^"']*["'][^>]*>([^<]{1,60})</gi,
+  )].map((m) => decodeHtmlEntities(m[1]).trim()).filter(isValidAmazonPriceText);
+  for (const cand of priceElMatches) {
+    const parsed = parseAmazonPriceText(cand);
+    if (parsed.price) return parsed;
+  }
+
+  // 3) symbol + whole + fraction 组合（新版 DOM 无 a-offscreen 时）
+  const combo = html.match(
+    /class=["'][^"']*a-price-symbol[^"']*["'][^>]*>([^<]{1,8})<\/span>[\s\S]{0,200}?class=["'][^"']*a-price-whole[^"']*["'][^>]*>([\d,]+)(?:[\s\S]{0,120}?class=["'][^"']*a-price-fraction[^"']*["'][^>]*>(\d{1,2}))?/i,
+  );
+  if (combo) {
+    const currency = SYMBOL_TO_ISO[combo[1].trim()] || combo[1].trim().toUpperCase();
+    const price = combo[3]
+      ? `${normalizePriceNumber(combo[2])}.${combo[3]}`
+      : normalizePriceNumber(combo[2]);
+    if (price && price !== '0') return { price, currency };
+  }
+
+  // 4) 全局首个有效 a-offscreen
+  const all = extractAmazonOffscreenPrices(html).filter(isValidAmazonPriceText);
+  for (const cand of all) {
+    const parsed = parseAmazonPriceText(cand);
+    if (parsed.price) return parsed;
+  }
+
+  return {};
+}
+
+/**
+ * Amazon 划线价（原价）提取：
+ *   1. 主价容器窗口内的 "List:" / "Typical:" 前缀 a-offscreen（避免误取推荐位价格）
+ *   2. data-a-strike="true" 内的 a-offscreen
+ */
+function extractAmazonOriginalPrice(
+  html: string,
+  mainPrice?: string,
+  containerIdx?: number,
+): string | undefined {
+  // 1) 主价容器窗口内的 List:/Typical: 参考价
+  if (containerIdx !== undefined) {
+    const segment = html.slice(containerIdx, containerIdx + 2500);
+    const refPrice = extractAmazonOffscreenPrices(segment)
+      .find((p) => /^(list|typical|was)\s*[:：]/i.test(p));
+    if (refPrice) {
+      const parsed = parseAmazonPriceText(refPrice.replace(/^(list|typical|was)\s*[:：]\s*/i, ''));
+      if (parsed.price && parsed.price !== mainPrice) return parsed.price;
+    }
+  }
+  // 2) data-a-strike 划线价
+  const strikeBlock = html.match(/data-a-strike=["']true["'][^>]*>[\s\S]{0,400}?class=["'][^"']*a-offscreen[^"']*["'][^>]*>([^<]{1,60})</i);
+  if (strikeBlock) {
+    const parsed = parseAmazonPriceText(strikeBlock[1]);
+    if (parsed.price && parsed.price !== mainPrice) return parsed.price;
+  }
+  return undefined;
+}
+
+/**
  * Amazon 商品页专用解析器。
  *
  * Amazon 页面没有 JSON-LD Product 和 og: meta（服务端渲染版本），
  * 需要从页面固定 DOM 结构提取：
  *   - 名称: #productTitle
- *   - 价格: 首个 .a-offscreen
- *   - 原价: data-a-strike="true" 内的 .a-offscreen
+ *   - 价格: 多级降级提取（见 extractAmazonMainPrice）
+ *   - 原价: data-a-strike / List: / Typical: 前缀
  *   - 图片: #landingImage 的 data-old-hires / data-a-dynamic-image
  *   - 卖点: #feature-bullets 下的 <li>
  *   - 品牌: #bylineInfo
@@ -622,27 +851,12 @@ export function parseAmazonProduct(html: string, finalUrl: string): ProductInfo 
     ? decodeHtmlEntities(titleMatch[1]).trim()
     : (getTitleTag(html) || '').replace(/^Amazon\.[a-z.]+:\s*/i, '').split(/\s*[|–-]\s*Amazon\.com/i)[0].trim();
 
-  // ---- 价格（首个非空 a-offscreen 为主价）----
-  const offscreenPrices = [...html.matchAll(/class=["'][^"']*a-offscreen[^"']*["'][^>]*>([^<]{1,40})</gi)]
-    .map((m) => m[1].trim())
-    .filter((s) => /[\d]/.test(s));
-  const { price, currency } = parseAmazonPriceText(offscreenPrices[0]);
+  // ---- 价格（多级降级，兼容 US$/CNY/€ 等各站点格式）----
+  const mainPriceInfo = extractAmazonMainPrice(html);
+  const { price, currency } = mainPriceInfo;
 
   // ---- 原价（划线价）----
-  let originalPrice: string | undefined;
-  const strikeBlock = html.match(/data-a-strike=["']true["'][^>]*>[\s\S]{0,400}?class=["'][^"']*a-offscreen[^"']*["'][^>]*>([^<]{1,40})</i);
-  if (strikeBlock) {
-    const parsed = parseAmazonPriceText(strikeBlock[1]);
-    if (parsed.price && parsed.price !== price) originalPrice = parsed.price;
-  }
-  if (!originalPrice && offscreenPrices.length > 1) {
-    // "Typical: CNY 208.80" 类型的参考原价
-    const typical = offscreenPrices.find((p) => /^typical:/i.test(decodeHtmlEntities(p)));
-    if (typical) {
-      const parsed = parseAmazonPriceText(decodeHtmlEntities(typical).replace(/^typical:\s*/i, ''));
-      if (parsed.price && parsed.price !== price) originalPrice = parsed.price;
-    }
-  }
+  const originalPrice = extractAmazonOriginalPrice(html, price, mainPriceInfo.containerIdx);
 
   // ---- 高清主图 ----
   let image: string | undefined;
@@ -734,6 +948,8 @@ export function parseAmazonProduct(html: string, finalUrl: string): ProductInfo 
     price,
     originalPrice,
     currency,
+    priceDisplay: toDisplayPrice(currency, price),
+    originalPriceDisplay: toDisplayPrice(currency, originalPrice),
     image,
     description: description?.trim().slice(0, 600),
     brand: finalBrand,
