@@ -30,15 +30,24 @@ import {
   wrapText,
   withAlpha,
   drawImageContain,
-  easeOutCubic,
 } from './canvas-utils';
 import { type SceneTheme, resolveSceneTheme } from './scene-theme';
+import { AVATAR_RIGS, sampleSkinTone } from './avatar-rigs';
+import { drawAvatarPuppet } from './avatar-puppet';
 
 /* ------------------------------------------------------------------ */
 /* 真人数字人形象（AI 生成的形象照，见 public/avatars/）                  */
 /* ------------------------------------------------------------------ */
 
 export type PhotoAvatarGender = 'female' | 'male';
+
+/** 逐形象嘴部校准（离线检测生成视频的构图后烘焙，未设置时使用全局默认） */
+export interface AvatarFaceCalibration {
+  /** 垂直 cover 裁剪的起始比例（0..1，越小越偏画面顶部） */
+  cropTop?: number;
+  /** 嘴线在裁剪后可见区域中的纵向比例（0..1） */
+  mouthY?: number;
+}
 
 export interface PhotoAvatarSpec {
   id: string;
@@ -47,25 +56,29 @@ export interface PhotoAvatarSpec {
   countryCode: string;
   countryName: string;
   flag: string;
-  /** 形象照（public 静态资源，同源无 CORS 问题） */
+  /** 选择器缩略图（真人形象照） */
   photo: string;
+  /** 真人主播说话视频（口播主体，Seedance 以形象照为首帧生成） */
+  video: string;
   /** 该形象国家对应的口音 locale（用于 TTS 选声线） */
   voiceLocale: string;
+  /** 嘴部位置校准（生成视频构图偏差时覆盖默认值） */
+  face?: AvatarFaceCalibration;
 }
 
 export const PHOTO_AVATARS: PhotoAvatarSpec[] = [
-  { id: 'us-f', name: 'Emma', gender: 'female', countryCode: 'US', countryName: 'United States', flag: '🇺🇸', photo: '/avatars/us-f.jpg', voiceLocale: 'en-US' },
-  { id: 'us-m', name: 'Ryan', gender: 'male', countryCode: 'US', countryName: 'United States', flag: '🇺🇸', photo: '/avatars/us-m.jpg', voiceLocale: 'en-US' },
-  { id: 'gb-f', name: 'Charlotte', gender: 'female', countryCode: 'GB', countryName: 'United Kingdom', flag: '🇬🇧', photo: '/avatars/gb-f.jpg', voiceLocale: 'en-GB' },
-  { id: 'gb-m', name: 'Oliver', gender: 'male', countryCode: 'GB', countryName: 'United Kingdom', flag: '🇬🇧', photo: '/avatars/gb-m.jpg', voiceLocale: 'en-GB' },
-  { id: 'fr-f', name: 'Chloé', gender: 'female', countryCode: 'FR', countryName: 'France', flag: '🇫🇷', photo: '/avatars/fr-f.jpg', voiceLocale: 'fr-FR' },
-  { id: 'fr-m', name: 'Louis', gender: 'male', countryCode: 'FR', countryName: 'France', flag: '🇫🇷', photo: '/avatars/fr-m.jpg', voiceLocale: 'fr-FR' },
-  { id: 'jp-f', name: 'Sakura', gender: 'female', countryCode: 'JP', countryName: 'Japan', flag: '🇯🇵', photo: '/avatars/jp-f.jpg', voiceLocale: 'ja-JP' },
-  { id: 'jp-m', name: 'Haruto', gender: 'male', countryCode: 'JP', countryName: 'Japan', flag: '🇯🇵', photo: '/avatars/jp-m.jpg', voiceLocale: 'ja-JP' },
-  { id: 'kr-f', name: 'Jiwoo', gender: 'female', countryCode: 'KR', countryName: 'South Korea', flag: '🇰🇷', photo: '/avatars/kr-f.jpg', voiceLocale: 'ko-KR' },
-  { id: 'kr-m', name: 'Minjun', gender: 'male', countryCode: 'KR', countryName: 'South Korea', flag: '🇰🇷', photo: '/avatars/kr-m.jpg', voiceLocale: 'ko-KR' },
-  { id: 'cn-f', name: 'Xiaoyu', gender: 'female', countryCode: 'CN', countryName: 'China', flag: '🇨🇳', photo: '/avatars/cn-f.jpg', voiceLocale: 'zh-CN' },
-  { id: 'cn-m', name: 'Chen', gender: 'male', countryCode: 'CN', countryName: 'China', flag: '🇨🇳', photo: '/avatars/cn-m.jpg', voiceLocale: 'zh-CN' },
+  { id: 'us-f', name: 'Emma', gender: 'female', countryCode: 'US', countryName: 'United States', flag: '🇺🇸', photo: '/avatars/us-f.jpg', video: '/avatar-videos/us-f.mp4', voiceLocale: 'en-US' },
+  { id: 'us-m', name: 'Ryan', gender: 'male', countryCode: 'US', countryName: 'United States', flag: '🇺🇸', photo: '/avatars/us-m.jpg', video: '/avatar-videos/us-m.mp4', voiceLocale: 'en-US' },
+  { id: 'gb-f', name: 'Charlotte', gender: 'female', countryCode: 'GB', countryName: 'United Kingdom', flag: '🇬🇧', photo: '/avatars/gb-f.jpg', video: '/avatar-videos/gb-f.mp4', voiceLocale: 'en-GB' },
+  { id: 'gb-m', name: 'Oliver', gender: 'male', countryCode: 'GB', countryName: 'United Kingdom', flag: '🇬🇧', photo: '/avatars/gb-m.jpg', video: '/avatar-videos/gb-m.mp4', voiceLocale: 'en-GB' },
+  { id: 'fr-f', name: 'Chloé', gender: 'female', countryCode: 'FR', countryName: 'France', flag: '🇫🇷', photo: '/avatars/fr-f.jpg', video: '/avatar-videos/fr-f.mp4', voiceLocale: 'fr-FR' },
+  { id: 'fr-m', name: 'Louis', gender: 'male', countryCode: 'FR', countryName: 'France', flag: '🇫🇷', photo: '/avatars/fr-m.jpg', video: '/avatar-videos/fr-m.mp4', voiceLocale: 'fr-FR' },
+  { id: 'jp-f', name: 'Sakura', gender: 'female', countryCode: 'JP', countryName: 'Japan', flag: '🇯🇵', photo: '/avatars/jp-f.jpg', video: '/avatar-videos/jp-f.mp4', voiceLocale: 'ja-JP' },
+  { id: 'jp-m', name: 'Haruto', gender: 'male', countryCode: 'JP', countryName: 'Japan', flag: '🇯🇵', photo: '/avatars/jp-m.jpg', video: '/avatar-videos/jp-m.mp4', voiceLocale: 'ja-JP' },
+  { id: 'kr-f', name: 'Jiwoo', gender: 'female', countryCode: 'KR', countryName: 'South Korea', flag: '🇰🇷', photo: '/avatars/kr-f.jpg', video: '/avatar-videos/kr-f.mp4', voiceLocale: 'ko-KR' },
+  { id: 'kr-m', name: 'Minjun', gender: 'male', countryCode: 'KR', countryName: 'South Korea', flag: '🇰🇷', photo: '/avatars/kr-m.jpg', video: '/avatar-videos/kr-m.mp4', voiceLocale: 'ko-KR' },
+  { id: 'cn-f', name: 'Xiaoyu', gender: 'female', countryCode: 'CN', countryName: 'China', flag: '🇨🇳', photo: '/avatars/cn-f.jpg', video: '/avatar-videos/cn-f.mp4', voiceLocale: 'zh-CN' },
+  { id: 'cn-m', name: 'Chen', gender: 'male', countryCode: 'CN', countryName: 'China', flag: '🇨🇳', photo: '/avatars/cn-m.jpg', video: '/avatar-videos/cn-m.mp4', voiceLocale: 'zh-CN' },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -175,40 +188,41 @@ export interface TalkingSceneDrawProps {
     rating?: string | null;
     reviewCount?: string | null;
   };
+  /** 真人主播视频（预览/MediaRecorder 实时绘制）；导出 WebCodecs 时为 null（使用 avatarFrames） */
+  videoEl: HTMLVideoElement | null;
+  /** 导出预解码的循环帧（15fps ImageBitmap，WebCodecs 确定性导出用） */
+  avatarFrames: ImageBitmap[] | null;
+  /** avatarFrames 每帧时长（秒） */
+  avatarFrameDur: number;
+  /** 全局时间轴（秒），驱动循环帧选择 */
+  globalT: number;
   photoImg: HTMLImageElement | null;
   productImg: HTMLImageElement | null;
+  /** 运行时采样的肤色（照片模式眨眼眼皮） */
+  skinTone: string | null;
   /** 0..1 口型开合度（由音频包络驱动） */
   mouthOpen: number;
-  /** 场景内已经过秒数（驱动摆动/眨眼） */
+  /** 场景内已经过秒数（驱动徽章/CTA 动画） */
   sceneT: number;
   /** 形象确定性相位种子 */
   avatarSeed: number;
 }
 
-/** 形象照中人脸关键点（相对整张照片的比例坐标，由生成提示词保证构图一致） */
-const FACE = {
-  eyesY: 0.33,
-  mouthY: 0.52,
-  centerX: 0.5,
-  eyeHalfSpan: 0.085,
+/**
+ * 视频构图参数（生成提示词保证统一构图）：
+ * cropTop 为垂直 cover 裁剪的起始比例（保留头部到胸部）；
+ * mouthY 为嘴线在裁剪后可见区域中的纵向比例（校准于生成视频）。
+ */
+const VIDEO_FACE = {
+  cropTop: 0.04,
+  mouthY: 0.42,
+  mouthHalfW: 0.085,
 };
 
 function hashSeed(id: string): number {
   let h = 0;
   for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
   return (h % 1000) / 1000;
-}
-
-/**
- * 眨眼曲线：以确定性周期眨眼，150ms 内闭合再睁开。
- */
-function blinkAmount(sceneT: number, seed: number): number {
-  const period = 3.6 + seed * 1.2;
-  const phase = (sceneT + seed * 7) % period;
-  if (phase > 0.15) return 0;
-  // 0..0.075 闭合, 0.075..0.15 睁开
-  const t = phase / 0.15;
-  return t < 0.5 ? easeOutCubic(t * 2) : easeOutCubic((1 - t) * 2);
 }
 
 export function drawTalkingScene(dc: DrawContext, props: TalkingSceneDrawProps): void {
@@ -276,99 +290,107 @@ export function drawTalkingScene(dc: DrawContext, props: TalkingSceneDrawProps):
   ctx.textBaseline = 'middle';
   ctx.fillText(nameText, w / 2, chipY + h * 0.021);
 
-  /* ---- 形象照（cover 裁剪 + 摆动/呼吸 + 下颌口型 + 眨眼） ---- */
-  const photoRect = { x: 0, y: h * 0.16, w, h: h * 0.40 };
+  /* ---- 真人主播（视频帧 cover 裁剪 / 照片口播引擎） ---- */
+  const photoRect = { x: 0, y: h * 0.145, w, h: h * 0.42 };
+  const FACE = { ...VIDEO_FACE, ...props.avatar.face };
   const img = props.photoImg;
-  if (img && img.naturalWidth > 0) {
-    const imgAspect = img.naturalWidth / img.naturalHeight;
-    const rectAspect = photoRect.w / photoRect.h;
-    let drawW: number, drawH: number;
-    if (imgAspect > rectAspect) {
-      drawH = photoRect.h;
-      drawW = drawH * imgAspect;
-    } else {
-      drawW = photoRect.w;
-      drawH = drawW / imgAspect;
-    }
-    // 垂直裁剪偏向上部（人像头部在上半）
-    const srcTotal = drawH - photoRect.h;
-    const srcY = Math.max(0, srcTotal * 0.28);
-    // 水平居中
-    const srcX = Math.max(0, (drawW - photoRect.w) / 2);
 
-    // 照片内归一化坐标 → 画布坐标
-    const toDest = (px: number, py: number) => ({
-      x: photoRect.x + px * drawW - srcX,
-      y: photoRect.y + py * drawH - srcY,
-    });
+  // 帧源：导出用预解码 ImageBitmap（确定性）；预览用实时播放的 video 元素
+  const frames = props.avatarFrames;
+  let liveVideo: HTMLVideoElement | null = null;
+  if (
+    (!frames || frames.length === 0) &&
+    props.videoEl &&
+    props.videoEl.readyState >= 2 &&
+    props.videoEl.videoWidth > 0
+  ) {
+    liveVideo = props.videoEl;
+  }
+  let bitmap: ImageBitmap | null = null;
+  if (frames && frames.length > 0 && props.avatarFrameDur > 0) {
+    const fi = Math.floor(props.globalT / props.avatarFrameDur) % frames.length;
+    bitmap = frames[Math.max(0, fi)];
+  }
 
-    const anchor = toDest(FACE.centerX, FACE.eyesY);
-    const mouthDest = toDest(FACE.centerX, FACE.mouthY);
+  type FrameSource = { src: CanvasImageSource; vw: number; vh: number };
+  let frameSrc: FrameSource | null = null;
+  if (bitmap) {
+    frameSrc = { src: bitmap, vw: bitmap.width, vh: bitmap.height };
+  } else if (liveVideo) {
+    frameSrc = { src: liveVideo, vw: liveVideo.videoWidth, vh: liveVideo.videoHeight };
+  }
 
-    // 头部微摆 + 呼吸
-    const swayX = Math.sin(t * 0.8 + seed * 6.28) * w * 0.004;
-    const swayY = Math.sin(t * 0.57 + seed * 3.14) * h * 0.0022;
-    const breathe = 1 + 0.004 * Math.sin(t * 1.5 + seed * 6.28);
-    const rot = Math.sin(t * 0.45 + seed * 2.2) * 0.006;
-    const cx = photoRect.x + photoRect.w / 2;
-    const cy = photoRect.y + photoRect.h * 0.42;
+  if (frameSrc) {
+    const { src, vw, vh } = frameSrc;
+    // cover：视频比区域窄长 → 宽度撑满，垂直裁剪（偏上保留头胸）
+    const drawH = photoRect.w * (vh / vw);
+    const visibleRatio = Math.min(1, photoRect.h / drawH);
+    const srcH = vh * visibleRatio;
+    const srcY = Math.min(vh * FACE.cropTop * (1 - visibleRatio) + vh * FACE.cropTop, vh - srcH);
 
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.rotate(rot);
-    ctx.scale(1, breathe);
-    ctx.translate(-cx, -cy);
-    ctx.translate(swayX, swayY);
+    // 1) 完整视频帧（嘴线以上部分）
+    const mouthCanvasY = photoRect.y + photoRect.h * FACE.mouthY;
+    ctx.drawImage(src, 0, srcY, vw, srcH * FACE.mouthY, photoRect.x, photoRect.y, photoRect.w, photoRect.h * FACE.mouthY);
 
-    // 1) 完整照片
-    ctx.drawImage(img, srcX, srcY, photoRect.w, photoRect.h, photoRect.x, photoRect.y, photoRect.w, photoRect.h);
-
-    // 2) 下颌/口型：以眼线为锚点垂直拉伸（椭圆裁剪隐藏接缝）
+    // 2) 嘴线以下：音频驱动纵向拉伸（张嘴时下巴下移）
     const open = props.mouthOpen;
-    if (open > 0.02) {
-      const jawScale = 1 + open * 0.075;
+    const lowerSrcH = srcH * (1 - FACE.mouthY);
+    const lowerDestH = photoRect.h * (1 - FACE.mouthY) * (1 + open * 0.085);
+    ctx.drawImage(
+      src,
+      0, srcY + srcH * FACE.mouthY, vw, lowerSrcH,
+      photoRect.x, mouthCanvasY, photoRect.w, lowerDestH,
+    );
+
+    // 3) 口腔阴影：唇间暗色椭圆（随开合变化）
+    if (open > 0.06) {
+      const mx = photoRect.x + photoRect.w / 2;
+      const grad = ctx.createRadialGradient(mx, mouthCanvasY + open * photoRect.h * 0.012, 0, mx, mouthCanvasY + open * photoRect.h * 0.012, photoRect.w * FACE.mouthHalfW);
+      grad.addColorStop(0, `rgba(35, 12, 12, ${0.55 * Math.min(1, open * 1.6)})`);
+      grad.addColorStop(1, 'rgba(35, 12, 12, 0)');
       ctx.save();
       ctx.beginPath();
-      ctx.ellipse(mouthDest.x, mouthDest.y + open * h * 0.012, w * 0.135, w * 0.105, 0, 0, Math.PI * 2);
+      ctx.ellipse(mx, mouthCanvasY + open * photoRect.h * 0.012, photoRect.w * FACE.mouthHalfW, photoRect.h * 0.016 * (0.35 + open * 1.1), 0, 0, Math.PI * 2);
       ctx.clip();
-      ctx.translate(0, anchor.y);
-      ctx.scale(1, jawScale);
-      ctx.translate(0, -anchor.y);
-      ctx.drawImage(img, srcX, srcY, photoRect.w, photoRect.h, photoRect.x, photoRect.y, photoRect.w, photoRect.h);
-      // 唇部阴影，增强开口感
-      ctx.fillStyle = `rgba(60, 20, 20, ${0.16 * open})`;
-      ctx.beginPath();
-      ctx.ellipse(mouthDest.x, mouthDest.y + open * h * 0.012, w * 0.075, w * 0.028 * (0.4 + open), 0, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.fillStyle = grad;
+      ctx.fillRect(mx - photoRect.w * FACE.mouthHalfW, mouthCanvasY - photoRect.h * 0.04, photoRect.w * FACE.mouthHalfW * 2, photoRect.h * 0.09);
       ctx.restore();
     }
-
-    // 3) 眨眼：眼部椭圆内垂直压扁
-    const blink = blinkAmount(t, seed);
-    if (blink > 0.05) {
-      for (const side of [-1, 1]) {
-        const eyeDest = toDest(FACE.centerX + side * FACE.eyeHalfSpan, FACE.eyesY);
-        ctx.save();
-        ctx.beginPath();
-        ctx.ellipse(eyeDest.x, eyeDest.y, w * 0.055, w * 0.032, 0, 0, Math.PI * 2);
-        ctx.clip();
-        ctx.translate(0, eyeDest.y);
-        ctx.scale(1, 1 - 0.9 * blink);
-        ctx.translate(0, -eyeDest.y);
-        ctx.drawImage(img, srcX, srcY, photoRect.w, photoRect.h, photoRect.x, photoRect.y, photoRect.w, photoRect.h);
-        ctx.restore();
+  } else if (img && img.naturalWidth > 0) {
+    // 照片口播模式（自研面部驱动引擎：下颌变形 + 视位口型 + 眨眼 + 头部运动）
+    const rig = AVATAR_RIGS[props.avatar.id];
+    if (rig) {
+      drawAvatarPuppet({
+        ctx,
+        img,
+        rig,
+        rect: photoRect,
+        mouthOpen: props.mouthOpen,
+        globalT: props.globalT,
+        sceneT: props.sceneT,
+        seed: props.avatarSeed,
+        bgDark: th.bgDark,
+        skinTone: props.skinTone,
+      });
+    } else {
+      // 无骨架数据：cover 兜底
+      const imgAspect = img.naturalWidth / img.naturalHeight;
+      const rectAspect = photoRect.w / photoRect.h;
+      let drawW: number, drawH: number;
+      if (imgAspect > rectAspect) {
+        drawH = photoRect.h;
+        drawW = drawH * imgAspect;
+      } else {
+        drawW = photoRect.w;
+        drawH = drawW / imgAspect;
       }
+      const srcTotal = drawH - photoRect.h;
+      const srcY = Math.max(0, srcTotal * 0.28);
+      const srcX = Math.max(0, (drawW - photoRect.w) / 2);
+      ctx.drawImage(img, srcX, srcY, photoRect.w, photoRect.h, photoRect.x, photoRect.y, photoRect.w, photoRect.h);
     }
-    ctx.restore();
-
-    // 4) 照片底部渐隐融入背景
-    const fade = ctx.createLinearGradient(0, photoRect.y + photoRect.h * 0.7, 0, photoRect.y + photoRect.h);
-    fade.addColorStop(0, withAlpha(th.bgDark, 0));
-    fade.addColorStop(1, withAlpha(th.bgDark, 0.95));
-    ctx.fillStyle = fade;
-    ctx.fillRect(0, photoRect.y + photoRect.h * 0.7, w, photoRect.h * 0.3);
   } else {
-    // 形象照加载失败降级：剪影占位
+    // 占位剪影
     ctx.save();
     ctx.fillStyle = withAlpha(th.primary, 0.25);
     ctx.beginPath();
@@ -590,6 +612,56 @@ const FPS = 30;
 
 type TrFn = (key: string, fallback?: string) => string;
 
+/**
+ * 预解码真人主播循环视频帧（WebCodecs 确定性导出用）。
+ * 15fps 采样 + 缩放到 540 宽：5s 循环 ≈ 75 帧 ≈ 116MB 峰值（桌面浏览器可接受），
+ * 导出结束由调用方 close() 释放。
+ */
+async function extractAvatarLoopFrames(
+  videoUrl: string,
+  sampleFps = 15,
+  resizeWidth = 540,
+): Promise<{ frames: ImageBitmap[]; frameDur: number }> {
+  const video = document.createElement('video');
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = 'auto';
+  video.src = videoUrl;
+  video.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none;';
+  document.body.appendChild(video);
+
+  const frames: ImageBitmap[] = [];
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const to = setTimeout(() => reject(new Error('avatar video load timeout')), 20000);
+      video.addEventListener('loadeddata', () => { clearTimeout(to); resolve(); }, { once: true });
+      video.addEventListener('error', () => { clearTimeout(to); reject(new Error('avatar video load failed')); }, { once: true });
+      video.load();
+    });
+    if (video.videoWidth <= 0) throw new Error('avatar video has no video track');
+
+    const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 5;
+    const count = Math.max(1, Math.floor(duration * sampleFps));
+    const frameDur = 1 / sampleFps;
+    const resizeHeight = Math.round((resizeWidth * video.videoHeight) / Math.max(1, video.videoWidth));
+
+    for (let i = 0; i < count; i++) {
+      const t = Math.min(Math.max(0, duration - 0.02), i * frameDur);
+      await new Promise<void>((resolve, reject) => {
+        const to = setTimeout(() => reject(new Error('avatar video seek timeout')), 10000);
+        video.addEventListener('seeked', () => { clearTimeout(to); resolve(); }, { once: true });
+        video.currentTime = t;
+      });
+      const bmp = await createImageBitmap(video, { resizeWidth, resizeHeight, resizeQuality: 'medium' });
+      frames.push(bmp);
+    }
+    return { frames, frameDur };
+  } finally {
+    video.pause();
+    video.remove();
+  }
+}
+
 export function TalkingVideoRenderer({
   scenes,
   avatar,
@@ -612,6 +684,8 @@ export function TalkingVideoRenderer({
   const playingRef = useRef(false);
   const photoRef = useRef<HTMLImageElement | null>(null);
   const productImgRef = useRef<HTMLImageElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const skinToneRef = useRef<string | null>(null);
 
   const [playing, setPlaying] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -670,8 +744,13 @@ export function TalkingVideoRenderer({
           highlight: scene.highlight,
           price: scene.price,
           product,
+          videoEl: videoRef.current,
+          avatarFrames: null,
+          avatarFrameDur: 0,
+          globalT: elapsed,
           photoImg: photoRef.current,
           productImg: productImgRef.current,
+          skinTone: skinToneRef.current,
           mouthOpen,
           sceneT,
           avatarSeed,
@@ -681,13 +760,15 @@ export function TalkingVideoRenderer({
     [scenes, sceneStarts, avatar, theme, product, avatarSeed],
   );
 
-  // 加载形象照 + 商品图，然后绘制首帧
+  // 加载形象照 + 商品图 + 真人主播循环视频，然后绘制首帧
   useEffect(() => {
     let cancelled = false;
     const img = new Image();
     img.onload = () => {
       if (!cancelled) {
         photoRef.current = img;
+        const rig = AVATAR_RIGS[avatar.id];
+        skinToneRef.current = rig ? sampleSkinTone(img, rig) : null;
         drawFrame(0);
       }
     };
@@ -701,11 +782,42 @@ export function TalkingVideoRenderer({
       };
       pimg.src = product.image;
     }
+
+    // 真人主播视频：挂在 body 上（1px 透明；iOS 需在 DOM 内才输出像素），静音循环自动播放
+    const prev = videoRef.current;
+    if (prev) {
+      prev.pause();
+      prev.remove();
+      videoRef.current = null;
+    }
+    const vid = document.createElement('video');
+    vid.muted = true;
+    vid.loop = true;
+    vid.playsInline = true;
+    vid.preload = 'auto';
+    vid.src = avatar.video;
+    vid.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none;';
+    vid.addEventListener('loadeddata', () => {
+      if (cancelled) return;
+      videoRef.current = vid;
+      void vid.play().catch(() => undefined);
+      drawFrame(0);
+    });
+    vid.addEventListener('error', () => {
+      // 视频缺失/加载失败 → 降级照片模式
+      if (!cancelled) drawFrame(0);
+    });
+    document.body.appendChild(vid);
+    vid.load();
+
     drawFrame(0);
     return () => {
       cancelled = true;
+      vid.pause();
+      vid.remove();
+      if (videoRef.current === vid) videoRef.current = null;
     };
-  }, [avatar.photo, product.image, drawFrame]);
+  }, [avatar.id, avatar.photo, avatar.video, product.image, drawFrame]);
 
   const stopPlayback = useCallback(() => {
     playingRef.current = false;
@@ -810,7 +922,9 @@ export function TalkingVideoRenderer({
         {
           avatar, theme, kind: scene.kind, subtitle: scene.subtitle, label: scene.label,
           highlight: scene.highlight, price: scene.price, product,
+          videoEl: videoRef.current, avatarFrames: null, avatarFrameDur: 0, globalT: elapsed,
           photoImg: photoRef.current, productImg: productImgRef.current,
+          skinTone: skinToneRef.current,
           mouthOpen: scene.envelope[Math.max(0, frameIdx)] ?? 0,
           sceneT, avatarSeed,
         },
@@ -930,12 +1044,24 @@ export function TalkingVideoRenderer({
       codec: 'mp4a.40.2', sampleRate, numberOfChannels: 1, bitrate: 96_000,
     });
 
-    const drawTo = (scene: TalkingSceneData, sceneT: number, frameIdx: number) => {
+    // 预解码真人主播循环帧（确定性导出；失败则回退照片模式）
+    let avatarFrames: ImageBitmap[] | null = null;
+    let avatarFrameDur = 0;
+    try {
+      const extracted = await extractAvatarLoopFrames(avatar.video);
+      avatarFrames = extracted.frames;
+      avatarFrameDur = extracted.frameDur;
+    } catch (e) {
+      console.warn('[TalkingVideoRenderer] avatar loop extraction failed, fallback to photo:', e);
+    }
+
+    const drawTo = (scene: TalkingSceneData, sceneT: number, frameIdx: number, globalT: number) => {
       drawTalkingScene(
         { ctx, progress: sceneT / scene.duration, width: EXPORT_W, height: EXPORT_H },
         {
           avatar, theme, kind: scene.kind, subtitle: scene.subtitle, label: scene.label,
           highlight: scene.highlight, price: scene.price, product,
+          videoEl: null, avatarFrames, avatarFrameDur, globalT,
           photoImg: photoRef.current, productImg: productImgRef.current,
           mouthOpen: scene.envelope[Math.min(Math.max(0, frameIdx), scene.envelope.length - 1)] ?? 0,
           sceneT, avatarSeed,
@@ -970,35 +1096,42 @@ export function TalkingVideoRenderer({
     let globalFrame = 0;
     const totalFrames = scenes.reduce((s, sc) => s + Math.ceil(sc.duration * FPS), 0);
 
-    for (let si = 0; si < scenes.length; si++) {
-      const scene = scenes[si];
-      const frames = Math.ceil(scene.duration * FPS);
-      const sceneStartSec = globalFrame / FPS;
-      void enqueueAudio(scene, sceneStartSec);
+    try {
+      for (let si = 0; si < scenes.length; si++) {
+        const scene = scenes[si];
+        const frames = Math.ceil(scene.duration * FPS);
+        const sceneStartSec = globalFrame / FPS;
+        void enqueueAudio(scene, sceneStartSec);
 
-      for (let f = 0; f < frames; f++) {
-        const sceneT = f / FPS;
-        drawTo(scene, sceneT, Math.floor(sceneT * FPS));
-        const frame = new w.VideoFrame!(canvas, {
-          timestamp: Math.round(globalFrame * (1e6 / FPS)),
-          duration: Math.round(1e6 / FPS),
-        });
-        videoEncoder.encode(frame, { keyFrame: globalFrame % 60 === 0 });
-        frame.close();
-        globalFrame++;
-        if (videoEncoder.encodeQueueSize > 8) {
-          await new Promise((r) => setTimeout(r, 4));
+        for (let f = 0; f < frames; f++) {
+          const sceneT = f / FPS;
+          drawTo(scene, sceneT, Math.floor(sceneT * FPS), globalFrame / FPS);
+          const frame = new w.VideoFrame!(canvas, {
+            timestamp: Math.round(globalFrame * (1e6 / FPS)),
+            duration: Math.round(1e6 / FPS),
+          });
+          videoEncoder.encode(frame, { keyFrame: globalFrame % 60 === 0 });
+          frame.close();
+          globalFrame++;
+          if (videoEncoder.encodeQueueSize > 8) {
+            await new Promise((r) => setTimeout(r, 4));
+          }
+          if ((globalFrame & 15) === 0) setExportPct(Math.min(96, (globalFrame / totalFrames) * 96));
+          if (encodeFailed) throw new Error('video encoder failed');
         }
-        if ((globalFrame & 15) === 0) setExportPct(Math.min(96, (globalFrame / totalFrames) * 96));
-        if (encodeFailed) throw new Error('video encoder failed');
+      }
+
+      setExportPct(97);
+      await Promise.all([videoEncoder.flush(), audioEncoder.flush()]);
+      videoEncoder.close();
+      audioEncoder.close();
+      muxer.finalize();
+    } finally {
+      if (avatarFrames) {
+        for (const bmp of avatarFrames) bmp.close();
+        avatarFrames = null;
       }
     }
-
-    setExportPct(97);
-    await Promise.all([videoEncoder.flush(), audioEncoder.flush()]);
-    videoEncoder.close();
-    audioEncoder.close();
-    muxer.finalize();
 
     const buffer = (muxer.target as ArrayBufferTarget).buffer;
     if (!buffer || buffer.byteLength === 0) throw new Error('muxer produced empty buffer');
