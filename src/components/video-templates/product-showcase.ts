@@ -58,6 +58,8 @@ export interface ShowcaseSceneProps {
   highlightIndex: number;
   /** UI 语言（徽章文案） */
   isZh: boolean;
+  /** 出镜主持（右上角头像徽章 + 声线来源；null 则不绘制） */
+  host?: { name: string; flag: string; img: HTMLImageElement | null } | null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -233,6 +235,97 @@ function drawStars(dc: DrawContext, props: ShowcaseSceneProps, cx: number, cy: n
   ctx.fillText(txt, cx, cy);
 }
 
+/** 主持徽章：右上角圆形头像 + 姓名牌（角色即解说声线来源，光环随语音包络脉动） */
+function drawHostChip(dc: DrawContext, th: SceneTheme, props: ShowcaseSceneProps): void {
+  const host = props.host;
+  if (!host || !host.name) return;
+  const { ctx, width: w, height: h } = dc;
+  const inn = popIn(ctx, props.sceneT - 0.2);
+  if (inn <= 0.01) return;
+
+  const r = w * 0.055;
+  const cx = w * 0.885;
+  const cy = h * 0.10;
+  const pulse = 1 + props.mouthOpen * 0.05;
+
+  // 头像圆 + 说话光晕（envelope 驱动，暗示"这位主持正在解说"）
+  ctx.save();
+  ctx.globalAlpha = clamp01(inn);
+  ctx.translate(cx, cy);
+  const s = Math.max(0.01, inn) * pulse;
+  ctx.scale(s, s);
+  if (props.mouthOpen > 0.04) {
+    const g = ctx.createRadialGradient(0, 0, r * 0.6, 0, 0, r * 2.2);
+    g.addColorStop(0, withAlpha(th.primaryLight, 0.35 * props.mouthOpen));
+    g.addColorStop(1, withAlpha(th.primaryLight, 0));
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 2.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.shadowColor = 'rgba(0,0,0,0.5)';
+  ctx.shadowBlur = w * 0.02;
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.fillStyle = withAlpha(th.primaryDark, 0.9);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  if (host.img && host.img.naturalWidth > 0) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(0, 0, r - w * 0.004, 0, Math.PI * 2);
+    ctx.clip();
+    const im = host.img;
+    const cover = (r * 2) / Math.min(im.naturalWidth, im.naturalHeight);
+    const dw = im.naturalWidth * cover;
+    const dh = im.naturalHeight * cover;
+    ctx.drawImage(im, -dw / 2, -dh / 2, dw, dh);
+    ctx.restore();
+  } else {
+    setFont(ctx, { size: r, weight: 900 });
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(host.name.slice(0, 1).toUpperCase(), 0, r * 0.06);
+  }
+  ctx.lineWidth = w * 0.010;
+  ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.stroke();
+  // 在线绿点（右下缘，"正在解说"信号）
+  const dx = r * 0.72;
+  const dr = w * 0.020;
+  ctx.beginPath();
+  ctx.arc(dx, dx, dr, 0, Math.PI * 2);
+  ctx.fillStyle = '#22c55e';
+  ctx.fill();
+  ctx.lineWidth = Math.max(1.5, w * 0.006);
+  ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+  ctx.stroke();
+  ctx.restore();
+
+  // 姓名牌（头像左侧，玻璃拟态）
+  ctx.save();
+  ctx.globalAlpha = clamp01(inn);
+  setFont(ctx, { size: w * 0.030, weight: 800 });
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  const label = `${host.flag} ${host.name}`.trim();
+  const tw = ctx.measureText(label).width;
+  const pillH = w * 0.062;
+  const pillW = Math.min(w * 0.42, tw + w * 0.052);
+  const px = cx - r - w * 0.018 - pillW;
+  fillRoundRect(ctx, px, cy - pillH / 2, pillW, pillH, pillH / 2, 'rgba(0,0,0,0.55)');
+  ctx.strokeStyle = withAlpha(th.primary, 0.55);
+  ctx.lineWidth = Math.max(1.2, w * 0.003);
+  roundRect(ctx, px, cy - pillH / 2, pillW, pillH, pillH / 2);
+  ctx.stroke();
+  ctx.fillStyle = '#fff';
+  ctx.fillText(label, px + pillW - w * 0.026, cy + w * 0.001);
+  ctx.restore();
+}
+
 /* ------------------------------------------------------------------ */
 /* 场景渲染                                                            */
 /* ------------------------------------------------------------------ */
@@ -263,6 +356,7 @@ export function drawShowcaseScene(dc: DrawContext, props: ShowcaseSceneProps): v
       break;
   }
 
+  drawHostChip(dc, th, props);
   drawSubtitleAndWave(dc, th, props);
   drawWatermark(dc);
 }

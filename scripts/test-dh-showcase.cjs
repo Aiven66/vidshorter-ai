@@ -16,15 +16,21 @@ const AMAZON = 'https://www.amazon.com/medicube-Collagen-Volufiline-Under-Eyes-F
   await page.goto(`${BASE}/digital-human`, { timeout: 60000 });
   await page.waitForLoadState('networkidle');
 
-  // showcase mode must be the default and avatar picker hidden
+  // Talking Host must be hidden; showcase-only; avatar picker visible (roles drive voice + host chip)
   const modeState = await page.evaluate(() => {
     const txt = document.body.innerText;
     return {
-      showcaseSelected: !!document.querySelector('.ring-primary'),
-      avatarPickerVisible: txt.includes('Emma') || txt.includes('Ryan'),
+      talkingHostHidden: !txt.includes('Talking Host'),
+      avatarPickerVisible: txt.includes('Emma') && txt.includes('Ryan'),
     };
   });
   console.log('mode state:', JSON.stringify(modeState));
+  if (!modeState.talkingHostHidden) { console.log('FAIL: Talking Host still visible'); process.exit(1); }
+  if (!modeState.avatarPickerVisible) { console.log('FAIL: avatar picker hidden'); process.exit(1); }
+
+  // select male host Ryan — narration voice must follow the role (en-US-GuyNeural)
+  await page.locator('button', { hasText: 'Ryan' }).first().click();
+  console.log('selected host: Ryan (us-m)');
 
   await page.locator('input[type="url"]').fill(AMAZON);
   await page.locator('button[type="submit"]').click();
@@ -59,11 +65,13 @@ const AMAZON = 'https://www.amazon.com/medicube-Collagen-Volufiline-Under-Eyes-F
       ctaBtn: band(0.15, 0.45, 0.85, 0.56),      // CTA button (primary fill)
       subZone: band(0.08, 0.86, 0.92, 0.95),     // subtitle bar
       waveZone: band(0.42, 0.78, 0.58, 0.90),    // voice waveform bars
+      hostDot: band(0.895, 0.112, 0.952, 0.170), // host chip online green dot (#22c55e)
+      hostFace: band(0.830, 0.072, 0.940, 0.128),// host chip circular photo
     };
 
     const readBand = (r) => {
       const d = ctx.getImageData(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0).data;
-      let dark = 0, white = 0, yellow = 0, indigo = 0, sumL = 0, n = 0, sumL2 = 0;
+      let dark = 0, white = 0, yellow = 0, indigo = 0, green = 0, sumL = 0, n = 0, sumL2 = 0;
       for (let i = 0; i < d.length; i += 4) {
         const Rr = d[i], G = d[i + 1], B = d[i + 2];
         const L = 0.299 * Rr + 0.587 * G + 0.114 * B;
@@ -72,9 +80,10 @@ const AMAZON = 'https://www.amazon.com/medicube-Collagen-Volufiline-Under-Eyes-F
         if (L > 205) white++;
         if (Rr > 190 && G > 140 && B < 110) yellow++;          // star gold #fbbf24
         if (B > 170 && Rr < 170 && G < 170 && B - Rr > 40) indigo++; // primary/primaryLight
+        if (G > 120 && Rr < 110 && B < 110 && G - Rr > 40 && G - B > 30) green++; // online dot #22c55e
       }
       const meanL = sumL / n;
-      return { darkFrac: dark / n, whiteFrac: white / n, yellowFrac: yellow / n, indigoFrac: indigo / n, meanL, grayStd: Math.sqrt(Math.max(0, sumL2 / n - meanL * meanL)) };
+      return { darkFrac: dark / n, whiteFrac: white / n, yellowFrac: yellow / n, indigoFrac: indigo / n, greenFrac: green / n, meanL, grayStd: Math.sqrt(Math.max(0, sumL2 / n - meanL * meanL)) };
     };
 
     const samples = [];
@@ -147,15 +156,31 @@ const AMAZON = 'https://www.amazon.com/medicube-Collagen-Volufiline-Under-Eyes-F
   const waveIndigo = col('waveZone', 'indigoFrac');
   check('waveform animates', sd(waveIndigo) > 0.002 && Math.max(...waveIndigo) > 0.01, `sd=${sd(waveIndigo).toFixed(4)} max=${Math.max(...waveIndigo).toFixed(3)}`);
 
+  // 12. Host chip present in every scene: online green dot (#22c55e) at top-right
+  const dotGreen = col('hostDot', 'greenFrac');
+  check('host chip online dot', mm(dotGreen) > 0.01 && Math.max(...dotGreen) > 0.03, `mean=${mm(dotGreen).toFixed(4)} max=${Math.max(...dotGreen).toFixed(3)}`);
+  check('host chip sustained', dotGreen.filter((v) => v > 0.01).length > S.length * 0.8, `frames>0.01: ${dotGreen.filter((v) => v > 0.01).length}/${S.length}`);
+
+  // 13. Host chip circular photo renders (face pixels → local variance)
+  const faceStd = col('hostFace', 'grayStd');
+  check('host chip avatar photo', Math.max(...faceStd) > 18, `max=${Math.max(...faceStd).toFixed(1)} (>18)`);
+
   fs.writeFileSync('/tmp/dh-showcase-stats.json', JSON.stringify({ W: stats.W, H: stats.H, n: S.length }, null, 2));
+
+  // ---- Voice follows selected host (Ryan = male en-US → GuyNeural) ----
+  const voiceChip = await page.evaluate(() => {
+    const codes = [...document.querySelectorAll('code')];
+    return codes.map((c) => c.textContent || '').join(',');
+  });
+  check('voice follows host (GuyNeural)', voiceChip.includes('GuyNeural'), `chip="${voiceChip}"`);
 
   // ---- Export ----
   console.log('\n=== EXPORT ===');
   await page.locator('button', { hasText: 'Export MP4' }).first().click();
   try {
-    await page.waitForSelector('video', { timeout: 240000 });
+    await page.waitForSelector('video[controls]', { timeout: 240000 });
     const meta = await page.evaluate(async () => {
-      const v = document.querySelector('video');
+      const v = document.querySelector('video[controls]');
       const info = { duration: v.duration, w: v.videoWidth, h: v.videoHeight };
       try {
         const buf = await (await fetch(v.src)).arrayBuffer();

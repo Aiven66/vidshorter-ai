@@ -69,8 +69,8 @@ const FPS = 30;
 export default function DigitalHumanPage() {
   const { t, locale } = useLocale();
   const { deductCredits } = useCredits();
-  /** 视频形式：showcase = 商品种草（默认，无数字人）；avatar = 主播口播 */
-  const [videoMode, setVideoMode] = useState<'showcase' | 'avatar'>('showcase');
+  /** 视频形式固定为商品种草（Talking Host 暂时下线，角色用于解说声线 + 主持徽章） */
+  const videoMode = 'showcase' as const;
   const [avatar, setAvatar] = useState<PhotoAvatarSpec>(PHOTO_AVATARS[0]);
   const [genderFilter, setGenderFilter] = useState<PhotoAvatarGender | 'all'>('all');
   const [selectedTemplate, setSelectedTemplate] = useState<'fashion' | 'beauty' | 'food' | 'home' | 'tech'>('tech');
@@ -170,12 +170,8 @@ export default function DigitalHumanPage() {
     const price = productPrice || tr('digitalHuman.priceFallback', 'a great price');
 
     const greeting = isZh
-      ? videoMode === 'avatar'
-        ? `大家好！今天给大家种草 ${brand} 的爆款好物，${pName}！`
-        : `别划走！${brand} 这款 ${pName}，用过就回不去了！`
-      : videoMode === 'avatar'
-        ? `Hi everyone! Today I'm sharing an amazing find from ${brand} — the ${pName}!`
-        : `Stop scrolling! This ${pName} from ${brand} is a total game-changer!`;
+      ? `别划走！${brand} 这款 ${pName}，用过就回不去了！`
+      : `Stop scrolling! This ${pName} from ${brand} is a total game-changer!`;
 
     const hl = highlights.slice(0, 3).map((h, i) => {
       const spoken = [h.title, h.detail].filter(Boolean).join('. ').slice(0, 180);
@@ -210,7 +206,7 @@ export default function DigitalHumanPage() {
       },
       { kind: 'cta' as const, subtitle: ctaLine, label: isZh ? '立即下单' : 'Shop Now' },
     ];
-  }, [productName, brandName, productPrice, originalPrice, highlights, isZh, tr, videoMode]);
+  }, [productName, brandName, productPrice, originalPrice, highlights, isZh, tr]);
 
   /** 生成场景：逐条合成真人语音 → 解码 → 振幅包络 */
   const generateScenes = useCallback(async () => {
@@ -226,11 +222,8 @@ export default function DigitalHumanPage() {
       // 给旧生成循环 250ms 退出窗口，避免并发 TTS 请求（会触发服务端限流）
       await new Promise((r) => setTimeout(r, 250));
       if (genTokenRef.current !== token) return;
-      const voice = pickEdgeVoice(
-        videoMode === 'avatar' ? avatar.gender : 'female',
-        locale || 'en',
-        videoMode === 'avatar' ? avatar.voiceLocale : undefined,
-      );
+      // 声线跟随所选角色（性别 + 与 UI 语言匹配时的口音）
+      const voice = pickEdgeVoice(avatar.gender, locale || 'en', avatar.voiceLocale);
       setVoiceName(voice);
       const audioCtx = getAudioCtx();
 
@@ -267,7 +260,7 @@ export default function DigitalHumanPage() {
     } finally {
       if (genTokenRef.current === token) setGenerating(false);
     }
-  }, [productName, productPrice, brandName, avatar, videoMode, locale, buildLines, getAudioCtx, tr]);
+  }, [productName, productPrice, brandName, avatar, locale, buildLines, getAudioCtx, tr]);
 
   // 提取成功后自动生成语音场景（商品指纹变化时仅触发一次，防抖避免并发请求）
   const lastAutoKeyRef = useRef('');
@@ -281,11 +274,11 @@ export default function DigitalHumanPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoDetected, productName, productPrice]);
 
-  // 切换形象后（声线性别/口音变化）提示重新生成；切换视频形式同理
+  // 切换形象后（声线性别/口音变化）提示重新生成
   useEffect(() => {
     if (scenes.length > 0) setStaleVoice(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [avatar.id, videoMode]);
+  }, [avatar.id]);
 
   /** Deduct 30 credits when a video is successfully exported. */
   const handleExported = useCallback(() => {
@@ -325,61 +318,14 @@ export default function DigitalHumanPage() {
               <p className="mt-3 max-w-2xl text-sm text-muted-foreground md:text-base">
                 {tr(
                   'digitalHuman.subtitleReal',
-                  'Pick a realistic human host, paste a product link — get a talking promo video with real neural voice.',
+                  'Pick a host, paste a product link — get a cinematic showcase video narrated with a real neural voice.',
                 )}
               </p>
             </div>
 
             {/* 主播形象 + 商品链接 */}
             <Card className="mb-6 p-4 md:p-6 shadow-sm">
-              {/* 视频形式：商品种草（默认）/ 主播口播 */}
-              <div className="mb-4">
-                <div className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">
-                  <Sparkles className="h-4 w-4 text-primary" />
-                  {tr('digitalHuman.videoModeLabel', 'Video Format')}
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  {(
-                    [
-                      {
-                        key: 'showcase' as const,
-                        icon: Sparkles,
-                        label: tr('digitalHuman.modeShowcase', 'Product Showcase'),
-                        hint: tr('digitalHuman.modeShowcaseHint', 'Cinematic product shots + voiceover'),
-                      },
-                      {
-                        key: 'avatar' as const,
-                        icon: Users,
-                        label: tr('digitalHuman.modeAvatar', 'Talking Host'),
-                        hint: tr('digitalHuman.modeAvatarHint', 'Human presenter speaks on camera'),
-                      },
-                    ]
-                  ).map(({ key, icon: Icon, label, hint }) => {
-                    const selected = videoMode === key;
-                    return (
-                      <button
-                        key={key}
-                        type="button"
-                        onClick={() => setVideoMode(key)}
-                        className={`flex items-start gap-2.5 rounded-lg border p-3 text-left transition-all ${
-                          selected
-                            ? 'border-primary bg-primary/5 ring-1 ring-primary'
-                            : 'border-border bg-card hover:bg-accent'
-                        }`}
-                      >
-                        <Icon className={`mt-0.5 h-5 w-5 shrink-0 ${selected ? 'text-primary' : 'text-muted-foreground'}`} />
-                        <span className="min-w-0">
-                          <span className={`block text-sm font-semibold ${selected ? 'text-primary' : 'text-foreground'}`}>{label}</span>
-                          <span className="mt-0.5 block text-[11px] leading-tight text-muted-foreground">{hint}</span>
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* 形象选择（仅主播口播模式） */}
-              {videoMode === 'avatar' && (
+              {/* 主持角色选择（决定解说声线 + 视频右上角主持徽章） */}
               <div className="mb-4">
                 <div className="mb-3 flex items-center justify-between">
                   <div className="flex items-center gap-2 text-sm font-medium text-foreground">
@@ -440,7 +386,6 @@ export default function DigitalHumanPage() {
                   })}
                 </div>
               </div>
-              )}
 
               {/* 商品链接 */}
               <div className="border-t border-border pt-4">
@@ -503,7 +448,7 @@ export default function DigitalHumanPage() {
               {/* 声线提示 */}
               <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
                 <Mic className="h-3.5 w-3.5 text-primary" />
-                {tr('digitalHuman.voiceNote', 'Host speaks your UI language with a real neural voice.')}
+                {tr('digitalHuman.voiceNote', 'Your chosen host narrates in your UI language with a real neural voice.')}
                 {voiceName && <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">{voiceName}</code>}
               </div>
             </Card>
@@ -523,9 +468,7 @@ export default function DigitalHumanPage() {
                       ? tr('digitalHuman.generatingVoice', 'Synthesizing real human voice')
                       : staleVoice
                         ? tr('digitalHuman.regenerate', 'Regenerate voice (settings changed)')
-                        : videoMode === 'showcase'
-                          ? tr('digitalHuman.generateShowcase', 'Generate Showcase Video')
-                          : tr('digitalHuman.generate', 'Generate Talking Video')}
+                        : tr('digitalHuman.generateShowcase', 'Generate Showcase Video')}
                   </button>
 
                   {generating && (
@@ -570,7 +513,7 @@ export default function DigitalHumanPage() {
                 </div>
                 <div className="min-h-[500px]">
                   <TalkingVideoRenderer
-                    key={`${scenesKey}-${videoMode}`}
+                    key={scenesKey}
                     scenes={scenes}
                     avatar={avatar}
                     themeId={selectedTemplate}
@@ -601,7 +544,7 @@ export default function DigitalHumanPage() {
                 <p className="text-sm text-muted-foreground">
                   {generating
                     ? tr('digitalHuman.generatingVoice', 'Synthesizing real human voice')
-                    : tr('digitalHuman.emptyHintVoice', 'Click "Generate Talking Video" to synthesize the host voice and preview.')}
+                    : tr('digitalHuman.emptyHintVoice', 'Click "Generate Showcase Video" to synthesize the host voice and preview.')}
                 </p>
               </Card>
             ) : (

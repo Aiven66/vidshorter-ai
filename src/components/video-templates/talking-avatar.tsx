@@ -780,6 +780,11 @@ export function TalkingVideoRenderer({
           price: scene.price,
           product,
           productImg: productImgRef.current,
+          host: {
+            name: avatar.name,
+            flag: avatar.flag,
+            img: extras?.photoImg !== undefined ? extras.photoImg : photoRef.current,
+          },
           mouthOpen,
           sceneT,
           sceneDur: scene.duration,
@@ -838,10 +843,18 @@ export function TalkingVideoRenderer({
     [scenes, sceneStarts, renderScene],
   );
 
-  // 加载形象照 + 商品图 + 真人主播循环视频，然后绘制首帧（showcase 模式仅加载商品图）
+  // 加载形象照 + 商品图 + 真人主播循环视频，然后绘制首帧（showcase 模式加载商品图 + 主持徽章头像）
   useEffect(() => {
     let cancelled = false;
     if (mode !== 'avatar') {
+      const himg = new Image();
+      himg.onload = () => {
+        if (!cancelled) {
+          photoRef.current = himg;
+          drawFrame(0);
+        }
+      };
+      himg.src = avatar.photo;
       if (product.image) {
         const pimg0 = new Image();
         pimg0.crossOrigin = 'anonymous';
