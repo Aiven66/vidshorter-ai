@@ -30,6 +30,13 @@ export type {
 
 export type { DrawContext } from './canvas-utils';
 export {
+  SCENE_THEMES,
+  DEFAULT_SCENE_THEME,
+  resolveSceneTheme,
+  type SceneTheme,
+  type SceneThemeId,
+} from './scene-theme';
+export {
   easeOutCubic,
   easeOutBack,
   clamp01,
@@ -49,3 +56,15 @@ export {
 export { UrlExtractor } from './url-extractor';
 export { SocialShare } from './social-share';
 export { default as SocialShareDefault } from './social-share';
+export {
+  AVATAR_PRESETS,
+  DigitalHumanScene,
+  AvatarThumb,
+  drawDigitalHumanScene,
+  drawAvatarThumb,
+  type AvatarSpec,
+  type AvatarGender,
+  type AvatarHairStyle,
+  type AvatarGesture,
+  type DigitalHumanSceneProps,
+} from './avatar-templates';

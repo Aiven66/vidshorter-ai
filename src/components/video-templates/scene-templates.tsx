@@ -17,6 +17,7 @@ import {
   getCachedImage,
   drawImageContain,
 } from './canvas-utils';
+import { type SceneTheme, resolveSceneTheme } from './scene-theme';
 
 /* ------------------------------------------------------------------ */
 /* Shared animation keyframes (for live DOM preview only)             */
@@ -39,16 +40,22 @@ function AnimationStyles() {
   return <style dangerouslySetInnerHTML={{ __html: ANIMATION_KEYFRAMES }} />;
 }
 
+/** #rrggbb + alpha → rgba() 字符串（供 React 内联样式使用） */
+function withAlphaCss(hex: string, alpha: number): string {
+  const m = hex.replace('#', '');
+  const r = parseInt(m.slice(0, 2), 16);
+  const g = parseInt(m.slice(2, 4), 16);
+  const b = parseInt(m.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 /* ------------------------------------------------------------------ */
 /* Shared palette                                                      */
 /* ------------------------------------------------------------------ */
 
-// Brand colors (kept in sync with tailwind primary hue ~ #6366f1 indigo)
-const PRIMARY = '#6366f1';
-const PRIMARY_DARK = '#4f46e5';
-const PRIMARY_LIGHT = '#818cf8';
-const BG_DARK = '#0f1020';
-const BG_CARD = '#1a1b2e';
+// 所有场景颜色统一走 SceneTheme（见 scene-theme.ts）。
+// resolveSceneTheme 在缺省时回退 indigo（与平台 tailwind primary 同步），
+// 保证旧调用方（不传 theme）行为不变。
 
 /* ------------------------------------------------------------------ */
 /* 1. NewsHeadlineScene                                                */
@@ -59,6 +66,7 @@ export interface NewsHeadlineSceneProps {
   source: string;
   date?: string;
   category?: string;
+  theme?: SceneTheme;
 }
 
 export function NewsHeadlineScene({
@@ -66,15 +74,23 @@ export function NewsHeadlineScene({
   source,
   date,
   category,
+  theme,
 }: NewsHeadlineSceneProps) {
+  const th = resolveSceneTheme(theme);
   return (
-    <div className="relative flex h-full w-full flex-col justify-center overflow-hidden bg-gradient-to-b from-background to-muted p-8">
+    <div
+      className="relative flex h-full w-full flex-col justify-center overflow-hidden p-8"
+      style={{
+        background: `linear-gradient(to bottom, ${th.bgCard}, ${th.bgDark})`,
+      }}
+    >
       <AnimationStyles />
 
       <div
-        className="absolute left-0 top-0 h-2 bg-primary"
+        className="absolute left-0 top-0 h-2"
         style={{
           width: '100%',
+          backgroundColor: th.primary,
           transformOrigin: 'left',
           animation: 'vs-grow-width 0.6s ease-out both',
         }}
@@ -85,14 +101,17 @@ export function NewsHeadlineScene({
           className="relative z-10 mb-6"
           style={{ animation: 'vs-fade-in-up 0.6s ease-out both' }}
         >
-          <span className="inline-block rounded-full bg-primary px-4 py-1.5 text-sm font-semibold uppercase tracking-wide text-primary-foreground">
+          <span
+            className="inline-block rounded-full px-4 py-1.5 text-sm font-semibold uppercase tracking-wide text-white"
+            style={{ backgroundColor: th.primary }}
+          >
             {category}
           </span>
         </div>
       )}
 
       <h1
-        className="relative z-10 text-4xl font-bold leading-tight text-foreground"
+        className="relative z-10 text-4xl font-bold leading-tight text-white"
         style={{ animation: 'vs-fade-in-up 0.8s ease-out 0.2s both' }}
       >
         {headline}
@@ -102,10 +121,13 @@ export function NewsHeadlineScene({
         className="relative z-10 mt-8 flex items-center gap-3"
         style={{ animation: 'vs-fade-in-up 0.8s ease-out 0.5s both' }}
       >
-        <div className="h-8 w-1 rounded-full bg-primary" />
+        <div
+          className="h-8 w-1 rounded-full"
+          style={{ backgroundColor: th.primary }}
+        />
         <div>
-          <p className="text-base font-medium text-foreground">{source}</p>
-          {date && <p className="text-sm text-muted-foreground">{date}</p>}
+          <p className="text-base font-medium text-white">{source}</p>
+          {date && <p className="text-sm" style={{ color: th.textMuted }}>{date}</p>}
         </div>
       </div>
     </div>
@@ -118,16 +140,17 @@ export function drawNewsHeadline(
   props: NewsHeadlineSceneProps,
 ) {
   const { ctx, progress, width, height } = dc;
+  const th = resolveSceneTheme(props.theme);
 
   // Background: vertical gradient (dark → slightly lighter)
   fillGradient(ctx, width, height, [
-    { offset: 0, color: '#1a1b2e' },
-    { offset: 1, color: '#0f1020' },
+    { offset: 0, color: th.bgCard },
+    { offset: 1, color: th.bgDark },
   ], 'vertical');
 
   // Top accent bar — grows from left to right over first 40%
   const barProgress = easeOutCubic(stagger(progress, 0, 0.4));
-  ctx.fillStyle = PRIMARY;
+  ctx.fillStyle = th.primary;
   ctx.fillRect(0, 0, width * barProgress, Math.max(6, height * 0.006));
 
   const padding = width * 0.08;
@@ -147,7 +170,7 @@ export function drawNewsHeadline(
     const badgePadY = width * 0.018;
     const badgeW = badgeMetrics.width + badgePadX * 2;
     const badgeH = width * 0.038 + badgePadY * 2;
-    fillRoundRect(ctx, padding, badgeY, badgeW, badgeH, badgeH / 2, PRIMARY);
+    fillRoundRect(ctx, padding, badgeY, badgeW, badgeH, badgeH / 2, th.primary);
     ctx.fillStyle = '#ffffff';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
@@ -181,7 +204,7 @@ export function drawNewsHeadline(
   const srcAlpha = easeOutCubic(srcT);
   ctx.globalAlpha = srcAlpha;
   // accent bar
-  ctx.fillStyle = PRIMARY;
+  ctx.fillStyle = th.primary;
   ctx.fillRect(padding, height * 0.82, width * 0.012, width * 0.08);
   setFont(ctx, { size: width * 0.042, weight: 600 });
   ctx.fillStyle = '#ffffff';
@@ -190,7 +213,7 @@ export function drawNewsHeadline(
   ctx.fillText(props.source, padding + width * 0.04, height * 0.82);
   if (props.date) {
     setFont(ctx, { size: width * 0.032, weight: 400 });
-    ctx.fillStyle = '#9ca3af';
+    ctx.fillStyle = th.textMuted;
     ctx.fillText(props.date, padding + width * 0.04, height * 0.82 + width * 0.052);
   }
   ctx.globalAlpha = 1;
@@ -204,14 +227,22 @@ export interface KeyPointSceneProps {
   number: number | string;
   title: string;
   content: string;
+  theme?: SceneTheme;
 }
 
-export function KeyPointScene({ number, title, content }: KeyPointSceneProps) {
+export function KeyPointScene({ number, title, content, theme }: KeyPointSceneProps) {
+  const th = resolveSceneTheme(theme);
   return (
-    <div className="relative flex h-full w-full flex-col justify-center overflow-hidden bg-background p-8">
+    <div
+      className="relative flex h-full w-full flex-col justify-center overflow-hidden p-8"
+      style={{ backgroundColor: th.bgCard }}
+    >
       <AnimationStyles />
 
-      <span className="absolute right-4 top-8 select-none text-[200px] font-bold leading-none text-primary/5">
+      <span
+        className="absolute right-4 top-8 select-none text-[200px] font-bold leading-none"
+        style={{ color: `${th.primaryLight}0d` }}
+      >
         {number}
       </span>
 
@@ -219,29 +250,38 @@ export function KeyPointScene({ number, title, content }: KeyPointSceneProps) {
         className="relative z-10 mb-8"
         style={{ animation: 'vs-scale-in 0.6s ease-out both' }}
       >
-        <div className="flex h-20 w-20 items-center justify-center rounded-full bg-primary text-4xl font-bold text-primary-foreground">
+        <div
+          className="flex h-20 w-20 items-center justify-center rounded-full text-4xl font-bold text-white"
+          style={{
+            background: `linear-gradient(135deg, ${th.primaryLight}, ${th.primaryDark})`,
+          }}
+        >
           {number}
         </div>
       </div>
 
       <h2
-        className="relative z-10 mb-4 text-3xl font-bold text-foreground"
+        className="relative z-10 mb-4 text-3xl font-bold text-white"
         style={{ animation: 'vs-fade-in-up 0.8s ease-out 0.2s both' }}
       >
         {title}
       </h2>
 
       <p
-        className="relative z-10 text-lg leading-relaxed text-muted-foreground"
-        style={{ animation: 'vs-fade-in-up 0.8s ease-out 0.4s both' }}
+        className="relative z-10 text-lg leading-relaxed"
+        style={{ color: th.textBody, animation: 'vs-fade-in-up 0.8s ease-out 0.4s both' }}
       >
         {content}
       </p>
 
-      <div className="absolute bottom-8 left-8 right-8 h-1 overflow-hidden rounded-full bg-primary/20">
+      <div
+        className="absolute bottom-8 left-8 right-8 h-1 overflow-hidden rounded-full"
+        style={{ backgroundColor: `${th.primary}33` }}
+      >
         <div
-          className="h-full rounded-full bg-primary"
+          className="h-full rounded-full"
           style={{
+            backgroundColor: th.primary,
             transformOrigin: 'left',
             animation: 'vs-grow-width 1s ease-out 0.6s both',
           }}
@@ -253,14 +293,15 @@ export function KeyPointScene({ number, title, content }: KeyPointSceneProps) {
 
 export function drawKeyPoint(dc: DrawContext, props: KeyPointSceneProps) {
   const { ctx, progress, width, height } = dc;
+  const th = resolveSceneTheme(props.theme);
 
-  fillSolid(ctx, width, height, BG_CARD);
+  fillSolid(ctx, width, height, th.bgCard);
 
   // Oversized background number (decorative)
   const decoT = stagger(progress, 0, 0.5);
   ctx.globalAlpha = 0.05 * decoT;
   setFont(ctx, { size: width * 0.55, weight: 900 });
-  ctx.fillStyle = PRIMARY_LIGHT;
+  ctx.fillStyle = th.primaryLight;
   ctx.textAlign = 'right';
   ctx.textBaseline = 'top';
   ctx.fillText(String(props.number), width - width * 0.05, height * 0.04);
@@ -280,8 +321,8 @@ export function drawKeyPoint(dc: DrawContext, props: KeyPointSceneProps) {
   ctx.scale(scale, scale);
   // circle
   const grad = ctx.createLinearGradient(-badgeSize / 2, -badgeSize / 2, badgeSize / 2, badgeSize / 2);
-  grad.addColorStop(0, PRIMARY_LIGHT);
-  grad.addColorStop(1, PRIMARY_DARK);
+  grad.addColorStop(0, th.primaryLight);
+  grad.addColorStop(1, th.primaryDark);
   ctx.fillStyle = grad;
   ctx.beginPath();
   ctx.arc(0, 0, badgeSize / 2, 0, Math.PI * 2);
@@ -319,7 +360,7 @@ export function drawKeyPoint(dc: DrawContext, props: KeyPointSceneProps) {
   const bodyAlpha = easeOutCubic(bodyT);
   ctx.globalAlpha = bodyAlpha;
   setFont(ctx, { size: width * 0.038, weight: 400 });
-  ctx.fillStyle = '#cbd5e1';
+  ctx.fillStyle = th.textBody;
   // measure title height to position content under it
   setFont(ctx, { size: width * 0.062, weight: 800 });
   const titleLines = wrapText(ctx, props.title, width - padding * 2);
@@ -342,10 +383,10 @@ export function drawKeyPoint(dc: DrawContext, props: KeyPointSceneProps) {
   const lineW = (width - padding * 2) * easeOutCubic(lineT);
   const lineY = height * 0.92;
   // track
-  ctx.fillStyle = withAlpha(PRIMARY, 0.2);
+  ctx.fillStyle = withAlpha(th.primary, 0.2);
   ctx.fillRect(padding, lineY, width - padding * 2, Math.max(4, width * 0.006));
   // fill
-  ctx.fillStyle = PRIMARY;
+  ctx.fillStyle = th.primary;
   ctx.fillRect(padding, lineY, lineW, Math.max(4, width * 0.006));
 }
 
@@ -357,28 +398,35 @@ export interface QuoteSceneProps {
   quote: string;
   author?: string;
   role?: string;
+  theme?: SceneTheme;
 }
 
-export function QuoteScene({ quote, author, role }: QuoteSceneProps) {
+export function QuoteScene({ quote, author, role, theme }: QuoteSceneProps) {
+  const th = resolveSceneTheme(theme);
   return (
-    <div className="relative flex h-full w-full flex-col items-center justify-center overflow-hidden bg-gradient-to-br from-muted to-background p-10">
+    <div
+      className="relative flex h-full w-full flex-col items-center justify-center overflow-hidden p-10"
+      style={{
+        background: `linear-gradient(to bottom right, ${th.bgCard}, ${th.bgDark})`,
+      }}
+    >
       <AnimationStyles />
 
       <span
-        className="absolute left-6 top-8 select-none font-serif text-[180px] leading-none text-primary/20"
-        style={{ animation: 'vs-fade-in 1s ease-out both' }}
+        className="absolute left-6 top-8 select-none font-serif text-[180px] leading-none"
+        style={{ color: `${th.primaryLight}38`, animation: 'vs-fade-in 1s ease-out both' }}
       >
         &ldquo;
       </span>
       <span
-        className="absolute bottom-8 right-6 rotate-180 select-none font-serif text-[180px] leading-none text-primary/20"
-        style={{ animation: 'vs-fade-in 1s ease-out 0.3s both' }}
+        className="absolute bottom-8 right-6 rotate-180 select-none font-serif text-[180px] leading-none"
+        style={{ color: `${th.primaryLight}38`, animation: 'vs-fade-in 1s ease-out 0.3s both' }}
       >
         &ldquo;
       </span>
 
       <p
-        className="relative z-10 text-center text-3xl font-bold leading-snug text-foreground"
+        className="relative z-10 text-center text-3xl font-bold leading-snug text-white"
         style={{ animation: 'vs-fade-in-up 0.8s ease-out 0.2s both' }}
       >
         {quote}
@@ -389,9 +437,12 @@ export function QuoteScene({ quote, author, role }: QuoteSceneProps) {
           className="relative z-10 mt-8 flex flex-col items-center gap-1"
           style={{ animation: 'vs-fade-in-up 0.8s ease-out 0.5s both' }}
         >
-          <div className="mb-2 h-0.5 w-12 rounded-full bg-primary" />
-          <p className="text-lg font-semibold text-foreground">{author}</p>
-          {role && <p className="text-sm text-muted-foreground">{role}</p>}
+          <div
+            className="mb-2 h-0.5 w-12 rounded-full"
+            style={{ backgroundColor: th.primary }}
+          />
+          <p className="text-lg font-semibold text-white">{author}</p>
+          {role && <p className="text-sm" style={{ color: th.textMuted }}>{role}</p>}
         </div>
       )}
     </div>
@@ -400,11 +451,12 @@ export function QuoteScene({ quote, author, role }: QuoteSceneProps) {
 
 export function drawQuote(dc: DrawContext, props: QuoteSceneProps) {
   const { ctx, progress, width, height } = dc;
+  const th = resolveSceneTheme(props.theme);
 
   // Background: diagonal gradient
   fillGradient(ctx, width, height, [
-    { offset: 0, color: '#22243a' },
-    { offset: 1, color: '#0f1020' },
+    { offset: 0, color: th.bgCard },
+    { offset: 1, color: th.bgDark },
   ], 'diagonal');
 
   const padding = width * 0.1;
@@ -413,7 +465,7 @@ export function drawQuote(dc: DrawContext, props: QuoteSceneProps) {
   const mark1T = easeOutCubic(stagger(progress, 0, 0.4));
   const mark2T = easeOutCubic(stagger(progress, 0.2, 0.4));
 
-  ctx.fillStyle = withAlpha(PRIMARY_LIGHT, 0.22);
+  ctx.fillStyle = withAlpha(th.primaryLight, 0.22);
   setFont(ctx, { size: width * 0.32, weight: 700, family: 'Georgia, serif' });
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
@@ -450,7 +502,7 @@ export function drawQuote(dc: DrawContext, props: QuoteSceneProps) {
     const aAlpha = easeOutCubic(aT);
     ctx.globalAlpha = aAlpha;
     // accent line
-    ctx.fillStyle = PRIMARY;
+    ctx.fillStyle = th.primary;
     ctx.fillRect(width / 2 - width * 0.04, height * 0.78, width * 0.08, 3);
     // author
     setFont(ctx, { size: width * 0.044, weight: 600 });
@@ -460,7 +512,7 @@ export function drawQuote(dc: DrawContext, props: QuoteSceneProps) {
     ctx.fillText(props.author, width / 2, height * 0.78 + width * 0.05);
     if (props.role) {
       setFont(ctx, { size: width * 0.032, weight: 400 });
-      ctx.fillStyle = '#9ca3af';
+      ctx.fillStyle = th.textMuted;
       ctx.fillText(props.role, width / 2, height * 0.78 + width * 0.105);
     }
     ctx.globalAlpha = 1;
@@ -475,37 +527,50 @@ export interface BrandIntroSceneProps {
   brandName: string;
   tagline?: string;
   logoText?: string;
+  theme?: SceneTheme;
 }
 
 export function BrandIntroScene({
   brandName,
   tagline,
   logoText,
+  theme,
 }: BrandIntroSceneProps) {
+  const th = resolveSceneTheme(theme);
   return (
-    <div className="relative flex h-full w-full flex-col items-center justify-center overflow-hidden bg-gradient-to-br from-primary/20 via-background to-primary/10">
+    <div
+      className="relative flex h-full w-full flex-col items-center justify-center overflow-hidden"
+      style={{
+        background: `linear-gradient(to bottom right, ${withAlphaCss(th.primary, 0.22)}, ${th.bgDark} 50%, ${withAlphaCss(th.primary, 0.12)})`,
+      }}
+    >
       <AnimationStyles />
 
       <div
-        className="absolute left-1/4 top-1/4 h-48 w-48 rounded-full bg-primary/10 blur-3xl"
-        style={{ animation: 'vs-float 4s ease-in-out infinite' }}
+        className="absolute left-1/4 top-1/4 h-48 w-48 rounded-full blur-3xl"
+        style={{ backgroundColor: withAlphaCss(th.primary, 0.1), animation: 'vs-float 4s ease-in-out infinite' }}
       />
       <div
-        className="absolute bottom-1/4 right-1/4 h-32 w-32 rounded-full bg-primary/20 blur-2xl"
-        style={{ animation: 'vs-float 3s ease-in-out infinite reverse' }}
+        className="absolute bottom-1/4 right-1/4 h-32 w-32 rounded-full blur-2xl"
+        style={{ backgroundColor: withAlphaCss(th.primary, 0.2), animation: 'vs-float 3s ease-in-out infinite reverse' }}
       />
 
       <div
         className="relative z-10 mb-8"
         style={{ animation: 'vs-scale-in 0.8s ease-out both' }}
       >
-        <div className="flex h-24 w-24 items-center justify-center rounded-2xl bg-primary text-3xl font-bold text-primary-foreground shadow-xl">
+        <div
+          className="flex h-24 w-24 items-center justify-center rounded-2xl text-3xl font-bold text-white shadow-xl"
+          style={{
+            background: `linear-gradient(135deg, ${th.primaryLight}, ${th.primaryDark})`,
+          }}
+        >
           {logoText ?? brandName.charAt(0).toUpperCase()}
         </div>
       </div>
 
       <h1
-        className="relative z-10 px-8 text-center text-4xl font-bold text-foreground"
+        className="relative z-10 px-8 text-center text-4xl font-bold text-white"
         style={{ animation: 'vs-fade-in-up 0.8s ease-out 0.3s both' }}
       >
         {brandName}
@@ -513,8 +578,8 @@ export function BrandIntroScene({
 
       {tagline && (
         <p
-          className="relative z-10 mt-4 px-8 text-center text-lg text-muted-foreground"
-          style={{ animation: 'vs-fade-in-up 0.8s ease-out 0.6s both' }}
+          className="relative z-10 mt-4 px-8 text-center text-lg"
+          style={{ color: th.textMuted, animation: 'vs-fade-in-up 0.8s ease-out 0.6s both' }}
         >
           {tagline}
         </p>
@@ -525,16 +590,17 @@ export function BrandIntroScene({
 
 export function drawBrandIntro(dc: DrawContext, props: BrandIntroSceneProps) {
   const { ctx, progress, width, height } = dc;
+  const th = resolveSceneTheme(props.theme);
 
   fillGradient(ctx, width, height, [
-    { offset: 0, color: withAlpha(PRIMARY, 0.22) },
-    { offset: 0.5, color: BG_DARK },
-    { offset: 1, color: withAlpha(PRIMARY, 0.12) },
+    { offset: 0, color: withAlpha(th.primary, 0.22) },
+    { offset: 0.5, color: th.bgDark },
+    { offset: 1, color: withAlpha(th.primary, 0.12) },
   ], 'diagonal');
 
   // Floating orbs (static positions, alpha driven by progress)
   ctx.globalAlpha = 0.12 * clamp01(progress * 2);
-  ctx.fillStyle = PRIMARY_LIGHT;
+  ctx.fillStyle = th.primaryLight;
   ctx.beginPath();
   ctx.arc(width * 0.28, height * 0.3, width * 0.18, 0, Math.PI * 2);
   ctx.fill();
@@ -555,8 +621,8 @@ export function drawBrandIntro(dc: DrawContext, props: BrandIntroSceneProps) {
   ctx.translate(cx, cy);
   ctx.scale(scale, scale);
   const grad = ctx.createLinearGradient(-logoSize / 2, -logoSize / 2, logoSize / 2, logoSize / 2);
-  grad.addColorStop(0, PRIMARY_LIGHT);
-  grad.addColorStop(1, PRIMARY_DARK);
+  grad.addColorStop(0, th.primaryLight);
+  grad.addColorStop(1, th.primaryDark);
   ctx.fillStyle = grad;
   const r = width * 0.04;
   ctx.beginPath();
@@ -607,6 +673,7 @@ export interface ProductShowcaseSceneProps {
   originalPrice?: string;
   description?: string;
   imageUrl?: string;
+  theme?: SceneTheme;
 }
 
 export function ProductShowcaseScene({
@@ -615,12 +682,22 @@ export function ProductShowcaseScene({
   originalPrice,
   description,
   imageUrl,
+  theme,
 }: ProductShowcaseSceneProps) {
+  const th = resolveSceneTheme(theme);
   return (
-    <div className="relative flex h-full w-full flex-col overflow-hidden bg-background">
+    <div
+      className="relative flex h-full w-full flex-col overflow-hidden"
+      style={{ backgroundColor: th.bgDark }}
+    >
       <AnimationStyles />
 
-      <div className="absolute inset-0 bg-gradient-to-b from-primary/10 to-transparent" />
+      <div
+        className="absolute inset-0"
+        style={{
+          background: `linear-gradient(to bottom, ${withAlphaCss(th.primary, 0.18)}, transparent)`,
+        }}
+      />
 
       <div
         className="relative flex flex-1 items-center justify-center p-8"
@@ -634,7 +711,12 @@ export function ProductShowcaseScene({
             className="max-h-full max-w-full rounded-2xl object-contain shadow-2xl"
           />
         ) : (
-          <div className="flex h-48 w-48 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/40 to-primary/10">
+          <div
+            className="flex h-48 w-48 items-center justify-center rounded-2xl"
+            style={{
+              background: `linear-gradient(to bottom right, ${withAlphaCss(th.primary, 0.4)}, ${withAlphaCss(th.primary, 0.1)})`,
+            }}
+          >
             <span className="text-6xl">📦</span>
           </div>
         )}
@@ -644,14 +726,14 @@ export function ProductShowcaseScene({
         className="relative space-y-3 p-8"
         style={{ animation: 'vs-fade-in-up 0.8s ease-out 0.3s both' }}
       >
-        <h2 className="text-3xl font-bold text-foreground">{productName}</h2>
+        <h2 className="text-3xl font-bold text-white">{productName}</h2>
         {description && (
-          <p className="text-base text-muted-foreground">{description}</p>
+          <p className="text-base" style={{ color: th.textBody }}>{description}</p>
         )}
         <div className="flex items-baseline gap-3">
-          <span className="text-4xl font-bold text-primary">{price}</span>
+          <span className="text-4xl font-bold" style={{ color: th.primaryLight }}>{price}</span>
           {originalPrice && (
-            <span className="text-lg text-muted-foreground line-through">
+            <span className="text-lg line-through" style={{ color: th.textMuted }}>
               {originalPrice}
             </span>
           )}
@@ -666,11 +748,12 @@ export function drawProductShowcase(
   props: ProductShowcaseSceneProps,
 ) {
   const { ctx, progress, width, height } = dc;
+  const th = resolveSceneTheme(props.theme);
 
   fillGradient(ctx, width, height, [
-    { offset: 0, color: withAlpha(PRIMARY, 0.18) },
-    { offset: 0.5, color: BG_DARK },
-    { offset: 1, color: BG_DARK },
+    { offset: 0, color: withAlpha(th.primary, 0.18) },
+    { offset: 0.5, color: th.bgDark },
+    { offset: 1, color: th.bgDark },
   ], 'vertical');
 
   const padding = width * 0.08;
@@ -710,8 +793,8 @@ export function drawProductShowcase(
     ctx.restore();
   } else {
     const grad = ctx.createLinearGradient(phX, phY, phX + phW, phY + phH);
-    grad.addColorStop(0, withAlpha(PRIMARY, 0.4));
-    grad.addColorStop(1, withAlpha(PRIMARY, 0.1));
+    grad.addColorStop(0, withAlpha(th.primary, 0.4));
+    grad.addColorStop(1, withAlpha(th.primary, 0.1));
     ctx.fillStyle = grad;
     ctx.beginPath();
     ctx.roundRect(phX, phY, phW, phW, width * 0.04);
@@ -743,7 +826,7 @@ export function drawProductShowcase(
 
   if (props.description) {
     setFont(ctx, { size: width * 0.034, weight: 400 });
-    ctx.fillStyle = '#cbd5e1';
+    ctx.fillStyle = th.textBody;
     const descLines = wrapText(ctx, props.description, width - padding * 2).slice(0, 3);
     cursorY += width * 0.015;
     for (const line of descLines) {
@@ -756,13 +839,13 @@ export function drawProductShowcase(
 
   // Price
   setFont(ctx, { size: width * 0.085, weight: 800 });
-  ctx.fillStyle = PRIMARY_LIGHT;
+  ctx.fillStyle = th.primaryLight;
   ctx.fillText(props.price, padding, cursorY);
 
   if (props.originalPrice) {
     const priceW = ctx.measureText(props.price).width;
     setFont(ctx, { size: width * 0.045, weight: 400 });
-    ctx.fillStyle = '#9ca3af';
+    ctx.fillStyle = th.textMuted;
     const opX = padding + priceW + width * 0.04;
     const opY = cursorY + width * 0.04;
     ctx.fillText(props.originalPrice, opX, opY);
@@ -786,18 +869,25 @@ export interface CTASceneProps {
   ctaText: string;
   brandName: string;
   subtitle?: string;
+  theme?: SceneTheme;
 }
 
-export function CTAScene({ ctaText, brandName, subtitle }: CTASceneProps) {
+export function CTAScene({ ctaText, brandName, subtitle, theme }: CTASceneProps) {
+  const th = resolveSceneTheme(theme);
   return (
-    <div className="relative flex h-full w-full flex-col items-center justify-center overflow-hidden bg-gradient-to-br from-primary to-primary/70">
+    <div
+      className="relative flex h-full w-full flex-col items-center justify-center overflow-hidden"
+      style={{
+        background: `linear-gradient(to bottom right, ${th.primaryLight}, ${th.primaryDark})`,
+      }}
+    >
       <AnimationStyles />
 
-      <div className="absolute -right-20 -top-20 h-64 w-64 rounded-full bg-primary-foreground/10" />
-      <div className="absolute -bottom-20 -left-20 h-48 w-48 rounded-full bg-primary-foreground/10" />
+      <div className="absolute -right-20 -top-20 h-64 w-64 rounded-full bg-white/10" />
+      <div className="absolute -bottom-20 -left-20 h-48 w-48 rounded-full bg-white/10" />
 
       <h1
-        className="relative z-10 px-8 text-center text-5xl font-bold text-primary-foreground"
+        className="relative z-10 px-8 text-center text-5xl font-bold text-white"
         style={{ animation: 'vs-pulse 2s ease-in-out infinite' }}
       >
         {ctaText}
@@ -805,7 +895,7 @@ export function CTAScene({ ctaText, brandName, subtitle }: CTASceneProps) {
 
       {subtitle && (
         <p
-          className="relative z-10 mt-6 px-8 text-center text-xl text-primary-foreground/80"
+          className="relative z-10 mt-6 px-8 text-center text-xl text-white/80"
           style={{ animation: 'vs-fade-in-up 0.8s ease-out 0.3s both' }}
         >
           {subtitle}
@@ -816,7 +906,7 @@ export function CTAScene({ ctaText, brandName, subtitle }: CTASceneProps) {
         className="absolute bottom-12 z-10"
         style={{ animation: 'vs-fade-in 0.8s ease-out 0.6s both' }}
       >
-        <p className="text-sm uppercase tracking-widest text-primary-foreground/60">
+        <p className="text-sm uppercase tracking-widest text-white/60">
           {brandName}
         </p>
       </div>
@@ -826,11 +916,12 @@ export function CTAScene({ ctaText, brandName, subtitle }: CTASceneProps) {
 
 export function drawCTA(dc: DrawContext, props: CTASceneProps) {
   const { ctx, progress, width, height } = dc;
+  const th = resolveSceneTheme(props.theme);
 
   // Background: primary gradient
   fillGradient(ctx, width, height, [
-    { offset: 0, color: PRIMARY_LIGHT },
-    { offset: 1, color: PRIMARY_DARK },
+    { offset: 0, color: th.primaryLight },
+    { offset: 1, color: th.primaryDark },
   ], 'diagonal');
 
   // Decorative circles
@@ -901,19 +992,27 @@ export interface DataChartSceneProps {
   title: string;
   data: Array<{ label: string; value: number; color?: string }>;
   unit?: string;
+  theme?: SceneTheme;
 }
 
-export function DataChartScene({ title, data, unit }: DataChartSceneProps) {
+export function DataChartScene({ title, data, unit, theme }: DataChartSceneProps) {
+  const th = resolveSceneTheme(theme);
   const maxValue = Math.max(...data.map((d) => d.value), 1);
 
   return (
-    <div className="relative flex h-full w-full flex-col overflow-hidden bg-background p-8">
+    <div
+      className="relative flex h-full w-full flex-col overflow-hidden p-8"
+      style={{ backgroundColor: th.bgDark }}
+    >
       <AnimationStyles />
 
-      <div className="absolute right-0 top-0 h-1/2 w-1/2 rounded-bl-full bg-primary/5" />
+      <div
+        className="absolute right-0 top-0 h-1/2 w-1/2 rounded-bl-full"
+        style={{ backgroundColor: withAlphaCss(th.primary, 0.05) }}
+      />
 
       <h2
-        className="relative z-10 mt-12 mb-12 text-center text-3xl font-bold text-foreground"
+        className="relative z-10 mt-12 mb-12 text-center text-3xl font-bold text-white"
         style={{ animation: 'vs-fade-in-down 0.8s ease-out both' }}
       >
         {title}
@@ -926,7 +1025,7 @@ export function DataChartScene({ title, data, unit }: DataChartSceneProps) {
             className="flex max-w-[120px] flex-1 flex-col items-center gap-2"
           >
             <span
-              className="text-2xl font-bold text-foreground"
+              className="text-2xl font-bold text-white"
               style={{
                 animation: `vs-fade-in-up 0.5s ease-out ${0.3 + idx * 0.15}s both`,
               }}
@@ -939,14 +1038,15 @@ export function DataChartScene({ title, data, unit }: DataChartSceneProps) {
               style={{
                 height: `${(item.value / maxValue) * 100}%`,
                 minHeight: '20px',
-                backgroundColor: item.color ?? 'var(--primary)',
+                backgroundColor: item.color ?? th.primary,
                 transformOrigin: 'bottom',
                 animation: `vs-grow-up 0.8s ease-out ${0.3 + idx * 0.15}s both`,
               }}
             />
             <span
-              className="text-center text-sm text-muted-foreground"
+              className="text-center text-sm"
               style={{
+                color: th.textMuted,
                 animation: `vs-fade-in-up 0.5s ease-out ${0.5 + idx * 0.15}s both`,
               }}
             >
@@ -961,11 +1061,12 @@ export function DataChartScene({ title, data, unit }: DataChartSceneProps) {
 
 export function drawDataChart(dc: DrawContext, props: DataChartSceneProps) {
   const { ctx, progress, width, height } = dc;
+  const th = resolveSceneTheme(props.theme);
 
-  fillSolid(ctx, width, height, BG_DARK);
+  fillSolid(ctx, width, height, th.bgDark);
 
   // Decorative quarter circle (top-right)
-  ctx.fillStyle = withAlpha(PRIMARY, 0.06);
+  ctx.fillStyle = withAlpha(th.primary, 0.06);
   ctx.beginPath();
   ctx.moveTo(width, 0);
   ctx.arc(width, 0, width * 0.5, Math.PI * 0.5, Math.PI, false);
@@ -1019,7 +1120,7 @@ export function drawDataChart(dc: DrawContext, props: DataChartSceneProps) {
     ctx.globalAlpha = 1;
 
     // bar
-    ctx.fillStyle = item.color ?? PRIMARY_LIGHT;
+    ctx.fillStyle = item.color ?? th.primaryLight;
     ctx.beginPath();
     ctx.roundRect(barX, barY, barW, Math.max(barH, 4), [width * 0.02, width * 0.02, 0, 0]);
     ctx.fill();
@@ -1028,7 +1129,7 @@ export function drawDataChart(dc: DrawContext, props: DataChartSceneProps) {
     const labT = stagger(progress, 0.5 + idx * 0.1, 0.4);
     ctx.globalAlpha = easeOutCubic(labT);
     setFont(ctx, { size: width * 0.032, weight: 500 });
-    ctx.fillStyle = '#9ca3af';
+    ctx.fillStyle = th.textMuted;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     ctx.fillText(item.label, cx, chartBottom + width * 0.03);

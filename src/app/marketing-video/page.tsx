@@ -19,7 +19,9 @@ import {
   drawKeyPoint,
   drawCTA,
   preloadImage,
+  SCENE_THEMES,
   type Scene,
+  type SceneTheme,
 } from '@/components/video-templates';
 import { useLocale } from '@/lib/locale-context';
 import {
@@ -51,6 +53,11 @@ const TEMPLATES: TemplateOption[] = [
   { id: 'home', nameKey: 'marketing.templateHome', icon: Home },
   { id: 'tech', nameKey: 'marketing.templateTech', icon: Cpu },
 ];
+
+/** 模板 → 场景主题（fashion=玫红 / beauty=粉紫 / food=橙 / home=绿 / tech=靛蓝） */
+function templateTheme(id: TemplateId): SceneTheme {
+  return SCENE_THEMES[id] ?? SCENE_THEMES.tech;
+}
 
 interface ProductHighlight {
   title: string;
@@ -173,6 +180,7 @@ export default function MarketingVideoPage() {
       const pName = shortProductName(productName || tr('marketing.productName', 'Product'));
       const ctaBrand = brandName || tr('marketing.brandName', 'Brand');
       const ctaLabel = ctaText || tr('marketing.ctaText', 'Shop Now');
+      const theme = templateTheme(selectedTemplate);
 
       // 1. 品牌开场
       const sceneList: Scene[] = [
@@ -180,8 +188,8 @@ export default function MarketingVideoPage() {
           id: 'intro',
           duration: 3,
           transition: 'fade',
-          render: () => <BrandIntroScene brandName={introBrand} tagline="Product Pick" />,
-          draw: (dc) => drawBrandIntro(dc, { brandName: introBrand, tagline: 'Product Pick' }),
+          render: () => <BrandIntroScene brandName={introBrand} tagline="Product Pick" theme={theme} />,
+          draw: (dc) => drawBrandIntro(dc, { brandName: introBrand, tagline: 'Product Pick', theme }),
         },
         // 2. 商品展示（名称 + 价格 + 主图）
         {
@@ -195,6 +203,7 @@ export default function MarketingVideoPage() {
               originalPrice={originalPrice || undefined}
               description={promoText}
               imageUrl={productImage}
+              theme={theme}
             />
           ),
           draw: (dc) =>
@@ -204,6 +213,7 @@ export default function MarketingVideoPage() {
               originalPrice: originalPrice || undefined,
               description: promoText,
               imageUrl: productImage,
+              theme,
             }),
           // 导出前确保商品主图已预载（CORS 模式），canvas 才能绘制真实商品图
           prepare: productImage ? () => preloadImage(productImage).then(() => undefined) : undefined,
@@ -216,8 +226,8 @@ export default function MarketingVideoPage() {
           id: `highlight-${i}`,
           duration: 4,
           transition: 'slide',
-          render: () => <KeyPointScene number={i + 1} title={h.title} content={h.detail} />,
-          draw: (dc) => drawKeyPoint(dc, { number: i + 1, title: h.title, content: h.detail }),
+          render: () => <KeyPointScene number={i + 1} title={h.title} content={h.detail} theme={theme} />,
+          draw: (dc) => drawKeyPoint(dc, { number: i + 1, title: h.title, content: h.detail, theme }),
         });
       });
 
@@ -233,8 +243,8 @@ export default function MarketingVideoPage() {
           id: 'rating',
           duration: 3,
           transition: 'fade',
-          render: () => <KeyPointScene number={highlights.length + 1} title={ratingTitle} content={ratingContent} />,
-          draw: (dc) => drawKeyPoint(dc, { number: highlights.length + 1, title: ratingTitle, content: ratingContent }),
+          render: () => <KeyPointScene number={highlights.length + 1} title={ratingTitle} content={ratingContent} theme={theme} />,
+          draw: (dc) => drawKeyPoint(dc, { number: highlights.length + 1, title: ratingTitle, content: ratingContent, theme }),
         });
       }
 
@@ -243,13 +253,13 @@ export default function MarketingVideoPage() {
         id: 'cta',
         duration: 3,
         transition: 'slide',
-        render: () => <CTAScene ctaText={ctaLabel} brandName={ctaBrand} />,
-        draw: (dc) => drawCTA(dc, { ctaText: ctaLabel, brandName: ctaBrand }),
+        render: () => <CTAScene ctaText={ctaLabel} brandName={ctaBrand} theme={theme} />,
+        draw: (dc) => drawCTA(dc, { ctaText: ctaLabel, brandName: ctaBrand, theme }),
       });
 
       return sceneList;
     },
-    [brandName, productName, productPrice, originalPrice, promoText, productImage, ctaText, highlights, rating, reviewCount, tr],
+    [brandName, productName, productPrice, originalPrice, promoText, productImage, ctaText, highlights, rating, reviewCount, tr, selectedTemplate],
   );
 
   /** Deduct 30 credits when a video is successfully exported. */
@@ -308,6 +318,7 @@ export default function MarketingVideoPage() {
                   {TEMPLATES.map((tpl) => {
                     const Icon = tpl.icon;
                     const selected = selectedTemplate === tpl.id;
+                    const th = templateTheme(tpl.id);
                     return (
                       <button
                         key={tpl.id}
@@ -319,7 +330,14 @@ export default function MarketingVideoPage() {
                             : 'border-border bg-card text-muted-foreground hover:bg-accent'
                         }`}
                       >
-                        <Icon className="h-5 w-5" />
+                        <span
+                          className="flex h-8 w-8 items-center justify-center rounded-full"
+                          style={{
+                            background: `linear-gradient(135deg, ${th.primaryLight}, ${th.primaryDark})`,
+                          }}
+                        >
+                          <Icon className="h-4 w-4 text-white" />
+                        </span>
                         <span className="truncate">{tr(tpl.nameKey, tpl.id)}</span>
                       </button>
                     );

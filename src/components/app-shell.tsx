@@ -23,6 +23,7 @@ import {
   ShoppingBag,
   TrendingUp,
   BookOpen,
+  Bot,
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { DESKTOP_WEB_APP_URL } from '@/lib/desktop-auth';
@@ -59,7 +60,7 @@ const LanguageSwitcher = dynamic(
 type NavItem = {
   href: string;
   // 通过 useLocale().t('nav.xxx') 读取翻译
-  labelKey: 'clips' | 'notes' | 'blog' | 'pricing' | 'about' | 'download' | 'marketing' | 'news' | 'article';
+  labelKey: 'clips' | 'notes' | 'blog' | 'pricing' | 'about' | 'download' | 'marketing' | 'news' | 'article' | 'digitalHuman';
   icon: typeof Scissors;
   badge?: 'NEW';
 };
@@ -68,6 +69,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/video-clips', labelKey: 'clips', icon: Scissors },
   { href: '/video-notes', labelKey: 'notes', icon: FileText, badge: 'NEW' },
   { href: '/marketing-video', labelKey: 'marketing', icon: ShoppingBag, badge: 'NEW' },
+  { href: '/digital-human', labelKey: 'digitalHuman', icon: Bot, badge: 'NEW' },
   { href: '/news-video', labelKey: 'news', icon: TrendingUp, badge: 'NEW' },
   { href: '/article-to-video', labelKey: 'article', icon: BookOpen, badge: 'NEW' },
   { href: '/blog', labelKey: 'blog', icon: Newspaper },
@@ -199,6 +201,7 @@ function SidebarLabel({ labelKey }: { labelKey: NavItem['labelKey'] }) {
     clips: '高光剪辑',
     notes: '高光笔记',
     marketing: '营销视频',
+    digitalHuman: '数字人带货',
     news: '资讯视频',
     article: '文章转视频',
     blog: '博客',
