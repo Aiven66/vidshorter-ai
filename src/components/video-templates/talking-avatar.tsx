@@ -399,6 +399,38 @@ export function drawTalkingScene(dc: DrawContext, props: TalkingSceneDrawProps):
     ctx.restore();
   }
 
+  /* ---- 主播手持商品展示（greeting/highlight：商品浮现于胸口右侧，随语音律动） ---- */
+  if ((props.kind === 'greeting' || props.kind === 'highlight') && props.productImg && props.productImg.naturalWidth > 0) {
+    const pSize = w * 0.19;
+    const pcx = w * 0.775;
+    const pcy = h * 0.515;
+    // 弹入动画（场景前 0.55s 缩放淡入）+ 语音能量律动（bob + 微旋转）
+    const appear = Math.min(1, Math.max(0, t / 0.55));
+    const ease = 1 - Math.pow(1 - appear, 3);
+    const bob = Math.sin(t * 2.1 + seed * 5) * w * 0.006 + props.mouthOpen * w * 0.008;
+    const tilt = -0.11 + Math.sin(t * 1.4 + seed * 9) * 0.035;
+    const pw = pSize * (0.82 + 0.18 * ease);
+    ctx.save();
+    ctx.translate(pcx, pcy + (1 - ease) * w * 0.05 + bob);
+    ctx.rotate(tilt);
+    ctx.scale(ease, ease);
+    ctx.globalAlpha = ease;
+    // 阴影
+    ctx.shadowColor = 'rgba(0,0,0,0.45)';
+    ctx.shadowBlur = w * 0.035;
+    ctx.shadowOffsetY = w * 0.012;
+    fillRoundRect(ctx, -pw / 2, -pw / 2, pw, pw, w * 0.03, 'rgba(255,255,255,0.97)');
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetY = 0;
+    // 商品图（contain）
+    ctx.save();
+    roundRect(ctx, -pw / 2 + w * 0.006, -pw / 2 + w * 0.006, pw - w * 0.012, pw - w * 0.012, w * 0.026);
+    ctx.clip();
+    drawImageContain(ctx, props.productImg, -pw / 2 + w * 0.008, -pw / 2 + w * 0.008, pw - w * 0.016, pw - w * 0.016);
+    ctx.restore();
+    ctx.restore();
+  }
+
   /* ---- 场景标签 ---- */
   if (props.label) {
     const labelY = h * 0.575;

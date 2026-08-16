@@ -57,6 +57,9 @@ const AMAZON = 'https://www.amazon.com/medicube-Collagen-Volufiline-Under-Eyes-F
       subtitle: band(60 / 540, 760 / 960, 480 / 540, 890 / 960),
       product: band(40 / 540, 672 / 960, 500 / 540, 756 / 960),
       midtext: band(80 / 540, 545 / 960, 460 / 540, 690 / 960),
+      // v2 新增：下巴带（黑腔不得侵入）与商品浮层带
+      chin: band(200 / 540, 490 / 960, 345 / 540, 560 / 960),
+      pfloat: band(360 / 540, 440 / 960, 475 / 540, 550 / 960),
     };
 
     const readBand = (r) => {
@@ -89,6 +92,8 @@ const AMAZON = 'https://www.amazon.com/medicube-Collagen-Volufiline-Under-Eyes-F
       s.subtitle = readBand(R.subtitle);
       s.product = readBand(R.product);
       s.midtext = readBand(R.midtext);
+      s.chin = readBand(R.chin);
+      s.pfloat = readBand(R.pfloat);
       // drop grays to keep payload small
       for (const k in s) { delete s[k].grays; }
       // keep forehead gray ROW (center row) for x-shift correlation
@@ -157,6 +162,18 @@ const AMAZON = 'https://www.amazon.com/medicube-Collagen-Volufiline-Under-Eyes-F
   console.log('subtitle whiteFrac: mean=%.3f max=%.3f (>0.01 = text present)', mm(subWhite), Math.max(...subWhite));
   console.log('product-card nonDark: mean=%.3f (>0.15 = card visible)', mm(prodVar));
   console.log('mid-area whiteFrac (label/highlight/price/cta): mean=%.3f max=%.3f', mm(midWhite), Math.max(...midWhite));
+
+  // v2: chin band must stay clean (cavity bleeding check) — compare against first-frame baseline
+  const chinDark = S.map((s) => s.chin.darkFrac);
+  const chinBase = chinDark[0];
+  const chinMaxDev = Math.max(...chinDark.map((v) => v - chinBase));
+  console.log('\n=== V2 CHIN CLEANLINESS ===');
+  console.log('chin darkFrac baseline=%.3f maxDev=%+.3f (<+0.12 = cavity NOT bleeding into chin ✓)', chinBase, chinMaxDev);
+
+  // v2: product float card (white card) during greeting scene (first ~10s)
+  const pfloatWhite = S.map((s) => s.pfloat.whiteFrac);
+  console.log('=== V2 PRODUCT FLOAT ===');
+  console.log('pfloat whiteFrac: mean=%.3f max=%.3f (>0.04 = product card visible ✓)', mm(pfloatWhite), Math.max(...pfloatWhite));
 
   fs.writeFileSync('/tmp/dh-stats.json', JSON.stringify({ stats: { W: stats.W, H: stats.H }, summary: { mouth: { mean: mm(mouth), sd: sd(mouth), range: range(mouth), crossings } } }, null, 2));
 
