@@ -34,6 +34,7 @@ import {
 import { type SceneTheme, resolveSceneTheme } from './scene-theme';
 import { AVATAR_RIGS, sampleSkinTone } from './avatar-rigs';
 import { drawAvatarPuppet } from './avatar-puppet';
+import { drawShowcaseScene } from './product-showcase';
 
 /* ------------------------------------------------------------------ */
 /* 真人数字人形象（AI 生成的形象照，见 public/avatars/）                  */
@@ -630,6 +631,7 @@ export interface TalkingProductInfo {
   originalPrice?: string | null;
   rating?: string | null;
   reviewCount?: string | null;
+  brand?: string | null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -701,6 +703,8 @@ export function TalkingVideoRenderer({
   product,
   tr,
   onExported,
+  mode = 'avatar',
+  isZh = false,
 }: {
   scenes: TalkingSceneData[];
   avatar: PhotoAvatarSpec;
@@ -708,6 +712,9 @@ export function TalkingVideoRenderer({
   product: TalkingProductInfo;
   tr: TrFn;
   onExported?: (blob: Blob, videoUrl: string) => void;
+  /** avatar = 主播口播（默认）；showcase = 商品种草（无数字人） */
+  mode?: 'avatar' | 'showcase';
+  isZh?: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -749,6 +756,66 @@ export function TalkingVideoRenderer({
     return audioCtxRef.current;
   }, []);
 
+  /** 统一场景绘制入口：按 mode 分流（主播口播 / 商品种草） */
+  const renderScene = useCallback(
+    (
+      dc: DrawContext,
+      scene: TalkingSceneData,
+      idx: number,
+      sceneT: number,
+      globalT: number,
+      extras?: { avatarFrames?: ImageBitmap[] | null; avatarFrameDur?: number; videoEl?: HTMLVideoElement | null; skinTone?: string | null; photoImg?: HTMLImageElement | null },
+    ) => {
+      const frameIdx = Math.min(scene.envelope.length - 1, Math.floor(sceneT * FPS));
+      const mouthOpen = scene.envelope[Math.max(0, frameIdx)] ?? 0;
+
+      if (mode === 'showcase') {
+        const hlBefore = scenes.slice(0, idx).filter((s) => s.kind === 'highlight').length;
+        drawShowcaseScene(dc, {
+          theme,
+          kind: scene.kind,
+          subtitle: scene.subtitle,
+          label: scene.label,
+          highlight: scene.highlight,
+          price: scene.price,
+          product,
+          productImg: productImgRef.current,
+          mouthOpen,
+          sceneT,
+          sceneDur: scene.duration,
+          globalT,
+          sceneIndex: idx,
+          sceneCount: scenes.length,
+          highlightIndex: hlBefore + (scene.kind === 'highlight' ? 1 : 0),
+          isZh,
+        });
+        return;
+      }
+
+      drawTalkingScene(dc, {
+        avatar,
+        theme,
+        kind: scene.kind,
+        subtitle: scene.subtitle,
+        label: scene.label,
+        highlight: scene.highlight,
+        price: scene.price,
+        product,
+        videoEl: extras?.videoEl !== undefined ? extras.videoEl : videoRef.current,
+        avatarFrames: extras?.avatarFrames ?? null,
+        avatarFrameDur: extras?.avatarFrameDur ?? 0,
+        globalT,
+        photoImg: extras?.photoImg !== undefined ? extras.photoImg : photoRef.current,
+        productImg: productImgRef.current,
+        skinTone: extras?.skinTone !== undefined ? extras.skinTone : skinToneRef.current,
+        mouthOpen,
+        sceneT,
+        avatarSeed,
+      });
+    },
+    [scenes, mode, avatar, theme, product, avatarSeed, isZh],
+  );
+
   const drawFrame = useCallback(
     (elapsed: number) => {
       const canvas = canvasRef.current;
@@ -762,39 +829,35 @@ export function TalkingVideoRenderer({
       }
       const scene = scenes[idx];
       const sceneT = Math.max(0, Math.min(scene.duration, elapsed - sceneStarts[idx]));
-      const frameIdx = Math.min(scene.envelope.length - 1, Math.floor(sceneT * FPS));
-      const mouthOpen = scene.envelope[Math.max(0, frameIdx)] ?? 0;
 
-      drawTalkingScene(
+      renderScene(
         { ctx, progress: sceneT / scene.duration, width: canvas.width, height: canvas.height },
-        {
-          avatar,
-          theme,
-          kind: scene.kind,
-          subtitle: scene.subtitle,
-          label: scene.label,
-          highlight: scene.highlight,
-          price: scene.price,
-          product,
-          videoEl: videoRef.current,
-          avatarFrames: null,
-          avatarFrameDur: 0,
-          globalT: elapsed,
-          photoImg: photoRef.current,
-          productImg: productImgRef.current,
-          skinTone: skinToneRef.current,
-          mouthOpen,
-          sceneT,
-          avatarSeed,
-        },
+        scene, idx, sceneT, elapsed,
       );
     },
-    [scenes, sceneStarts, avatar, theme, product, avatarSeed],
+    [scenes, sceneStarts, renderScene],
   );
 
-  // 加载形象照 + 商品图 + 真人主播循环视频，然后绘制首帧
+  // 加载形象照 + 商品图 + 真人主播循环视频，然后绘制首帧（showcase 模式仅加载商品图）
   useEffect(() => {
     let cancelled = false;
+    if (mode !== 'avatar') {
+      if (product.image) {
+        const pimg0 = new Image();
+        pimg0.crossOrigin = 'anonymous';
+        pimg0.onload = () => {
+          if (!cancelled) {
+            productImgRef.current = pimg0;
+            drawFrame(0);
+          }
+        };
+        pimg0.src = product.image;
+      }
+      drawFrame(0);
+      return () => {
+        cancelled = true;
+      };
+    }
     const img = new Image();
     img.onload = () => {
       if (!cancelled) {
@@ -849,7 +912,7 @@ export function TalkingVideoRenderer({
       vid.remove();
       if (videoRef.current === vid) videoRef.current = null;
     };
-  }, [avatar.id, avatar.photo, avatar.video, product.image, drawFrame]);
+  }, [avatar.id, avatar.photo, avatar.video, product.image, drawFrame, mode]);
 
   const stopPlayback = useCallback(() => {
     playingRef.current = false;
@@ -948,18 +1011,9 @@ export function TalkingVideoRenderer({
       }
       const scene = scenes[idx];
       const sceneT = Math.max(0, Math.min(scene.duration, elapsed - sceneStarts[idx]));
-      const frameIdx = Math.min(scene.envelope.length - 1, Math.floor(sceneT * FPS));
-      drawTalkingScene(
+      renderScene(
         { ctx, progress: sceneT / scene.duration, width: EXPORT_W, height: EXPORT_H },
-        {
-          avatar, theme, kind: scene.kind, subtitle: scene.subtitle, label: scene.label,
-          highlight: scene.highlight, price: scene.price, product,
-          videoEl: videoRef.current, avatarFrames: null, avatarFrameDur: 0, globalT: elapsed,
-          photoImg: photoRef.current, productImg: productImgRef.current,
-          skinTone: skinToneRef.current,
-          mouthOpen: scene.envelope[Math.max(0, frameIdx)] ?? 0,
-          sceneT, avatarSeed,
-        },
+        scene, idx, sceneT, elapsed,
       );
     };
 
@@ -988,7 +1042,7 @@ export function TalkingVideoRenderer({
     const blob = new Blob(chunks, { type: mimeType.split(';')[0] || 'video/webm' });
     const label = mimeType.startsWith('video/mp4') ? 'MP4 (H.264+AAC)' : 'WebM (VP9/Opus)';
     return { blob, label };
-  }, [scenes, sceneStarts, totalDuration, theme, product, avatar, avatarSeed, getAudioCtx]);
+  }, [scenes, sceneStarts, totalDuration, theme, product, avatar, avatarSeed, getAudioCtx, renderScene]);
 
   const exportViaWebCodecs = useCallback(async (): Promise<{ blob: Blob; label: string }> => {
     const w = window as unknown as {
@@ -1076,28 +1130,24 @@ export function TalkingVideoRenderer({
       codec: 'mp4a.40.2', sampleRate, numberOfChannels: 1, bitrate: 96_000,
     });
 
-    // 预解码真人主播循环帧（确定性导出；失败则回退照片模式）
+    // 预解码真人主播循环帧（确定性导出；失败则回退照片模式；showcase 模式跳过）
     let avatarFrames: ImageBitmap[] | null = null;
     let avatarFrameDur = 0;
-    try {
-      const extracted = await extractAvatarLoopFrames(avatar.video);
-      avatarFrames = extracted.frames;
-      avatarFrameDur = extracted.frameDur;
-    } catch (e) {
-      console.warn('[TalkingVideoRenderer] avatar loop extraction failed, fallback to photo:', e);
+    if (mode === 'avatar') {
+      try {
+        const extracted = await extractAvatarLoopFrames(avatar.video);
+        avatarFrames = extracted.frames;
+        avatarFrameDur = extracted.frameDur;
+      } catch (e) {
+        console.warn('[TalkingVideoRenderer] avatar loop extraction failed, fallback to photo:', e);
+      }
     }
 
-    const drawTo = (scene: TalkingSceneData, sceneT: number, frameIdx: number, globalT: number) => {
-      drawTalkingScene(
+    const drawTo = (scene: TalkingSceneData, idx: number, sceneT: number, globalT: number) => {
+      renderScene(
         { ctx, progress: sceneT / scene.duration, width: EXPORT_W, height: EXPORT_H },
-        {
-          avatar, theme, kind: scene.kind, subtitle: scene.subtitle, label: scene.label,
-          highlight: scene.highlight, price: scene.price, product,
-          videoEl: null, avatarFrames, avatarFrameDur, globalT,
-          photoImg: photoRef.current, productImg: productImgRef.current,
-          mouthOpen: scene.envelope[Math.min(Math.max(0, frameIdx), scene.envelope.length - 1)] ?? 0,
-          sceneT, avatarSeed,
-        },
+        scene, idx, sceneT, globalT,
+        { avatarFrames, avatarFrameDur, videoEl: null },
       );
     };
 
@@ -1137,7 +1187,7 @@ export function TalkingVideoRenderer({
 
         for (let f = 0; f < frames; f++) {
           const sceneT = f / FPS;
-          drawTo(scene, sceneT, Math.floor(sceneT * FPS), globalFrame / FPS);
+          drawTo(scene, si, sceneT, globalFrame / FPS);
           const frame = new w.VideoFrame!(canvas, {
             timestamp: Math.round(globalFrame * (1e6 / FPS)),
             duration: Math.round(1e6 / FPS),
@@ -1168,7 +1218,7 @@ export function TalkingVideoRenderer({
     const buffer = (muxer.target as ArrayBufferTarget).buffer;
     if (!buffer || buffer.byteLength === 0) throw new Error('muxer produced empty buffer');
     return { blob: new Blob([buffer], { type: 'video/mp4' }), label: 'MP4 (H.264 + AAC 真人语音)' };
-  }, [scenes, theme, product, avatar, avatarSeed]);
+  }, [scenes, theme, product, avatar, avatarSeed, renderScene]);
 
   const handleExport = useCallback(async () => {
     if (exporting || scenes.length === 0) return;
