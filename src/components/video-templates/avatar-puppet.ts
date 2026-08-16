@@ -1,14 +1,15 @@
 /**
- * 自研真人数字人口播引擎 v2（照片驱动，纯浏览器端）。
+ * 自研真人数字人口播引擎 v3（照片驱动，纯浏览器端）。
  *
- * 核心算法 —— 唇间间隙法（Gap-based jaw warp）：
- *  以照片唇线（rig.mouth.y）为切缝把照片分成两片：
- *   - 上片：头 + 上唇（固定不动）
- *   - 下片：下唇 + 下巴 + 身体（随开合度整体下落 jawDrop，并轻微拉伸）
- *  张嘴时两片之间露出间隙，口腔内部（暗腔 + 牙齿 + 舌头）精确绘制在
- *  间隙内 —— 上下边界即照片里真实的嘴唇，口型对齐由构造保证：
- *   - open = 0 时两片无缝拼接，与原照片像素一致（零变形）
- *   - open > 0 时暗腔永远不会越过下唇（根治"黑腔盖下巴"错位）
+ * 核心算法 —— 基底 + 锥形下颌条带 + 唇形透镜（Base + tapered jaw strips + lip lens）：
+ *  v2 的"唇线以下整片下落"会在嘴角两侧露出全宽背景横缝（脸部像被横向切断）。
+ *  v3 分层根治：
+ *   1) 基底：整张照片原样绘制 —— 任何未覆盖处永远是照片像素，背景绝无外露；
+ *   2) 下颌条带：仅嘴部邻域的下半脸内容下移 jawDrop，随离嘴中心的水平距离
+ *      余弦锥形衰减到 0（嘴角外侧不动）—— 皮肤随下颌自然下沉，无撕裂；
+ *   3) 唇形透镜口腔：上缘 = 固定的上唇线，下缘 = 锥形下落的下唇曲线，
+ *      暗腔/牙齿/舌头只画在透镜内 —— 口型对齐由构造保证，
+ *      open = 0 时与原照片像素一致（零变形）。
  *
  * 其余层：头部微运动（旋转/平移/呼吸）、确定性眨眼（肤色眼皮+睫毛线）、
  * 视位宽度变化、边缘渐隐融合。所有参数均为确定性函数，预览与导出逐帧一致。
@@ -107,12 +108,12 @@ export function drawAvatarPuppet(p: PuppetParams): void {
   };
 
   /* ---- 3. 下颌运动学 ---- */
-  // 下落量：开口 1.0 时约 1.6 个唇区高度（真人张嘴的视觉幅度）
-  const jawDrop = open * mhPx * 1.6;
-  // 下巴跟随的轻微拉伸（下片整体）
-  const chinStretch = 1 + open * 0.07;
+  // 下落量：开口 1.0 时约 1.45 个唇区高度（真人张嘴的视觉幅度）
+  const jawDrop = open * mhPx * 1.45;
+  // 下巴跟随的轻微拉伸
+  const chinStretch = 1 + open * 0.06;
 
-  // 切片（源图坐标）
+  // 源图坐标
   const mouthLineSrc = rig.mouth.y * rig.imgH;
   const imgBottomDst = offY + drawH;
 
@@ -120,60 +121,106 @@ export function drawAvatarPuppet(p: PuppetParams): void {
   const clipY = rect.y - 0.02 * h;
   const clipH = h + 0.16 * h;
 
-  /* ---- 4. 头部 + 唇间间隙渲染 ---- */
+  /* ---- 锥形衰减：下颌下落量随离嘴中心的水平距离衰减 ---- */
+  const fullZone = mwPx * 0.30; // 全幅下落区（口腔正中）
+  const dropZone = mwPx * 0.72; // 下落截止区（嘴角外侧，皮肤不动）
+  const taper = (cx: number): number => {
+    const ax = Math.abs(cx - mouthX);
+    if (ax <= fullZone) return 1;
+    if (ax >= dropZone) return 0;
+    const s = (ax - fullZone) / (dropZone - fullZone);
+    return 0.5 * (1 + Math.cos(Math.PI * s));
+  };
+
+  /* ---- 4. 基底照片（完整无变形）+ 锥形下颌条带 ---- */
   ctx.save();
   ctx.beginPath();
   ctx.rect(rect.x - 0.02 * w, clipY, w + 0.04 * w, clipH);
   ctx.clip();
   headTransform();
 
-  // 上片：源 [0, 唇线] → 目标 [offY, mouthY]（1:1 无变形；含上唇）
-  ctx.drawImage(
-    img,
-    0, 0, rig.imgW, Math.max(1, mouthLineSrc),
-    offX, offY, drawW, Math.max(1, mouthY - offY + 1), // +1px 防缝隙
-  );
+  // 4.1 基底：整张照片原样绘制 —— 未覆盖处永远是照片像素，背景绝无外露
+  ctx.drawImage(img, offX, offY, drawW, drawH);
 
-  // 下片：源 [唇线, 底] → 目标 [mouthY + jawDrop, ...]（含下唇+下巴+身体）
-  const lowerSrcH = Math.max(1, rig.imgH - mouthLineSrc);
-  const lowerDstH = (imgBottomDst - mouthY) * chinStretch;
-  ctx.drawImage(
-    img,
-    0, mouthLineSrc, rig.imgW, lowerSrcH,
-    offX, mouthY + jawDrop, drawW, lowerDstH,
-  );
+  // 4.2 下颌条带：嘴部邻域的下半脸内容下移，条带顶缘逐段线性拼接成平滑锥形曲线
+  if (jawDrop > 0.5) {
+    const N = 36;
+    const sw = drawW / N;
+    const lowerSrcH = Math.max(1, rig.imgH - mouthLineSrc);
+    const lowerDstH = imgBottomDst - mouthY;
+    for (let i = 0; i < N; i++) {
+      const dx0 = offX + i * sw;
+      const dx1 = dx0 + sw + 0.6; // 轻微重叠，消除条带间发丝缝
+      const e0 = jawDrop * taper(dx0);
+      const e1 = jawDrop * taper(dx1);
+      if (e0 < 0.35 && e1 < 0.35) continue;
+      const dc = (e0 + e1) / 2;
+      const stc = 1 + (chinStretch - 1) * taper((dx0 + dx1) / 2);
+      const sx = Math.max(0, (dx0 - offX) / scale);
+      const sx1 = Math.min(rig.imgW, (dx1 - offX) / scale);
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(dx0, mouthY + e0);
+      ctx.lineTo(dx1, mouthY + e1);
+      ctx.lineTo(dx1, imgBottomDst + 600);
+      ctx.lineTo(dx0, imgBottomDst + 600);
+      ctx.closePath();
+      ctx.clip();
+      ctx.drawImage(
+        img,
+        sx, mouthLineSrc, Math.max(1, sx1 - sx), lowerSrcH,
+        dx0, mouthY + dc, dx1 - dx0, lowerDstH * stc,
+      );
+      ctx.restore();
+    }
+  }
 
-  /* ---- 5. 口腔内部：精确填充唇间间隙 ---- */
+  /* ---- 5. 口腔：唇形透镜（上缘=固定上唇线，下缘=锥形下落的下唇曲线） ---- */
   const gapH = jawDrop;
   if (open > 0.07 && gapH > 2.5) {
     const vw = visemeWidth(t, seed, open);
-    const rx = mwPx * 0.46 * vw; // 半宽
-    const cy = mouthY + gapH / 2; // 间隙中心
-    const ry = gapH / 2 + Math.min(4, mhPx * 0.10); // 略微咬合唇缘，融合边缘
+    const rx = mwPx * 0.5 * vw; // 半宽（透镜角点即嘴角）
+    // 透镜横向轮廓（x 为画布绝对坐标，先平移到嘴中心再归一化）
+    const lensR = (x: number) => Math.sqrt(Math.max(0, 1 - ((x - mouthX) / rx) ** 2));
+    // 下唇曲线：下落量随锥形衰减 + 轻微咬合下唇缘
+    const lipBot = (x: number) =>
+      mouthY + 1 + (gapH * taper(x) + mhPx * 0.10) * lensR(x);
+
+    const lensPath = () => {
+      ctx.beginPath();
+      ctx.moveTo(mouthX - rx, mouthY + 1);
+      // 上缘：上唇线（固定，中央微微上拱）
+      ctx.quadraticCurveTo(mouthX, mouthY + 1 - mhPx * 0.16, mouthX + rx, mouthY + 1);
+      // 下缘：沿锥形下落的下唇曲线（右 → 左）
+      const STEPS = 22;
+      for (let i = STEPS; i >= 0; i--) {
+        const x = mouthX - rx + (2 * rx * i) / STEPS;
+        ctx.lineTo(x, lipBot(x));
+      }
+      ctx.closePath();
+    };
 
     ctx.save();
-    // 间隙外轮廓（口腔暗腔）
-    ctx.beginPath();
-    ctx.ellipse(mouthX, cy, rx, ry, 0, 0, Math.PI * 2);
+    lensPath();
     ctx.clip();
 
     // 暗腔底色：上浅下深（上牙床反光）
-    const cavity = ctx.createLinearGradient(0, cy - ry, 0, cy + ry);
+    const cavity = ctx.createLinearGradient(0, mouthY - mhPx * 0.08, 0, lipBot(0) + 2);
     cavity.addColorStop(0, '#4a1d22');
     cavity.addColorStop(0.45, '#33121a');
     cavity.addColorStop(1, '#20090f');
     ctx.fillStyle = cavity;
-    ctx.fillRect(mouthX - rx - 2, cy - ry - 2, rx * 2 + 4, ry * 2 + 4);
+    ctx.fillRect(mouthX - rx - 2, mouthY - mhPx * 0.1, rx * 2 + 4, lipBot(0) - mouthY + mhPx * 0.2);
 
     // 上排牙：挂在上唇下缘（固定），随开口增大而下伸
     const teethH = Math.min(gapH * 0.34, mhPx * 0.42);
     if (teethH > 1.5) {
-      const tg = ctx.createLinearGradient(0, cy - ry, 0, cy - ry + teethH);
+      const tg = ctx.createLinearGradient(0, mouthY, 0, mouthY + teethH);
       tg.addColorStop(0, 'rgba(252, 248, 240, 0.98)');
       tg.addColorStop(1, 'rgba(228, 220, 208, 0.92)');
       ctx.fillStyle = tg;
       ctx.beginPath();
-      ctx.ellipse(mouthX, cy - ry + teethH * 0.1, rx * 0.72, teethH * 0.62, 0, 0, Math.PI * 2);
+      ctx.ellipse(mouthX, mouthY + 1 + teethH * 0.5, rx * 0.72, teethH * 0.62, 0, 0, Math.PI * 2);
       ctx.fill();
     }
 
@@ -184,7 +231,7 @@ export function drawAvatarPuppet(p: PuppetParams): void {
       if (lth > 1) {
         ctx.fillStyle = 'rgba(238, 231, 219, 0.94)';
         ctx.beginPath();
-        ctx.ellipse(mouthX, cy + ry - lth * 0.1, rx * 0.60, lth * 0.58, 0, 0, Math.PI * 2);
+        ctx.ellipse(mouthX, lipBot(0) - lth * 0.5, rx * 0.60, lth * 0.58, 0, 0, Math.PI * 2);
         ctx.fill();
       }
     }
@@ -196,7 +243,7 @@ export function drawAvatarPuppet(p: PuppetParams): void {
       if (sh > 1) {
         ctx.fillStyle = `rgba(158, 66, 76, ${0.55 + 0.3 * st})`;
         ctx.beginPath();
-        ctx.ellipse(mouthX, cy + ry - sh * 0.34, rx * 0.52, sh * 0.5, 0, 0, Math.PI * 2);
+        ctx.ellipse(mouthX, lipBot(0) - sh * 0.3, rx * 0.52, sh * 0.5, 0, 0, Math.PI * 2);
         ctx.fill();
       }
     }
@@ -205,16 +252,16 @@ export function drawAvatarPuppet(p: PuppetParams): void {
     // 内唇暗红边缘线（唇形轮廓，融合口腔与嘴唇）
     ctx.strokeStyle = `rgba(96, 30, 36, ${0.34 + 0.2 * open})`;
     ctx.lineWidth = Math.max(1, mhPx * 0.07);
-    ctx.beginPath();
-    ctx.ellipse(mouthX, cy, rx * 0.985, ry * 0.99, 0, 0, Math.PI * 2);
+    lensPath();
     ctx.stroke();
 
-    // 下唇下缘阴影（下颌下落的立体感，画在间隙下方即下唇之上）
-    const lipShade = ctx.createLinearGradient(0, mouthY + gapH, 0, mouthY + gapH + mhPx * 0.5);
+    // 下唇下缘阴影（下颌下落的立体感，沿下唇曲线）
+    const shY0 = lipBot(0);
+    const lipShade = ctx.createLinearGradient(0, shY0, 0, shY0 + mhPx * 0.5);
     lipShade.addColorStop(0, `rgba(40, 16, 18, ${0.20 * open})`);
     lipShade.addColorStop(1, 'rgba(40, 16, 18, 0)');
     ctx.fillStyle = lipShade;
-    ctx.fillRect(mouthX - mwPx * 0.55, mouthY + gapH, mwPx * 1.1, mhPx * 0.5);
+    ctx.fillRect(mouthX - mwPx * 0.55, shY0, mwPx * 1.1, mhPx * 0.5);
   } else if (gapH > 0.5 && gapH <= 2.5) {
     // 极小间隙：仅画唇缝暗线，避免闪烁
     ctx.strokeStyle = 'rgba(70, 26, 30, 0.35)';

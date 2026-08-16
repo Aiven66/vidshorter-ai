@@ -14,6 +14,10 @@ const AMAZON = 'https://www.amazon.com/medicube-Collagen-Volufiline-Under-Eyes-F
   await page.goto(`${BASE}/digital-human`, { timeout: 60000 });
   await page.waitForLoadState('networkidle');
 
+  // switch to Talking Host mode (page now defaults to Product Showcase)
+  await page.locator('button', { hasText: 'Talking Host' }).first().click();
+  console.log('switched to Talking Host mode');
+
   // which avatar is selected by default?
   const selAvatar = await page.evaluate(() => {
     const btns = [...document.querySelectorAll('button')];
@@ -60,6 +64,9 @@ const AMAZON = 'https://www.amazon.com/medicube-Collagen-Volufiline-Under-Eyes-F
       // v2 新增：下巴带（黑腔不得侵入）与商品浮层带
       chin: band(200 / 540, 490 / 960, 345 / 540, 560 / 960),
       pfloat: band(360 / 540, 440 / 960, 475 / 540, 550 / 960),
+      // v3 新增：嘴角两侧脸颊带（张嘴时不得露出背景 —— 撕裂带检测）
+      cheekL: band(105 / 540, 395 / 960, 185 / 540, 450 / 960),
+      cheekR: band(355 / 540, 395 / 960, 438 / 540, 450 / 960),
     };
 
     const readBand = (r) => {
@@ -94,6 +101,8 @@ const AMAZON = 'https://www.amazon.com/medicube-Collagen-Volufiline-Under-Eyes-F
       s.midtext = readBand(R.midtext);
       s.chin = readBand(R.chin);
       s.pfloat = readBand(R.pfloat);
+      s.cheekL = readBand(R.cheekL);
+      s.cheekR = readBand(R.cheekR);
       // drop grays to keep payload small
       for (const k in s) { delete s[k].grays; }
       // keep forehead gray ROW (center row) for x-shift correlation
@@ -175,15 +184,32 @@ const AMAZON = 'https://www.amazon.com/medicube-Collagen-Volufiline-Under-Eyes-F
   console.log('=== V2 PRODUCT FLOAT ===');
   console.log('pfloat whiteFrac: mean=%.3f max=%.3f (>0.04 = product card visible ✓)', mm(pfloatWhite), Math.max(...pfloatWhite));
 
-  fs.writeFileSync('/tmp/dh-stats.json', JSON.stringify({ stats: { W: stats.W, H: stats.H }, summary: { mouth: { mean: mm(mouth), sd: sd(mouth), range: range(mouth), crossings } } }, null, 2));
+  // v3: NO background tear beside the mouth (cheeks must stay photo-bright at open peaks)
+  const cheekL = S.map((s) => s.cheekL.darkFrac);
+  const cheekR = S.map((s) => s.cheekR.darkFrac);
+  const tearMax = Math.max(Math.max(...cheekL), Math.max(...cheekR));
+  console.log('=== V3 TEAR CHECK (cheek bands at mouth height) ===');
+  console.log('cheekL darkFrac: min=%.3f max=%.3f | cheekR: min=%.3f max=%.3f (<0.35 = no background tear ✓)',
+    Math.min(...cheekL), Math.max(...cheekL), Math.min(...cheekR), Math.max(...cheekR));
+  const mouthOpenPeak = Math.max(...mouth) - Math.min(...mouth);
+  let hardFail = false;
+  if (tearMax >= 0.35 && mouthOpenPeak > 0.1) {
+    console.log('HARD FAIL: background tear detected beside mouth (v2 full-width jaw drop regression)');
+    hardFail = true;
+  }
+
+  fs.writeFileSync('/tmp/dh-stats.json', JSON.stringify({ stats: { W: stats.W, H: stats.H }, summary: { mouth: { mean: mm(mouth), sd: sd(mouth), range: range(mouth), crossings }, tearMax } }, null, 2));
+  if (hardFail) process.exit(1);
 
   // ---- Export ----
   console.log('\n=== EXPORT ===');
   await page.locator('button', { hasText: 'Export MP4' }).first().click();
   try {
-    await page.waitForSelector('video', { timeout: 240000 });
+    // v3 fix: hidden 1px probe videos (no controls, blob-less /avatar-videos src) also match
+    // plain 'video'; the real export result is the ONLY video with a controls attribute.
+    await page.waitForSelector('video[controls]', { timeout: 240000 });
     const meta = await page.evaluate(async () => {
-      const v = document.querySelector('video');
+      const v = document.querySelector('video[controls]');
       const info = { duration: v.duration, w: v.videoWidth, h: v.videoHeight, src: v.src.slice(0, 60) };
       try {
         const buf = await (await fetch(v.src)).arrayBuffer();
