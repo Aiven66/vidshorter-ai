@@ -84,6 +84,7 @@
     "lowlight": "^3.3.0",
     "lucide-react": "^0.468.0",
     "mp4-muxer": "^5.2.1",
+    "msedge-tts": "^2.0.7",
     "next": "16.1.1",
     "next-themes": "^0.4.6",
     "nodemailer": "^8.0.5",

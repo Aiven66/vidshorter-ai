@@ -1,22 +1,23 @@
 'use client';
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { Card } from '@/components/ui/card';
 import { useCredits } from '@/lib/credits-context';
 import {
-  TemplateRenderer,
   UrlExtractor,
-  DigitalHumanScene,
-  drawDigitalHumanScene,
   preloadImage,
-  AvatarThumb,
-  AVATAR_PRESETS,
   SCENE_THEMES,
-  type Scene,
-  type SceneTheme,
-  type AvatarSpec,
-  type AvatarGender,
 } from '@/components/video-templates';
+import {
+  TalkingVideoRenderer,
+  PHOTO_AVATARS,
+  pickEdgeVoice,
+  computeEnvelope,
+  type PhotoAvatarSpec,
+  type PhotoAvatarGender,
+  type TalkingSceneData,
+} from '@/components/video-templates/talking-avatar';
+import { SocialShare } from '@/components/video-templates/social-share';
 import { useLocale } from '@/lib/locale-context';
 import {
   Bot,
@@ -26,6 +27,9 @@ import {
   Link as LinkIcon,
   UserRound,
   User,
+  Mic,
+  RefreshCw,
+  Loader2,
 } from 'lucide-react';
 
 interface ProductHighlight {
@@ -59,22 +63,37 @@ function shortProductName(name: string): string {
   return base.length > 60 ? base.slice(0, 60).replace(/\s+\S*$/, '') + '…' : base;
 }
 
+const TAIL_SECONDS = 0.25;
+const FPS = 30;
+
 export default function DigitalHumanPage() {
   const { t, locale } = useLocale();
   const { deductCredits } = useCredits();
-  const [avatar, setAvatar] = useState<AvatarSpec>(AVATAR_PRESETS[0]);
-  const [genderFilter, setGenderFilter] = useState<AvatarGender | 'all'>('all');
+  const [avatar, setAvatar] = useState<PhotoAvatarSpec>(PHOTO_AVATARS[0]);
+  const [genderFilter, setGenderFilter] = useState<PhotoAvatarGender | 'all'>('all');
   const [selectedTemplate, setSelectedTemplate] = useState<'fashion' | 'beauty' | 'food' | 'home' | 'tech'>('tech');
   const [productName, setProductName] = useState('');
   const [productPrice, setProductPrice] = useState('');
   const [originalPrice, setOriginalPrice] = useState('');
   const [brandName, setBrandName] = useState('');
   const [productImage, setProductImage] = useState('');
-  const [ctaText, setCtaText] = useState('');
+  const [rating, setRating] = useState('');
+  const [reviewCount, setReviewCount] = useState('');
   const [highlights, setHighlights] = useState<ProductHighlight[]>([]);
   const [autoDetected, setAutoDetected] = useState(false);
-  const [previewReady, setPreviewReady] = useState(false);
-  const [extractKey, setExtractKey] = useState(0);
+
+  // 语音/场景生成状态
+  const [scenes, setScenes] = useState<TalkingSceneData[]>([]);
+  const [scenesKey, setScenesKey] = useState(0);
+  const [generating, setGenerating] = useState(false);
+  const [genProgress, setGenProgress] = useState({ done: 0, total: 0 });
+  const [genError, setGenError] = useState('');
+  const [voiceName, setVoiceName] = useState('');
+  const [staleVoice, setStaleVoice] = useState(false);
+  const [exportedUrl, setExportedUrl] = useState('');
+
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const genTokenRef = useRef(0);
 
   const tr = useCallback(
     (key: string, fallback: string) => {
@@ -85,6 +104,14 @@ export default function DigitalHumanPage() {
   );
 
   const isZh = locale === 'zh' || locale === 'zh-Hant' || locale?.startsWith('zh');
+
+  const getAudioCtx = useCallback(() => {
+    if (!audioCtxRef.current) {
+      const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      audioCtxRef.current = new AC();
+    }
+    return audioCtxRef.current;
+  }, []);
 
   const handleExtractFromUrl = useCallback(
     async (url: string): Promise<{ ok: boolean }> => {
@@ -112,125 +139,163 @@ export default function DigitalHumanPage() {
           setOriginalPrice(p.originalPrice);
         }
         if (p.brand) setBrandName(p.brand);
+        if (p.rating) setRating(p.rating);
+        if (p.reviewCount) setReviewCount(p.reviewCount);
         if (p.image) {
           setProductImage(p.image);
           // 提前预载商品主图（CORS 模式），导出视频时 canvas 可直接绘制
           void preloadImage(p.image);
         }
         setHighlights(Array.isArray(p.highlights) ? p.highlights : []);
-        if (!ctaText) setCtaText(tr('digitalHuman.ctaPlaceholder', 'Shop Now'));
         setAutoDetected(true);
-        setPreviewReady(true);
-        setExtractKey((k) => k + 1);
         return { ok: true };
       } catch {
         return { ok: false };
       }
     },
-    [t, ctaText, locale, tr],
+    [locale],
   );
 
   const visibleAvatars = useMemo(
-    () => (genderFilter === 'all' ? AVATAR_PRESETS : AVATAR_PRESETS.filter((a) => a.gender === genderFilter)),
+    () => (genderFilter === 'all' ? PHOTO_AVATARS : PHOTO_AVATARS.filter((a) => a.gender === genderFilter)),
     [genderFilter],
   );
 
-  const scenes: Scene[] = useMemo(() => {
-    const theme: SceneTheme = SCENE_THEMES[selectedTemplate] ?? SCENE_THEMES.tech;
+  /** 台词（口播文案，语言跟随 UI locale） */
+  const buildLines = useCallback(() => {
     const pName = shortProductName(productName || tr('digitalHuman.productFallback', 'This amazing product'));
     const brand = brandName || tr('digitalHuman.brandFallback', 'Top Brand');
-    const cta = ctaText || tr('digitalHuman.ctaPlaceholder', 'Shop Now');
+    const price = productPrice || tr('digitalHuman.priceFallback', 'a great price');
 
-    // 台词按 locale 生成（种草口播文案）
     const greeting = isZh
-      ? `大家好！今天给大家种草 ${brand} 的爆款好物！`
-      : `Hi everyone! Today I'm sharing this amazing find from ${brand}!`;
-    const priceLine = isZh
-      ? `现在下单只要 ${productPrice || '超值价'}，手慢无！`
-      : `Now only ${productPrice || 'a great deal'} — don't miss out!`;
+      ? `大家好！今天给大家种草 ${brand} 的爆款好物，${pName}！`
+      : `Hi everyone! Today I'm sharing an amazing find from ${brand} — the ${pName}!`;
+
+    const hl = highlights.slice(0, 3).map((h, i) => {
+      const spoken = [h.title, h.detail].filter(Boolean).join('. ').slice(0, 180);
+      return {
+        kind: 'highlight' as const,
+        subtitle: isZh ? `第${i + 1}个亮点：${spoken}` : `Highlight number ${i + 1}: ${spoken}`,
+        label: isZh ? `亮点 ${i + 1}` : `Highlight ${i + 1}`,
+        highlight: { title: h.title, detail: h.detail },
+      };
+    });
+
+    const priceLine = originalPrice
+      ? isZh
+        ? `现在下单只要 ${price}，原价 ${originalPrice}，限时特惠，手慢无！`
+        : `Order now for just ${price}, down from ${originalPrice} — limited time offer!`
+      : isZh
+        ? `现在下单只要 ${price}，手慢无！`
+        : `Now only ${price} — don't miss out!`;
+
     const ctaLine = isZh
-      ? `喜欢的宝子点击下方链接，${cta}！`
-      : `Love it? Tap the link below and ${cta}!`;
+      ? '喜欢的宝子点击下方链接，马上把它带回家！'
+      : 'Love it? Tap the link below and grab yours now!';
 
-    const baseProps = {
-      avatar,
-      productName: pName,
-      productImage: productImage || undefined,
-      theme,
-    };
-
-    const sceneList: Scene[] = [
-      // 1. 开场问候（挥手）
+    return [
+      { kind: 'greeting' as const, subtitle: greeting, label: isZh ? '爆款好物' : 'Hot Pick' },
+      ...hl,
       {
-        id: 'greeting',
-        duration: 4,
-        transition: 'fade',
-        render: () => <DigitalHumanScene {...baseProps} subtitle={greeting} badge={brand} gesture="wave" />,
-        draw: (dc) => drawDigitalHumanScene(dc, { ...baseProps, subtitle: greeting, badge: brand, gesture: 'wave' }),
-        prepare: productImage ? () => preloadImage(productImage).then(() => undefined) : undefined,
+        kind: 'price' as const,
+        subtitle: priceLine,
+        label: isZh ? '限时特惠' : 'Special Price',
+        price: { display: price, original: originalPrice || undefined },
       },
+      { kind: 'cta' as const, subtitle: ctaLine, label: isZh ? '立即下单' : 'Shop Now' },
     ];
+  }, [productName, brandName, productPrice, originalPrice, highlights, isZh, tr]);
 
-    // 2. 卖点讲解（指向商品，最多 3 条）
-    highlights.slice(0, 3).forEach((h, i) => {
-      const line = isZh ? `第${i + 1}个亮点：${h.title}` : `Highlight number ${i + 1}: ${h.title}`;
-      const badge = isZh ? `亮点 ${i + 1}` : `Highlight ${i + 1}`;
-      sceneList.push({
-        id: `feature-${i}`,
-        duration: 4,
-        transition: 'slide',
-        render: () => <DigitalHumanScene {...baseProps} subtitle={line} badge={badge} price={productPrice} gesture="point" />,
-        draw: (dc) => drawDigitalHumanScene(dc, { ...baseProps, subtitle: line, badge, price: productPrice, gesture: 'point' }),
-        prepare: productImage ? () => preloadImage(productImage).then(() => undefined) : undefined,
-      });
-    });
+  /** 生成场景：逐条合成真人语音 → 解码 → 振幅包络 */
+  const generateScenes = useCallback(async () => {
+    if (!productName && !productPrice && !brandName) return;
+    const token = ++genTokenRef.current;
+    setGenerating(true);
+    setGenError('');
+    setExportedUrl('');
+    const lines = buildLines();
+    setGenProgress({ done: 0, total: lines.length });
 
-    // 3. 价格公布（双手展示）
-    sceneList.push({
-      id: 'price',
-      duration: 4,
-      transition: 'fade',
-      render: () => (
-        <DigitalHumanScene
-          {...baseProps}
-          subtitle={priceLine}
-          badge={isZh ? '限时特惠' : 'Special Price'}
-          price={productPrice}
-          originalPrice={originalPrice || undefined}
-          gesture="present"
-        />
-      ),
-      draw: (dc) =>
-        drawDigitalHumanScene(dc, {
-          ...baseProps,
-          subtitle: priceLine,
-          badge: isZh ? '限时特惠' : 'Special Price',
-          price: productPrice,
-          originalPrice: originalPrice || undefined,
-          gesture: 'present',
-        }),
-      prepare: productImage ? () => preloadImage(productImage).then(() => undefined) : undefined,
-    });
+    try {
+      // 给旧生成循环 250ms 退出窗口，避免并发 TTS 请求（会触发服务端限流）
+      await new Promise((r) => setTimeout(r, 250));
+      if (genTokenRef.current !== token) return;
+      const voice = pickEdgeVoice(avatar.gender, locale || 'en', avatar.voiceLocale);
+      setVoiceName(voice);
+      const audioCtx = getAudioCtx();
 
-    // 4. CTA 收尾（点赞推荐）
-    sceneList.push({
-      id: 'cta',
-      duration: 3,
-      transition: 'slide',
-      render: () => <DigitalHumanScene {...baseProps} subtitle={ctaLine} badge={cta} price={productPrice} gesture="ok" />,
-      draw: (dc) => drawDigitalHumanScene(dc, { ...baseProps, subtitle: ctaLine, badge: cta, price: productPrice, gesture: 'ok' }),
-      prepare: productImage ? () => preloadImage(productImage).then(() => undefined) : undefined,
-    });
+      const out: TalkingSceneData[] = [];
+      for (let i = 0; i < lines.length; i++) {
+        if (genTokenRef.current !== token) return;
+        const resp = await fetch('/api/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: lines[i].subtitle, voice }),
+        });
+        if (!resp.ok) throw new Error(`TTS failed (${resp.status})`);
+        const mp3Buf = await resp.arrayBuffer();
+        const audioBuffer = await audioCtx.decodeAudioData(mp3Buf);
+        const envelope = computeEnvelope(audioBuffer, FPS);
+        out.push({
+          ...lines[i],
+          id: `${lines[i].kind}-${i}-${Date.now()}`,
+          audioBuffer,
+          envelope,
+          duration: audioBuffer.duration + TAIL_SECONDS,
+        });
+        setGenProgress({ done: i + 1, total: lines.length });
+      }
+      if (genTokenRef.current !== token) return;
+      setScenes(out);
+      setScenesKey((k) => k + 1);
+      setStaleVoice(false);
+    } catch (err) {
+      console.error('[digital-human] generate failed:', err);
+      if (genTokenRef.current === token) {
+        setGenError(tr('digitalHuman.ttsFailed', 'Voice synthesis failed. Please try again.'));
+      }
+    } finally {
+      if (genTokenRef.current === token) setGenerating(false);
+    }
+  }, [productName, productPrice, brandName, avatar, locale, buildLines, getAudioCtx, tr]);
 
-    return sceneList;
-  }, [avatar, selectedTemplate, productName, productPrice, originalPrice, brandName, productImage, ctaText, highlights, isZh, tr]);
+  // 提取成功后自动生成语音场景（商品指纹变化时仅触发一次，防抖避免并发请求）
+  const lastAutoKeyRef = useRef('');
+  useEffect(() => {
+    if (!autoDetected || (!productName && !productPrice)) return;
+    const key = `${productName}|${productPrice}`;
+    if (lastAutoKeyRef.current === key) return;
+    lastAutoKeyRef.current = key;
+    const t = setTimeout(() => void generateScenes(), 400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoDetected, productName, productPrice]);
+
+  // 切换形象后（声线性别/口音变化）提示重新生成
+  useEffect(() => {
+    if (scenes.length > 0) setStaleVoice(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [avatar.id]);
 
   /** Deduct 30 credits when a video is successfully exported. */
-  const handleExportSuccess = useCallback(() => {
+  const handleExported = useCallback(() => {
     deductCredits(30);
   }, [deductCredits]);
 
   const hasAnyContent = productName || productPrice || brandName;
+  const productInfo = useMemo(
+    () => ({
+      name: shortProductName(productName || tr('digitalHuman.productFallback', 'This amazing product')),
+      image: productImage || null,
+      priceDisplay: productPrice || null,
+      originalPrice: originalPrice || null,
+      rating: rating || null,
+      reviewCount: reviewCount || null,
+    }),
+    [productName, productImage, productPrice, originalPrice, rating, reviewCount, tr],
+  );
+
+  const totalVideoSeconds = scenes.reduce((s, sc) => s + sc.duration, 0);
 
   return (
     <div className="min-h-screen bg-background">
@@ -248,15 +313,15 @@ export default function DigitalHumanPage() {
               </h1>
               <p className="mt-3 max-w-2xl text-sm text-muted-foreground md:text-base">
                 {tr(
-                  'digitalHuman.subtitle',
-                  'Pick an AI host, paste a product link, and generate a talking-avatar promo video instantly.',
+                  'digitalHuman.subtitleReal',
+                  'Pick a realistic human host, paste a product link — get a talking promo video with real neural voice.',
                 )}
               </p>
             </div>
 
             {/* 主播形象 + 商品链接 */}
             <Card className="mb-6 p-4 md:p-6 shadow-sm">
-              {/* 形象选择 */}
+              {/* 形象选择（真人形象照） */}
               <div className="mb-4">
                 <div className="mb-3 flex items-center justify-between">
                   <div className="flex items-center gap-2 text-sm font-medium text-foreground">
@@ -295,22 +360,18 @@ export default function DigitalHumanPage() {
                         key={a.id}
                         type="button"
                         onClick={() => setAvatar(a)}
-                        className={`flex flex-col items-center gap-1.5 rounded-lg border p-3 text-xs font-medium transition-all ${
+                        className={`flex flex-col items-center gap-1.5 rounded-lg border p-2.5 text-xs font-medium transition-all ${
                           selected
                             ? 'border-primary bg-primary/5 text-primary ring-1 ring-primary'
                             : 'border-border bg-card text-muted-foreground hover:bg-accent'
                         }`}
                       >
-                        {/* 头像缩略图（canvas 绘制的形象特写） */}
                         <span
-                          className="block rounded-full p-0.5"
-                          style={{
-                            background: selected
-                              ? `linear-gradient(135deg, ${a.outfit}, ${a.outfitAccent})`
-                              : 'linear-gradient(135deg, #64748b33, #64748b11)',
-                          }}
+                          className={`block size-14 overflow-hidden rounded-full border-2 ${selected ? 'border-primary' : 'border-border'}`}
                         >
-                          <AvatarThumb avatar={a} size={56} />
+                          {/* 真人形象照（AI 生成，同源静态资源） */}
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={a.photo} alt={a.name} className="size-full object-cover" loading="lazy" />
                         </span>
                         <span className="truncate">{a.name}</span>
                         <span className="text-[10px] text-muted-foreground">
@@ -379,10 +440,63 @@ export default function DigitalHumanPage() {
                   })}
                 </div>
               </div>
+
+              {/* 声线提示 */}
+              <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                <Mic className="h-3.5 w-3.5 text-primary" />
+                {tr('digitalHuman.voiceNote', 'Host speaks your UI language with a real neural voice.')}
+                {voiceName && <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">{voiceName}</code>}
+              </div>
             </Card>
 
-            {/* 预览区 */}
-            {previewReady && hasAnyContent ? (
+            {/* 生成按钮 / 进度 */}
+            {hasAnyContent && (
+              <Card className="mb-6 p-4 md:p-6 shadow-sm">
+                <div className="flex flex-col items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => void generateScenes()}
+                    disabled={generating}
+                    className="inline-flex items-center gap-2 rounded-md bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow hover:bg-primary/90 disabled:opacity-50"
+                  >
+                    {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : staleVoice ? <RefreshCw className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                    {generating
+                      ? tr('digitalHuman.generatingVoice', 'Synthesizing real human voice')
+                      : staleVoice
+                        ? tr('digitalHuman.regenerate', 'Regenerate voice (host changed)')
+                        : tr('digitalHuman.generate', 'Generate Talking Video')}
+                  </button>
+
+                  {generating && (
+                    <div className="w-full max-w-sm space-y-1">
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                        <div
+                          className="h-full rounded-full bg-primary transition-all"
+                          style={{ width: `${genProgress.total ? (genProgress.done / genProgress.total) * 100 : 0}%` }}
+                        />
+                      </div>
+                      <p className="text-center text-[11px] text-muted-foreground">
+                        {tr('digitalHuman.voiceProgress', 'Voice clip')} {genProgress.done}/{genProgress.total}
+                      </p>
+                    </div>
+                  )}
+                  {staleVoice && !generating && (
+                    <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                      {tr('digitalHuman.staleHint', 'Host changed — regenerate to update the voice.')}
+                    </p>
+                  )}
+                  {genError && <p className="text-xs text-red-500">{genError}</p>}
+                  {scenes.length > 0 && !generating && (
+                    <p className="text-xs text-muted-foreground">
+                      {tr('digitalHuman.scenesReady', 'Scenes ready')}: {scenes.length} · {totalVideoSeconds.toFixed(1)}s
+                    </p>
+                  )}
+                </div>
+              </Card>
+            )}
+
+            {/* 预览 + 导出区 */}
+            {scenes.length > 0 && !generating ? (
               <Card className="p-4 md:p-6 shadow-sm">
                 <div className="mb-4 flex items-center justify-between">
                   <h2 className="flex items-center gap-2 text-lg font-semibold">
@@ -390,17 +504,42 @@ export default function DigitalHumanPage() {
                     {tr('digitalHuman.preview', 'Preview')}
                   </h2>
                   <p className="text-xs text-muted-foreground">
-                    {tr('digitalHuman.exportTip', 'Rendering uses browser Canvas capture — no upload required.')}
+                    {tr('digitalHuman.exportTipVoice', 'Exports MP4 with real human voice track.')}
                   </p>
                 </div>
                 <div className="min-h-[500px]">
-                  <TemplateRenderer
+                  <TalkingVideoRenderer
+                    key={scenesKey}
                     scenes={scenes}
-                    resetKey={extractKey}
-                    videoTitle={`${avatar.name} · ${productName || 'Digital Human Video'}`}
-                    onExportSuccess={handleExportSuccess}
+                    avatar={avatar}
+                    themeId={selectedTemplate}
+                    product={productInfo}
+                    tr={tr}
+                    onExported={(_blob, url) => {
+                      setExportedUrl(url);
+                      handleExported();
+                    }}
                   />
                 </div>
+                {exportedUrl && (
+                  <div className="mt-6 border-t border-border pt-4">
+                    <SocialShare
+                      videoUrl={exportedUrl}
+                      videoTitle={productName || tr('digitalHuman.title', 'Digital Human Sales Video')}
+                    />
+                  </div>
+                )}
+              </Card>
+            ) : hasAnyContent ? (
+              <Card className="border-dashed p-12 text-center">
+                <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+                  <Mic className="h-6 w-6 text-muted-foreground" />
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {generating
+                    ? tr('digitalHuman.generatingVoice', 'Synthesizing real human voice')
+                    : tr('digitalHuman.emptyHintVoice', 'Click "Generate Talking Video" to synthesize the host voice and preview.')}
+                </p>
               </Card>
             ) : (
               <Card className="border-dashed p-12 text-center">

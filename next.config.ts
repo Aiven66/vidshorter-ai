@@ -35,6 +35,7 @@ const nextConfig: NextConfig = {
     // webpack's CJS interop wraps .default incorrectly causing build-time crash.
     'uuid',
     'coze-coding-dev-sdk',
+    'msedge-tts',
     '@langchain/core',
     '@langchain/openai',
     'langsmith',

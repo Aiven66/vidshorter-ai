@@ -6,6 +6,7 @@ const translations = {
   home: '首页', blog: '博客', pricing: '定价', about: '关于我们', feedback: '用户反馈', login: '登录', register: '注册', dashboard: '控制台', admin: '管理后台', logout: '退出登录', credits: '积分', creditsBalance: '积分余额', upgradePro: '升级 Pro', inviteFriends: '邀请好友', download: '下载客户端', light: '浅色', dark: '深色',
   'clips': '高光剪辑', 'notes': '高光笔记', 'podcast': '播客',
   'marketing': '营销视频', 'news': '资讯视频', 'article': '文章转视频',
+  'digitalHuman': '数字人带货',
   },
   common: {
   error: '错误', ready: '就绪', failed: '失败', saving: '保存中...', score: '评分', user: '用户',
