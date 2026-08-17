@@ -48,26 +48,32 @@ const nextConfig: NextConfig = {
     '@smithy/util-utf8',
     '@smithy/util-stream',
   ],
-  // onnxruntime-node 的 binding 动态链接 libonnxruntime.so.1，
-  // NFT 默认不追踪该 so — 只给用到的三个图像推理路由显式带上（视频路由不需要，避免超 250MB）
+  // 原生库追踪：onnxruntime（libonnxruntime.so.1）与 sharp（libvips）都不会被 NFT 自动带上，
+  // 只给用到的三个图像推理路由显式包含（视频路由排除 onnxruntime 避免超 250MB）
   outputFileTracingIncludes: {
     '/api/ai-tools/image-dewatermark': [
       './node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime.so.1',
       './node_modules/onnxruntime-node/bin/napi-v6/linux/x64/onnxruntime_binding.node',
       './node_modules/onnxruntime-node/bin/napi-v6/linux/arm64/libonnxruntime.so.1',
       './node_modules/onnxruntime-node/bin/napi-v6/linux/arm64/onnxruntime_binding.node',
+      './node_modules/@img/sharp-linux-x64/**',
+      './node_modules/@img/sharp-linux-arm64/**',
     ],
     '/api/ai-tools/image-upscale': [
       './node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime.so.1',
       './node_modules/onnxruntime-node/bin/napi-v6/linux/x64/onnxruntime_binding.node',
       './node_modules/onnxruntime-node/bin/napi-v6/linux/arm64/libonnxruntime.so.1',
       './node_modules/onnxruntime-node/bin/napi-v6/linux/arm64/onnxruntime_binding.node',
+      './node_modules/@img/sharp-linux-x64/**',
+      './node_modules/@img/sharp-linux-arm64/**',
     ],
     '/api/ai-tools/image-colorization': [
       './node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime.so.1',
       './node_modules/onnxruntime-node/bin/napi-v6/linux/x64/onnxruntime_binding.node',
       './node_modules/onnxruntime-node/bin/napi-v6/linux/arm64/libonnxruntime.so.1',
       './node_modules/onnxruntime-node/bin/napi-v6/linux/arm64/onnxruntime_binding.node',
+      './node_modules/@img/sharp-linux-x64/**',
+      './node_modules/@img/sharp-linux-arm64/**',
     ],
   },
   // 视频去水印路由不需要 onnxruntime — 排除避免函数体积超限
