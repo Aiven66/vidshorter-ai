@@ -1,33 +1,39 @@
 'use client';
 
 /**
- * AI 黑白照片变彩色 — colorful_image_colorization
- * 模型小（~10MB），保留原图分辨率细节，仅色彩由 AI 生成
+ * AI 黑白照片变彩色 — 云端推理
+ * 服务端模型部署，用户零下载；色彩强度混合在客户端完成
  */
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Progress } from '@/components/ui/progress';
 import { Slider } from '@/components/ui/slider';
 import { useLocale } from '@/lib/locale-context';
-import { colorizeImage, COLORIZE_REPO } from '@/lib/ai-tools/colorize';
-import { getOrtSession, type ModelProgress } from '@/lib/ai-tools/model-loader';
+import { useAuth } from '@/lib/auth-context';
+import {
+  AiToolError,
+  callAiTool,
+  uploadAiInput,
+  type AiImageResult,
+} from '@/lib/ai-tools/client-api';
 import {
   canvasToBlob,
   createCanvas,
   downloadBlob,
-  formatBytes,
   loadImageElement,
 } from '@/lib/ai-tools/image-utils';
-import { Download, Loader2, ImagePlus, Sparkles } from 'lucide-react';
+import { Download, Loader2, ImagePlus, Sparkles, LogIn } from 'lucide-react';
+import Link from 'next/link';
 
 export function ImageColorization() {
   const { t } = useLocale();
+  const { user, accessToken, loading: authLoading } = useAuth();
+  const [file, setFile] = useState<File | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [serverResult, setServerResult] = useState<AiImageResult | null>(null);
   const [resultUrl, setResultUrl] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
-  const [modelProgress, setModelProgress] = useState<{ loaded: number; total: number } | null>(null);
   const [stage, setStage] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [colorStrength, setColorStrength] = useState(100);
@@ -35,69 +41,112 @@ export function ImageColorization() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
+  const objectUrlsRef = useRef<string[]>([]);
+
+  useEffect(() => {
+    return () => {
+      objectUrlsRef.current.forEach((u) => URL.revokeObjectURL(u));
+    };
+  }, []);
 
   const handleFile = async (file: File) => {
     setError(null);
+    setServerResult(null);
     setResultUrl(null);
     const url = URL.createObjectURL(file);
     try {
       const img = await loadImageElement(url);
       imageRef.current = img;
+      setFile(file);
       setImageUrl(url);
+      objectUrlsRef.current.push(url);
     } catch {
+      URL.revokeObjectURL(url);
       setError(t('aiTools.loadImageFailed'));
     }
   };
 
+  /** 色彩强度混合：黑白原图 + 上色结果按比例混合 */
+  const applyStrength = async (
+    strength: number,
+    result: AiImageResult,
+    source: HTMLImageElement
+  ) => {
+    const colorImg = await loadImageElement(result.resultUrl);
+    if (strength >= 100) {
+      setResultUrl(result.resultUrl);
+      return;
+    }
+    const mix = strength / 100;
+    const w = colorImg.naturalWidth;
+    const h = colorImg.naturalHeight;
+    const blended = createCanvas(w, h);
+    const bctx = blended.getContext('2d', { willReadFrequently: true })!;
+    bctx.drawImage(source, 0, 0, w, h);
+    const base = bctx.getImageData(0, 0, w, h);
+    const cctx = createCanvas(w, h).getContext('2d', { willReadFrequently: true })!;
+    cctx.drawImage(colorImg, 0, 0);
+    const colorData = cctx.getImageData(0, 0, w, h);
+    for (let i = 0; i < base.data.length; i += 4) {
+      base.data[i] = Math.round(base.data[i] * (1 - mix) + colorData.data[i] * mix);
+      base.data[i + 1] = Math.round(base.data[i + 1] * (1 - mix) + colorData.data[i + 1] * mix);
+      base.data[i + 2] = Math.round(base.data[i + 2] * (1 - mix) + colorData.data[i + 2] * mix);
+    }
+    bctx.putImageData(base, 0, 0);
+    const blob = await canvasToBlob(blended, 'image/png');
+    const url = URL.createObjectURL(blob);
+    objectUrlsRef.current.push(url);
+    setResultUrl(url);
+  };
+
   const handleProcess = async () => {
-    if (!imageRef.current) return;
+    if (!file || !imageRef.current) return;
+    if (!user || !accessToken) {
+      setError(t('aiTools.needsLogin'));
+      return;
+    }
     setProcessing(true);
     setError(null);
-    setStage(t('aiTools.loadingModel'));
 
     try {
-      // 预触发模型下载（带进度）
-      await getOrtSession('colorize', COLORIZE_REPO, (loaded, total) => {
-        setModelProgress({ loaded, total });
-        if (total > 0 && loaded < total) {
-          setStage(`${t('aiTools.downloadingModel')} (${Math.round((loaded / total) * 100)}%)`);
-        }
+      setStage(t('aiTools.uploading'));
+      const upload = await uploadAiInput(
+        accessToken,
+        user.id,
+        file,
+        file.name || 'image.png',
+        file.type || 'image/png'
+      );
+
+      setStage(t('aiTools.serverProcessing'));
+      const result = await callAiTool<AiImageResult>(accessToken, 'image-colorization', {
+        imageUrl: upload.signedUrl,
       });
-      setModelProgress(null);
+      setServerResult(result);
+
       setStage(t('aiTools.processing'));
-
-      const src = createCanvas(imageRef.current.naturalWidth, imageRef.current.naturalHeight);
-      src.getContext('2d')!.drawImage(imageRef.current, 0, 0);
-
-      const canvas = await colorizeImage(src);
-
-      // 色彩强度混合（原图黑白 + 上色结果）
-      let finalCanvas = canvas;
-      if (colorStrength < 100) {
-        const mix = colorStrength / 100;
-        const blended = createCanvas(canvas.width, canvas.height);
-        const bctx = blended.getContext('2d', { willReadFrequently: true })!;
-        bctx.drawImage(src, 0, 0, canvas.width, canvas.height);
-        const base = bctx.getImageData(0, 0, canvas.width, canvas.height);
-        const colorData = canvas.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, canvas.width, canvas.height);
-        for (let i = 0; i < base.data.length; i += 4) {
-          base.data[i] = Math.round(base.data[i] * (1 - mix) + colorData.data[i] * mix);
-          base.data[i + 1] = Math.round(base.data[i + 1] * (1 - mix) + colorData.data[i + 1] * mix);
-          base.data[i + 2] = Math.round(base.data[i + 2] * (1 - mix) + colorData.data[i + 2] * mix);
-        }
-        bctx.putImageData(base, 0, 0);
-        finalCanvas = blended;
-      }
-
-      const blob = await canvasToBlob(finalCanvas, 'image/png');
-      setResultUrl(URL.createObjectURL(blob));
+      await applyStrength(colorStrength, result, imageRef.current);
       setComparePos(50);
     } catch (e) {
-      setError(`${t('aiTools.processFailed')}: ${e instanceof Error ? e.message : String(e)}`);
+      if (e instanceof AiToolError && (e.code === 'UNAUTHORIZED' || e.code === 'UPLOAD_FAILED')) {
+        setError(e.code === 'UNAUTHORIZED' ? t('aiTools.needsLogin') : `${t('aiTools.processFailed')}: ${e.message}`);
+      } else {
+        setError(`${t('aiTools.processFailed')}: ${e instanceof Error ? e.message : String(e)}`);
+      }
     } finally {
       setProcessing(false);
-      setModelProgress(null);
       setStage('');
+    }
+  };
+
+  /** 调整强度：基于服务端结果重新混合（无需再次请求） */
+  const handleStrengthChange = async (strength: number) => {
+    setColorStrength(strength);
+    if (!serverResult || !imageRef.current) return;
+    try {
+      await applyStrength(strength, serverResult, imageRef.current);
+    } catch {
+      /* 混合失败保持当前结果 */
     }
   };
 
@@ -108,10 +157,14 @@ export function ImageColorization() {
   };
 
   const reset = () => {
+    setFile(null);
     setImageUrl(null);
+    setServerResult(null);
     setResultUrl(null);
     imageRef.current = null;
   };
+
+  const needsLogin = !authLoading && !user;
 
   return (
     <div className="space-y-6">
@@ -127,7 +180,15 @@ export function ImageColorization() {
               className="hidden"
               onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
             />
-            <Button onClick={() => fileInputRef.current?.click()}>{t('aiTools.selectImage')}</Button>
+            {needsLogin ? (
+              <Button asChild>
+                <Link href="/login">
+                  <LogIn className="h-4 w-4 mr-2" /> {t('aiTools.signInToUse')}
+                </Link>
+              </Button>
+            ) : (
+              <Button onClick={() => fileInputRef.current?.click()}>{t('aiTools.selectImage')}</Button>
+            )}
           </CardContent>
         </Card>
       )}
@@ -144,6 +205,7 @@ export function ImageColorization() {
                 step={5}
                 onValueChange={([v]) => setColorStrength(v)}
                 className="w-32"
+                disabled={processing}
               />
               <span className="w-10 tabular-nums">{colorStrength}%</span>
             </div>
@@ -151,7 +213,7 @@ export function ImageColorization() {
               {t('aiTools.changeImage')}
             </Button>
             <div className="flex-1" />
-            <Button onClick={handleProcess} disabled={processing}>
+            <Button onClick={handleProcess} disabled={processing || needsLogin}>
               {processing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Sparkles className="h-4 w-4 mr-2" />}
               {processing ? stage || t('aiTools.processing') : t('aiTools.colorizeImage')}
             </Button>
@@ -161,20 +223,10 @@ export function ImageColorization() {
             <img src={imageUrl} alt="input" className="block max-w-full max-h-[55vh] w-auto grayscale" draggable={false} />
           </div>
 
-          {(processing || modelProgress) && (
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground flex items-center gap-2">
-                <Loader2 className="h-4 w-4 animate-spin" /> {stage}
-              </p>
-              {modelProgress && modelProgress.total > 0 && (
-                <Progress value={(modelProgress.loaded / modelProgress.total) * 100} />
-              )}
-              {modelProgress && (
-                <p className="text-xs text-muted-foreground">
-                  {formatBytes(modelProgress.loaded)} / {formatBytes(modelProgress.total)} · {t('aiTools.modelCacheHint')}
-                </p>
-              )}
-            </div>
+          {processing && (
+            <p className="text-sm text-muted-foreground flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" /> {stage}
+            </p>
           )}
 
           {error && <p className="text-sm text-destructive">{error}</p>}
@@ -190,6 +242,18 @@ export function ImageColorization() {
             <Button variant="ghost" onClick={reset}>
               {t('aiTools.newImage')}
             </Button>
+            <div className="flex items-center gap-2 text-sm text-muted-foreground ml-auto">
+              <span className="whitespace-nowrap">{t('aiTools.colorStrength')}</span>
+              <Slider
+                value={[colorStrength]}
+                min={10}
+                max={100}
+                step={5}
+                onValueChange={([v]) => handleStrengthChange(v)}
+                className="w-32"
+              />
+              <span className="w-10 tabular-nums">{colorStrength}%</span>
+            </div>
           </div>
 
           <div className="relative inline-block max-w-full rounded-lg overflow-hidden border select-none">

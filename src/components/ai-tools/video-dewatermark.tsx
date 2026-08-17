@@ -1,19 +1,24 @@
 'use client';
 
 /**
- * AI 视频去水印 — ffmpeg.wasm delogo 滤镜（逐帧插值修复）
- * 交互: 上传视频 → 框选水印区域（支持多个）→ 处理 → 下载
- * delogo 失败时自动回退到区域高斯模糊（crop+boxblur+overlay 链）
+ * AI 视频去水印 — 云端 ffmpeg delogo
+ * 交互: 上传视频 → 框选水印区域（支持多个）→ 上传 + 服务端处理 → 下载
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Progress } from '@/components/ui/progress';
 import { useLocale } from '@/lib/locale-context';
-import { getFFmpeg } from '@/lib/ai-tools/model-loader';
+import { useAuth } from '@/lib/auth-context';
+import {
+  AiToolError,
+  callAiTool,
+  uploadAiInput,
+  type AiVideoResult,
+} from '@/lib/ai-tools/client-api';
 import { formatBytes } from '@/lib/ai-tools/image-utils';
-import { Download, Loader2, Trash2, Video, Square, Sparkles } from 'lucide-react';
+import { Download, Loader2, Trash2, Video, Square, Sparkles, LogIn } from 'lucide-react';
+import Link from 'next/link';
 
 interface Rect {
   x: number; // 归一化 0..1
@@ -22,16 +27,16 @@ interface Rect {
   h: number;
 }
 
-const MAX_VIDEO_BYTES = 300 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 48 * 1024 * 1024; // Supabase 桶单文件上限 50MB
 
 export function VideoDewatermark() {
   const { t } = useLocale();
+  const { user, accessToken, loading: authLoading } = useAuth();
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [videoSize, setVideoSize] = useState<{ w: number; h: number } | null>(null);
   const [rects, setRects] = useState<Rect[]>([]);
   const [dragRect, setDragRect] = useState<Rect | null>(null);
   const [processing, setProcessing] = useState(false);
-  const [progress, setProgress] = useState(0);
   const [stage, setStage] = useState('');
   const [resultUrl, setResultUrl] = useState<string | null>(null);
   const [resultSize, setResultSize] = useState(0);
@@ -39,7 +44,6 @@ export function VideoDewatermark() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
-  const videoWrapRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<File | null>(null);
   const dragStartRef = useRef<{ x: number; y: number } | null>(null);
 
@@ -137,6 +141,7 @@ export function VideoDewatermark() {
     }
     setError(null);
     setResultUrl(null);
+    setResultSize(0);
     setRects([]);
     if (videoUrl) URL.revokeObjectURL(videoUrl);
     fileRef.current = file;
@@ -152,128 +157,57 @@ export function VideoDewatermark() {
     }
   };
 
-  /** 归一化区域 → ffmpeg 像素坐标（delogo 要求 1px 边距） */
-  const toDelogoCoords = (rect: Rect) => {
-    const vw = videoSize!.w;
-    const vh = videoSize!.h;
-    let x = Math.round(rect.x * vw);
-    let y = Math.round(rect.y * vh);
-    let w = Math.round(rect.w * vw);
-    let h = Math.round(rect.h * vh);
-    x = Math.max(1, Math.min(vw - 3, x));
-    y = Math.max(1, Math.min(vh - 3, y));
-    w = Math.max(1, Math.min(vw - x - 1, w));
-    h = Math.max(1, Math.min(vh - y - 1, h));
-    return { x, y, w, h };
-  };
-
-  const runFFmpeg = async (filters: string[], label: string) => {
-    const ffmpeg = await getFFmpeg();
-    const { fetchFile } = await import('@ffmpeg/util');
-
-    const progressHandler = ({ progress }: { progress: number }) => {
-      setProgress(Math.min(99, Math.round(progress * 100)));
-    };
-    ffmpeg.on('progress', progressHandler as never);
-
-    try {
-      await ffmpeg.writeFile('input.mp4', await fetchFile(fileRef.current!));
-      const code = await ffmpeg.exec([
-        '-i', 'input.mp4',
-        '-vf', filters.join(','),
-        '-c:v', 'libx264',
-        '-preset', 'ultrafast',
-        '-crf', '20',
-        '-pix_fmt', 'yuv420p',
-        '-c:a', 'copy',
-        '-y', 'output.mp4',
-      ]);
-      const data = await ffmpeg.readFile('output.mp4');
-      if (code !== 0 || typeof data === 'string' || data.byteLength < 1024) {
-        throw new Error(`ffmpeg ${label} failed (code ${code})`);
-      }
-      return new Blob([new Uint8Array(data as ArrayBuffer)], { type: 'video/mp4' });
-    } finally {
-      ffmpeg.off?.('progress', progressHandler as never);
-      try { await ffmpeg.deleteFile?.('input.mp4'); } catch { /* ignore */ }
-      try { await ffmpeg.deleteFile?.('output.mp4'); } catch { /* ignore */ }
-    }
-  };
-
   const handleProcess = async () => {
-    if (!videoSize || rects.length === 0) {
+    if (!fileRef.current || !videoSize || rects.length === 0) {
       setError(t('aiTools.rectRequired'));
+      return;
+    }
+    if (!user || !accessToken) {
+      setError(t('aiTools.needsLogin'));
       return;
     }
     setProcessing(true);
     setError(null);
-    setProgress(0);
-    setStage(t('aiTools.loadingEngine'));
+    setStage(t('aiTools.uploading'));
 
     try {
-      const delogoFilters = rects.map((rect) => {
-        const { x, y, w, h } = toDelogoCoords(rect);
-        return `delogo=x=${x}:y=${y}:w=${w}:h=${h}`;
+      // 上传视频（直传 Storage，避免大文件经 API 中转）
+      const upload = await uploadAiInput(
+        accessToken,
+        user.id,
+        fileRef.current,
+        fileRef.current.name || 'video.mp4',
+        fileRef.current.type || 'video/mp4'
+      );
+
+      // 服务端 ffmpeg delogo 处理
+      setStage(t('aiTools.processingVideo'));
+      const result = await callAiTool<AiVideoResult>(accessToken, 'video-dewatermark', {
+        videoUrl: upload.signedUrl,
+        rects: rects.map(({ x, y, w, h }) => ({ x, y, w, h })),
       });
 
-      let blob: Blob;
-      try {
-        setStage(t('aiTools.processingVideo'));
-        blob = await runFFmpeg(delogoFilters, 'delogo');
-      } catch {
-        // 回退：区域高斯模糊（delogo 在部分构建中不可用时）
-        setStage(t('aiTools.fallbackBlur'));
-        const blurFilters = rects.map((rect) => {
-          const { x, y, w, h } = toDelogoCoords(rect);
-          const strength = Math.max(8, Math.round(Math.min(w, h) / 4));
-          return [
-            `split=2[base${x}_${y}][crop_src${x}_${y}]`,
-            `[crop_src${x}_${y}]crop=${w}:${h}:${x}:${y},boxblur=luma_radius=${strength}:luma_power=2[blurred${x}_${y}]`,
-            `[base${x}_${y}][blurred${x}_${y}]overlay=${x}:${y}`,
-          ].join(';');
-        });
-        // filter_complex 形式（分号链），需用 -filter_complex
-        const ffmpeg = await getFFmpeg();
-        const { fetchFile } = await import('@ffmpeg/util');
-        const progressHandler = ({ progress }: { progress: number }) => {
-          setProgress(Math.min(99, Math.round(progress * 100)));
-        };
-        ffmpeg.on('progress', progressHandler as never);
-        try {
-          await ffmpeg.writeFile('input.mp4', await fetchFile(fileRef.current!));
-          const fc = blurFilters.join(';');
-          const code = await ffmpeg.exec([
-            '-i', 'input.mp4',
-            '-filter_complex', fc,
-            '-c:v', 'libx264',
-            '-preset', 'ultrafast',
-            '-crf', '20',
-            '-pix_fmt', 'yuv420p',
-            '-c:a', 'copy',
-            '-y', 'output.mp4',
-          ]);
-          const data = await ffmpeg.readFile('output.mp4');
-          if (code !== 0 || typeof data === 'string' || data.byteLength < 1024) {
-            throw new Error('ffmpeg fallback failed');
-          }
-          blob = new Blob([new Uint8Array(data as ArrayBuffer)], { type: 'video/mp4' });
-        } finally {
-          ffmpeg.off?.('progress', progressHandler as never);
-          try { await ffmpeg.deleteFile?.('input.mp4'); } catch { /* ignore */ }
-          try { await ffmpeg.deleteFile?.('output.mp4'); } catch { /* ignore */ }
-        }
-      }
-
-      setProgress(100);
-      if (resultUrl) URL.revokeObjectURL(resultUrl);
-      setResultUrl(URL.createObjectURL(blob));
-      setResultSize(blob.size);
+      setResultUrl(result.resultUrl);
+      setResultSize(result.sizeBytes);
     } catch (e) {
-      setError(`${t('aiTools.processFailed')}: ${e instanceof Error ? e.message : String(e)}`);
+      if (e instanceof AiToolError) {
+        if (e.code === 'UNAUTHORIZED') {
+          setError(t('aiTools.needsLogin'));
+        } else if (e.code === 'VIDEO_TOO_LARGE') {
+          setError(t('aiTools.videoTooLarge'));
+        } else if (e.code === 'VIDEO_TOO_LONG') {
+          setError(t('aiTools.videoTooLong'));
+        } else if (e.code === 'RECT_REQUIRED') {
+          setError(t('aiTools.rectRequired'));
+        } else {
+          setError(`${t('aiTools.processFailed')}: ${e.message}`);
+        }
+      } else {
+        setError(`${t('aiTools.processFailed')}: ${e instanceof Error ? e.message : String(e)}`);
+      }
     } finally {
       setProcessing(false);
       setStage('');
-      setProgress(0);
     }
   };
 
@@ -287,13 +221,15 @@ export function VideoDewatermark() {
 
   const reset = () => {
     if (videoUrl) URL.revokeObjectURL(videoUrl);
-    if (resultUrl) URL.revokeObjectURL(resultUrl);
     setVideoUrl(null);
     setResultUrl(null);
+    setResultSize(0);
     setVideoSize(null);
     setRects([]);
     fileRef.current = null;
   };
+
+  const needsLogin = !authLoading && !user;
 
   return (
     <div className="space-y-6">
@@ -309,7 +245,15 @@ export function VideoDewatermark() {
               className="hidden"
               onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
             />
-            <Button onClick={() => fileInputRef.current?.click()}>{t('aiTools.selectVideo')}</Button>
+            {needsLogin ? (
+              <Button asChild>
+                <Link href="/login">
+                  <LogIn className="h-4 w-4 mr-2" /> {t('aiTools.signInToUse')}
+                </Link>
+              </Button>
+            ) : (
+              <Button onClick={() => fileInputRef.current?.click()}>{t('aiTools.selectVideo')}</Button>
+            )}
           </CardContent>
         </Card>
       )}
@@ -325,15 +269,15 @@ export function VideoDewatermark() {
             </Button>
             <div className="flex-1" />
             <span className="text-xs text-muted-foreground">{t('aiTools.regionsSelected')}: {rects.length}</span>
-            <Button onClick={handleProcess} disabled={processing}>
+            <Button onClick={handleProcess} disabled={processing || needsLogin}>
               {processing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Sparkles className="h-4 w-4 mr-2" />}
-              {processing ? t('aiTools.processing') : t('aiTools.removeWatermark')}
+              {processing ? stage || t('aiTools.processing') : t('aiTools.removeWatermark')}
             </Button>
           </div>
 
           <p className="text-xs text-muted-foreground">{t('aiTools.videoDewatermarkHint')}</p>
 
-          <div ref={videoWrapRef} className="relative inline-block max-w-full rounded-lg overflow-hidden border select-none touch-none">
+          <div className="relative inline-block max-w-full rounded-lg overflow-hidden border select-none touch-none">
             <video
               src={videoUrl}
               className="block max-w-full max-h-[55vh] w-auto"
@@ -359,9 +303,8 @@ export function VideoDewatermark() {
           {processing && (
             <div className="space-y-2">
               <p className="text-sm text-muted-foreground flex items-center gap-2">
-                <Loader2 className="h-4 w-4 animate-spin" /> {stage} · {progress}%
+                <Loader2 className="h-4 w-4 animate-spin" /> {stage}
               </p>
-              <Progress value={progress} />
               <p className="text-xs text-muted-foreground">{t('aiTools.videoProcessTimeHint')}</p>
             </div>
           )}

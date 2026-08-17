@@ -1,29 +1,29 @@
 'use client';
 
 /**
- * AI 图片变高清 — Swin2SR 超分辨率（transformers.js）
- * 支持 2x / 4x（4x = 两次 2x 级联）
+ * AI 图片变高清 — 云端推理
+ * 服务端 Swin2SR 超分（支持 2x / 4x），用户零下载
  */
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Progress } from '@/components/ui/progress';
 import { useLocale } from '@/lib/locale-context';
-import { getUpscaler } from '@/lib/ai-tools/model-loader';
+import { useAuth } from '@/lib/auth-context';
 import {
-  canvasToBlob,
-  createCanvas,
-  downloadBlob,
-  fitSize,
-  loadImageElement,
-} from '@/lib/ai-tools/image-utils';
-import { Download, Loader2, ImagePlus, Sparkles } from 'lucide-react';
-
-const MAX_INPUT_SIDE = 960; // Swin2SR wasm 推理约束（过慢/OOM）
+  AiToolError,
+  callAiTool,
+  uploadAiInput,
+  type AiImageResult,
+} from '@/lib/ai-tools/client-api';
+import { downloadBlob, loadImageElement } from '@/lib/ai-tools/image-utils';
+import { Download, Loader2, ImagePlus, Sparkles, LogIn } from 'lucide-react';
+import Link from 'next/link';
 
 export function ImageUpscale() {
   const { t } = useLocale();
+  const { user, accessToken, loading: authLoading } = useAuth();
+  const [file, setFile] = useState<File | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
   const [resultUrl, setResultUrl] = useState<string | null>(null);
@@ -32,73 +32,68 @@ export function ImageUpscale() {
   const [processing, setProcessing] = useState(false);
   const [stage, setStage] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [usedFullRes, setUsedFullRes] = useState(true);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const objectUrlsRef = useRef<string[]>([]);
 
+  useEffect(() => {
+    return () => {
+      objectUrlsRef.current.forEach((u) => URL.revokeObjectURL(u));
+    };
+  }, []);
+
   const handleFile = async (file: File) => {
     setError(null);
     setResultUrl(null);
+    setResultDims(null);
     const url = URL.createObjectURL(file);
     try {
       const img = await loadImageElement(url);
       imageRef.current = img;
+      setFile(file);
       setDims({ w: img.naturalWidth, h: img.naturalHeight });
       setImageUrl(url);
       objectUrlsRef.current.push(url);
     } catch {
+      URL.revokeObjectURL(url);
       setError(t('aiTools.loadImageFailed'));
     }
   };
 
   const handleProcess = async () => {
-    if (!imageRef.current) return;
+    if (!file || !imageRef.current) return;
+    if (!user || !accessToken) {
+      setError(t('aiTools.needsLogin'));
+      return;
+    }
     setProcessing(true);
     setError(null);
-    setStage(t('aiTools.loadingModel'));
 
     try {
-      const upscaler = await getUpscaler((status) => {
-        if (status === 'downloading') setStage(t('aiTools.downloadingModel'));
+      setStage(t('aiTools.uploading'));
+      const upload = await uploadAiInput(
+        accessToken,
+        user.id,
+        file,
+        file.name || 'image.png',
+        file.type || 'image/png'
+      );
+
+      setStage(t('aiTools.serverProcessing'));
+      const result = await callAiTool<AiImageResult>(accessToken, 'image-upscale', {
+        imageUrl: upload.signedUrl,
+        scale: scaleFactor,
       });
 
-      // 输入约束
-      const fitted = fitSize(dims!.w, dims!.h, MAX_INPUT_SIDE);
-      setUsedFullRes(fitted.w === dims!.w && fitted.h === dims!.h);
-      let canvas = createCanvas(fitted.w, fitted.h);
-      const ctx = canvas.getContext('2d')!;
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(imageRef.current, 0, 0, fitted.w, fitted.h);
-      let inputUrl = canvas.toDataURL('image/png');
-
-      // 级联放大 2x → 4x
-      const passes = scaleFactor === 4 ? 2 : 1;
-      let currentDims = { w: fitted.w, h: fitted.h };
-      for (let i = 0; i < passes; i++) {
-        setStage(`${t('aiTools.processing')} (${i + 1}/${passes})`);
-        const output = await upscaler(inputUrl);
-        canvas = createCanvas(output.width, output.height);
-        const outCtx = canvas.getContext('2d')!;
-        const imageData = new ImageData(
-          new Uint8ClampedArray(output.data as Uint8ClampedArray),
-          output.width,
-          output.height
-        );
-        outCtx.putImageData(imageData, 0, 0);
-        currentDims = { w: output.width, h: output.height };
-        inputUrl = canvas.toDataURL('image/png');
-      }
-
-      const blob = await canvasToBlob(canvas, 'image/png');
-      const result = URL.createObjectURL(blob);
-      objectUrlsRef.current.push(result);
-      setResultUrl(result);
-      setResultDims(currentDims);
+      setResultUrl(result.resultUrl);
+      setResultDims({ w: result.width, h: result.height });
     } catch (e) {
-      setError(`${t('aiTools.processFailed')}: ${e instanceof Error ? e.message : String(e)}`);
+      if (e instanceof AiToolError && (e.code === 'UNAUTHORIZED' || e.code === 'UPLOAD_FAILED')) {
+        setError(e.code === 'UNAUTHORIZED' ? t('aiTools.needsLogin') : `${t('aiTools.processFailed')}: ${e.message}`);
+      } else {
+        setError(`${t('aiTools.processFailed')}: ${e instanceof Error ? e.message : String(e)}`);
+      }
     } finally {
       setProcessing(false);
       setStage('');
@@ -112,14 +107,15 @@ export function ImageUpscale() {
   };
 
   const reset = () => {
+    setFile(null);
     setImageUrl(null);
     setResultUrl(null);
     setDims(null);
     setResultDims(null);
     imageRef.current = null;
-    objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
-    objectUrlsRef.current = [];
   };
+
+  const needsLogin = !authLoading && !user;
 
   return (
     <div className="space-y-6">
@@ -135,7 +131,15 @@ export function ImageUpscale() {
               className="hidden"
               onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
             />
-            <Button onClick={() => fileInputRef.current?.click()}>{t('aiTools.selectImage')}</Button>
+            {needsLogin ? (
+              <Button asChild>
+                <Link href="/login">
+                  <LogIn className="h-4 w-4 mr-2" /> {t('aiTools.signInToUse')}
+                </Link>
+              </Button>
+            ) : (
+              <Button onClick={() => fileInputRef.current?.click()}>{t('aiTools.selectImage')}</Button>
+            )}
           </CardContent>
         </Card>
       )}
@@ -162,26 +166,25 @@ export function ImageUpscale() {
               {t('aiTools.changeImage')}
             </Button>
             <div className="flex-1" />
-            <Button onClick={handleProcess} disabled={processing}>
+            <Button onClick={handleProcess} disabled={processing || needsLogin}>
               {processing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Sparkles className="h-4 w-4 mr-2" />}
               {processing ? stage || t('aiTools.processing') : t('aiTools.upscaleImage')}
             </Button>
           </div>
 
           <p className="text-xs text-muted-foreground">
-            {dims.w} × {dims.h}
-            {scaleFactor === 4 ? ' → ' : ' → '}
-            {Math.round((usedFullRes ? dims.w : Math.min(dims.w, MAX_INPUT_SIDE)) * scaleFactor)} ×{' '}
-            {Math.round((usedFullRes ? dims.h : Math.min(dims.h, MAX_INPUT_SIDE)) * scaleFactor)}
-            {' · '}
-            {t('aiTools.upscaleTimeHint')}
+            {dims.w} × {dims.h} → {Math.round(dims.w * scaleFactor)} × {Math.round(dims.h * scaleFactor)}
           </p>
 
           <div className="inline-block max-w-full rounded-lg overflow-hidden border">
             <img src={imageUrl} alt="input" className="block max-w-full max-h-[55vh] w-auto" draggable={false} />
           </div>
 
-          {processing && <Progress value={undefined} />}
+          {processing && (
+            <p className="text-sm text-muted-foreground flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" /> {stage}
+            </p>
+          )}
 
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>

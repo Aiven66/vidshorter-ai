@@ -1,9 +1,9 @@
 'use client';
 
 /**
- * AI 工具箱 — 四大浏览器端 AI 工具
+ * AI 工具箱 — 四大云端 AI 工具
  * 图片去水印(LaMa) / 视频去水印(ffmpeg delogo) / 图片超分(Swin2SR) / 黑白上色(Colorization)
- * 全部本地推理，图片视频不上传服务器
+ * 模型部署在服务端，用户零下载，开箱即用
  */
 
 import { Suspense, lazy, useState } from 'react';

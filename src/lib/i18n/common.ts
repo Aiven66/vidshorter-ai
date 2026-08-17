@@ -713,13 +713,13 @@ export const commonTranslations = {
   },
   aiTools: {
     title: 'AI Toolbox',
-    subtitle: 'Remove watermarks, upscale images, and colorize photos — all powered by AI models running fully in your browser.',
-    privacyBadge: '100% private — files never leave your device',
+    subtitle: 'Remove watermarks, upscale images, and colorize photos — powered by cloud AI models. No downloads, ready out of the box.',
+    privacyBadge: 'Cloud AI — zero setup, no model downloads',
     tabImageDewatermark: 'Image Watermark Removal',
     tabVideoDewatermark: 'Video Watermark Removal',
     tabUpscale: 'Image Upscaler',
     tabColorize: 'Photo Colorization',
-    footerNote: 'AI models (LaMa, Swin2SR, colorization) run locally via WebAssembly. First use downloads models once; they are cached for instant reuse.',
+    footerNote: 'AI models (LaMa, Swin2SR, colorization) run on our server. Sign in, upload a file, and get results in seconds.',
     // 通用
     selectImage: 'Choose Image',
     selectVideo: 'Choose Video',
@@ -727,6 +727,11 @@ export const commonTranslations = {
     uploadVideoHint: 'Upload a video to get started (MP4 / MOV / WebM, ≤300MB)',
     loadImageFailed: 'Failed to load the image. Please try another file.',
     videoTooLarge: 'Video is too large. Please use a file under 300MB.',
+    videoTooLong: 'Video is too long. Please use a file under 15 minutes.',
+    needsLogin: 'Please sign in to use this feature.',
+    signInToUse: 'Sign in to use',
+    uploading: 'Uploading file…',
+    serverProcessing: 'AI processing on server…',
     processing: 'Processing…',
     processFailed: 'Processing failed',
     loadingModel: 'Loading AI model…',
@@ -750,7 +755,7 @@ export const commonTranslations = {
     maskRequired: 'Please paint over the watermark area first.',
     removeWatermark: 'Remove Watermark',
     // 视频去水印
-    videoDewatermarkHint: 'Drag to draw a box over each watermark (click the × corner to delete a box). Processing runs frame-by-frame on your device.',
+    videoDewatermarkHint: 'Drag to draw a box over each watermark (click the × corner to delete a box). Processing runs in the cloud — you can keep browsing.',
     clearRegions: 'Clear all',
     regionsSelected: 'regions selected',
     rectRequired: 'Please draw a box over the watermark first.',
@@ -759,7 +764,7 @@ export const commonTranslations = {
     fallbackBlur: 'Retrying with blur removal…',
     videoProcessTimeHint: 'This can take a while for long videos — keep this tab open.',
     // 超分
-    upscaleHint: 'Upload a photo to upscale 2x or 4x with AI (best for images up to ~960px)',
+    upscaleHint: 'Upload a photo to upscale 2x or 4x with AI — cloud powered, no size limit worries',
     upscaleImage: 'Upscale Image',
     upscaleTimeHint: 'larger images take longer',
     // 上色

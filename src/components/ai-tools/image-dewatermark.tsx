@@ -1,25 +1,25 @@
 'use client';
 
 /**
- * AI 图片去水印 — LaMa inpainting
- * 交互: 上传图片 → 画笔涂抹水印区域 → AI 修复 → 滑块对比 + 下载
+ * AI 图片去水印 — 云端 LaMa 推理
+ * 交互: 上传图片 → 画笔涂抹水印区域 → 上传原图+掩码 → 服务端修复 → 滑块对比 + 下载
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Progress } from '@/components/ui/progress';
 import { Slider } from '@/components/ui/slider';
 import { useLocale } from '@/lib/locale-context';
-import { lamaInpaint } from '@/lib/ai-tools/lama';
+import { useAuth } from '@/lib/auth-context';
 import {
-  canvasToBlob,
-  createCanvas,
-  downloadBlob,
-  formatBytes,
-  loadImageElement,
-} from '@/lib/ai-tools/image-utils';
-import { Eraser, Download, Loader2, Paintbrush, Undo2, Trash2, ImagePlus, Sparkles } from 'lucide-react';
+  AiToolError,
+  callAiTool,
+  uploadAiInput,
+  type AiImageResult,
+} from '@/lib/ai-tools/client-api';
+import { canvasToBlob, createCanvas, downloadBlob, loadImageElement } from '@/lib/ai-tools/image-utils';
+import { Eraser, Download, Loader2, Paintbrush, Undo2, Trash2, ImagePlus, Sparkles, LogIn } from 'lucide-react';
+import Link from 'next/link';
 
 interface Stroke {
   points: { x: number; y: number }[];
@@ -28,6 +28,8 @@ interface Stroke {
 
 export function ImageDewatermark() {
   const { t } = useLocale();
+  const { user, accessToken, loading: authLoading } = useAuth();
+  const [file, setFile] = useState<File | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [imageSize, setImageSize] = useState<{ w: number; h: number } | null>(null);
   const [resultUrl, setResultUrl] = useState<string | null>(null);
@@ -35,13 +37,11 @@ export function ImageDewatermark() {
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [painting, setPainting] = useState(false);
   const [processing, setProcessing] = useState(false);
-  const [modelProgress, setModelProgress] = useState<{ loaded: number; total: number } | null>(null);
   const [stage, setStage] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const [comparePos, setComparePos] = useState(50);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const displayRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const maskRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
@@ -150,6 +150,7 @@ export function ImageDewatermark() {
     try {
       const img = await loadImageElement(url);
       imageRef.current = img;
+      setFile(file);
       setImageSize({ w: img.naturalWidth, h: img.naturalHeight });
       setImageUrl(url);
     } catch {
@@ -159,37 +160,61 @@ export function ImageDewatermark() {
   };
 
   const handleProcess = async () => {
-    if (!imageRef.current || !maskRef.current) return;
+    if (!file || !imageRef.current || !maskRef.current) return;
     if (strokesRef.current.length === 0) {
       setError(t('aiTools.maskRequired'));
       return;
     }
+    if (!user || !accessToken) {
+      setError(t('aiTools.needsLogin'));
+      return;
+    }
     setProcessing(true);
     setError(null);
-    setStage(t('aiTools.loadingModel'));
     try {
-      // 原图画布
-      const src = createCanvas(imageRef.current.naturalWidth, imageRef.current.naturalHeight);
-      src.getContext('2d')!.drawImage(imageRef.current, 0, 0);
+      // 上传原图
+      setStage(t('aiTools.uploading'));
+      const imageUpload = await uploadAiInput(
+        accessToken,
+        user.id,
+        file,
+        file.name || 'image.png',
+        file.type || 'image/png'
+      );
 
-      const { canvas } = await lamaInpaint(src, maskRef.current, (loaded, total) => {
-        setModelProgress({ loaded, total });
-        if (total > 0 && loaded < total) {
-          setStage(`${t('aiTools.downloadingModel')} (${Math.round((loaded / total) * 100)}%)`);
-        }
+      // 上传掩码（白色涂抹区域）
+      const maskBlob = await canvasToBlob(maskRef.current, 'image/png');
+      const maskUpload = await uploadAiInput(
+        accessToken,
+        user.id,
+        maskBlob,
+        'mask.png',
+        'image/png'
+      );
+
+      // 服务端 LaMa 推理
+      setStage(t('aiTools.serverProcessing'));
+      const result = await callAiTool<AiImageResult>(accessToken, 'image-dewatermark', {
+        imageUrl: imageUpload.signedUrl,
+        maskUrl: maskUpload.signedUrl,
       });
-      setModelProgress(null);
-      setStage(t('aiTools.processing'));
-      const blob = await canvasToBlob(canvas, 'image/png');
-      const result = URL.createObjectURL(blob);
-      setResultUrl(result);
+
+      setResultUrl(result.resultUrl);
       setComparePos(50);
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      setError(message === 'EMPTY_MASK' ? t('aiTools.maskRequired') : `${t('aiTools.processFailed')}: ${message}`);
+      if (e instanceof AiToolError) {
+        if (e.code === 'UNAUTHORIZED') {
+          setError(t('aiTools.needsLogin'));
+        } else if (e.code === 'EMPTY_MASK') {
+          setError(t('aiTools.maskRequired'));
+        } else {
+          setError(`${t('aiTools.processFailed')}: ${e.message}`);
+        }
+      } else {
+        setError(`${t('aiTools.processFailed')}: ${e instanceof Error ? e.message : String(e)}`);
+      }
     } finally {
       setProcessing(false);
-      setModelProgress(null);
       setStage('');
     }
   };
@@ -203,14 +228,16 @@ export function ImageDewatermark() {
 
   const reset = () => {
     if (imageUrl) URL.revokeObjectURL(imageUrl);
-    if (resultUrl) URL.revokeObjectURL(resultUrl);
     setImageUrl(null);
     setResultUrl(null);
     setImageSize(null);
+    setFile(null);
     strokesRef.current = [];
     setStrokes([]);
     setError(null);
   };
+
+  const needsLogin = !authLoading && !user;
 
   return (
     <div className="space-y-6">
@@ -227,7 +254,15 @@ export function ImageDewatermark() {
               className="hidden"
               onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
             />
-            <Button onClick={() => fileInputRef.current?.click()}>{t('aiTools.selectImage')}</Button>
+            {needsLogin ? (
+              <Button asChild>
+                <Link href="/login">
+                  <LogIn className="h-4 w-4 mr-2" /> {t('aiTools.signInToUse')}
+                </Link>
+              </Button>
+            ) : (
+              <Button onClick={() => fileInputRef.current?.click()}>{t('aiTools.selectImage')}</Button>
+            )}
           </CardContent>
         </Card>
       )}
@@ -259,18 +294,15 @@ export function ImageDewatermark() {
               {t('aiTools.changeImage')}
             </Button>
             <div className="flex-1" />
-            <Button onClick={handleProcess} disabled={processing}>
+            <Button onClick={handleProcess} disabled={processing || needsLogin}>
               {processing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Sparkles className="h-4 w-4 mr-2" />}
-              {processing ? t('aiTools.processing') : t('aiTools.removeWatermark')}
+              {processing ? stage || t('aiTools.processing') : t('aiTools.removeWatermark')}
             </Button>
           </div>
 
           <p className="text-xs text-muted-foreground">{t('aiTools.dewatermarkHint')}</p>
 
-          <div
-            ref={displayRef}
-            className="relative inline-block max-w-full rounded-lg overflow-hidden border select-none touch-none"
-          >
+          <div className="relative inline-block max-w-full rounded-lg overflow-hidden border select-none touch-none">
             <img src={imageUrl} alt="input" className="block max-w-full max-h-[60vh] w-auto" draggable={false} />
             <canvas
               ref={overlayRef}
@@ -282,24 +314,14 @@ export function ImageDewatermark() {
               onPointerUp={handlePointerUp}
               onPointerLeave={handlePointerUp}
             />
-            {/* 隐藏的白色掩码层（推理用） */}
+            {/* 隐藏的白色掩码层（上传服务端推理用） */}
             <canvas ref={maskRef} width={imageSize.w} height={imageSize.h} className="hidden" />
           </div>
 
-          {(processing || modelProgress) && (
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground flex items-center gap-2">
-                <Loader2 className="h-4 w-4 animate-spin" /> {stage}
-              </p>
-              {modelProgress && modelProgress.total > 0 && (
-                <Progress value={(modelProgress.loaded / modelProgress.total) * 100} />
-              )}
-              {modelProgress && (
-                <p className="text-xs text-muted-foreground">
-                  {formatBytes(modelProgress.loaded)} / {formatBytes(modelProgress.total)} · {t('aiTools.modelCacheHint')}
-                </p>
-              )}
-            </div>
+          {processing && (
+            <p className="text-sm text-muted-foreground flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" /> {stage}
+            </p>
           )}
 
           {error && <p className="text-sm text-destructive">{error}</p>}
