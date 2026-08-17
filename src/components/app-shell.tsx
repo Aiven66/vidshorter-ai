@@ -24,6 +24,7 @@ import {
   TrendingUp,
   BookOpen,
   Bot,
+  Wrench,
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { DESKTOP_WEB_APP_URL } from '@/lib/desktop-auth';
@@ -60,7 +61,7 @@ const LanguageSwitcher = dynamic(
 type NavItem = {
   href: string;
   // 通过 useLocale().t('nav.xxx') 读取翻译
-  labelKey: 'clips' | 'notes' | 'blog' | 'pricing' | 'about' | 'download' | 'marketing' | 'news' | 'article' | 'digitalHuman';
+  labelKey: 'clips' | 'notes' | 'blog' | 'pricing' | 'about' | 'download' | 'marketing' | 'news' | 'article' | 'digitalHuman' | 'aiTools';
   icon: typeof Scissors;
   badge?: 'NEW';
 };
@@ -72,6 +73,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/digital-human', labelKey: 'digitalHuman', icon: Bot, badge: 'NEW' },
   { href: '/news-video', labelKey: 'news', icon: TrendingUp, badge: 'NEW' },
   { href: '/article-to-video', labelKey: 'article', icon: BookOpen, badge: 'NEW' },
+  { href: '/ai-tools', labelKey: 'aiTools', icon: Wrench, badge: 'NEW' },
   { href: '/blog', labelKey: 'blog', icon: Newspaper },
   { href: '/pricing', labelKey: 'pricing', icon: Tag },
   { href: '/download', labelKey: 'download', icon: Download },
@@ -204,6 +206,7 @@ function SidebarLabel({ labelKey }: { labelKey: NavItem['labelKey'] }) {
     digitalHuman: '数字人带货',
     news: '资讯视频',
     article: '文章转视频',
+    aiTools: 'AI 工具箱',
     blog: '博客',
     pricing: '定价',
     download: '下载客户端',

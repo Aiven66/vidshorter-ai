@@ -98,6 +98,7 @@ export function Navbar() {
         { href: `${process.env.NEXT_PUBLIC_APP_URL || DESKTOP_WEB_APP_URL}/download`, label: t('nav.download'), external: true },
         { href: `${process.env.NEXT_PUBLIC_APP_URL || DESKTOP_WEB_APP_URL}/blog`, label: t('nav.blog'), external: true },
         { href: `${process.env.NEXT_PUBLIC_APP_URL || DESKTOP_WEB_APP_URL}/about`, label: t('nav.about'), external: true },
+        { href: '/ai-tools', label: t('nav.aiTools') },
       ]
     : [
         { href: '/', label: t('nav.home') },
@@ -106,6 +107,7 @@ export function Navbar() {
         { href: '/notes', label: 'My Notes' },
         { href: '/blog', label: t('nav.blog') },
         { href: '/about', label: t('nav.about') },
+        { href: '/ai-tools', label: t('nav.aiTools') },
       ];
 
   const isActive = (path: string) => path === '/' ? pathname === '/' : pathname?.startsWith(path);
