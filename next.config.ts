@@ -48,6 +48,16 @@ const nextConfig: NextConfig = {
     '@smithy/util-utf8',
     '@smithy/util-stream',
   ],
+  // onnxruntime-node 的 binding 动态链接 libonnxruntime.so.1，
+  // NFT 默认不追踪该 so — 必须显式带上 Linux 原生库（x64 + arm64）
+  outputFileTracingIncludes: {
+    '/api/ai-tools/**': [
+      './node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime.so.1',
+      './node_modules/onnxruntime-node/bin/napi-v6/linux/x64/onnxruntime_binding.node',
+      './node_modules/onnxruntime-node/bin/napi-v6/linux/arm64/libonnxruntime.so.1',
+      './node_modules/onnxruntime-node/bin/napi-v6/linux/arm64/onnxruntime_binding.node',
+    ],
+  },
   images: {
     formats: ['image/avif', 'image/webp'],
     minimumCacheTTL: 86400,
