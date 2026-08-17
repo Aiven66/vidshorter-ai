@@ -29,6 +29,9 @@ const nextConfig: NextConfig = {
     '@ffmpeg-installer/win32-x64',
     'youtubei.js',
     'sharp',
+    // AI 工具箱服务端推理：原生 NAPI 绑定必须保持外部化，打包会破坏 .node 加载
+    'onnxruntime-node',
+    'onnxruntime-common',
     'nodemailer',
     'pg',
     // uuid@11 native.js accesses crypto.randomUUID at module top-level;
