@@ -75,7 +75,7 @@ export async function uploadAiInput(
 /** 调用服务端 AI 工具 */
 export async function callAiTool<T>(
   accessToken: string,
-  tool: 'image-dewatermark' | 'video-dewatermark' | 'image-upscale' | 'image-colorization',
+  tool: 'image-dewatermark' | 'video-dewatermark' | 'image-upscale' | 'image-colorization' | 'chat-video-edit',
   body: Record<string, unknown>
 ): Promise<T> {
   const resp = await fetch(`/api/ai-tools/${tool}`, {
@@ -103,4 +103,12 @@ export interface AiImageResult {
 export interface AiVideoResult {
   resultUrl: string;
   sizeBytes: number;
+}
+
+export interface AiChatVideoEditResult {
+  reply: string;
+  ffmpegCommand: string;
+  resultUrl?: string;
+  sizeBytes?: number;
+  error?: string;
 }

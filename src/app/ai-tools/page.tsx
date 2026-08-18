@@ -1,8 +1,8 @@
 'use client';
 
 /**
- * AI 工具箱 — 四大云端 AI 工具
- * 图片去水印(LaMa) / 视频去水印(ffmpeg delogo) / 图片超分(Swin2SR) / 黑白上色(Colorization)
+ * AI 工具箱 — 云端 AI 工具 + AI 对话视频剪辑
+ * 图片去水印(LaMa) / 视频去水印(ffmpeg delogo) / 图片超分(Swin2SR) / 黑白上色(Colorization) / AI 对话剪辑
  * 模型部署在服务端，用户零下载，开箱即用
  */
 
@@ -10,7 +10,7 @@ import { Suspense, lazy, useState } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useLocale } from '@/lib/locale-context';
-import { Eraser, Video, Wand2, Palette, ShieldCheck } from 'lucide-react';
+import { Eraser, Video, Wand2, Palette, ShieldCheck, MessageSquare } from 'lucide-react';
 
 const ImageDewatermark = lazy(() =>
   import('@/components/ai-tools/image-dewatermark').then((m) => ({ default: m.ImageDewatermark }))
@@ -23,6 +23,9 @@ const ImageUpscale = lazy(() =>
 );
 const ImageColorization = lazy(() =>
   import('@/components/ai-tools/image-colorization').then((m) => ({ default: m.ImageColorization }))
+);
+const ChatVideoEditor = lazy(() =>
+  import('@/components/ai-tools/chat-video-editor').then((m) => ({ default: m.ChatVideoEditor }))
 );
 
 function ToolSkeleton() {
@@ -52,7 +55,7 @@ export default function AIToolsPage() {
       </div>
 
       <Tabs value={tab} onValueChange={setTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 h-auto mb-6">
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-5 h-auto mb-6">
           <TabsTrigger value="image-dewatermark" className="flex flex-col gap-1 py-2.5 sm:flex-row sm:gap-2">
             <Eraser className="h-4 w-4" />
             <span className="text-xs sm:text-sm">{t('aiTools.tabImageDewatermark')}</span>
@@ -68,6 +71,10 @@ export default function AIToolsPage() {
           <TabsTrigger value="image-colorization" className="flex flex-col gap-1 py-2.5 sm:flex-row sm:gap-2">
             <Palette className="h-4 w-4" />
             <span className="text-xs sm:text-sm">{t('aiTools.tabColorize')}</span>
+          </TabsTrigger>
+          <TabsTrigger value="chat-video-edit" className="flex flex-col gap-1 py-2.5 sm:flex-row sm:gap-2">
+            <MessageSquare className="h-4 w-4" />
+            <span className="text-xs sm:text-sm">{t('aiTools.tabChatVideoEdit')}</span>
           </TabsTrigger>
         </TabsList>
 
@@ -89,6 +96,11 @@ export default function AIToolsPage() {
         <TabsContent value="image-colorization">
           <Suspense fallback={<ToolSkeleton />}>
             <ImageColorization />
+          </Suspense>
+        </TabsContent>
+        <TabsContent value="chat-video-edit">
+          <Suspense fallback={<ToolSkeleton />}>
+            <ChatVideoEditor />
           </Suspense>
         </TabsContent>
       </Tabs>
