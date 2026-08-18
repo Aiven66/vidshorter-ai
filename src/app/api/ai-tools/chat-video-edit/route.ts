@@ -1,10 +1,11 @@
 /**
- * AI 对话视频剪辑 — 服务端 LLM + ffmpeg
+ * AI 对话视频剪辑 — 服务端 LLM + ffmpeg（支持多视频混剪）
  *
- * POST { videoUrl, messages: [{role, content}], locale }
- * 1. LLM 分析用户需求 → 生成 ffmpeg 命令
- * 2. 执行 ffmpeg 命令
- * 3. 返回结果 URL
+ * POST { videoUrls: string[], messages: [{role, content}], locale }
+ * 1. 探测每个视频的元数据
+ * 2. LLM 分析用户需求 → 生成 ffmpeg 命令（支持多路输入）
+ * 3. 执行 ffmpeg 命令
+ * 4. 返回结果 URL
  */
 
 import { NextRequest } from 'next/server';
@@ -31,8 +32,18 @@ export const runtime = 'nodejs';
 
 const MAX_VIDEO_BYTES = 48 * 1024 * 1024;
 const MAX_VIDEO_DURATION_S = 900;
+const MAX_VIDEO_COUNT = 6;
 
-/** ffmpeg 二进制查找（与 video-dewatermark 一致） */
+interface VideoMeta {
+  index: number;
+  durationS: number;
+  width: number;
+  height: number;
+  hasAudio: boolean;
+  sizeBytes: number;
+}
+
+/** ffmpeg 二进制查找 */
 let ffmpegBinaryCache: string | null = null;
 function findFfmpegBinary(): string {
   if (ffmpegBinaryCache) return ffmpegBinaryCache;
@@ -75,8 +86,23 @@ function probeFromStderr(stderr: string): { durationS: number; width: number; he
   return { durationS, width, height, hasAudio };
 }
 
-/** 构建 LLM 系统提示词 */
-function buildSystemPrompt(probe: { durationS: number; width: number; height: number; hasAudio: boolean }, locale: string): string {
+/** 探测单个视频元数据 */
+async function probeVideo(ffmpeg: string, url: string, index: number, sizeBytes: number): Promise<VideoMeta> {
+  let probe: ReturnType<typeof probeFromStderr>;
+  try {
+    await execFileAsync(ffmpeg, ['-hide_banner', '-i', url], { timeout: 30_000 });
+    probe = probeFromStderr('');
+  } catch (error) {
+    const stderr = (error as { stderr?: string }).stderr || '';
+    probe = probeFromStderr(stderr);
+  }
+  if (!probe.width || !probe.height) throw new ApiError(400, `VIDEO_DECODE_FAILED:${index}`);
+  if (probe.durationS > MAX_VIDEO_DURATION_S) throw new ApiError(400, `VIDEO_TOO_LONG:${index}`);
+  return { ...probe, index, sizeBytes };
+}
+
+/** 构建 LLM 系统提示词（多视频版） */
+function buildSystemPrompt(videos: VideoMeta[], locale: string): string {
   const localeNames: Record<string, string> = {
     en: 'English', zh: '简体中文', 'zh-Hant': '繁體中文',
     ja: '日本語', ko: '한국어', de: 'Deutsch', fr: 'Français',
@@ -87,46 +113,75 @@ function buildSystemPrompt(probe: { durationS: number; width: number; height: nu
   };
   const lang = localeNames[locale] || 'English';
 
-  return `You are an expert ffmpeg video editor. The user's video has these properties:
-- Duration: ${Math.round(probe.durationS)} seconds
-- Resolution: ${probe.width}x${probe.height}
-- Has audio: ${probe.hasAudio ? 'yes' : 'no'}
+  // 构建视频元数据列表
+  const videoList = videos.map(v =>
+    `Video ${v.index + 1} (index ${v.index}): ${v.width}x${v.height}, ${Math.round(v.durationS)}s, ${v.hasAudio ? 'has audio' : 'no audio'}, ${(v.sizeBytes / 1024 / 1024).toFixed(1)}MB`
+  ).join('\n');
 
-The video is accessible at a URL. Your task is to generate ffmpeg commands for the user's editing requests.
+  return `You are an expert ffmpeg video editor. The user has uploaded ${videos.length} video(s):
 
-SUPPORTED OPERATIONS (with examples):
-1. Trim/cut: -ss START -to END -c copy
-2. Speed change: setpts=0.5*PTS (slow×2), atempo=2.0 (fast×2), or setpts=2.0*PTS (half speed), atempo=0.5
+${videoList}
+
+Each video URL is passed as a separate -i argument to ffmpeg in order of their index. 
+- Video 1 (index 0) = first -i argument
+- Video 2 (index 1) = second -i argument
+- etc.
+
+Your task is to generate ffmpeg commands for the user's editing requests.
+
+SINGLE-VIDEO OPERATIONS (use when only one video is involved or per-video edits):
+1. Trim: -ss START -to END -c copy
+2. Speed change: setpts=0.5*PTS (slow×2), atempo=2.0 (fast×2)
 3. Resize: -vf scale=1280:720
 4. Crop: -vf crop=W:H:X:Y
 5. Add text overlay: -vf drawtext=text='Hello':fontsize=48:fontcolor=white:x=(w-text_w)/2:y=50
-6. Volume: -af volume=2.0 (2x louder), or volume=0.5 (half)
+6. Volume: -af volume=2.0
 7. Remove audio: -an
-8. Replace audio: -i audio.mp3 -c:v copy -c:a aac -shortest
-9. Color filters: eq=brightness=0.0:saturation=1.5:contrast=1.2
-10. Rotate: transpose=1 (90° CW), transpose=2 (90° CCW)
-11. Fade in/out: fade=in:0:d=1, fade=out:st=10:d=2
-12. Reverse: -vf reverse (slow; use for short clips)
-13. Loop: -loop 1 -t 5 (still image to video)
-14. Extract audio: -vn -c:a copy output.mp3
-15. Concatenate: concat file list
-16. GIF: -vf fps=10,scale=480:-1:flags=lanczos output.gif
-17. Mute segment: -af volume=enable='between(t,5,10)':volume=0
-18. PIP overlay: -i overlay.png -filter_complex overlay=W-w-10:10
-19. Vignette/curves: -vf curves=vintage
-20. Hue shift: -vf hue=h=90:s=1
+8. Color filters: eq=brightness=0.0:saturation=1.5:contrast=1.2
+9. Rotate: transpose=1 (90° CW), transpose=2 (90° CCW)
+10. Fade in/out: fade=in:0:d=1, fade=out:st=10:d=2
+11. Reverse: -vf reverse (slow; use for short clips)
+12. Extract audio: -vn -c:a copy output.mp3
+13. Mute segment: -af volume=enable='between(t,5,10)':volume=0
+14. GIF: -vf fps=10,scale=480:-1:flags=lanczos output.gif
+
+MULTI-VIDEO MIXING OPERATIONS:
+15. Concatenate (merge in sequence):
+    -i URL0 -i URL1 -filter_complex "[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1" -c:v libx264 -c:a aac
+    For n videos: concat=n=${videos.length}:v=1:a=1
+
+16. Side-by-side (horizontal stack):
+    -i URL0 -i URL1 -filter_complex "[0:v]scale=iw/2:ih[v0];[1:v]scale=iw/2:ih[v1];[v0][v1]hstack=inputs=2" -c:v libx264
+
+17. Vertical stack (top-bottom):
+    -i URL0 -i URL1 -filter_complex "[0:v]scale=iw:ih/2[v0];[1:v]scale=iw:ih/2[v1];[v0][v1]vstack=inputs=2" -c:v libx264
+
+18. Picture-in-picture (overlay):
+    -i URL0 -i URL1 -filter_complex "[1:v]scale=iw/3:ih/3[pip];[0:v][pip]overlay=W-w-10:H-h-10" -c:v libx264
+
+19. Cross-fade transition between two clips:
+    -i URL0 -i URL1 -filter_complex "[0:v]trim=d=DURATION[v0];[0:a]atrim=d=DURATION[a0];[1:v]trim=d=DURATION[v1];[1:a]atrim=d=DURATION[a1];[v0][v1]xfade=transition=fade:duration=1:offset=OFFSET,format=yuv420p[vout];[a0][a1]acrossfade=d=1[aout]" -map "[vout]" -map "[aout]" -c:v libx264 -c:a aac
+    (DURATION = shorter clip duration, OFFSET = DURATION - 1)
+
+20. Grid layout (2x2 for 4 videos):
+    -i URL0 -i URL1 -i URL2 -i URL3 -filter_complex "[0:v]scale=iw/2:ih/2[v0];[1:v]scale=iw/2:ih/2[v1];[2:v]scale=iw/2:ih/2[v2];[3:v]scale=iw/2:ih/2[v3];[v0][v1]hstack[v01];[v2][v3]hstack[v23];[v01][v23]vstack" -c:v libx264
+
+21. Audio mixing (overlay audio from one video onto another):
+    -i URL0 -i URL1 -filter_complex "[1:a]volume=0.5[a1];[0:a][a1]amix=inputs=2:duration=first" -c:v copy -c:a aac
 
 CRITICAL RULES:
 1. Always use -y (overwrite output)
-2. Output path: /tmp/ai-chat-edit/output.mp4 (or .gif / .mp3 / .png as appropriate)
+2. Output path: /tmp/ai-chat-edit/output.mp4 (or .gif / .mp3 as appropriate)
 3. Use -ss BEFORE -i for fast seeking when trimming
 4. Video codec: -c:v libx264 -preset veryfast -crf 23
 5. Audio codec: -c:a aac -b:a 128k
 6. Web optimization: -movflags +faststart (for MP4 output)
 7. For complex filters, use -filter_complex instead of -vf
-8. Input URL: the videoUrl provided in the user's message
+8. Input URLs: use the video URLs provided in the user's message context
 9. If the request is impossible or unsafe, explain why
 10. Do NOT use protocols that access local filesystem (file://, concat: with local files)
+11. When referencing videos in the command, use -i for each URL in order
+12. For concat, each video must have the same codec parameters or use re-encoding
 
 Output ONLY valid JSON with this exact structure:
 {
@@ -159,40 +214,44 @@ export async function POST(req: NextRequest) {
   try {
     const userId = await requireUserId(req);
     const body = (await req.json()) as {
-      videoUrl?: string;
+      videoUrls?: string[];
       messages?: Array<{ role: string; content: string }>;
       locale?: string;
     };
 
-    if (!body.videoUrl || !Array.isArray(body.messages) || body.messages.length === 0) {
+    if (!Array.isArray(body.videoUrls) || body.videoUrls.length === 0) {
+      throw new ApiError(400, 'MISSING_VIDEOS');
+    }
+    if (body.videoUrls.length > MAX_VIDEO_COUNT) {
+      throw new ApiError(400, 'TOO_MANY_VIDEOS', `Maximum ${MAX_VIDEO_COUNT} videos allowed.`);
+    }
+    if (!Array.isArray(body.messages) || body.messages.length === 0) {
       throw new ApiError(400, 'MISSING_PARAMS');
     }
 
-    const videoUrl = assertUserStorageUrl(body.videoUrl, userId, 'ai-tools');
+    const videoUrls = body.videoUrls.map((url, i) => {
+      const validated = assertUserStorageUrl(url, userId, 'ai-tools');
+      return { index: i, url: validated };
+    });
+
     const lastUserMsg = body.messages.filter(m => m.role === 'user').pop()?.content || '';
     if (!lastUserMsg) throw new ApiError(400, 'MISSING_USER_MESSAGE');
 
-    // 1. 大小检查
-    const head = await fetch(videoUrl, { method: 'HEAD' });
-    const contentLength = Number(head.headers.get('content-length') || 0);
-    if (contentLength > MAX_VIDEO_BYTES) throw new ApiError(400, 'VIDEO_TOO_LARGE');
-
-    // 2. 探测视频参数
+    // 1. 大小检查 + 探测视频元数据
     const ffmpeg = findFfmpegBinary();
-    let probe: ReturnType<typeof probeFromStderr>;
-    try {
-      await execFileAsync(ffmpeg, ['-hide_banner', '-i', videoUrl], { timeout: 30_000 });
-      probe = probeFromStderr('');
-    } catch (error) {
-      const stderr = (error as { stderr?: string }).stderr || '';
-      probe = probeFromStderr(stderr);
-    }
-    if (!probe.width || !probe.height) throw new ApiError(400, 'VIDEO_DECODE_FAILED');
-    if (probe.durationS > MAX_VIDEO_DURATION_S) throw new ApiError(400, 'VIDEO_TOO_LONG');
+    const probes: VideoMeta[] = [];
 
-    // 3. 调用 LLM 生成 ffmpeg 命令
+    for (const v of videoUrls) {
+      const head = await fetch(v.url, { method: 'HEAD' });
+      const contentLength = Number(head.headers.get('content-length') || 0);
+      if (contentLength > MAX_VIDEO_BYTES) throw new ApiError(400, `VIDEO_TOO_LARGE:${v.index}`);
+      const meta = await probeVideo(ffmpeg, v.url, v.index, contentLength);
+      probes.push(meta);
+    }
+
+    // 2. 调用 LLM 生成 ffmpeg 命令
     const locale = body.locale || 'en';
-    const systemPrompt = buildSystemPrompt(probe, locale);
+    const systemPrompt = buildSystemPrompt(probes, locale);
 
     const customHeaders = HeaderUtils.extractForwardHeaders(req.headers);
     const config = new Config({
@@ -203,30 +262,30 @@ export async function POST(req: NextRequest) {
     const llmModel = 'doubao-seed-1-8-251228';
     const llmClient = new LLMClient(config, customHeaders);
 
-    // 构建聊天上下文：system + 历史消息（最后一条替换为带 videoUrl 的完整请求）
+    // 构建聊天上下文
     const llmMessages: Array<{ role: string; content: string }> = [
       { role: 'system', content: systemPrompt },
     ];
 
-    // 添加历史消息（跳过 system 角色）
+    // 构建视频URL引用字符串
+    const videoUrlRefs = videoUrls.map((v, i) => `Video ${i + 1} URL: ${v.url}`).join('\n');
+
     for (const msg of body.messages) {
       if (msg.role === 'system') continue;
-      // 将最后一条用户消息替换为完整请求（含 videoUrl）
       if (msg.role === 'user' && msg.content === lastUserMsg) {
         llmMessages.push({
           role: 'user',
-          content: `Video URL: ${videoUrl}\n\nUser request: ${lastUserMsg}`,
+          content: `${videoUrlRefs}\n\nUser request: ${lastUserMsg}`,
         });
       } else {
         llmMessages.push(msg);
       }
     }
 
-    // 确保用户消息存在
     if (!llmMessages.some(m => m.role === 'user')) {
       llmMessages.push({
         role: 'user',
-        content: `Video URL: ${videoUrl}\n\nUser request: ${lastUserMsg}`,
+        content: `${videoUrlRefs}\n\nUser request: ${lastUserMsg}`,
       });
     }
 
@@ -248,16 +307,14 @@ export async function POST(req: NextRequest) {
       throw new ApiError(500, 'LLM_INVALID_RESPONSE', 'AI returned an invalid response. Please try rephrasing your request.');
     }
 
-    const reasoning = String(parsed.reasoning || '');
     const userReply = String(parsed.userReply || '');
     const commands = parsed.commands as Array<{ description: string; command: string }>;
 
-    // 4. 执行 ffmpeg 命令
+    // 3. 执行 ffmpeg 命令
     await mkdir(path.join(workDir, 'output'), { recursive: true });
 
     for (let i = 0; i < commands.length; i++) {
       const cmd = commands[i];
-      // 验证命令只使用允许的二进制
       const cmdLine = cmd.command;
       const allowedBinaries = ['ffmpeg', ffmpeg];
       const usesFfmpeg = allowedBinaries.some(b => cmdLine.startsWith(b) || cmdLine.startsWith(`"${b}"`) || cmdLine.startsWith(`'${b}'`));
@@ -265,7 +322,6 @@ export async function POST(req: NextRequest) {
         throw new ApiError(400, 'UNSAFE_COMMAND', 'Generated command uses disallowed binary.');
       }
 
-      // 禁止访问危险路径
       if (/\/etc\/|\/proc\/|\/dev\/|\/sys\//.test(cmdLine) || /file:\/\//.test(cmdLine)) {
         throw new ApiError(400, 'UNSAFE_COMMAND', 'Generated command accesses restricted paths.');
       }
@@ -277,7 +333,7 @@ export async function POST(req: NextRequest) {
         const args = safeCmd.split(/\s+/).slice(1); // 去掉 ffmpeg 本身
         await execFileAsync(ffmpeg, args, {
           timeout: 240_000,
-          maxBuffer: 16 * 1024 * 1024,
+          maxBuffer: 32 * 1024 * 1024,
           env: { ...process.env, LANG: 'C' },
         });
       } catch (cmdError) {
@@ -287,7 +343,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 5. 查找输出文件并上传
+    // 4. 查找输出文件并上传
     const outputDir = path.join(workDir, 'output');
     const files = await readdirSafe(outputDir);
     const outputFile = files.find(f => f.startsWith('output'));
@@ -300,7 +356,6 @@ export async function POST(req: NextRequest) {
     const output = await readFile(outputPath);
     if (output.byteLength === 0) throw new ApiError(500, 'OUTPUT_EMPTY');
 
-    // 确定扩展名
     const ext = outputFile.endsWith('.mp4') ? 'mp4' :
                 outputFile.endsWith('.gif') ? 'mp4' :
                 outputFile.endsWith('.mp3') ? 'mp4' : 'mp4';
@@ -309,7 +364,7 @@ export async function POST(req: NextRequest) {
     const { signedUrl, sizeBytes } = await uploadResult(userId, 'mp4', output, contentType);
 
     return Response.json({
-      reply: userReply || reasoning,
+      reply: userReply,
       ffmpegCommand: commands.map(c => c.command).join('\n'),
       resultUrl: signedUrl,
       sizeBytes,
@@ -321,7 +376,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/** 安全读取目录（不抛异常） */
+/** 安全读取目录 */
 async function readdirSafe(dir: string): Promise<string[]> {
   try {
     const { readdir } = await import('node:fs/promises');
