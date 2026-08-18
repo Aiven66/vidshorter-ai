@@ -48,40 +48,28 @@ const nextConfig: NextConfig = {
     '@smithy/util-utf8',
     '@smithy/util-stream',
   ],
-  // 原生库追踪：onnxruntime（libonnxruntime.so.1）与 sharp（libvips）都不会被 NFT 自动带上。
-  // sharp 的动态 require(`@img/sharp-${platform}`) 无法静态追踪，且 pnpm 隔离布局下
-  // 必须用 .pnpm 真实路径（libvips-cpp.so 在 @img/sharp-libvips-* 包中）。
+  // 原生库追踪：onnxruntime（libonnxruntime.so.1）不会被 NFT 自动带上。
   // 只给三个图像推理路由包含；视频路由排除 onnxruntime 避免超 250MB。
+  // 注意：sharp 的 libvips 不在此追踪，因为 Vercel 平台原生支持 sharp，且 .pnpm 符号链接
+  // 会导致 The framework produced an invalid deployment package 错误。
   outputFileTracingIncludes: {
     '/api/ai-tools/image-dewatermark': [
       './node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime.so.1',
       './node_modules/onnxruntime-node/bin/napi-v6/linux/x64/onnxruntime_binding.node',
       './node_modules/onnxruntime-node/bin/napi-v6/linux/arm64/libonnxruntime.so.1',
       './node_modules/onnxruntime-node/bin/napi-v6/linux/arm64/onnxruntime_binding.node',
-      './node_modules/.pnpm/@img+sharp-linux-x64@*/node_modules/@img/sharp-linux-x64/**',
-      './node_modules/.pnpm/@img+sharp-linux-arm64@*/node_modules/@img/sharp-linux-arm64/**',
-      './node_modules/.pnpm/@img+sharp-libvips-linux-x64@*/node_modules/@img/sharp-libvips-linux-x64/**',
-      './node_modules/.pnpm/@img+sharp-libvips-linux-arm64@*/node_modules/@img/sharp-libvips-linux-arm64/**',
     ],
     '/api/ai-tools/image-upscale': [
       './node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime.so.1',
       './node_modules/onnxruntime-node/bin/napi-v6/linux/x64/onnxruntime_binding.node',
       './node_modules/onnxruntime-node/bin/napi-v6/linux/arm64/libonnxruntime.so.1',
       './node_modules/onnxruntime-node/bin/napi-v6/linux/arm64/onnxruntime_binding.node',
-      './node_modules/.pnpm/@img+sharp-linux-x64@*/node_modules/@img/sharp-linux-x64/**',
-      './node_modules/.pnpm/@img+sharp-linux-arm64@*/node_modules/@img/sharp-linux-arm64/**',
-      './node_modules/.pnpm/@img+sharp-libvips-linux-x64@*/node_modules/@img/sharp-libvips-linux-x64/**',
-      './node_modules/.pnpm/@img+sharp-libvips-linux-arm64@*/node_modules/@img/sharp-libvips-linux-arm64/**',
     ],
     '/api/ai-tools/image-colorization': [
       './node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime.so.1',
       './node_modules/onnxruntime-node/bin/napi-v6/linux/x64/onnxruntime_binding.node',
       './node_modules/onnxruntime-node/bin/napi-v6/linux/arm64/libonnxruntime.so.1',
       './node_modules/onnxruntime-node/bin/napi-v6/linux/arm64/onnxruntime_binding.node',
-      './node_modules/.pnpm/@img+sharp-linux-x64@*/node_modules/@img/sharp-linux-x64/**',
-      './node_modules/.pnpm/@img+sharp-linux-arm64@*/node_modules/@img/sharp-linux-arm64/**',
-      './node_modules/.pnpm/@img+sharp-libvips-linux-x64@*/node_modules/@img/sharp-libvips-linux-x64/**',
-      './node_modules/.pnpm/@img+sharp-libvips-linux-arm64@*/node_modules/@img/sharp-libvips-linux-arm64/**',
     ],
   },
   // 视频去水印路由不需要 onnxruntime — 排除避免函数体积超限
