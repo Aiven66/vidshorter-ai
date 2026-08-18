@@ -4,7 +4,22 @@
   "framework": "nextjs",
   "regions": ["hkg1"],
   "functions": {
-    "src/app/api/**/*.ts": {
+    "src/app/api/process-video/**/*.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/ai-tools/**/*.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/blog/**/*.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/payment/**/*.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/agent/**/*.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/admin/**/*.ts": {
       "maxDuration": 300
     }
   },

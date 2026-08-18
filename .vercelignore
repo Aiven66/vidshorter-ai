@@ -18,3 +18,9 @@ test-output*
 # Coze platform internals
 .coze/
 .coze-logs/
+
+# Build artifacts
+.next/
+node_modules/
+dist/
+*.tsbuildinfo

@@ -469,11 +469,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (!isSupabaseConfigured()) {
         const demoUser = getDemoUser();
+        const storedToken = typeof window !== 'undefined' ? localStorage.getItem('clipop_access_token') : null;
         if (demoUser) {
           setUser(demoUser);
           setUseDemo(true);
+          if (storedToken) {
+            setAccessToken(storedToken);
+          }
         }
-        setAccessToken(null);
         setLoading(false);
         return;
       }
