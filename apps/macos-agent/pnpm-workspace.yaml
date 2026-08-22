@@ -1,3 +1,5 @@
-allowBuilds:
-  '@ffmpeg-installer/darwin-arm64': set this to true or false
-  electron: set this to true or false
+onlyBuiltDependencies:
+  - electron
+  - electron-builder
+  - '@ffmpeg-installer/darwin-arm64'
+  - '@ffmpeg-installer/ffmpeg'

@@ -27,9 +27,16 @@ function runQuiet(cmd, args) {
 }
 
 function walk(root, visitor) {
-  if (!fs.existsSync(root)) return;
+  // Use lstat (not existsSync): existsSync follows symlinks and returns false
+  // for broken symlinks, which would skip them before the visitor could see
+  // them (removeBrokenSymlinks relies on visiting every symlink).
+  let stat;
+  try {
+    stat = fs.lstatSync(root);
+  } catch {
+    return;
+  }
   visitor(root);
-  const stat = fs.lstatSync(root);
   if (!stat.isDirectory()) return;
   for (const entry of fs.readdirSync(root)) {
     walk(path.join(root, entry), visitor);
@@ -43,6 +50,31 @@ function removeMetadataFiles(root) {
       fs.rmSync(item, { force: true, recursive: true });
     }
   });
+}
+
+/**
+ * Remove broken symlinks left behind by the extraResources slimming filters
+ * (e.g. embedded-web/node_modules pnpm links whose targets were excluded).
+ * codesign --deep --strict fails with "No such file or directory" when the
+ * resource seal contains a symlink whose target is missing, so these MUST be
+ * pruned before signing. All of them point to build-time-only packages that
+ * the standalone server never requires at runtime.
+ */
+function removeBrokenSymlinks(root) {
+  let removed = 0;
+  walk(root, (item) => {
+    let stat;
+    try {
+      stat = fs.lstatSync(item);
+    } catch {
+      return;
+    }
+    if (stat.isSymbolicLink() && !fs.existsSync(item)) {
+      fs.rmSync(item, { force: true });
+      removed += 1;
+    }
+  });
+  if (removed > 0) console.log(`[mac-package] removed ${removed} broken symlinks (slimmed pnpm links)`);
 }
 
 function clearExtendedAttributes(root) {
@@ -96,8 +128,10 @@ function finalizeMacApp(appPath, options = {}) {
 
   try {
     removeMetadataFiles(appPath);
+    removeBrokenSymlinks(appPath);
     run('/usr/bin/ditto', ['--norsrc', appPath, cleanAppPath]);
     removeMetadataFiles(cleanAppPath);
+    removeBrokenSymlinks(cleanAppPath);
     clearExtendedAttributes(cleanAppPath);
     signMacApp(cleanAppPath, options);
     clearExtendedAttributes(cleanAppPath);

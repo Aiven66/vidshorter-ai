@@ -159,7 +159,7 @@ async function testBuildConfiguration() {
   
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   assert(pkg.version, `Package version is set: ${pkg.version}`);
-  assert(pkg.version === '0.9.29', 'Package version is bumped to 0.9.29');
+  assert(pkg.version === '0.9.31', 'Package version is bumped to 0.9.31');
   assert(pkg.main === 'main.js', 'Main entry point is main.js');
   assert(pkg.build, 'Build configuration exists');
   assert(pkg.build.appId, 'App ID is set');
