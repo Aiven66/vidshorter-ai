@@ -310,10 +310,10 @@ export default function DigitalHumanPage() {
             <div className="mb-8 flex flex-col items-center text-center">
               <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/50 px-3 py-1 text-xs font-medium text-muted-foreground">
                 <Bot className="size-3.5" />
-                {tr('digitalHuman.badge', 'AI Avatar Selling')}
+                {tr('digitalHuman.badge', 'Selling Video')}
               </span>
               <h1 className="mt-4 text-3xl font-bold tracking-tight text-foreground md:text-4xl">
-                {tr('digitalHuman.title', 'Digital Human Sales Video')}
+                {tr('digitalHuman.title', 'Selling Short Video')}
               </h1>
               <p className="mt-3 max-w-2xl text-sm text-muted-foreground md:text-base">
                 {tr(
@@ -531,7 +531,7 @@ export default function DigitalHumanPage() {
                   <div className="mt-6 border-t border-border pt-4">
                     <SocialShare
                       videoUrl={exportedUrl}
-                      videoTitle={productName || tr('digitalHuman.title', 'Digital Human Sales Video')}
+                      videoTitle={productName || tr('digitalHuman.title', 'Selling Short Video')}
                     />
                   </div>
                 )}

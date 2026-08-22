@@ -42,6 +42,8 @@ export interface ProductInfo {
   /** 组合好的划线价展示，如 "$29.99" */
   originalPriceDisplay?: string;
   image?: string;
+  /** 商品图集（JSON-LD image 数组，供数字人带货页面图集切换） */
+  images?: string[];
   description?: string;
   brand?: string;
   /** 核心卖点（如 Amazon feature bullets），用于种草视频要点场景 */
@@ -617,6 +619,28 @@ export function parseProduct(html: string, finalUrl: string): ProductInfo {
   // 无结构化 bullets 时从描述拆句生成卖点，保证种草视频有内容
   const highlights = splitDescriptionHighlights(description);
 
+  // 图集：JSON-LD image 数组（兼容字符串与 ImageObject，去重最多 6 张）
+  const asImgUrl = (v: unknown): string | undefined => {
+    if (typeof v === 'string') return v;
+    if (v && typeof v === 'object') {
+      const o = v as { url?: unknown; contentUrl?: unknown };
+      if (typeof o.url === 'string') return o.url;
+      if (typeof o.contentUrl === 'string') return o.contentUrl;
+    }
+    return undefined;
+  };
+  const imageList: string[] = [];
+  if (Array.isArray(jsonLd?.image)) {
+    for (const img of jsonLd.image) {
+      const u = asImgUrl(img);
+      if (u && !imageList.includes(u)) imageList.push(u);
+      if (imageList.length >= 6) break;
+    }
+  } else if (image) {
+    imageList.push(image);
+  }
+  if (ogImage && !imageList.includes(ogImage)) imageList.push(ogImage);
+
   return {
     name: name.trim().slice(0, 200),
     price,
@@ -624,7 +648,8 @@ export function parseProduct(html: string, finalUrl: string): ProductInfo {
     priceDisplay: toDisplayPrice(currency, price),
     description: description?.trim().slice(0, 600),
     brand,
-    image: Array.isArray(image) ? image[0] : image,
+    image: imageList[0] || undefined,
+    images: imageList.length > 0 ? imageList : undefined,
     highlights: highlights.length > 0 ? highlights : undefined,
     rating,
     reviewCount,

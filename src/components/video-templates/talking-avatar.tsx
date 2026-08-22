@@ -35,6 +35,7 @@ import { type SceneTheme, resolveSceneTheme } from './scene-theme';
 import { AVATAR_RIGS, sampleSkinTone } from './avatar-rigs';
 import { drawAvatarPuppet } from './avatar-puppet';
 import { drawShowcaseScene } from './product-showcase';
+import { drawLiveScene } from './live-commerce';
 
 /* ------------------------------------------------------------------ */
 /* 真人数字人形象（AI 生成的形象照，见 public/avatars/）                  */
@@ -135,6 +136,157 @@ export function pickEdgeVoice(
   if (langOnly) return langOnly[1][g];
   return EDGE_VOICES['en-US'][g];
 }
+
+/* ------------------------------------------------------------------ */
+/* 声线目录（供数字人带货页面选择 语言 × 性别 × 音色）                       */
+/* ------------------------------------------------------------------ */
+
+export interface VoiceOption {
+  /** msedge-tts 音色 ID */
+  id: string;
+  /** 音色描述（中文） */
+  label: string;
+  /** 音色描述（英文） */
+  labelEn: string;
+}
+
+export interface VoiceLocaleEntry {
+  locale: string;
+  /** 语言显示名（中文 / 英文） */
+  name: string;
+  nameEn: string;
+  female: VoiceOption[];
+  male: VoiceOption[];
+}
+
+export const VOICE_CATALOG: VoiceLocaleEntry[] = [
+  {
+    locale: 'zh-CN', name: '中文（普通话）', nameEn: 'Chinese (Mandarin)',
+    female: [
+      { id: 'zh-CN-XiaoxiaoNeural', label: '晓晓 · 亲切甜美女声', labelEn: 'Xiaoxiao · warm & sweet' },
+      { id: 'zh-CN-XiaoyiNeural', label: '晓伊 · 温柔元气', labelEn: 'Xiaoyi · gentle & lively' },
+      { id: 'zh-CN-YunxiaNeural', label: '云夏 · 活泼少女', labelEn: 'Yunxia · cheerful teen' },
+    ],
+    male: [
+      { id: 'zh-CN-YunjianNeural', label: '云健 · 磁性主播', labelEn: 'Yunjian · magnetic anchor' },
+      { id: 'zh-CN-YunxiNeural', label: '云希 · 阳光青年', labelEn: 'Yunxi · sunny youth' },
+      { id: 'zh-CN-YunyangNeural', label: '云扬 · 新闻播音', labelEn: 'Yunyang · news anchor' },
+    ],
+  },
+  {
+    locale: 'zh-TW', name: '中文（台湾）', nameEn: 'Chinese (Taiwan)',
+    female: [
+      { id: 'zh-TW-HsiaoChenNeural', label: '曉臻 · 親切自然', labelEn: 'HsiaoChen · friendly' },
+      { id: 'zh-TW-HsiaoYuNeural', label: '曉雨 · 溫柔甜美', labelEn: 'HsiaoYu · soft & sweet' },
+    ],
+    male: [{ id: 'zh-TW-YunJhongNeural', label: '雲中 · 沉穩男聲', labelEn: 'YunJhong · steady male' }],
+  },
+  {
+    locale: 'en-US', name: '英语（美式）', nameEn: 'English (US)',
+    female: [
+      { id: 'en-US-JennyNeural', label: 'Jenny · warm & friendly', labelEn: 'Jenny · warm & friendly' },
+      { id: 'en-US-AriaNeural', label: 'Aria · professional', labelEn: 'Aria · professional' },
+      { id: 'en-US-MichelleNeural', label: 'Michelle · sweet & energetic', labelEn: 'Michelle · sweet & energetic' },
+    ],
+    male: [
+      { id: 'en-US-GuyNeural', label: 'Guy · magnetic host', labelEn: 'Guy · magnetic host' },
+      { id: 'en-US-AndrewNeural', label: 'Andrew · documentary calm', labelEn: 'Andrew · documentary calm' },
+      { id: 'en-US-DavisNeural', label: 'Davis · sunny narrator', labelEn: 'Davis · sunny narrator' },
+    ],
+  },
+  {
+    locale: 'en-GB', name: '英语（英式）', nameEn: 'English (UK)',
+    female: [
+      { id: 'en-GB-SoniaNeural', label: 'Sonia · warm British', labelEn: 'Sonia · warm British' },
+      { id: 'en-GB-LibbyNeural', label: 'Libby · lively British', labelEn: 'Libby · lively British' },
+    ],
+    male: [
+      { id: 'en-GB-RyanNeural', label: 'Ryan · confident British', labelEn: 'Ryan · confident British' },
+      { id: 'en-GB-ThomasNeural', label: 'Thomas · calm British', labelEn: 'Thomas · calm British' },
+    ],
+  },
+  {
+    locale: 'ja-JP', name: '日语', nameEn: 'Japanese',
+    female: [
+      { id: 'ja-JP-NanamiNeural', label: '七海 · 明るく親しみやすい', labelEn: 'Nanami · bright & friendly' },
+      { id: 'ja-JP-ShioriNeural', label: 'しおり · 穏やか', labelEn: 'Shiori · calm & gentle' },
+    ],
+    male: [
+      { id: 'ja-JP-KeitaNeural', label: '圭太 · クールな男性', labelEn: 'Keita · cool male' },
+      { id: 'ja-JP-DaichiNeural', label: '大地 · 若々しい', labelEn: 'Daichi · youthful' },
+    ],
+  },
+  {
+    locale: 'ko-KR', name: '韩语', nameEn: 'Korean',
+    female: [
+      { id: 'ko-KR-SunHiNeural', label: '선히 · 따뜻한 여성', labelEn: 'SunHi · warm female' },
+      { id: 'ko-KR-JiMinNeural', label: '지민 · 밝은 여성', labelEn: 'JiMin · bright female' },
+    ],
+    male: [{ id: 'ko-KR-InJoonNeural', label: '인준 · 진중한 남성', labelEn: 'InJoon · sincere male' }],
+  },
+  {
+    locale: 'fr-FR', name: '法语', nameEn: 'French',
+    female: [
+      { id: 'fr-FR-DeniseNeural', label: 'Denise · chaleureuse', labelEn: 'Denise · warm' },
+      { id: 'fr-FR-EloiseNeural', label: 'Éloïse · douce', labelEn: 'Eloise · soft' },
+    ],
+    male: [
+      { id: 'fr-FR-HenriNeural', label: 'Henri · posé', labelEn: 'Henri · steady' },
+      { id: 'fr-FR-RemyNeural', label: 'Rémy · amical', labelEn: 'Remy · friendly' },
+    ],
+  },
+  {
+    locale: 'de-DE', name: '德语', nameEn: 'German',
+    female: [
+      { id: 'de-DE-KatjaNeural', label: 'Katja · freundlich', labelEn: 'Katja · friendly' },
+      { id: 'de-DE-AmalaNeural', label: 'Amala · jung & frisch', labelEn: 'Amala · young & fresh' },
+    ],
+    male: [
+      { id: 'de-DE-ConradNeural', label: 'Conrad · souverän', labelEn: 'Conrad · confident' },
+      { id: 'de-DE-KasperNeural', label: 'Kasper · locker', labelEn: 'Kasper · casual' },
+    ],
+  },
+  {
+    locale: 'es-ES', name: '西班牙语', nameEn: 'Spanish',
+    female: [{ id: 'es-ES-ElviraNeural', label: 'Elvira · cálida', labelEn: 'Elvira · warm' }],
+    male: [{ id: 'es-ES-AlvaroNeural', label: 'Álvaro · seguro', labelEn: 'Alvaro · confident' }],
+  },
+  {
+    locale: 'pt-BR', name: '葡萄牙语（巴西）', nameEn: 'Portuguese (Brazil)',
+    female: [{ id: 'pt-BR-FranciscaNeural', label: 'Francisca · calorosa', labelEn: 'Francisca · warm' }],
+    male: [{ id: 'pt-BR-AntonioNeural', label: 'Antônio · tranquilo', labelEn: 'Antonio · calm' }],
+  },
+  {
+    locale: 'it-IT', name: '意大利语', nameEn: 'Italian',
+    female: [{ id: 'it-IT-ElsaNeural', label: 'Elsa · cordiale', labelEn: 'Elsa · cordial' }],
+    male: [{ id: 'it-IT-DiegoNeural', label: 'Diego · sicuro', labelEn: 'Diego · confident' }],
+  },
+  {
+    locale: 'ru-RU', name: '俄语', nameEn: 'Russian',
+    female: [{ id: 'ru-RU-SvetlanaNeural', label: 'Светлана · тёплый', labelEn: 'Svetlana · warm' }],
+    male: [{ id: 'ru-RU-DmitryNeural', label: 'Дмитрий · уверенный', labelEn: 'Dmitry · confident' }],
+  },
+  {
+    locale: 'hi-IN', name: '印地语', nameEn: 'Hindi',
+    female: [{ id: 'hi-IN-SwaraNeural', label: 'स्वरा · ऊष्ण', labelEn: 'Swara · warm' }],
+    male: [{ id: 'hi-IN-MadhurNeural', label: 'मधुर · आत्मविश्वासी', labelEn: 'Madhur · confident' }],
+  },
+  {
+    locale: 'id-ID', name: '印尼语', nameEn: 'Indonesian',
+    female: [{ id: 'id-ID-GadisNeural', label: 'Gadis · ramah', labelEn: 'Gadis · friendly' }],
+    male: [{ id: 'id-ID-ArdiNeural', label: 'Ardi · meyakinkan', labelEn: 'Ardi · convincing' }],
+  },
+  {
+    locale: 'th-TH', name: '泰语', nameEn: 'Thai',
+    female: [{ id: 'th-TH-PremwadeeNeural', label: 'เปรมวดี · อบอุ่น', labelEn: 'Premwadee · warm' }],
+    male: [{ id: 'th-TH-NiwatNeural', label: 'นิวัติ • มั่นใจ', labelEn: 'Niwat · confident' }],
+  },
+  {
+    locale: 'vi-VN', name: '越南语', nameEn: 'Vietnamese',
+    female: [{ id: 'vi-VN-HoaiMyNeural', label: 'Hoài My • ấm áp', labelEn: 'HoaiMy · warm' }],
+    male: [{ id: 'vi-VN-NamMinhNeural', label: 'Nam Minh • tự tin', labelEn: 'NamMinh · confident' }],
+  },
+];
 
 /* ------------------------------------------------------------------ */
 /* 音频振幅包络（驱动口型）                                              */
@@ -712,8 +864,8 @@ export function TalkingVideoRenderer({
   product: TalkingProductInfo;
   tr: TrFn;
   onExported?: (blob: Blob, videoUrl: string) => void;
-  /** avatar = 主播口播（默认）；showcase = 商品种草（无数字人） */
-  mode?: 'avatar' | 'showcase';
+  /** avatar = 主播口播（默认）；showcase = 商品种草（无数字人）；live = 数字人带货（照片数字人 + 手势 + 商品互动） */
+  mode?: 'avatar' | 'showcase' | 'live';
   isZh?: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -797,6 +949,33 @@ export function TalkingVideoRenderer({
         return;
       }
 
+      if (mode === 'live') {
+        const hlBefore = scenes.slice(0, idx).filter((s) => s.kind === 'highlight').length;
+        drawLiveScene(dc, {
+          theme,
+          kind: scene.kind,
+          subtitle: scene.subtitle,
+          label: scene.label,
+          highlight: scene.highlight,
+          price: scene.price,
+          product,
+          productImg: productImgRef.current,
+          photoImg: extras?.photoImg !== undefined ? extras.photoImg : photoRef.current,
+          skinTone: extras?.skinTone !== undefined ? extras.skinTone : skinToneRef.current,
+          avatar: { id: avatar.id, name: avatar.name, flag: avatar.flag, photo: avatar.photo },
+          mouthOpen,
+          sceneT,
+          sceneDur: scene.duration,
+          globalT,
+          avatarSeed,
+          sceneIndex: idx,
+          sceneCount: scenes.length,
+          highlightIndex: hlBefore + (scene.kind === 'highlight' ? 1 : 0),
+          isZh,
+        });
+        return;
+      }
+
       drawTalkingScene(dc, {
         avatar,
         theme,
@@ -843,7 +1022,7 @@ export function TalkingVideoRenderer({
     [scenes, sceneStarts, renderScene],
   );
 
-  // 加载形象照 + 商品图 + 真人主播循环视频，然后绘制首帧（showcase 模式加载商品图 + 主持徽章头像）
+  // 加载形象照 + 商品图 + 真人主播循环视频，然后绘制首帧（showcase 模式加载商品图 + 主持徽章头像；live 模式额外采样肤色驱动手势/眼皮）
   useEffect(() => {
     let cancelled = false;
     if (mode !== 'avatar') {
@@ -851,6 +1030,10 @@ export function TalkingVideoRenderer({
       himg.onload = () => {
         if (!cancelled) {
           photoRef.current = himg;
+          if (mode === 'live') {
+            const rig = AVATAR_RIGS[avatar.id];
+            skinToneRef.current = rig ? sampleSkinTone(himg, rig) : null;
+          }
           drawFrame(0);
         }
       };
@@ -1076,6 +1259,11 @@ export function TalkingVideoRenderer({
       im.src = avatar.photo;
     });
     photoRef.current = photoImg;
+    // live 模式：导出前采样肤色（矢量手势 + 眨眼眼皮与预览一致）
+    if (mode === 'live' && photoImg) {
+      const rig = AVATAR_RIGS[avatar.id];
+      skinToneRef.current = rig ? sampleSkinTone(photoImg, rig) : null;
+    }
     if (product.image) {
       const pimg = await new Promise<HTMLImageElement | null>((resolve) => {
         const im = new Image();
@@ -1231,7 +1419,7 @@ export function TalkingVideoRenderer({
     const buffer = (muxer.target as ArrayBufferTarget).buffer;
     if (!buffer || buffer.byteLength === 0) throw new Error('muxer produced empty buffer');
     return { blob: new Blob([buffer], { type: 'video/mp4' }), label: 'MP4 (H.264 + AAC 真人语音)' };
-  }, [scenes, theme, product, avatar, avatarSeed, renderScene]);
+  }, [scenes, theme, product, avatar, avatarSeed, renderScene, mode]);
 
   const handleExport = useCallback(async () => {
     if (exporting || scenes.length === 0) return;
