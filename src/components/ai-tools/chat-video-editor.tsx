@@ -57,6 +57,17 @@ interface VideoEntry {
 const MAX_VIDEO_BYTES = 48 * 1024 * 1024;
 const MAX_VIDEO_COUNT = 6;
 
+/** 读取管理员在后台配置的 AI 密钥（与视频处理流程一致，保证 LLM 可用） */
+function getAdminAiConfig(): Record<string, unknown> | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const stored = localStorage.getItem('clipop_ai_config');
+    return stored ? JSON.parse(stored) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function ChatVideoEditor() {
   const { t, locale } = useLocale();
   const { user, accessToken, loading: authLoading } = useAuth();
@@ -225,6 +236,7 @@ export function ChatVideoEditor() {
         videoUrls,
         messages: chatHistory,
         locale,
+        aiConfig: getAdminAiConfig(),
       });
 
       setMessages(prev =>

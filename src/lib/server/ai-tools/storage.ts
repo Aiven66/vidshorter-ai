@@ -40,19 +40,42 @@ export class ApiError extends Error {
   }
 }
 
+/** 解码 JWT payload（不验证签名，仅用于 demo token 提取） */
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const payload = parts[1];
+    const padded = payload + '='.repeat((4 - (payload.length % 4)) % 4);
+    const decoded = Buffer.from(padded, 'base64').toString('utf-8');
+    return JSON.parse(decoded) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 /** 从请求头校验用户，返回 user id */
 export async function requireUserId(req: NextRequest): Promise<string> {
   const auth = req.headers.get('authorization') || '';
   const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
   if (!token) throw new ApiError(401, 'UNAUTHORIZED');
 
+  // 1. 先尝试标准 Supabase JWT 验证
   const { url, anonKey } = supabaseConfig();
   const client = createClient(url, anonKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
   const { data, error } = await client.auth.getUser(token);
-  if (error || !data.user?.id) throw new ApiError(401, 'UNAUTHORIZED');
-  return data.user.id;
+  if (!error && data.user?.id) return data.user.id;
+
+  // 2. 如果 Supabase 验证失败，尝试 Demo 模式 token（自签发，含 demo: true 标记）
+  const payload = decodeJwtPayload(token);
+  if (payload?.demo === true) {
+    const sub = typeof payload.sub === 'string' ? payload.sub : '';
+    if (sub) return sub;
+  }
+
+  throw new ApiError(401, 'UNAUTHORIZED');
 }
 
 /**

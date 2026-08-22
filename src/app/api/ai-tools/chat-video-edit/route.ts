@@ -217,6 +217,13 @@ export async function POST(req: NextRequest) {
       videoUrls?: string[];
       messages?: Array<{ role: string; content: string }>;
       locale?: string;
+      aiConfig?: {
+        enabled?: boolean;
+        apiKey?: string;
+        baseUrl?: string;
+        modelBaseUrl?: string;
+        model?: string;
+      };
     };
 
     if (!Array.isArray(body.videoUrls) || body.videoUrls.length === 0) {
@@ -253,13 +260,25 @@ export async function POST(req: NextRequest) {
     const locale = body.locale || 'en';
     const systemPrompt = buildSystemPrompt(probes, locale);
 
+    // 构建 Config：管理员后台配置的密钥优先，其次再使用环境变量（与视频处理流程一致）
+    const aiConfig = body.aiConfig;
+    const config = new Config(
+      (aiConfig?.enabled && aiConfig?.apiKey)
+        ? {
+            apiKey: aiConfig.apiKey,
+            baseUrl: aiConfig.baseUrl || process.env.COZE_INTEGRATION_BASE_URL,
+            modelBaseUrl: aiConfig.modelBaseUrl || process.env.COZE_INTEGRATION_MODEL_BASE_URL,
+          }
+        : {
+            apiKey: process.env.COZE_WORKLOAD_IDENTITY_API_KEY,
+            baseUrl: process.env.COZE_INTEGRATION_BASE_URL,
+            modelBaseUrl: process.env.COZE_INTEGRATION_MODEL_BASE_URL,
+          }
+    );
+    const llmModel = (aiConfig?.enabled && aiConfig?.model)
+      ? aiConfig.model
+      : 'doubao-seed-1-8-251228';
     const customHeaders = HeaderUtils.extractForwardHeaders(req.headers);
-    const config = new Config({
-      apiKey: process.env.COZE_WORKLOAD_IDENTITY_API_KEY,
-      baseUrl: process.env.COZE_INTEGRATION_BASE_URL,
-      modelBaseUrl: process.env.COZE_INTEGRATION_MODEL_BASE_URL,
-    });
-    const llmModel = 'doubao-seed-1-8-251228';
     const llmClient = new LLMClient(config, customHeaders);
 
     // 构建聊天上下文
