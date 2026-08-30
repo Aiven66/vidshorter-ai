@@ -20,7 +20,7 @@ export const commonTranslations = {
     // 新侧边栏入口
     clips: 'Highlight Clips',
     notes: 'Highlight Notes',
-    podcast: 'Podcast',
+    podcast: 'Podcast AI',
     marketing: 'Marketing Video',
     digitalHuman: 'Selling Video',
     digitalHumanLive: 'Digital Human Selling',
