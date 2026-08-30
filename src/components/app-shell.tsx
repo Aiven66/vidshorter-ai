@@ -26,9 +26,9 @@ import {
   Bot,
   Wrench,
   Megaphone,
+  Podcast,
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
-import { DESKTOP_WEB_APP_URL } from '@/lib/desktop-auth';
 import { useCredits } from '@/lib/credits-context';
 import { useAuth } from '@/lib/auth-context';
 import { useLocale } from '@/lib/locale-context';
@@ -62,9 +62,11 @@ const LanguageSwitcher = dynamic(
 type NavItem = {
   href: string;
   // 通过 useLocale().t('nav.xxx') 读取翻译
-  labelKey: 'clips' | 'notes' | 'blog' | 'pricing' | 'about' | 'download' | 'marketing' | 'news' | 'article' | 'digitalHuman' | 'digitalHumanLive' | 'aiTools';
+  labelKey: 'clips' | 'notes' | 'blog' | 'pricing' | 'about' | 'download' | 'marketing' | 'news' | 'article' | 'digitalHuman' | 'digitalHumanLive' | 'aiTools' | 'podcast';
   icon: typeof Scissors;
   badge?: 'NEW';
+  // 外部链接（如 Podcast AI）: web 端新标签页打开，桌面端经 setWindowOpenHandler 用系统浏览器打开
+  external?: boolean;
 };
 
 const NAV_ITEMS: NavItem[] = [
@@ -75,6 +77,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/digital-human-live', labelKey: 'digitalHumanLive', icon: Megaphone, badge: 'NEW' },
   { href: '/news-video', labelKey: 'news', icon: TrendingUp, badge: 'NEW' },
   { href: '/article-to-video', labelKey: 'article', icon: BookOpen, badge: 'NEW' },
+  { href: 'https://podcastai.clipopai.com/', labelKey: 'podcast', icon: Podcast, badge: 'NEW', external: true },
   { href: '/ai-tools', labelKey: 'aiTools', icon: Wrench, badge: 'NEW' },
   { href: '/blog', labelKey: 'blog', icon: Newspaper },
   { href: '/pricing', labelKey: 'pricing', icon: Tag },
@@ -94,13 +97,11 @@ function SidebarLogo() {
 
 function AppSidebarContent({
   pathname,
-  isDesktop,
   onNavigate,
   collapsed = false,
   onToggleCollapse,
 }: {
   pathname: string | null;
-  isDesktop: boolean;
   onNavigate?: () => void;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
@@ -138,9 +139,11 @@ function AppSidebarContent({
       <div className={`flex flex-col gap-1 flex-1 ${collapsed ? 'px-1' : 'px-2'}`}>
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon;
-          const href = isDesktop
-            ? `${process.env.NEXT_PUBLIC_APP_URL || DESKTOP_WEB_APP_URL}${item.href}`
-            : item.href;
+          // Desktop runs the same Next.js app from the embedded local server — internal
+          // <Link> navigation keeps the page inside the Electron webview where the
+          // clipopDesktop IPC bridge (Real Human engine etc.) is available. NEVER link
+          // out to the online site from the sidebar.
+          const href = item.href;
           const active = isActive(item.href);
 
           const content = (
@@ -163,7 +166,8 @@ function AppSidebarContent({
             collapsed ? 'justify-center px-1 py-2.5' : 'px-3 py-2.5'
           } ${active ? 'bg-primary/10 text-primary' : ''}`;
 
-          if (isDesktop) {
+          // 外部链接（Podcast AI）: web 端新标签页打开，桌面端经 setWindowOpenHandler 转系统浏览器
+          if (item.external) {
             return (
               <a
                 key={item.href}
@@ -172,12 +176,13 @@ function AppSidebarContent({
                 rel="noopener noreferrer"
                 onClick={onNavigate}
                 className={className}
-                title={collapsed ? item.labelKey : undefined}
+                title={collapsed ? 'Podcast AI' : undefined}
               >
                 {content}
               </a>
             );
           }
+
           return (
             <Link
               key={item.href}
@@ -209,6 +214,7 @@ function SidebarLabel({ labelKey }: { labelKey: NavItem['labelKey'] }) {
     digitalHumanLive: '数字人带货短视频',
     news: '资讯视频',
     article: '文章转视频',
+    podcast: 'AI 播客',
     aiTools: 'AI 工具箱',
     blog: '博客',
     pricing: '定价',
@@ -308,7 +314,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       >
         <AppSidebarContent
           pathname={pathname}
-          isDesktop={isDesktop}
           collapsed={collapsed}
           onToggleCollapse={toggleSidebar}
         />
@@ -345,7 +350,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <SheetTitle className="sr-only">Menu</SheetTitle>
                 <AppSidebarContent
                   pathname={pathname}
-                  isDesktop={isDesktop}
                   onNavigate={() => setMobileOpen(false)}
                 />
                 <SidebarCreditsCard mounted={mounted} />

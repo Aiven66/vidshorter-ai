@@ -90,6 +90,7 @@ export const commonTranslations = {
     download: 'Download App',
     light: 'Light',
     dark: 'Dark',
+    podcast: 'Podcast AI',
     inviteFriends: 'Invite Friends',
   },
   referral: {
@@ -426,6 +427,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...commonTranslations,
     nav: {
       home: '首页', blog: '博客', pricing: '定价', feedback: '用户反馈', login: '登录', register: '注册', dashboard: '控制台', admin: '管理后台', logout: '退出登录', credits: '积分', download: '下载客户端', light: '浅色', dark: '深色',
+      podcast: 'AI 播客',
       inviteFriends: '邀请好友',
     },
     referral: {
@@ -607,7 +609,7 @@ export const translations: Record<Locale, Record<string, string>> = {
   'zh-Hant': flattenTranslations({
     ...commonTranslations,
     nav: {
-      home: '首頁', blog: '部落格', pricing: '定價', feedback: '使用者回饋', login: '登入', register: '註冊', dashboard: '儀錶板', admin: '管理後台', logout: '登出', credits: '積分', download: '下載應用程式', light: '淺色', dark: '深色',
+      home: '首頁', blog: '部落格', pricing: '定價', feedback: '使用者回饋', login: '登入', register: '註冊', dashboard: '儀錶板', admin: '管理後台', logout: '登出', credits: '積分', download: '下載應用程式', light: '淺色', dark: '深色', podcast: 'AI 播客',
       inviteFriends: '邀請好友',
     },
     referral: {
@@ -718,7 +720,7 @@ export const translations: Record<Locale, Record<string, string>> = {
   ja: flattenTranslations({
     ...commonTranslations,
     nav: {
-      home: 'ホーム', blog: 'ブログ', pricing: '価格', login: 'ログイン', register: '登録', dashboard: 'ダッシュボード', admin: '管理パネル', logout: 'ログアウト', credits: 'クレジット', download: 'アプリをダウンロード', light: 'ライト', dark: 'ダーク',
+      home: 'ホーム', blog: 'ブログ', pricing: '価格', login: 'ログイン', register: '登録', dashboard: 'ダッシュボード', admin: '管理パネル', logout: 'ログアウト', credits: 'クレジット', download: 'アプリをダウンロード', light: 'ライト', dark: 'ダーク', podcast: 'AI ポッドキャスト',
     },
     footer: {
       desc: 'AI駆動の分析と編集で、長い動画を魅力的なショートクリップに変換。', quickLinks: 'クイックリンク', legal: '法務', privacy: 'プライバシーポリシー', terms: '利用規約', contact: 'お問い合わせ', rights: 'All rights reserved.',
@@ -799,7 +801,7 @@ export const translations: Record<Locale, Record<string, string>> = {
   ko: flattenTranslations({
     ...commonTranslations,
     nav: {
-      home: '홈', blog: '블로그', pricing: '가격', login: '로그인', register: '회원가입', dashboard: '대시보드', admin: '관리자 패널', logout: '로그아웃', credits: '크레딧', download: '앱 다운로드', light: '라이트', dark: '다크',
+      home: '홈', blog: '블로그', pricing: '가격', login: '로그인', register: '회원가입', dashboard: '대시보드', admin: '관리자 패널', logout: '로그아웃', credits: '크레딧', download: '앱 다운로드', light: '라이트', dark: '다크', podcast: 'AI 팟캐스트',
     },
     footer: {
       desc: 'AI 기반 분석 및 편집으로 긴 동영상을 매력적인 짧은 클립으로 변환하세요.', quickLinks: '빠른 링크', legal: '법적 고지', privacy: '개인정보 처리방침', terms: '이용약관', contact: '문의', rights: 'All rights reserved.',
@@ -872,7 +874,7 @@ export const translations: Record<Locale, Record<string, string>> = {
   de: flattenTranslations({
     ...commonTranslations,
     nav: {
-      home: 'Start', blog: 'Blog', pricing: 'Preise', login: 'Anmelden', register: 'Registrieren', dashboard: 'Dashboard', admin: 'Admin-Panel', logout: 'Abmelden', credits: 'Guthaben', download: 'App Herunterladen', light: 'Hell', dark: 'Dunkel',
+      home: 'Start', blog: 'Blog', pricing: 'Preise', login: 'Anmelden', register: 'Registrieren', dashboard: 'Dashboard', admin: 'Admin-Panel', logout: 'Abmelden', credits: 'Guthaben', download: 'App Herunterladen', light: 'Hell', dark: 'Dunkel', podcast: 'KI-Podcast',
     },
     footer: {
       desc: 'Verwandeln Sie Ihre langen Videos mit KI-gestützter Analyse und Bearbeitung in fesselnde kurze Clips.', quickLinks: 'Schnelllinks', legal: 'Rechtliches', privacy: 'Datenschutzrichtlinie', terms: 'Nutzungsbedingungen', contact: 'Kontakt', rights: 'Alle Rechte vorbehalten.',
@@ -945,7 +947,7 @@ export const translations: Record<Locale, Record<string, string>> = {
   fr: flattenTranslations({
     ...commonTranslations,
     nav: {
-      home: 'Accueil', blog: 'Blog', pricing: 'Tarifs', login: 'Connexion', register: 'Inscription', dashboard: 'Tableau de bord', admin: 'Panel admin', logout: 'Déconnexion', credits: 'Crédits', download: 'Télécharger l\'App', light: 'Clair', dark: 'Sombre',
+      home: 'Accueil', blog: 'Blog', pricing: 'Tarifs', login: 'Connexion', register: 'Inscription', dashboard: 'Tableau de bord', admin: 'Panel admin', logout: 'Déconnexion', credits: 'Crédits', download: 'Télécharger l\'App', light: 'Clair', dark: 'Sombre', podcast: 'Podcast IA',
     },
     footer: {
       desc: 'Transformez vos vidéos longues en clips courts captivants grâce à l\'analyse et au montage alimentés par l\'IA.', quickLinks: 'Liens rapides', legal: 'Mentions légales', privacy: 'Politique de confidentialité', terms: 'Conditions d\'utilisation', contact: 'Contact', rights: 'Tous droits réservés.',
@@ -1018,7 +1020,7 @@ export const translations: Record<Locale, Record<string, string>> = {
   it: flattenTranslations({
     ...commonTranslations,
     nav: {
-      home: 'Home', blog: 'Blog', pricing: 'Prezzi', login: 'Accedi', register: 'Registrati', dashboard: 'Dashboard', admin: 'Pannello admin', logout: 'Esci', credits: 'Crediti', download: 'Scarica App', light: 'Chiaro', dark: 'Scuro',
+      home: 'Home', blog: 'Blog', pricing: 'Prezzi', login: 'Accedi', register: 'Registrati', dashboard: 'Dashboard', admin: 'Pannello admin', logout: 'Esci', credits: 'Crediti', download: 'Scarica App', light: 'Chiaro', dark: 'Scuro', podcast: 'Podcast IA',
     },
     footer: {
       desc: 'Trasforma i tuoi video lunghi in clip brevi coinvolgenti con analisi e montaggio AI.', quickLinks: 'Link Rapidi', legal: 'Legale', privacy: 'Informativa sulla Privacy', terms: 'Termini di Servizio', contact: 'Contatti', rights: 'Tutti i diritti riservati.',
@@ -1091,7 +1093,7 @@ export const translations: Record<Locale, Record<string, string>> = {
   es: flattenTranslations({
     ...commonTranslations,
     nav: {
-      home: 'Inicio', blog: 'Blog', pricing: 'Precios', login: 'Iniciar sesión', register: 'Registrarse', dashboard: 'Panel', admin: 'Panel admin', logout: 'Cerrar sesión', credits: 'Créditos', download: 'Descargar App', light: 'Claro', dark: 'Oscuro',
+      home: 'Inicio', blog: 'Blog', pricing: 'Precios', login: 'Iniciar sesión', register: 'Registrarse', dashboard: 'Panel', admin: 'Panel admin', logout: 'Cerrar sesión', credits: 'Créditos', download: 'Descargar App', light: 'Claro', dark: 'Oscuro', podcast: 'Podcast IA',
     },
     footer: {
       desc: 'Transforma tus videos largos en clips cortos atractivos con análisis y edición impulsados por IA.', quickLinks: 'Enlaces Rápidos', legal: 'Legal', privacy: 'Política de Privacidad', terms: 'Términos de Servicio', contact: 'Contacto', rights: 'Todos los derechos reservados.',
@@ -1164,7 +1166,7 @@ export const translations: Record<Locale, Record<string, string>> = {
   pt: flattenTranslations({
     ...commonTranslations,
     nav: {
-      home: 'Início', blog: 'Blog', pricing: 'Preços', login: 'Entrar', register: 'Cadastrar', dashboard: 'Painel', admin: 'Painel admin', logout: 'Sair', credits: 'Créditos', download: 'Baixar App', light: 'Claro', dark: 'Escuro',
+      home: 'Início', blog: 'Blog', pricing: 'Preços', login: 'Entrar', register: 'Cadastrar', dashboard: 'Painel', admin: 'Painel admin', logout: 'Sair', credits: 'Créditos', download: 'Baixar App', light: 'Claro', dark: 'Escuro', podcast: 'Podcast IA',
     },
     footer: {
       desc: 'Transforme seus vídeos longos em clipes curtos envolventes com análise e edição impulsionadas por IA.', quickLinks: 'Links Rápidos', legal: 'Legal', privacy: 'Política de Privacidade', terms: 'Termos de Serviço', contact: 'Contato', rights: 'Todos os direitos reservados.',
@@ -1237,7 +1239,7 @@ export const translations: Record<Locale, Record<string, string>> = {
   hi: flattenTranslations({
     ...commonTranslations,
     nav: {
-      home: 'होम', blog: 'ब्लॉग', pricing: 'मूल्य', login: 'लॉगिन', register: 'पंजीकरण', dashboard: 'डैशबोर्ड', admin: 'एडमिन पैनल', logout: 'लॉगआउट', credits: 'क्रेडिट', download: 'ऐप डाउनलोड करें', light: 'लाइट', dark: 'डार्क',
+      home: 'होम', blog: 'ब्लॉग', pricing: 'मूल्य', login: 'लॉगिन', register: 'पंजीकरण', dashboard: 'डैशबोर्ड', admin: 'एडमिन पैनल', logout: 'लॉगआउट', credits: 'क्रेडिट', download: 'ऐप डाउनलोड करें', light: 'लाइट', dark: 'डार्क', podcast: 'एआई पॉडकास्ट',
     },
     footer: {
       desc: 'AI-संचालित विश्लेषण और संपादन के साथ अपने लंबे वीडियो को आकर्षक छोटे क्लिप्स में बदलें।', quickLinks: 'त्वरित लिंक', legal: 'कानूनी', privacy: 'गोपनीयता नीति', terms: 'सेवा की शर्तें', contact: 'संपर्क', rights: 'सर्वाधिकार सुरक्षित।',
@@ -1310,7 +1312,7 @@ export const translations: Record<Locale, Record<string, string>> = {
   ar: flattenTranslations({
     ...commonTranslations,
     nav: {
-      home: 'الرئيسية', blog: 'المدونة', pricing: 'الأسعار', login: 'تسجيل الدخول', register: 'التسجيل', dashboard: 'لوحة التحكم', admin: 'لوحة المشرف', logout: 'تسجيل الخروج', credits: 'الرصيد', download: 'تنزيل التطبيق', light: 'فاتح', dark: 'داكن',
+      home: 'الرئيسية', blog: 'المدونة', pricing: 'الأسعار', login: 'تسجيل الدخول', register: 'التسجيل', dashboard: 'لوحة التحكم', admin: 'لوحة المشرف', logout: 'تسجيل الخروج', credits: 'الرصيد', download: 'تنزيل التطبيق', light: 'فاتح', dark: 'داكن', podcast: 'بودكاست AI',
     },
     footer: {
       desc: 'حوّل مقاطع الفيديو الطويلة إلى مقاطع قصيرة جذابة باستخدام التحليل والتحرير بالذكاء الاصطناعي.', quickLinks: 'روابط سريعة', legal: 'قانوني', privacy: 'سياسة الخصوصية', terms: 'شروط الخدمة', contact: 'اتصل بنا', rights: 'جميع الحقوق محفوظة.',
@@ -1383,7 +1385,7 @@ export const translations: Record<Locale, Record<string, string>> = {
   bn: flattenTranslations({
     ...commonTranslations,
     nav: {
-      home: 'হোম', blog: 'ব্লগ', pricing: 'মূল্য', login: 'লগইন', register: 'নিবন্ধন', dashboard: 'ড্যাশবোর্ড', admin: 'অ্যাডমিন প্যানেল', logout: 'লগআউট', credits: 'ক্রেডিট', download: 'অ্যাপ ডাউনলোড করুন', light: 'লাইট', dark: 'ডার্ক',
+      home: 'হোম', blog: 'ব্লগ', pricing: 'মূল্য', login: 'লগইন', register: 'নিবন্ধন', dashboard: 'ড্যাশবোর্ড', admin: 'অ্যাডমিন প্যানেল', logout: 'লগআউট', credits: 'ক্রেডিট', download: 'অ্যাপ ডাউনলোড করুন', light: 'লাইট', dark: 'ডার্ক', podcast: 'এআই পডকাস্ট',
     },
     footer: {
       desc: 'AI-চালিত বিশ্লেষণ এবং সম্পাদনার মাধ্যমে আপনার দীর্ঘ ভিডিওগুলোকে আকর্ষণীয় শর্ট ক্লিপে রূপান্তর করুন।', quickLinks: 'দ্রুত লিঙ্ক', legal: 'আইনি', privacy: 'গোপনীয়তা নীতি', terms: 'সেবার শর্তাবলী', contact: 'যোগাযোগ', rights: 'সর্বস্বত্ব সংরক্ষিত।',
@@ -1456,7 +1458,7 @@ export const translations: Record<Locale, Record<string, string>> = {
   id: flattenTranslations({
     ...commonTranslations,
     nav: {
-      home: 'Beranda', blog: 'Blog', pricing: 'Harga', login: 'Masuk', register: 'Daftar', dashboard: 'Dasbor', admin: 'Panel Admin', logout: 'Keluar', credits: 'Kredit', download: 'Unduh Aplikasi', light: 'Terang', dark: 'Gelap',
+      home: 'Beranda', blog: 'Blog', pricing: 'Harga', login: 'Masuk', register: 'Daftar', dashboard: 'Dasbor', admin: 'Panel Admin', logout: 'Keluar', credits: 'Kredit', download: 'Unduh Aplikasi', light: 'Terang', dark: 'Gelap', podcast: 'Podcast AI',
     },
     footer: {
       desc: 'Ubah video panjangmu menjadi klip pendek yang menarik dengan analisis dan pengeditan bertenaga AI.', quickLinks: 'Tautan Cepat', legal: 'Legal', privacy: 'Kebijakan Privasi', terms: 'Ketentuan Layanan', contact: 'Kontak', rights: 'Hak cipta dilindungi.',
@@ -1529,7 +1531,7 @@ export const translations: Record<Locale, Record<string, string>> = {
   ms: flattenTranslations({
     ...commonTranslations,
     nav: {
-      home: 'Laman Utama', blog: 'Blog', pricing: 'Harga', login: 'Log Masuk', register: 'Daftar', dashboard: 'Papan Pemuka', admin: 'Panel Admin', logout: 'Log Keluar', credits: 'Kredit', download: 'Muat Turun Aplikasi', light: 'Cerah', dark: 'Gelap',
+      home: 'Laman Utama', blog: 'Blog', pricing: 'Harga', login: 'Log Masuk', register: 'Daftar', dashboard: 'Papan Pemuka', admin: 'Panel Admin', logout: 'Log Keluar', credits: 'Kredit', download: 'Muat Turun Aplikasi', light: 'Cerah', dark: 'Gelap', podcast: 'Podcast AI',
     },
     footer: {
       desc: 'Tukar video panjang anda kepada klip pendek yang menarik dengan analisis dan penyuntingan berkuasa AI.', quickLinks: 'Pautan Pantas', legal: 'Undang-undang', privacy: 'Dasar Privasi', terms: 'Terma Perkhidmatan', contact: 'Hubungi', rights: 'Hak cipta terpelihara.',
