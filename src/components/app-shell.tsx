@@ -96,6 +96,9 @@ function SidebarLogo() {
     <img
       src="/clipop-logo3.svg"
       alt="Clipop AI"
+      width={28}
+      height={28}
+      decoding="async"
       className="h-7 w-7 object-contain"
     />
   );

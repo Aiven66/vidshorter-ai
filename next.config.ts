@@ -80,6 +80,15 @@ const nextConfig: NextConfig = {
   compress: true,
   poweredByHeader: false,
   reactStrictMode: true,
+  // 静态媒体资源长缓存：Logo / 图标 / 图片等减少重复往返，提升二次访问速度
+  async headers() {
+    return [
+      {
+        source: '/:all*(svg|jpg|jpeg|png|webp|avif|ico|gif|woff|woff2)',
+        headers: [{ key: 'Cache-Control', value: 'public, max-age=31536000, immutable' }],
+      },
+    ];
+  },
   experimental: {
     // The desktop standalone server runs from the signed macOS app bundle.
     // Persisting ISR/fetch cache there mutates sealed resources after launch

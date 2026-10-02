@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import ClientShortsProcessor from '@/components/home/client-shorts-processor';
 
 export const metadata: Metadata = {
-  title: 'YouTube Shorts 成片 — 长视频一键生成竖屏高光短视频 | Clipop AI',
+  title: 'YouTube Shorts 成片 — 长视频一键生成竖屏高光短视频',
   description:
     '输入长视频链接，AI 自动提取最具传播力的高光片段，输出 9:16 竖屏 YouTube Shorts 成片，含 AI 字幕，可直接发布。',
 };
