@@ -1,4 +1,5 @@
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const net = require('node:net');
 const { spawn } = require('node:child_process');
@@ -50,6 +51,11 @@ async function testEmbeddedWebStructure() {
   assert(fs.existsSync(path.join(EMBEDDED_WEB, 'node_modules', 'next')), 'node_modules/next exists');
   assert(fs.existsSync(path.join(EMBEDDED_WEB, 'public')), 'public directory exists');
   assert(fs.existsSync(path.join(EMBEDDED_WEB, 'package.json')), 'package.json exists');
+  const serverSource = fs.readFileSync(path.join(EMBEDDED_WEB, 'server.js'), 'utf8');
+  assert(
+    serverSource.includes('"isrFlushToDisk":false'),
+    'Desktop server disables signed-bundle fetch cache writes',
+  );
 }
 
 async function testEmbeddedWebServer() {
@@ -62,6 +68,13 @@ async function testEmbeddedWebServer() {
     return;
   }
   
+  const fetchCacheDir = path.join(EMBEDDED_WEB, '.next', 'cache', 'fetch-cache');
+  const listFetchCache = () => {
+    if (!fs.existsSync(fetchCacheDir)) return [];
+    return fs.readdirSync(fetchCacheDir).sort();
+  };
+  const fetchCacheBefore = listFetchCache();
+
   return new Promise((resolve) => {
     const env = {
       ...process.env,
@@ -125,6 +138,10 @@ async function testEmbeddedWebServer() {
             clearInterval(checkInterval);
             assert(true, 'Embedded web server responds to HTTP requests');
             assert(resp.status === 200, `Response status is 200 (got ${resp.status})`);
+            assert(
+              JSON.stringify(listFetchCache()) === JSON.stringify(fetchCacheBefore),
+              'Embedded web request does not write fetch cache into the app payload',
+            );
             try { child.kill(); } catch {}
             resolve();
           }
@@ -159,7 +176,7 @@ async function testBuildConfiguration() {
   
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   assert(pkg.version, `Package version is set: ${pkg.version}`);
-  assert(pkg.version === '0.9.31', 'Package version is bumped to 0.9.31');
+  assert(pkg.version === '0.9.66', 'Package version is bumped to 0.9.66');
   assert(pkg.main === 'main.js', 'Main entry point is main.js');
   assert(pkg.build, 'Build configuration exists');
   assert(pkg.build.appId, 'App ID is set');
@@ -174,9 +191,75 @@ async function testBuildConfiguration() {
   assert(files.includes('preload-web.js'), 'preload-web.js is included in build files');
   assert(files.includes('local-highlights.js'), 'local-highlights.js is included in build files');
   assert(files.includes('media-server.js'), 'media-server.js is included in build files');
+  assert(files.includes('real-human-engine.js'), 'Real Human engine is included in build files');
+  assert(files.includes('real-human-ipc.js'), 'Real Human IPC is included in build files');
+  assert(files.includes('local-product-avatar.js'), 'Local Product Avatar engine is included in build files');
   assert(files.includes('ytdlp.js'), 'ytdlp.js is included in build files');
   assert(files.includes('runner.js'), 'runner.js is included in build files');
   assert(files.includes('node_modules/**'), 'node_modules is included in build files');
+
+  const engineJs = fs.readFileSync(path.join(ROOT, 'real-human-engine.js'), 'utf8');
+  const ipcJs = fs.readFileSync(path.join(ROOT, 'real-human-ipc.js'), 'utf8');
+  assert(engineJs.includes('HD mouth bank:'), 'Real Human builds a full-resolution source mouth bank');
+  assert(engineJs.includes('tracked HD mouth bank:'), 'Real Human tracks mouth position in every host frame');
+  assert(engineJs.includes('Select exactly one real source pose'), 'Real Human selects one mouth pose without pixel cross-fades');
+  assert(!engineJs.includes('Top-3 soft-weighted'), 'Ghost-producing multi-mouth blending is removed');
+  assert(!engineJs.includes('compositeHeldProduct(frame, heldCards'), 'Procedural product-card compositing is disabled');
+  assert(engineJs.includes('Local product overlays are disabled'), 'Local renderer rejects fake product overlays');
+  assert(!engineJs.includes("['bisent', 'bisent_512.onnx']"), 'Real Human no longer loads obsolete BiSeNet');
+  assert(engineJs.includes('compositeHostMouth(frame, pred, frameIdx)'), 'Only retrieved host mouth pixels enter rendered frames');
+  assert(!engineJs.includes('await self._runGfpgan()'), 'Low-resolution face restoration is disabled in synthesis');
+  assert(ipcJs.includes("'bisent_512.onnx'"), 'Obsolete BiSeNet model is listed for disk cleanup');
+  assert(ipcJs.includes("'gfpgan_1.4.onnx'"), 'Obsolete CodeFormer model is listed for disk cleanup');
+  assert(!ipcJs.includes('Topview') && !ipcJs.includes('cloud-config'), 'No cloud Product Avatar credentials or calls remain');
+  assert(ipcJs.includes("const hostId = validProductImages.length ? 'f_asia'"), 'Product mode selects footage with a physically held cylinder');
+  assert(ipcJs.includes('localEngine.synthesize'), 'All real-human generation uses the local MuseTalk engine');
+  assert(ipcJs.includes('validatePlayableVideo(outPath)'), 'Every generated video is decoded and checked before it is shown');
+}
+
+async function testLocalProductAvatar() {
+  section('Local Product Avatar Integration');
+  const { LocalProductAvatarEngine, MUSETALK_FILES } = require('../local-product-avatar');
+  const localEngineExports = require('../real-human-engine');
+  const localSource = fs.readFileSync(path.join(ROOT, 'local-product-avatar.js'), 'utf8');
+  const replacementSource = fs.readFileSync(path.join(ROOT, 'vendor/musetalk-local/product_replace.py'), 'utf8');
+  const inferenceSource = fs.readFileSync(path.join(ROOT, 'vendor/musetalk-local/scripts/inference.py'), 'utf8');
+  assert(typeof LocalProductAvatarEngine === 'function', 'Local Product Avatar engine is available');
+  assert(MUSETALK_FILES.some((file) => file.name.endsWith('musetalkV15/unet.pth')), 'MuseTalk 1.5 model is required');
+  assert(!localEngineExports.compositeHeldProduct && !localEngineExports.renderProductCard, 'Legacy fake hand/card compositor is not publicly callable');
+  assert(replacementSource.includes('skin_mask(region)') && replacementSource.includes('bottle_box'), 'Original hand and finger pixels form the product occlusion mask, bottle-box pixels are excluded from skin_soft');
+  assert(replacementSource.includes('unsupported presenters') || replacementSource.includes('select her to continue'), 'Unsupported physical-holding layouts are rejected');
+  assert(replacementSource.includes('trackJitter') && replacementSource.includes('visibleCoverage'), 'Held-product stability and occlusion quality gates are enforced');
+  // v0.9.65: squat products (jars, aspect < 1.6) were rendered as a clipped
+  // ~180px vertical strip: plan_placement made a 433px sprite inside a 188px
+  // ROI and compose_region silently clipped it. Placement is now ROI-budget
+  // capped and the compose ROI covers the full sprite rectangle.
+  assert(replacementSource.includes('max_w = region_w + 2 * budget'), 'Placement sizes are capped to the compose ROI budget so sprites are never clipped');
+  assert(replacementSource.includes('sp_x = obj_x + px'), 'Compose ROI covers the full planned sprite rectangle');
+  assert(!replacementSource.includes('region_h * aspect * 1.02'), 'The old uncapped squat-placement width formula is removed');
+  assert(replacementSource.includes('halo = cv2.dilate(product_layer'), 'Ghost-rim wash is a narrow halo ring around the sprite, not a whole-box flat pillar');
+  // v0.9.66: composite hero shots (jar + tilted box, fill ratio ~0.5) were
+  // squeezed into the grip as an unrecognizable blob. They now go to
+  // showcase mode: bottle erased, fingers kept whole, original photo shown
+  // as a natural product card in the frame.
+  assert(replacementSource.includes('CUTOUT_CLEAN_FILL'), 'Cut-out fill ratio decides hold vs showcase mode');
+  assert(replacementSource.includes('fill >= CUTOUT_CLEAN_FILL'), 'Low-fill composite cut-outs are routed away from the grip');
+  assert(replacementSource.includes('def erase_only_region'), 'Showcase mode erases the source bottle without drawing a sprite');
+  assert(replacementSource.includes('def finger_mask'), 'Showcase mode keeps whole fingers via connected-component skin filtering');
+  assert(replacementSource.includes('def build_product_card_canvas'), 'Showcase mode builds a rounded product card with shadow');
+  assert(replacementSource.includes('def draw_product_card'), 'Showcase mode draws the card with a scale/fade entrance');
+  assert(replacementSource.includes('"mode": "hold" if hold_mode else "showcase"'), 'The done event reports which mode was used');
+  assert(localSource.includes('PYTORCH_ENABLE_MPS_FALLBACK'), 'MuseTalk uses the local Apple MPS runtime');
+  assert(localSource.includes("'-m', 'scripts.inference'"), 'Local MuseTalk inference is launched without a cloud API');
+  assert(inferenceSource.includes('extract_video_frames(video_path, save_dir_full)'), 'Presenter paths with spaces are decoded without a shell');
+  assert(!inferenceSource.includes('os.system(cmd)'), 'Presenter frame extraction no longer uses shell string interpolation');
+  assert(inferenceSource.includes('repair_face_coordinates'), 'Intermittent face detection misses are repaired before inference');
+  assert(inferenceSource.includes('No valid presenter face crops were produced'), 'Empty face crops fail before MuseTalk batching');
+  assert(localSource.includes("'--vae_model_path'"), 'Local VAE uses an explicit absolute model path');
+  assert(localSource.includes("'--face_parser_dir'"), 'Local face parser uses an explicit absolute model path');
+  assert(inferenceSource.includes('active_frame_count = min'), 'Short narrations encode only the presenter frames they consume');
+  assert(inferenceSource.includes('encoder.stdin.write(combine_frame.tobytes())'), 'Lip-sync frames stream to ffmpeg without multi-gigabyte PNG caches');
+  assert(!localSource.includes('Topview') && !localSource.includes('api.topview'), 'Local Product Avatar contains no Topview integration');
 }
 
 async function testBinaries() {
@@ -243,7 +326,22 @@ async function testElectronAppStartup() {
   assert(mainJs.includes("ipcMain.handle('open-web-ui'"), 'main.js handles open-web-ui IPC');
   assert(mainJs.includes("ipcMain.handle('local-generate-highlights'"), 'main.js handles local-generate-highlights IPC');
   assert(mainJs.includes('logout reload error'), 'main.js delays logout reload until IPC can return');
+  assert(mainJs.includes('await updateLoadingStatus'), 'Loading-page script updates are awaited to avoid startup rejections');
   assert(!mainJs.includes("require('./nonexistent')"), 'main.js has no broken requires');
+
+  // Amazon 反爬代理：Chromium 网络栈 + 移动 UA（桌面 UA 100% 被 "automated access" 挑战页拦截）
+  const mediaServerJs = fs.readFileSync(path.join(ROOT, 'media-server.js'), 'utf8');
+  assert(mediaServerJs.includes('/api/proxy-fetch'), 'media-server exposes /api/proxy-fetch endpoint');
+  assert(mediaServerJs.includes('electronNetGet'), 'media-server fetches through Chromium network stack');
+  assert(mediaServerJs.includes('MOBILE_UA'), 'media-server uses mobile UA for Amazon anti-bot bypass');
+  assert(mediaServerJs.includes('iPhone; CPU iPhone OS'), 'Amazon fetches use iPhone Safari UA');
+  // v0.9.64: Amazon IP 风控三级递进（直连 → 预热 cookies → 强制预热重试）
+  assert(mediaServerJs.includes('amazonFetch'), 'media-server has three-tier amazonFetch');
+  assert(mediaServerJs.includes('warmupAmazonSession'), 'media-server warms up session cookies via BrowserWindow');
+  assert(mediaServerJs.includes('persist:amazon-warmup'), 'warmup uses persistent partition (destroy+net.request crashes on in-memory session)');
+  assert(mediaServerJs.includes('isAmazonChallengeHtml'), 'challenge page detection exists');
+  // v0.9.64: 渲染进程崩溃自动恢复（闪退防护）
+  assert(mainJs.includes('render-process-gone'), 'main.js auto-recovers after renderer crash');
 }
 
 async function main() {
@@ -253,6 +351,7 @@ async function main() {
   console.log(`Date: ${new Date().toISOString()}`);
 
   await testBuildConfiguration();
+  await testLocalProductAvatar();
   await testMainJsRequires();
   await testI18nModule();
   await testBinaries();

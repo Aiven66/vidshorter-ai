@@ -23,10 +23,23 @@ import {
 } from '@clipop/core';
 import { PayPalCheckout } from './paypal-checkout';
 
+/**
+ * An item offered for checkout. A recurring subscription (PlanConfig) or a
+ * one-time credit pack. Credit packs carry `credits`; when present the modal
+ * renders as a one-time "buy credits" purchase instead of a subscription.
+ */
+export type PaymentItem = {
+  id: string;
+  name: string;
+  priceIntl: number;
+  priceCny: number;
+  credits?: number;
+};
+
 export interface PaymentModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  plan: PlanConfig | null;
+  plan: PlanConfig | PaymentItem | null;
   userId: string;
   onPaymentSuccess?: (provider: PaymentProvider, orderId?: string) => void;
 }
@@ -157,6 +170,8 @@ export function PaymentModal({
 
   if (!plan) return null;
 
+  const isPack = typeof plan.credits === 'number';
+
   return (
     <PaymentDialog open={open} onClose={close}>
       <div className="space-y-4">
@@ -177,11 +192,25 @@ export function PaymentModal({
             </svg>
           </div>
           <div>
-            <h2 className="text-lg font-semibold">Subscribe to {plan.name}</h2>
+            <h2 className="text-lg font-semibold">
+              {isPack ? (
+                <>
+                  Buy {plan.credits} credits
+                </>
+              ) : (
+                <>Subscribe to {plan.name}</>
+              )}
+            </h2>
             <p className="text-sm text-muted-foreground">
-              <span className="font-semibold text-foreground">
-                ${plan.priceIntl} / mo · ¥{plan.priceCny} / 月
-              </span>
+              {isPack ? (
+                <span className="font-semibold text-foreground">
+                  ${plan.priceIntl} · ¥{plan.priceCny} · one-time
+                </span>
+              ) : (
+                <span className="font-semibold text-foreground">
+                  ${plan.priceIntl} / mo · ¥{plan.priceCny} / 月
+                </span>
+              )}
             </p>
           </div>
         </div>
@@ -206,7 +235,9 @@ export function PaymentModal({
             <div className="text-center">
               <h3 className="text-lg font-bold">Payment Successful!</h3>
               <p className="text-sm text-muted-foreground">
-                Your {plan.name} subscription is now active.
+                {isPack
+                  ? `Your ${plan.credits} credits have been added to your balance.`
+                  : `Your ${plan.name} subscription is now active.`}
                 {orderId && <span className="block text-xs">Order: {orderId}</span>}
               </p>
             </div>

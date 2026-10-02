@@ -15,6 +15,7 @@ const { generateHighlightsFromPath, ffmpegPath } = require('./local-highlights')
 const { runYtDlp } = require('./ytdlp');
 const { createMediaServer } = require('./media-server');
 const { t, currentLocale, setLocale, detectLocale } = require('./i18n');
+const { registerRealHumanIpc } = require('./real-human-ipc');
 const APP_VERSION = require('./package.json').version;
 
 let mainWindow = null;
@@ -587,31 +588,159 @@ async function ensureWebWindow() {
     return { action: 'deny' };
   });
 
+  // 渲染进程崩溃自动恢复（避免「闪退」：窗口白屏/消失后无法自愈）
+  webWindow.webContents.on('render-process-gone', (_event, details) => {
+    appendLog(`[WebWindow] renderer gone: ${details?.reason || 'unknown'} (exit=${details?.exitCode})`);
+    setTimeout(() => {
+      try {
+        if (webWindow && !webWindow.isDestroyed()) {
+          appendLog('[WebWindow] reloading after renderer crash');
+          webWindow.webContents.reload();
+        } else {
+          ensureWebWindow();
+        }
+      } catch {}
+    }, 1500);
+  });
+  webWindow.webContents.on('unresponsive', () => {
+    appendLog('[WebWindow] renderer unresponsive');
+    try { webWindow?.webContents.forcefullyCrashRenderer(); } catch {}
+  });
+
+  // 下载自动保存到 ~/Downloads（跨域 <a download> 属性被忽略时仍可靠触发下载）
+  webWindow.webContents.session.on('will-download', (_event, item) => {
+    try {
+      const safeName = (item.getFilename() || `download-${Date.now()}`).replace(/[^\w.\-]+/g, '_').slice(0, 120);
+      let savePath = path.join(app.getPath('downloads'), safeName);
+      // 同名文件自动追加序号，避免覆盖
+      let n = 1;
+      const ext = path.extname(safeName);
+      const stem = ext ? safeName.slice(0, -ext.length) : safeName;
+      while (fsSync.existsSync(savePath)) {
+        savePath = path.join(app.getPath('downloads'), `${stem}-${n++}${ext}`);
+      }
+      item.setSavePath(savePath);
+      appendLog(`[Download] saving: ${savePath}`);
+    } catch (e) {
+      appendLog(`[Download] will-download handler error: ${e}`);
+    }
+  });
+
   // 先显示加载界面，避免白屏
   await webWindow.loadURL(`data:text/html,<html><head><style>html,body{margin:0;padding:0;height:100%;background:#0f172a;display:flex;align-items:center;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}h1{color:#fff;font-size:24px}p{color:#94a3b8;margin-top:10px 0 0}</style></head><body><div><h1>${t('loading.title')}</h1><p id="status">${t('loading.status')}</p></div></body></html>`);
   webWindow.show();
 
   // 后台启动嵌入式服务器
   let url = '';
-  try {
-    webWindow.webContents.executeJavaScript(`document.getElementById('status').textContent = '${t('loading.startingServer')}'`);
-    url = await ensureEmbeddedWeb();
-    webWindow.webContents.executeJavaScript(`document.getElementById('status').textContent = '${t('loading.loadingInterface')}'`);
-    await webWindow.loadURL(url);
-  } catch (e) {
-    appendLog(`[WebWindow] Embedded server failed: ${e}, falling back to remote URL`);
-    webWindow.webContents.executeJavaScript(`document.getElementById('status').textContent = '${t('loading.loadingInterface')}'`);
+  const updateLoadingStatus = async (message) => {
+    if (!webWindow || webWindow.isDestroyed()) return;
     try {
-      await webWindow.loadURL(SERVER_URL);
-      url = SERVER_URL;
-    } catch (e2) {
-      appendLog(`[WebWindow] Remote URL also failed: ${e2}`);
-      url = `data:text/html,<html><body style="background:#0f172a;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><h2>Unable to Connect</h2><p style="color:#94a3b8">Embedded server and remote server are both unavailable.</p><p style="color:#64748b;font-size:12px;margin-top:20px">${String(e)}</p></div></body></html>`;
-      webWindow.loadURL(url);
+      await webWindow.webContents.executeJavaScript(
+        `document.getElementById('status').textContent = ${JSON.stringify(message)}`,
+        true,
+      );
+    } catch (error) {
+      appendLog(`[WebWindow] Loading status update skipped: ${error}`);
+    }
+  };
+
+  // did-finish-load 必须在首次 loadURL 之前注册：
+  // 根路径会服务端 redirect 到 /video-clips，页面内部还可能硬跳转，
+  // loadURL 会以 ERR_ABORTED(-3) 拒绝，若监听注册太晚会漏掉注入时机。
+  webWindow.webContents.on('did-finish-load', handleWebWindowFinishedLoad);
+
+  try {
+    await updateLoadingStatus(t('loading.startingServer'));
+    url = await ensureEmbeddedWeb();
+    await updateLoadingStatus(t('loading.loadingInterface'));
+    // 直接加载 /video-clips，跳过根路径的服务端 redirect 引发的 ERR_ABORTED 竞态
+    await webWindow.loadURL(`${url}/video-clips`);
+  } catch (e) {
+    // ERR_ABORTED(-3) 表示导航被页面自身跳转打断（redirect / 前端硬跳转），
+    // 不代表嵌入式服务器故障；先探活，服务器健康则保持本地页面，绝不 fallback 到远程
+    const aborted = e && (e.code === -3 || /ERR_ABORTED/.test(String(e)));
+    let embeddedAlive = false;
+    if (aborted && embeddedWebUrl) {
+      try {
+        const resp = await fetch(`${embeddedWebUrl}/`, { method: 'GET' });
+        embeddedAlive = resp.ok;
+      } catch {}
+    }
+    if (embeddedAlive) {
+      appendLog('[WebWindow] loadURL aborted by in-page navigation; embedded server healthy, staying embedded');
+      url = embeddedWebUrl;
+      // 等待被打断后的最终导航完成；超时则重试直达路由
+      const finished = await new Promise((resolve) => {
+        let done = false;
+        const finish = (ok) => { if (!done) { done = true; cleanup(); resolve(ok); } };
+        const timer = setTimeout(() => finish(false), 10000);
+        const onLoad = () => finish(true);
+        const onFail = (_ev, code) => { if (code !== -3) finish(false); };
+        const cleanup = () => {
+          clearTimeout(timer);
+          webWindow.webContents.removeListener('did-finish-load', onLoad);
+          webWindow.webContents.removeListener('did-fail-load', onFail);
+        };
+        webWindow.webContents.on('did-finish-load', onLoad);
+        webWindow.webContents.on('did-fail-load', onFail);
+      });
+      if (!finished) {
+        appendLog('[WebWindow] Retrying direct route load after abort');
+        try {
+          await webWindow.loadURL(`${embeddedWebUrl}/video-clips`);
+        } catch (e3) {
+          appendLog(`[WebWindow] Direct route retry failed: ${e3}`);
+        }
+      }
+    } else {
+      appendLog(`[WebWindow] Embedded server failed: ${e}, falling back to remote URL`);
+      await updateLoadingStatus(t('loading.loadingInterface'));
+      try {
+        await webWindow.loadURL(SERVER_URL);
+        url = SERVER_URL;
+      } catch (e2) {
+        appendLog(`[WebWindow] Remote URL also failed: ${e2}`);
+        url = `data:text/html,<html><body style="background:#0f172a;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><h2>Unable to Connect</h2><p style="color:#94a3b8">Embedded server and remote server are both unavailable.</p><p style="color:#64748b;font-size:12px;margin-top:20px">${String(e)}</p></div></body></html>`;
+        webWindow.loadURL(url);
+      }
     }
   }
 
-  webWindow.webContents.on('did-finish-load', async () => {
+  webWindow.on('focus', async () => {
+    try {
+      const cfg = await loadConfig();
+      if (cfg.authToken && cfg.authToken !== lastInjectedToken && webWindow && !webWindow.isDestroyed()) {
+        appendLog('[WebWindow] Focus event: new token detected, injecting...');
+        lastInjectedToken = cfg.authToken;
+        await injectAuthToWebWindow(cfg.authToken, cfg.authEmail, cfg.authUserId, cfg.authName, cfg.authRefreshToken, false);
+      }
+    } catch (e) {
+      appendLog(`[WebWindow] Focus event error: ${e}`);
+    }
+  });
+
+  const tokenPollInterval = setInterval(async () => {
+    try {
+      if (!webWindow || webWindow.isDestroyed()) {
+        clearInterval(tokenPollInterval);
+        return;
+      }
+      const cfg = await loadConfig();
+      if (cfg.authToken && cfg.authToken !== lastInjectedToken) {
+        appendLog('[WebWindow] Token poll: new token detected, injecting...');
+        lastInjectedToken = cfg.authToken;
+        await injectAuthToWebWindow(cfg.authToken, cfg.authEmail, cfg.authUserId, cfg.authName, cfg.authRefreshToken, false);
+      }
+    } catch {}
+  }, 3000);
+
+  webWindow.on('closed', () => {
+    clearInterval(tokenPollInterval);
+    webWindow = null;
+  });
+}
+
+async function handleWebWindowFinishedLoad() {
     appendLog('[WebWindow] did-finish-load');
     try {
       // 并行启动媒体服务器
@@ -725,40 +854,6 @@ async function ensureWebWindow() {
     } catch (e) {
       appendLog(`[WebWindow] did-finish-load ERROR: ${e}`);
     }
-  });
-
-  webWindow.on('focus', async () => {
-    try {
-      const cfg = await loadConfig();
-      if (cfg.authToken && cfg.authToken !== lastInjectedToken && webWindow && !webWindow.isDestroyed()) {
-        appendLog('[WebWindow] Focus event: new token detected, injecting...');
-        lastInjectedToken = cfg.authToken;
-        await injectAuthToWebWindow(cfg.authToken, cfg.authEmail, cfg.authUserId, cfg.authName, cfg.authRefreshToken, false);
-      }
-    } catch (e) {
-      appendLog(`[WebWindow] Focus event error: ${e}`);
-    }
-  });
-
-  const tokenPollInterval = setInterval(async () => {
-    try {
-      if (!webWindow || webWindow.isDestroyed()) {
-        clearInterval(tokenPollInterval);
-        return;
-      }
-      const cfg = await loadConfig();
-      if (cfg.authToken && cfg.authToken !== lastInjectedToken) {
-        appendLog('[WebWindow] Token poll: new token detected, injecting...');
-        lastInjectedToken = cfg.authToken;
-        await injectAuthToWebWindow(cfg.authToken, cfg.authEmail, cfg.authUserId, cfg.authName, cfg.authRefreshToken, false);
-      }
-    } catch {}
-  }, 3000);
-
-  webWindow.on('closed', () => {
-    clearInterval(tokenPollInterval);
-    webWindow = null;
-  });
 }
 
 // ==================== MEDIA SERVER ====================
@@ -1107,6 +1202,12 @@ ipcMain.handle('local-generate-highlights', async (_event, input) => {
     outDir,
     clipBaseUrl: mediaBaseUrl,
   });
+});
+
+// ==================== REAL HUMAN ENGINE (数字人带货-真人模式) ====================
+registerRealHumanIpc({
+  getProxy: () => process.env.HTTPS_PROXY || process.env.https_proxy || process.env.ALL_PROXY || '',
+  getWebContents: () => (webWindow && !webWindow.isDestroyed() ? webWindow.webContents : null),
 });
 
 // ==================== LIFECYCLE ====================

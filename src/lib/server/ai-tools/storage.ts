@@ -188,7 +188,9 @@ export function jsonError(error: unknown) {
     return Response.json({ error: error.code, message: error.message }, { status: error.status });
   }
   const message = error instanceof Error ? error.message : String(error);
-  const code = ['EMPTY_MASK', 'MASK_SIZE_MISMATCH'].includes(message) ? message : 'INTERNAL';
+  const code = ['EMPTY_MASK', 'MASK_SIZE_MISMATCH', 'WATERMARK_NOT_FOUND'].includes(message)
+    ? message
+    : 'INTERNAL';
   console.error('[ai-tools]', message);
   return Response.json({ error: code, message }, { status: code === 'INTERNAL' ? 500 : 400 });
 }

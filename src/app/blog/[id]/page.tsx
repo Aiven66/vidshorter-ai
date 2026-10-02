@@ -209,7 +209,7 @@ export default function BlogDetailPage() {
               }
 
               for (const [, group] of groups) {
-                if (rPosts.length >= 6) break;
+                if (rPosts.length >= 12) break;
                 let selected = group.find(r => r.locale === activeLocale);
                 if (!selected) selected = group.find(r => r.locale === 'en' || !r.locale);
                 if (!selected) selected = group[0];
@@ -242,7 +242,7 @@ export default function BlogDetailPage() {
               }
 
               for (const [, group] of groups) {
-                if (rPosts.length >= 6) break;
+                if (rPosts.length >= 12) break;
                 let selected = group.find(r => r.locale === activeLocale);
                 if (!selected) selected = group.find(r => r.locale === 'en' || !r.locale);
                 if (!selected) selected = group[0];
@@ -258,7 +258,17 @@ export default function BlogDetailPage() {
         }
 
         if (!cancelled) {
-          setRelatedPosts(rPosts.slice(0, 6));
+          // 按标题去重：数据库可能存在同标题的多条记录（parent_id 不同），
+          // 只靠 parent_id/id 去重会漏掉，导致同一篇文章在同一列表中重复出现。
+          const seenTitles = new Set<string>();
+          const uniquePosts = rPosts.filter((p) => {
+            const titleKey = p.title.trim().toLowerCase();
+            if (seenTitles.has(titleKey)) return false;
+            seenTitles.add(titleKey);
+            return true;
+          });
+          // 候选池放宽到 12 篇：底部（4 篇）与右侧（5 篇）从同一池中做互斥分配，两边都能填满
+          setRelatedPosts(uniquePosts.slice(0, 12));
         }
       } catch {
         if (!cancelled) {
@@ -363,6 +373,16 @@ export default function BlogDetailPage() {
 
   const postUrl = buildBlogUrl(post);
 
+  // ── 两处推荐位互斥分配，避免底部与右侧出现重复文章 ──────────────────────
+  // 底部「推荐阅读」：候选池按相关度排序（同分类优先），取最相关的 4 篇
+  const bottomRelatedPosts = relatedPosts.slice(0, 4);
+  const bottomRelatedIds = new Set(bottomRelatedPosts.map((p) => String(p.id)));
+  // 右侧「热门推荐」：剔除底部已展示的文章后按浏览量降序取 5 篇，与底部完全不重复
+  const sidebarRecommendedPosts = relatedPosts
+    .filter((p) => !bottomRelatedIds.has(String(p.id)))
+    .sort((a, b) => (b.view_count ?? 0) - (a.view_count ?? 0))
+    .slice(0, 5);
+
   return (
     <div className="min-h-screen bg-background">
       <article className="max-w-6xl mx-auto px-4 py-12 md:py-16">
@@ -428,13 +448,13 @@ export default function BlogDetailPage() {
               </div>
 
               {/* Bottom: Related posts — always show */}
-              {relatedPosts.length > 0 && (
+              {bottomRelatedPosts.length > 0 && (
                 <section className="mt-10">
                   <h2 className="text-lg font-bold mb-4">
                     {activeLocale === 'zh' ? '推荐阅读' : activeLocale === 'zh-Hant' ? '推薦閱讀' : 'Related Posts'}
                   </h2>
                   <div className="grid gap-3 sm:grid-cols-2">
-                    {relatedPosts.slice(0, 4).map((relatedPost) => (
+                    {bottomRelatedPosts.map((relatedPost) => (
                       <Card key={relatedPost.id} className="overflow-hidden hover:shadow-md transition-shadow">
                         <CardContent className="p-3">
                           <div className="flex items-start gap-3">
@@ -475,14 +495,14 @@ export default function BlogDetailPage() {
             </div>
           </div>
 
-          {/* Right sidebar: Recommended posts */}
-          {relatedPosts.length > 0 && (
+          {/* Right sidebar: Recommended posts（与底部推荐互斥，不重复） */}
+          {sidebarRecommendedPosts.length > 0 && (
             <aside className="hidden lg:block w-72 flex-shrink-0">
               <div className="sticky top-8 space-y-3 border-l border-border/60 pl-5">
                 <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-wider mb-1">
                   {activeLocale === 'zh' ? '热门推荐' : activeLocale === 'zh-Hant' ? '熱門推薦' : 'Recommended'}
                 </h3>
-                {relatedPosts.slice(0, 5).map((rp) => (
+                {sidebarRecommendedPosts.map((rp) => (
                   <Link key={rp.id} href={buildBlogUrl(rp)} className="block group">
                     <Card className="overflow-hidden hover:shadow-md transition-shadow">
                       <div className="relative h-24 overflow-hidden">

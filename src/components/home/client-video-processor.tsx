@@ -23,10 +23,10 @@ const VideoProcessor = dynamic(
   }
 );
 
-export default function ClientVideoProcessor() {
+export default function ClientVideoProcessor({ initialUrl }: { initialUrl?: string }) {
   return (
     <div style={{ minHeight: '420px' }}>
-      <VideoProcessor />
+      <VideoProcessor initialUrl={initialUrl} />
     </div>
   );
 }

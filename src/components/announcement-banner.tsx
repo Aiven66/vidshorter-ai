@@ -33,8 +33,8 @@ export function AnnouncementBanner() {
   if (!mounted || dismissed) return null;
 
   // 文案兜底（i18n 缺失时使用内置文案）
-  const textEn = 'Upgrade to Pro — Unlimited AI video processing, priority queue & 4K exports';
-  const textZh = '升级 Pro 会员 — 无限 AI 视频处理、优先队列 & 4K 超清导出';
+  const textEn = 'Upgrade to Pro — Priority queue, 4K exports & 20,000 monthly credits';
+  const textZh = '升级 Pro 会员 — 优先队列、4K 超清导出 & 每月 20,000 积分';
   const ctaEn = 'View Plans';
   const ctaZh = '查看套餐';
 
@@ -50,22 +50,22 @@ export function AnnouncementBanner() {
 
   return (
     <div className="relative w-full overflow-hidden">
-      {/* 渐变背景 - 金色调突出付费感 */}
+      {/* 渐变背景 — 黑金基调：深曜石底 + 香槟金流光 */}
       <div
         className="absolute inset-0"
         style={{
           background:
-            'linear-gradient(90deg, #1a1a2e 0%, #16213e 20%, #0f3460 40%, #533483 60%, #0f3460 80%, #16213e 100%)',
+            'linear-gradient(90deg, color-mix(in oklab, var(--gold) 20%, #0C0D10) 0%, #0C0D10 22%, color-mix(in oklab, var(--gold-dim) 26%, #0C0D10) 50%, #0C0D10 78%, color-mix(in oklab, var(--gold) 20%, #0C0D10) 100%)',
           backgroundSize: '200% 100%',
           animation: 'banner-shimmer 12s linear infinite',
         }}
       />
       {/* 金色光效叠加 */}
       <div
-        className="absolute inset-0 opacity-30"
+        className="absolute inset-0 opacity-40"
         style={{
           background:
-            'radial-gradient(ellipse at left, rgba(255, 215, 0, 0.2) 0%, transparent 50%), radial-gradient(ellipse at right, rgba(255, 165, 0, 0.15) 0%, transparent 50%)',
+            'radial-gradient(ellipse at left, color-mix(in oklab, var(--gold) 22%, transparent) 0%, transparent 50%), radial-gradient(ellipse at right, color-mix(in oklab, var(--gold-light) 18%, transparent) 0%, transparent 50%)',
         }}
       />
       {/* 噪点纹理 */}
@@ -82,19 +82,19 @@ export function AnnouncementBanner() {
           <span
             className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full"
             style={{
-              background: 'linear-gradient(135deg, #ffd700 0%, #ffaa00 100%)',
-              boxShadow: '0 0 12px rgba(255, 215, 0, 0.5)',
+              background: 'linear-gradient(135deg, var(--gold-light) 0%, var(--gold) 100%)',
+              boxShadow: '0 0 12px color-mix(in oklab, var(--gold) 50%, transparent)',
             }}
           >
-            <Crown className="h-3.5 w-3.5 text-white" />
+            <Crown className="h-3.5 w-3.5 text-primary-foreground" />
           </span>
           <span className="truncate">{displayText}</span>
           {/* 折扣标签 */}
           <span
             className="ml-2 hidden shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-bold sm:inline-flex"
             style={{
-              background: 'linear-gradient(135deg, #ffd700 0%, #ffaa00 100%)',
-              color: '#1a1a2e',
+              background: 'linear-gradient(135deg, var(--gold-light) 0%, var(--gold) 100%)',
+              color: 'var(--primary-foreground)',
             }}
           >
             -20% OFF
@@ -106,9 +106,9 @@ export function AnnouncementBanner() {
             href="/pricing"
             className="group inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition-all"
             style={{
-              background: 'linear-gradient(135deg, #ffd700 0%, #ffaa00 100%)',
-              color: '#1a1a2e',
-              boxShadow: '0 2px 8px rgba(255, 215, 0, 0.4)',
+              background: 'linear-gradient(135deg, var(--gold-light) 0%, var(--gold) 100%)',
+              color: 'var(--primary-foreground)',
+              boxShadow: '0 2px 8px color-mix(in oklab, var(--gold) 40%, transparent)',
             }}
           >
             <Zap className="h-3 w-3" />

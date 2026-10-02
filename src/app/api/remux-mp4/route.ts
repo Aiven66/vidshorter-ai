@@ -33,7 +33,26 @@ export async function POST(request: NextRequest) {
   const outputPath = join(tmpdir(), `remux-output-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp4`);
 
   try {
-    const formData = await request.formData();
+    // 仅接受 multipart/form-data；畸形 Content-Type 时 formData() 会抛错落入 catch → 500，
+    // 需在此提前校验并返回 4xx，而不是拿它当服务端错误。
+    const contentType = request.headers.get('content-type') || '';
+    if (!contentType.toLowerCase().includes('multipart/form-data')) {
+      return NextResponse.json(
+        { error: `Expected multipart/form-data, got: "${contentType || 'missing'}"` },
+        { status: 415 },
+      );
+    }
+
+    let formData: FormData;
+    try {
+      formData = await request.formData();
+    } catch (parseErr) {
+      console.error('[remux-mp4] formData parse error:', String(parseErr));
+      return NextResponse.json(
+        { error: 'Invalid multipart/form-data body' },
+        { status: 400 },
+      );
+    }
     const file = formData.get('file');
 
     if (!file || !(file instanceof File)) {

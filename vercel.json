@@ -1,10 +1,13 @@
 {
-  "buildCommand": "pnpm next build",
-  "installCommand": "pnpm install --no-frozen-lockfile",
+  "buildCommand": "pnpm next build && node scripts/patch-native-nft.mjs",
+  "installCommand": "ONNXRUNTIME_NODE_INSTALL=skip pnpm install --no-frozen-lockfile",
   "framework": "nextjs",
   "regions": ["hkg1"],
   "functions": {
     "src/app/api/process-video/**/*.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/videos/**/*.ts": {
       "maxDuration": 300
     },
     "src/app/api/ai-tools/**/*.ts": {
@@ -21,6 +24,9 @@
     },
     "src/app/api/admin/**/*.ts": {
       "maxDuration": 300
+    },
+    "src/app/api/cron/**/*.ts": {
+      "maxDuration": 300
     }
   },
   "build": {
@@ -32,6 +38,10 @@
     {
       "path": "/api/blog/auto-publish",
       "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/subscription-expiry",
+      "schedule": "0 1 * * *"
     }
   ]
 }

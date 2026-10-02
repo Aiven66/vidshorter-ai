@@ -9,6 +9,8 @@
  * 适用于 Vercel serverless nodejs runtime，无外部依赖。
  */
 
+import { fetchFullTranscript } from '@/lib/server/subtitles';
+
 export type TranscriptSegment = {
   /** 字幕开始时间（秒） */
   start: number;
@@ -66,6 +68,26 @@ async function fetchWithTimeout(url: string, opts: RequestInit = {}, timeoutMs =
     ...(opts.headers || {}),
   };
   return fetch(url, { ...opts, headers, signal });
+}
+
+/**
+ * Vercel 环境变量 YOUTUBE_COOKIES 里的 YouTube 登录 Cookie。
+ * 支持 Netscape cookies.txt（tab 分隔 7 列）与 `a=b; c=d` 两种写法。
+ * 带上真实登录 Cookie 后，YouTube 不再对服务器出口 IP 返回 LOGIN_REQUIRED。
+ */
+function getYoutubeCookieHeader(): string {
+  const raw = String(process.env.YOUTUBE_COOKIES || '').trim();
+  if (!raw) return '';
+  if (!raw.includes('\t')) return raw;
+  return raw
+    .split('\n')
+    .filter(l => !l.startsWith('#') && l.trim())
+    .map(l => {
+      const p = l.split('\t');
+      return p.length >= 7 ? `${p[5]}=${p[6]}` : '';
+    })
+    .filter(Boolean)
+    .join('; ');
 }
 
 /** 从 YouTube URL 提取 video id */
@@ -230,15 +252,10 @@ function parseVTT(vtt: string): TranscriptSegment[] {
   return segments;
 }
 
-// 通过 watch HTML 解析 captions，参考 youtube-transcript-api 的策略
-async function getYouTubeCaptionTracksFromWatch(videoId: string): Promise<YouTubeCaptionTrack[]> {
-  const url = `https://www.youtube.com/watch?v=${videoId}&hl=en`;
-  const res = await fetchWithTimeout(url, { headers: { Accept: 'text/html,*/*' } });
-  if (!res.ok) return [];
-  const html = await res.text();
-
+/** 从 watch HTML 里解析 captionTracks（直连与 CF Worker 代理两条路径共用）。 */
+function extractCaptionTracksFromHtml(html: string): YouTubeCaptionTrack[] {
   // 在 HTML 中找 ytInitialPlayerResponse = {...};
-  const m = html.match(/ytInitialPlayerResponse\s*=\s*(\{.+?\});/);
+  const m = html.match(/ytInitialPlayerResponse\s*=\s*(\{[\s\S]+?\});/);
   if (!m) return [];
   let playerResponse: any;
   try {
@@ -269,6 +286,17 @@ async function getYouTubeCaptionTracksFromWatch(videoId: string): Promise<YouTub
   return tracks;
 }
 
+// 通过 watch HTML 解析 captions，参考 youtube-transcript-api 的策略
+async function getYouTubeCaptionTracksFromWatch(videoId: string): Promise<YouTubeCaptionTrack[]> {
+  const url = `https://www.youtube.com/watch?v=${videoId}&hl=en`;
+  const cookie = getYoutubeCookieHeader();
+  const res = await fetchWithTimeout(url, {
+    headers: { Accept: 'text/html,*/*', ...(cookie ? { Cookie: cookie } : {}) },
+  });
+  if (!res.ok) return [];
+  return extractCaptionTracksFromHtml(await res.text());
+}
+
 // 旧的 timedtext list API（备用）
 async function getYouTubeTranscriptList(videoId: string): Promise<any[]> {
   const url = `https://www.youtube.com/api/timedtext?v=${videoId}&type=list`;
@@ -291,24 +319,306 @@ async function getYouTubeTranscriptList(videoId: string): Promise<any[]> {
   return tracks;
 }
 
-async function getYouTubeTranscript(videoId: string, langHint?: string): Promise<TranscriptSegment[]> {
-  // 1. 优先：Invidious 镜像（CORS 友好，绕过 YouTube 对 Vercel 的屏蔽）
+/** 把 locale / langHint（如 'zh' / 'en'）映射成字幕白名单代码（如 'zh-CN' / 'en'）。 */
+function toWhitelistLang(langHint?: string): string | null {
+  if (!langHint) return null;
+  const l = String(langHint).toLowerCase();
+  if (l.startsWith('zh-hant') || l.startsWith('zh-tw')) return 'zh-TW';
+  if (l.startsWith('zh')) return 'zh-CN';
+  return l.split('-')[0];
+}
+
+/** 直接调用 InnerTube player 接口的客户端序列（移动端最不易被数据中心 IP 风控）。 */
+const INNERTUBE_CLIENTS = [
+  {
+    clientName: 'ANDROID',
+    clientVersion: '20.10.38',
+    userAgent: 'com.google.android.youtube/20.10.38 (Linux; U; Android 14)',
+  },
+  {
+    clientName: 'IOS',
+    clientVersion: '19.45.4',
+    userAgent: 'com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X)',
+  },
+  {
+    clientName: 'WEB',
+    clientVersion: '2.20240726.00.00',
+    userAgent:
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+  },
+];
+
+/** 解析 timedtext 两种格式：`<p t="ms" d="ms">…</p>` 与 `<text start="s" dur="s">…</text>` */
+function parseTimedText(xml: string): TranscriptSegment[] {
+  const decode = (s: string) =>
+    s
+      .replace(/<[^>]+>/g, '')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&apos;/g, "'")
+      .replace(/&#(\d+);/g, (_, d: string) => String.fromCodePoint(Number(d)))
+      .replace(/&#x([0-9a-fA-F]+);/g, (_, h: string) => String.fromCodePoint(parseInt(h, 16)))
+      .trim();
+
+  const segments: TranscriptSegment[] = [];
+  const pRe = /<p\s+t="(\d+)"\s+d="(\d+)"[^>]*>([\s\S]*?)<\/p>/g;
+  let m: RegExpExecArray | null;
+  while ((m = pRe.exec(xml))) {
+    const text = decode(m[3]);
+    if (text) segments.push({ start: Number(m[1]) / 1000, duration: Number(m[2]) / 1000, text });
+  }
+  if (segments.length > 0) return segments;
+
+  const tRe = /<text\s+start="([\d.]+)"\s+dur="([\d.]+)"[^>]*>([\s\S]*?)<\/text>/g;
+  while ((m = tRe.exec(xml))) {
+    const text = decode(m[3]);
+    if (text) segments.push({ start: Number(m[1]), duration: Number(m[2]), text });
+  }
+  return segments;
+}
+
+/**
+ * 直连 InnerTube player 接口取字幕（不依赖 youtube-transcript 包）。
+ * 与 yt-stream 路由同款调用方式，额外兜底 IOS / WEB 客户端，且每次失败都写入明文原因。
+ */
+async function getYouTubeTranscriptFromInnertube(
+  videoId: string,
+  langHint: string | undefined,
+  diag?: TranscriptDiagnostic,
+): Promise<TranscriptSegment[]> {
+  const cookie = getYoutubeCookieHeader();
+  for (const client of INNERTUBE_CLIENTS) {
+    const tag = `innertube(${client.clientName})`;
+    try {
+      const res = await fetchWithTimeout(
+        'https://www.youtube.com/youtubei/v1/player?prettyPrint=false',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'User-Agent': client.userAgent,
+            ...(cookie ? { Cookie: cookie } : {}),
+          },
+          body: JSON.stringify({
+            context: {
+              client: { clientName: client.clientName, clientVersion: client.clientVersion },
+            },
+            videoId,
+          }),
+        },
+        12000,
+      );
+      if (!res.ok) {
+        diag?.attempts.push(`${tag} http ${res.status}`);
+        continue;
+      }
+      const data = await res.json().catch(() => null);
+      const status = data?.playabilityStatus?.status;
+      const tracks: YouTubeCaptionTrack[] =
+        data?.captions?.playerCaptionsTracklistRenderer?.captionTracks || [];
+      if (tracks.length === 0) {
+        diag?.attempts.push(`${tag} no captionTracks (playability=${status || '?'})`);
+        continue;
+      }
+
+      const wanted = pickCaptionTrack(tracks, langHint);
+      if (!wanted?.baseUrl) {
+        diag?.attempts.push(`${tag} pick failed`);
+        continue;
+      }
+
+      const capRes = await fetchWithTimeout(
+        wanted.baseUrl,
+        {
+          headers: {
+            'User-Agent': client.userAgent,
+            Accept: '*/*',
+            ...(cookie ? { Cookie: cookie } : {}),
+          },
+        },
+        12000,
+      );
+      if (!capRes.ok) {
+        diag?.attempts.push(`${tag} caption http ${capRes.status}`);
+        continue;
+      }
+      const segs = parseTimedText(await capRes.text());
+      if (segs.length > 0) {
+        if (diag) diag.source = tag;
+        return segs;
+      }
+      diag?.attempts.push(`${tag} caption body parsed to 0 lines`);
+    } catch (err) {
+      diag?.attempts.push(`${tag} ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return [];
+}
+
+/** 选择最匹配的字幕轨：优先 langHint > 英文 > 中文 > 第一条。 */
+function pickCaptionTrack(
+  tracks: YouTubeCaptionTrack[],
+  langHint?: string,
+): YouTubeCaptionTrack | undefined {
+  const pickBy = (pred: (t: YouTubeCaptionTrack) => boolean) => tracks.find(pred);
+  const code = (t: YouTubeCaptionTrack) => String(t.languageCode || '').toLowerCase();
+  return (
+    (langHint ? pickBy(t => code(t).startsWith(langHint.toLowerCase())) : undefined) ||
+    pickBy(t => code(t).startsWith('en')) ||
+    pickBy(t => code(t).startsWith('zh')) ||
+    tracks[0]
+  );
+}
+
+/** CF Worker 代理地址（从 Cloudflare IP 出网，绕过 Vercel 数据中心 IP 的 YouTube LOGIN_REQUIRED）。 */
+function getCfWorkerUrl(): string {
+  const raw = String(process.env.CF_WORKER_URL || '').trim();
+  return raw ? raw.replace(/\/$/, '') : '';
+}
+
+/** 通过 CF Worker 的 /stream 端点代理抓取任意 YouTube URL。 */
+async function fetchViaCfWorker(
+  videoId: string,
+  targetUrl: string,
+  timeoutMs = 20000,
+): Promise<Response | null> {
+  const cf = getCfWorkerUrl();
+  if (!cf) return null;
+  const u = new URL(`${cf}/stream`);
+  u.searchParams.set('videoId', videoId);
+  u.searchParams.set('streamUrl', targetUrl);
+  return fetchWithTimeout(u.toString(), { headers: { Accept: '*/*' } }, timeoutMs);
+}
+
+/**
+ * 经 CF Worker 代理取字幕（生产环境最可靠的一条路径）：
+ * 先用 CF IP 抓 watch HTML 拿 captionTracks，再用 CF IP 抓 timedtext 拿字幕正文。
+ * Vercel 数据中心 IP 直连会拿到 LOGIN_REQUIRED，只有走 Cloudflare 出口才稳定。
+ */
+async function getYouTubeTranscriptViaCfWorker(
+  videoId: string,
+  langHint: string | undefined,
+  diag?: TranscriptDiagnostic,
+): Promise<TranscriptSegment[]> {
+  const tag = 'cf-worker';
+  if (!getCfWorkerUrl()) {
+    diag?.attempts.push(`${tag}: CF_WORKER_URL 未配置`);
+    return [];
+  }
+  // CF Worker 出口偶发被 YouTube 风控（LOGIN_REQUIRED / 返回 HTML 拦截页），重试可显著提高命中率。
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const suffix = attempt > 1 ? ` #${attempt}` : '';
+    try {
+      const watchRes = await fetchViaCfWorker(
+        videoId,
+        `https://www.youtube.com/watch?v=${videoId}&hl=en`,
+      );
+      if (!watchRes) return [];
+      if (!watchRes.ok) {
+        diag?.attempts.push(`${tag}${suffix} watch http ${watchRes.status}`);
+        continue;
+      }
+      const tracks = extractCaptionTracksFromHtml(await watchRes.text());
+      if (tracks.length === 0) {
+        diag?.attempts.push(`${tag}${suffix} watch 无 captionTracks`);
+        continue;
+      }
+      const wanted = pickCaptionTrack(tracks, langHint);
+      if (!wanted?.baseUrl) {
+        diag?.attempts.push(`${tag}${suffix} pick failed`);
+        continue;
+      }
+      const capRes = await fetchViaCfWorker(videoId, wanted.baseUrl);
+      if (!capRes || !capRes.ok) {
+        diag?.attempts.push(`${tag}${suffix} timedtext http ${capRes?.status ?? 'no-response'}`);
+        continue;
+      }
+      const body = await capRes.text();
+      const segs = parseTimedText(body);
+      if (segs.length === 0) {
+        // 打印明文原因：200 但不是字幕 XML，多半是被风控返回的 HTML 拦截页。
+        const head = body.replace(/\s+/g, ' ').slice(0, 70);
+        diag?.attempts.push(
+          `${tag}${suffix} timedtext 0 行 (type=${capRes.headers.get('content-type') || '?'} head=${head})`,
+        );
+        continue;
+      }
+      if (diag) {
+        diag.source = `${tag}(${wanted.languageCode}${wanted.kind ? '/' + wanted.kind : ''})`;
+      }
+      return segs;
+    } catch (err) {
+      diag?.attempts.push(`${tag}${suffix}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return [];
+}
+
+async function getYouTubeTranscript(
+  videoId: string,
+  langHint?: string,
+  diag?: TranscriptDiagnostic,
+): Promise<TranscriptSegment[]> {
+  if (diag) diag.source = 'none';
+
+  // 0. youtube-transcript 包（ANDROID InnerTube；Recap / 字幕烧录已在生产使用）
   try {
-    const segs = await getYouTubeTranscriptFromInvidious(videoId, langHint);
-    if (segs.length > 0) return segs;
+    const { cues } = await fetchFullTranscript(videoId, toWhitelistLang(langHint));
+    if (cues.length > 0) {
+      if (diag) diag.source = 'youtube-transcript';
+      return cues.map((c) => ({
+        start: c.start,
+        duration: Math.max(0, c.end - c.start),
+        text: c.text,
+      }));
+    }
+    diag?.attempts.push('youtube-transcript: no cues');
   } catch (err) {
-    console.warn('[yt-transcript] invidious failed:', err);
+    diag?.attempts.push(
+      `youtube-transcript: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
-  // 2. 从 watch HTML 解析 captionTracks
+  // 1. 经 CF Worker 代理（生产环境唯一稳定通道：Vercel 数据中心 IP 会被 LOGIN_REQUIRED 拦截）
+  try {
+    const segs = await getYouTubeTranscriptViaCfWorker(videoId, langHint, diag);
+    if (segs.length > 0) return segs;
+  } catch (err) {
+    diag?.attempts.push(`cf-worker: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  // 2. 直连 InnerTube（不依赖第三方包，自带 3 种客户端兜底）
+  try {
+    const segs = await getYouTubeTranscriptFromInnertube(videoId, langHint, diag);
+    if (segs.length > 0) return segs;
+  } catch (err) {
+    diag?.attempts.push(`innertube-direct: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  // 3. 降级：Invidious 镜像（CORS 友好，绕过 YouTube 对 Vercel 的屏蔽）
+  try {
+    const segs = await getYouTubeTranscriptFromInvidious(videoId, langHint);
+    if (segs.length > 0) {
+      if (diag) diag.source = 'invidious';
+      return segs;
+    }
+    diag?.attempts.push('invidious: no captions');
+  } catch (err) {
+    diag?.attempts.push(`invidious: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  // 4. 从 watch HTML 解析 captionTracks
   let tracks: YouTubeCaptionTrack[] = [];
   try {
     tracks = await getYouTubeCaptionTracksFromWatch(videoId);
   } catch (err) {
-    console.warn('[yt-transcript] getTracksFromWatch failed:', err);
+    diag?.attempts.push(`watch-html: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  // 3. 降级到 timedtext list API
+  // 5. 降级到 timedtext list API
   if (tracks.length === 0) {
     try {
       const legacyTracks = await getYouTubeTranscriptList(videoId);
@@ -318,26 +628,29 @@ async function getYouTubeTranscript(videoId: string, langHint?: string): Promise
         name: t.name,
       }));
     } catch (err) {
-      console.warn('[yt-transcript] getList failed:', err);
+      diag?.attempts.push(`timedtext-list: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
-  if (tracks.length === 0) return [];
+  if (tracks.length === 0) {
+    diag?.attempts.push('watch-html/timedtext: no tracks');
+    return [];
+  }
 
-  // 选择最匹配的字幕：优先 langHint > 英文 > 中文 > 第一条
-  const pickBy = (pred: (t: YouTubeCaptionTrack) => boolean) => tracks.find(pred);
-  const wanted =
-    (langHint ? pickBy(t => t.languageCode.toLowerCase().startsWith(langHint.toLowerCase())) : undefined) ||
-    pickBy(t => t.languageCode.toLowerCase().startsWith('en')) ||
-    pickBy(t => t.languageCode.toLowerCase().startsWith('zh')) ||
-    tracks[0];
-  if (!wanted || !wanted.baseUrl) return [];
+  const wanted = pickCaptionTrack(tracks, langHint);
+  if (!wanted || !wanted.baseUrl) {
+    diag?.attempts.push('watch-html: pick failed');
+    return [];
+  }
 
   let baseUrl = wanted.baseUrl;
   if (!baseUrl.includes('fmt=')) baseUrl += (baseUrl.includes('?') ? '&' : '?') + 'fmt=json3';
 
   const res = await fetchWithTimeout(baseUrl, { headers: { Accept: 'application/json,*/*' } });
-  if (!res.ok) return [];
+  if (!res.ok) {
+    diag?.attempts.push(`watch-html: caption http ${res.status}`);
+    return [];
+  }
   const data = await res.json().catch(() => null);
   const events = Array.isArray(data?.events) ? data.events : [];
   const segments: TranscriptSegment[] = [];
@@ -354,6 +667,11 @@ async function getYouTubeTranscript(videoId: string, langHint?: string): Promise
       duration: typeof ev.dDurationMs === 'number' ? ev.dDurationMs / 1000 : 0,
       text,
     });
+  }
+  if (segments.length > 0) {
+    if (diag) diag.source = 'watch-html';
+  } else {
+    diag?.attempts.push('watch-html: caption json3 parsed to 0 lines');
   }
   return segments;
 }
@@ -930,22 +1248,39 @@ function generateFallbackNote(
 // 主入口：根据 sourceType 选择字幕源
 // ============================
 
+/**
+ * 逐字稿获取诊断（明文原因，绝不静默降级）。
+ * `source` = 命中的字幕来源；`attempts` = 每个来源的失败原因。
+ */
+export type TranscriptDiagnostic = {
+  source: string;
+  attempts: string[];
+};
+
 export async function fetchTranscript(
   videoUrl: string,
   sourceType: 'youtube' | 'bilibili' | 'local',
   locale: string | undefined,
+  diag?: TranscriptDiagnostic,
 ): Promise<TranscriptSegment[]> {
   if (sourceType === 'youtube') {
     const id = extractYouTubeId(videoUrl);
-    if (!id) return [];
+    if (!id) {
+      diag?.attempts.push('youtube: 无法从链接解析出 videoId');
+      return [];
+    }
     const langHint = locale && locale.startsWith('zh') ? 'zh' : locale;
-    return getYouTubeTranscript(id, langHint);
+    return getYouTubeTranscript(id, langHint, diag);
   }
   if (sourceType === 'bilibili') {
     const bvid = extractBilibiliBvid(videoUrl);
-    if (!bvid) return [];
+    if (!bvid) {
+      diag?.attempts.push('bilibili: 无法从链接解析出 bvid');
+      return [];
+    }
     return getBilibiliTranscript(bvid, locale);
   }
+  diag?.attempts.push('local: 本地视频无服务端字幕');
   return [];
 }
 

@@ -1,0 +1,1494 @@
+<?xml version="1.0" encoding="utf-8" ?><timedtext format="3">
+<head>
+<ws id="0"/>
+<ws id="1" mh="2" ju="0" sd="3"/>
+<wp id="0"/>
+<wp id="1" ap="6" ah="20" av="100" rc="2" cc="40"/>
+</head>
+<body>
+<w t="0" id="1" wp="1" ws="1"/>
+<p t="1919" d="3094" w="1"><s>Distinguished</s><s t="862"> leaders</s><s t="1293">,</s><s t="1416"> guests</s><s t="1786">,</s><s t="1909"> and</s></p>
+<p t="4013" d="1000" w="1" a="1">
+</p>
+<p t="4074" d="3341" w="1"><s> fellow</s><s t="431"> developers</s><s t="1047">,</s><s t="1170"> good</s><s t="1478"> morning</s><s t="1971"> to</s><s t="2156"> you</s></p>
+<p t="6415" d="1000" w="1" a="1">
+</p>
+<p t="6476" d="3603" w="1"><s> all</s><s t="185">.</s><s t="347"> Welcome</s><s t="1068"> to</s><s t="1339"> the</s><s t="1700"> 2026</s><s t="2151"> Yunqi</s></p>
+<p t="9079" d="1000" w="1" a="1">
+</p>
+<p t="9169" d="4123" w="1"><s> Conference</s><s t="902">.</s><s t="1093"> Another</s><s t="1694"> year</s><s t="1995">,</s><s t="2145"> another</s><s t="2747"> Yunqi</s></p>
+<p t="12292" d="1000" w="1" a="1">
+</p>
+<p t="12367" d="3371" w="1"><s> Conference</s><s t="752">.</s><s t="928"> We</s><s t="1116"> have</s><s t="1430"> seen</s><s t="1744"> that</s><s t="2058"> since</s></p>
+<p t="14738" d="1000" w="1" a="1">
+</p>
+<p t="14801" d="3009" w="1"><s> last</s><s t="314"> year</s><s t="565">,</s><s t="691"> AI</s><s t="879"> technology</s><s t="1570"> has</s><s t="1821"> far</s></p>
+<p t="16810" d="1000" w="1" a="1">
+</p>
+<p t="16873" d="3448" w="1"><s> exceeded</s><s t="565"> our</s><s t="816"> initial</s><s t="1318"> expectations</s><s t="2072">,</s><s t="2197"> with</s></p>
+<p t="19321" d="1000" w="1" a="1">
+</p>
+<p t="19384" d="3197" w="1"><s> technical</s><s t="628"> iterations</s><s t="1318"> happening</s><s t="1946"> at</s><s t="2134"> a</s></p>
+<p t="21581" d="1000" w="1" a="1">
+</p>
+<p t="21644" d="5236" w="1"><s> rapid</s><s t="377"> pace</s><s t="628">.</s><s t="2796"> This</s><s t="3109"> year</s><s t="3359">,</s><s t="3484"> we</s><s t="3672"> feel</s><s t="3985"> very</s></p>
+<p t="25880" d="1000" w="1" a="1">
+</p>
+<p t="25942" d="3317" w="1"><s> fortunate</s><s t="626"> to</s><s t="814"> have</s><s t="1127"> this</s><s t="1440"> opportunity</s><s t="2191"> to</s></p>
+<p t="28259" d="1000" w="1" a="1">
+</p>
+<p t="28321" d="3442" w="1"><s> share</s><s t="376"> our</s><s t="626"> new</s><s t="877"> reflections</s><s t="1628"> from</s><s t="1941"> the</s><s t="2192"> past</s></p>
+<p t="30763" d="1000" w="1" a="1">
+</p>
+<p t="30826" d="4424" w="1"><s> year</s><s t="313"> and</s><s t="563"> our</s><s t="814"> outlook</s><s t="1314"> for</s><s t="1565"> the</s><s t="1815"> future</s><s t="2191">.</s><s t="3355"> A</s></p>
+<p t="34250" d="1000" w="1" a="1">
+</p>
+<p t="34320" d="3726" w="1"><s> year</s><s t="350"> ago</s><s t="559">,</s><s t="699"> we</s><s t="909"> judged</s><s t="1398"> that</s><s t="1747"> AGI</s><s t="2027"> was</s><s t="2306"> merely</s></p>
+<p t="37046" d="1000" w="1" a="1">
+</p>
+<p t="37116" d="3515" w="1"><s> the</s><s t="279"> starting</s><s t="908"> point</s><s t="1258">.</s><s t="1428"> AI</s><s t="1599"> will</s><s t="1885"> continue</s><s t="2400"> to</s></p>
+<p t="39631" d="1000" w="1" a="1">
+</p>
+<p t="39688" d="3231" w="1"><s> evolve</s><s t="400"> toward</s><s t="801"> superintelligence</s><s t="1831"> capable</s></p>
+<p t="41919" d="1000" w="1" a="1">
+</p>
+<p t="41977" d="3124" w="1"><s> of</s><s t="171"> self-iteration</s><s t="972">,</s><s t="1087"> or</s><s t="1258"> ASAI</s><s t="1487">.</s><s t="1645"> Over</s><s t="1944"> the</s></p>
+<p t="44101" d="1000" w="1" a="1">
+</p>
+<p t="44161" d="3339" w="1"><s> past</s><s t="300"> year</s><s t="540">,</s><s t="660"> we</s><s t="840"> have</s><s t="1140"> become</s><s t="1560"> accustomed</s><s t="2219"> to</s></p>
+<p t="46500" d="1000" w="1" a="1">
+</p>
+<p t="46560" d="2559" w="1"><s> seeing</s><s t="420"> AI</s><s t="600"> make</s><s t="900"> significant</s></p>
+<p t="48119" d="1000" w="1" a="1">
+</p>
+<p t="48179" d="3159" w="1"><s> breakthroughs</s><s t="840"> in</s><s t="1020"> long-horizon</s><s t="1800"> tasks</s><s t="2100">,</s></p>
+<p t="50338" d="1000" w="1" a="1">
+</p>
+<p t="50398" d="2800" w="1"><s> and</s><s t="240"> the</s><s t="480"> path</s><s t="780"> toward</s><s t="1200"> autonomous</s></p>
+<p t="52198" d="1000" w="1" a="1">
+</p>
+<p t="52258" d="3039" w="1"><s> evolution</s><s t="599"> is</s><s t="779"> becoming</s><s t="1319"> increasingly</s></p>
+<p t="54297" d="1000" w="1" a="1">
+</p>
+<p t="54357" d="2917" w="1"><s> clear</s><s t="300">.</s><s t="460"> As</s><s t="621"> AI</s><s t="783"> unlocks</s><s t="1215"> more</s><s t="1485"> powerful</s></p>
+<p t="56274" d="1000" w="1" a="1">
+</p>
+<p t="56328" d="2728" w="1"><s> capabilities</s><s t="702"> and</s><s t="918"> accelerates</s><s t="1566"> its</s></p>
+<p t="58056" d="1000" w="1" a="1">
+</p>
+<p t="58110" d="3051" w="1"><s> penetration</s><s t="647"> into</s><s t="917"> various</s><s t="1349"> scenarios</s><s t="1835">,</s><s t="1943"> we</s></p>
+<p t="60161" d="1000" w="1" a="1">
+</p>
+<p t="60215" d="2782" w="1"><s> are</s><s t="216"> witnessing</s><s t="810"> a</s><s t="918"> profound</s><s t="1404"> change</s><s t="1728">.</s></p>
+<p t="61997" d="1000" w="1" a="1">
+</p>
+<p t="62097" d="3336" w="1"><s> Machines</s><s t="637"> are</s><s t="920"> becoming</s><s t="1557"> a</s><s t="1699"> force</s><s t="2124"> for</s></p>
+<p t="64433" d="1000" w="1" a="1">
+</p>
+<p t="64504" d="3645" w="1"><s> thinking</s><s t="567">.</s><s t="738"> And</s><s t="1010"> intelligence</s><s t="1896"> is</s><s t="2100"> becoming</s></p>
+<p t="67149" d="1000" w="1" a="1">
+</p>
+<p t="67218" d="3079" w="1"><s> a</s><s t="136"> scalable</s><s t="749"> commodity</s><s t="1362">.</s><s t="1531"> The</s><s t="1699"> last</s><s t="1910"> time</s></p>
+<p t="69297" d="1000" w="1" a="1">
+</p>
+<p t="69339" d="2646" w="1"><s> such</s><s t="211"> a</s><s t="296"> change</s><s t="591"> occurred</s><s t="929">,</s><s t="1013"> we</s><s t="1139"> can</s><s t="1308"> trace</s><s t="1561"> it</s></p>
+<p t="70985" d="1000" w="1" a="1">
+</p>
+<p t="71027" d="2308" w="1"><s> back</s><s t="211"> to</s><s t="338"> the</s><s t="506"> early</s><s t="760"> stages</s><s t="1055"> of</s><s t="1181"> the</s></p>
+<p t="72335" d="1000" w="1" a="1">
+</p>
+<p t="72377" d="2845" w="1"><s> Industrial</s><s t="464"> Revolution</s><s t="886">.</s><s t="1029"> The</s><s t="1262"> Industrial</s></p>
+<p t="74222" d="1000" w="1" a="1">
+</p>
+<p t="74280" d="3157" w="1"><s> Revolution</s><s t="641"> turned</s><s t="1050"> motive</s><s t="1458"> power</s><s t="1808"> into</s><s t="2099"> a</s></p>
+<p t="76437" d="1000" w="1" a="1">
+</p>
+<p t="76496" d="2585" w="1"><s> scalable</s><s t="524"> commodity</s><s t="1049">.</s><s t="1208"> Humanity</s></p>
+<p t="78081" d="1000" w="1" a="1">
+</p>
+<p t="78128" d="2838" w="1"><s> successively</s><s t="613"> invented</s><s t="1037"> the</s><s t="1225"> steam</s><s t="1508"> engine</s><s t="1791">,</s></p>
+<p t="79966" d="1000" w="1" a="1">
+</p>
+<p t="80013" d="2650" w="1"><s> the</s><s t="189"> internal</s><s t="613"> combustion</s><s t="1132"> engine</s><s t="1415">,</s><s t="1509"> and</s></p>
+<p t="81663" d="1000" w="1" a="1">
+</p>
+<p t="81710" d="2556" w="1"><s> electricity</s><s t="519">,</s><s t="613"> and</s><s t="802"> built</s><s t="1085"> the</s><s t="1273"> modern</s></p>
+<p t="83266" d="1000" w="1" a="1">
+</p>
+<p t="83313" d="2792" w="1"><s> industries</s><s t="519"> we</s><s t="660"> are</s><s t="849"> familiar</s><s t="1273"> with</s><s t="1509"> around</s></p>
+<p t="85105" d="1000" w="1" a="1">
+</p>
+<p t="85152" d="3327" w="1"><s> them</s><s t="188">.</s><s t="336"> This</s><s t="657"> time</s><s t="914">,</s><s t="1042"> we</s><s t="1235"> believe</s><s t="1749"> it</s><s t="1942"> is</s><s t="2134"> the</s></p>
+<p t="87479" d="1000" w="1" a="1">
+</p>
+<p t="87543" d="3067" w="1"><s> turn</s><s t="322"> of</s><s t="514"> thinking</s><s t="1028">.</s><s t="1193"> In</s><s t="1357"> the</s><s t="1575"> past</s><s t="1794">,</s><s t="1903"> the</s></p>
+<p t="89610" d="1000" w="1" a="1">
+</p>
+<p t="89665" d="2914" w="1"><s> amount</s><s t="383"> of</s><s t="547"> thought</s><s t="985"> a</s><s t="1094"> complex</s><s t="1531"> problem</s></p>
+<p t="91579" d="1000" w="1" a="1">
+</p>
+<p t="91634" d="3023" w="1"><s> could</s><s t="328"> receive</s><s t="765"> was</s><s t="984"> entirely</s><s t="1476"> limited</s><s t="1914"> by</s></p>
+<p t="93657" d="1000" w="1" a="1">
+</p>
+<p t="93712" d="3023" w="1"><s> the</s><s t="219"> sum</s><s t="437"> of</s><s t="602"> human</s><s t="930"> intelligence</s><s t="1641"> and</s><s t="1859"> the</s></p>
+<p t="95735" d="1000" w="1" a="1">
+</p>
+<p t="95790" d="2862" w="1"><s> allocation</s><s t="602"> of</s><s t="766"> resources</s><s t="1258">.</s><s t="1413"> Today</s><s t="1787">,</s></p>
+<p t="97652" d="1000" w="1" a="1">
+</p>
+<p t="97727" d="3926" w="1"><s> machines</s><s t="674"> have</s><s t="1048"> broken</s><s t="1573"> these</s><s t="2022"> limits</s><s t="2472">.</s><s t="2647"> With</s></p>
+<p t="100653" d="1000" w="1" a="1">
+</p>
+<p t="100723" d="3722" w="1"><s> the</s><s t="279"> gradual</s><s t="837"> realization</s><s t="1675"> of</s><s t="1885"> this</s><s t="2234"> and</s><s t="2513"> the</s></p>
+<p t="103445" d="1000" w="1" a="1">
+</p>
+<p t="103515" d="2816" w="1"><s> continuous</s><s t="768"> expansion</s><s t="1466"> of</s><s t="1676"> AI</s></p>
+<p t="105331" d="1000" w="1" a="1">
+</p>
+<p t="105400" d="3584" w="1"><s> infrastructure</s><s t="978">,</s><s t="1117"> thinking</s><s t="1676">,</s><s t="1816"> like</s><s t="2165"> power</s><s t="2514">,</s></p>
+<p t="107984" d="1000" w="1" a="1">
+</p>
+<p t="108053" d="3453" w="1"><s> has</s><s t="280"> become</s><s t="768"> a</s><s t="908"> scalable</s><s t="1536"> commodity</s><s t="2165">.</s><s t="2335"> We</s></p>
+<p t="110506" d="1000" w="1" a="1">
+</p>
+<p t="110566" d="3140" w="1"><s> believe</s><s t="475"> that</s><s t="773"> the</s><s t="1010"> future</s><s t="1427"> will</s><s t="1724"> lead</s><s t="2021"> us</s></p>
+<p t="112706" d="1000" w="1" a="1">
+</p>
+<p t="112765" d="3141" w="1"><s> into</s><s t="298"> an</s><s t="476"> era</s><s t="714"> of</s><s t="892"> machine</s><s t="1368"> intelligence</s><s t="2081">.</s></p>
+<p t="114906" d="1000" w="1" a="1">
+</p>
+<p t="115006" d="3075" w="1"><s> What</s><s t="288"> we</s><s t="461"> want</s><s t="749"> to</s><s t="922"> discuss</s><s t="1383"> today</s><s t="1729"> is</s><s t="1902"> our</s></p>
+<p t="117081" d="1000" w="1" a="1">
+</p>
+<p t="117138" d="2903" w="1"><s> perspective</s><s t="692"> on</s><s t="865"> the</s><s t="1096"> era</s><s t="1326"> of</s><s t="1499"> machine</s></p>
+<p t="119041" d="1000" w="1" a="1">
+</p>
+<p t="119098" d="3076" w="1"><s> intelligence</s><s t="750"> and</s><s t="980"> Alibaba&#39;s</s><s t="1557"> strategic</s></p>
+<p t="121174" d="1000" w="1" a="1">
+</p>
+<p t="121231" d="3628" w="1"><s> choices</s><s t="404">.</s><s t="562"> First</s><s t="906">,</s><s t="1044"> I</s><s t="1181"> would</s><s t="1595"> like</s><s t="1939"> to</s><s t="2146"> clarify</s></p>
+<p t="123859" d="1000" w="1" a="1">
+</p>
+<p t="123928" d="3691" w="1"><s> a</s><s t="137"> concept</s><s t="620">.</s><s t="789"> We</s><s t="1000"> are</s><s t="1282"> used</s><s t="1634"> to</s><s t="1845"> calling</s><s t="2409"> AI</s><s t="2620"> &quot;</s></p>
+<p t="126619" d="1000" w="1" a="1">
+</p>
+<p t="126619" d="3677" w="1"><s>Artificial</s><s t="775"> Intelligence</s><s t="1620">,</s><s t="1691">&quot;</s><s t="1832"> but</s><s t="2114"> the</s><s t="2395"> word</s></p>
+<p t="129296" d="1000" w="1" a="1">
+</p>
+<p t="129367" d="3677" w="1"><s> &quot;</s><s t="70">artificial</s><s t="775">&quot;</s><s t="916"> in</s><s t="1127"> English</s><s t="1691"> is</s><s t="1902"> more</s><s t="2254"> like</s><s t="2606"> &quot;</s></p>
+<p t="132044" d="1000" w="1" a="1">
+</p>
+<p t="132044" d="3706" w="1"><s>man-made</s><s t="564">.</s><s t="634">&quot;</s><s t="805"> Like</s><s t="1170"> how</s><s t="1463"> we</s><s t="1682"> say</s><s t="1975"> artificial</s></p>
+<p t="134750" d="1000" w="1" a="1">
+</p>
+<p t="134823" d="3501" w="1"><s> stone</s><s t="439"> or</s><s t="658"> artificial</s><s t="1462"> leather</s><s t="1974">.</s><s t="2148"> That</s><s t="2400"> is</s></p>
+<p t="137324" d="1000" w="1" a="1">
+</p>
+<p t="137375" d="2969" w="1"><s> the</s><s t="202"> meaning</s><s t="555">,</s><s t="656"> but</s><s t="858"> when</s><s t="1111"> talking</s><s t="1515"> about</s><s t="1818"> AI</s><s t="1919">,</s></p>
+<p t="139344" d="1000" w="1" a="1">
+</p>
+<p t="139395" d="2818" w="1"><s> we</s><s t="151"> are</s><s t="353"> accustomed</s><s t="909"> to</s><s t="1060"> using</s><s t="1363"> this</s><s t="1616"> same</s></p>
+<p t="141213" d="1000" w="1" a="1">
+</p>
+<p t="141263" d="3116" w="1"><s> mindset</s><s t="404"> to</s><s t="556"> think</s><s t="859"> about</s><s t="1162"> it</s><s t="1263">.</s><s t="1414"> We</s><s t="1624"> hope</s><s t="1975"> to</s></p>
+<p t="143379" d="1000" w="1" a="1">
+</p>
+<p t="143449" d="3676" w="1"><s> create</s><s t="492"> AI</s><s t="703"> that</s><s t="1054"> thinks</s><s t="1545"> like</s><s t="1897"> a</s><s t="2037"> human</s><s t="2388">.</s><s t="2559"> In</s></p>
+<p t="146125" d="1000" w="1" a="1">
+</p>
+<p t="146184" d="3118" w="1"><s> the</s><s t="235"> past</s><s t="471">,</s><s t="588"> we</s><s t="765"> all</s><s t="1000"> asked</s><s t="1353"> whether</s><s t="1824"> AI</s><s t="2000"> is</s></p>
+<p t="148302" d="1000" w="1" a="1">
+</p>
+<p t="148361" d="3177" w="1"><s> like</s><s t="294"> a</s><s t="412"> human</s><s t="765"> and</s><s t="1000"> whether</s><s t="1471"> it</s><s t="1647"> can</s><s t="1883"> think</s></p>
+<p t="150538" d="1000" w="1" a="1">
+</p>
+<p t="150597" d="2971" w="1"><s> like</s><s t="294"> a</s><s t="411"> human</s><s t="706">.</s><s t="865"> The</s><s t="1086"> Turing</s><s t="1473"> Test</s><s t="1750"> once</s></p>
+<p t="152568" d="1000" w="1" a="1">
+</p>
+<p t="152624" d="3103" w="1"><s> became</s><s t="387"> the</s><s t="609"> gold</s><s t="885"> standard</s><s t="1383"> for</s><s t="1605"> measuring</s></p>
+<p t="154727" d="1000" w="1" a="1">
+</p>
+<p t="154782" d="2716" w="1"><s> AI</s><s t="111">,</s><s t="222"> but</s><s t="443"> let</s><s t="664"> us</s><s t="831"> look</s><s t="1107"> back</s><s t="1384"> at</s><s t="1550"> the</s></p>
+<p t="156498" d="1000" w="1" a="1">
+</p>
+<p t="156553" d="2993" w="1"><s> Industrial</s><s t="609"> Revolution</s><s t="1163">;</s><s t="1273"> steam</s><s t="1605"> engines</s></p>
+<p t="158546" d="1000" w="1" a="1">
+</p>
+<p t="158601" d="2882" w="1"><s> and</s><s t="222"> internal</s><s t="720"> combustion</s><s t="1329"> engines</s><s t="1771"> in</s></p>
+<p t="160483" d="1000" w="1" a="1">
+</p>
+<p t="160538" d="3048" w="1"><s> their</s><s t="332"> early</s><s t="665"> stages</s><s t="1052"> were</s><s t="1329"> perhaps</s><s t="1771"> meant</s></p>
+<p t="162586" d="1000" w="1" a="1">
+</p>
+<p t="162642" d="2881" w="1"><s> to</s><s t="166"> replace</s><s t="608"> tasks</s><s t="940"> done</s><s t="1217"> by</s><s t="1383"> people</s><s t="1771"> or</s></p>
+<p t="164523" d="1000" w="1" a="1">
+</p>
+<p t="164579" d="2881" w="1"><s> horses</s><s t="332">,</s><s t="442"> such</s><s t="719"> as</s><s t="885"> pumping</s><s t="1328"> water</s><s t="1660"> from</s></p>
+<p t="166460" d="1000" w="1" a="1">
+</p>
+<p t="166516" d="3038" w="1"><s> mines</s><s t="332"> or</s><s t="498"> transporting</s><s t="1217"> goods</s><s t="1494">.</s><s t="1650"> That</s><s t="1927"> is</s></p>
+<p t="168554" d="1000" w="1" a="1">
+</p>
+<p t="168609" d="3108" w="1"><s> where</s><s t="333"> the</s><s t="555"> term</s><s t="832"> &quot;</s><s t="888">horsepower</s><s t="1443">&quot;</s><s t="1554"> originally</s></p>
+<p t="170717" d="1000" w="1" a="1">
+</p>
+<p t="170773" d="3363" w="1"><s> came</s><s t="277"> from</s><s t="499">.</s><s t="655"> But</s><s t="899"> soon</s><s t="1143">,</s><s t="1265"> what</s><s t="1570"> machine</s><s t="2058"> power</s></p>
+<p t="173136" d="1000" w="1" a="1">
+</p>
+<p t="173197" d="3075" w="1"><s> could</s><s t="366"> do</s><s t="549"> far</s><s t="793"> exceeded</s><s t="1343"> the</s><s t="1587"> physical</s></p>
+<p t="175272" d="1000" w="1" a="1">
+</p>
+<p t="175333" d="3365" w="1"><s> labor</s><s t="366"> of</s><s t="549"> humans</s><s t="976"> and</s><s t="1220"> animals</s><s t="1647">.</s><s t="1809"> No</s><s t="1994"> amount</s></p>
+<p t="177698" d="1000" w="1" a="1">
+</p>
+<p t="177760" d="3163" w="1"><s> of</s><s t="185"> men</s><s t="432"> or</s><s t="618"> horses</s><s t="1050"> could</s><s t="1421"> make</s><s t="1730"> a</s><s t="1854"> train</s></p>
+<p t="179923" d="1000" w="1" a="1">
+</p>
+<p t="179985" d="3410" w="1"><s> race</s><s t="247">,</s><s t="371"> let</s><s t="618"> alone</s><s t="989"> send</s><s t="1298"> planes</s><s t="1730"> and</s><s t="1978"> rockets</s></p>
+<p t="182395" d="1000" w="1" a="1">
+</p>
+<p t="182457" d="3156" w="1"><s> into</s><s t="309"> the</s><s t="556"> sky</s><s t="742">.</s><s t="904"> Machine</s><s t="1405"> power</s><s t="1780"> is</s><s t="1968"> not</s></p>
+<p t="184613" d="1000" w="1" a="1">
+</p>
+<p t="184676" d="3254" w="1"><s> simply</s><s t="438"> artificial</s><s t="1127"> physical</s><s t="1691"> strength</s><s t="2192">,</s></p>
+<p t="186930" d="1000" w="1" a="1">
+</p>
+<p t="186993" d="2942" w="1"><s> but</s><s t="251"> the</s><s t="501"> creation</s><s t="1065"> of</s><s t="1253"> an</s><s t="1441"> entirely</s></p>
+<p t="188935" d="1000" w="1" a="1">
+</p>
+<p t="188997" d="3351" w="1"><s> different</s><s t="626"> species</s><s t="1065">.</s><s t="1228"> The</s><s t="1464"> depth</s><s t="1760">,</s><s t="1878"> breadth</s><s t="2292">,</s></p>
+<p t="191348" d="1000" w="1" a="1">
+</p>
+<p t="191407" d="2951" w="1"><s> and</s><s t="237"> density</s><s t="710"> of</s><s t="887"> machine</s><s t="1360"> power</s><s t="1715"> have</s></p>
+<p t="193358" d="1000" w="1" a="1">
+</p>
+<p t="193418" d="3247" w="1"><s> allowed</s><s t="473"> us</s><s t="650"> humans</s><s t="1064"> to</s><s t="1241"> achieve</s><s t="1714"> things</s><s t="2128"> we</s></p>
+<p t="195665" d="1000" w="1" a="1">
+</p>
+<p t="195724" d="3356" w="1"><s> never</s><s t="354"> imagined</s><s t="887"> before</s><s t="1241">.</s><s t="1401"> In</s><s t="1580"> the</s><s t="1819"> same</s><s t="2117"> way</s><s t="2296">,</s></p>
+<p t="198080" d="1000" w="1" a="1">
+</p>
+<p t="198140" d="3209" w="1"><s> today&#39;s</s><s t="477"> machine</s><s t="955"> intelligence</s><s t="1732"> is</s><s t="1911"> not</s><s t="2150"> a</s></p>
+<p t="200349" d="1000" w="1" a="1">
+</p>
+<p t="200409" d="3269" w="1"><s> substitute</s><s t="657"> for</s><s t="896"> human</s><s t="1254"> intelligence</s><s t="1971">,</s><s t="2090"> but</s></p>
+<p t="202678" d="1000" w="1" a="1">
+</p>
+<p t="202738" d="3275" w="1"><s> an</s><s t="179"> entirely</s><s t="717"> different</s><s t="1314"> species</s><s t="1732">.</s><s t="1892"> Today</s><s t="2211">,</s></p>
+<p t="205013" d="1000" w="1" a="1">
+</p>
+<p t="205077" d="3109" w="1"><s> seeing</s><s t="447"> AI</s><s t="639"> help</s><s t="959"> people</s><s t="1406"> code</s><s t="1662">,</s><s t="1790"> write</s></p>
+<p t="207186" d="1000" w="1" a="1">
+</p>
+<p t="207250" d="3429" w="1"><s> reports</s><s t="448">,</s><s t="576"> and</s><s t="831"> create</s><s t="1279"> PPTs</s><s t="1598"> is</s><s t="1790"> merely</s><s t="2238"> the</s></p>
+<p t="209679" d="1000" w="1" a="1">
+</p>
+<p t="209743" d="3430" w="1"><s> primary</s><s t="512"> stage</s><s t="895"> of</s><s t="1087"> machine</s><s t="1598"> intelligence</s><s t="2366">.</s></p>
+<p t="212173" d="1000" w="1" a="1">
+</p>
+<p t="212273" d="3104" w="1"><s> As</s><s t="170"> the</s><s t="398"> supply</s><s t="796"> of</s><s t="967"> machine</s><s t="1422"> intelligence</s></p>
+<p t="214377" d="1000" w="1" a="1">
+</p>
+<p t="214434" d="2821" w="1"><s> becomes</s><s t="455"> infinitely</s><s t="1081"> abundant</s><s t="1536">,</s><s t="1650"> its</s></p>
+<p t="216255" d="1000" w="1" a="1">
+</p>
+<p t="216312" d="3161" w="1"><s> significance</s><s t="739"> to</s><s t="910"> human</s><s t="1251"> society</s><s t="1706"> will</s><s t="1991"> far</s></p>
+<p t="218473" d="1000" w="1" a="1">
+</p>
+<p t="218530" d="3162" w="1"><s> exceed</s><s t="398"> our</s><s t="626"> current</s><s t="1081"> definition</s><s t="1707"> of</s><s t="1878"> it</s><s t="2048"> as</s></p>
+<p t="220692" d="1000" w="1" a="1">
+</p>
+<p t="220749" d="3048" w="1"><s> a</s><s t="114"> replacement</s><s t="796"> for</s><s t="1024"> mental</s><s t="1422"> labor</s><s t="1707">;</s><s t="1820"> this</s></p>
+<p t="222797" d="1000" w="1" a="1">
+</p>
+<p t="222854" d="3162" w="1"><s> change</s><s t="398"> will</s><s t="682"> be</s><s t="853"> even</s><s t="1138"> more</s><s t="1422"> profound</s><s t="1934"> than</s></p>
+<p t="225016" d="1000" w="1" a="1">
+</p>
+<p t="225072" d="3138" w="1"><s> the</s><s t="228"> Industrial</s><s t="854"> Revolution</s><s t="1423">.</s><s t="1580"> Regarding</s></p>
+<p t="227210" d="1000" w="1" a="1">
+</p>
+<p t="227273" d="3422" w="1"><s> the</s><s t="248"> future</s><s t="683"> era</s><s t="931"> of</s><s t="1118"> machine</s><s t="1614"> intelligence</s><s t="2360">,</s></p>
+<p t="229695" d="1000" w="1" a="1">
+</p>
+<p t="229757" d="3062" w="1"><s> we</s><s t="186"> have</s><s t="497"> two</s><s t="745"> assessments</s><s t="1428">.</s><s t="1591"> The</s><s t="1800"> first</s></p>
+<p t="231819" d="1000" w="1" a="1">
+</p>
+<p t="231871" d="2886" w="1"><s> assessment</s><s t="577"> is</s><s t="734"> that</s><s t="996"> in</s><s t="1153"> the</s><s t="1362"> future</s><s t="1677">,</s><s t="1782"> we</s></p>
+<p t="233757" d="1000" w="1" a="1">
+</p>
+<p t="233810" d="2414" w="1"><s> believe</s><s t="419"> the</s><s t="628"> total</s><s t="943"> volume</s><s t="1309"> of</s></p>
+<p t="235224" d="1000" w="1" a="1">
+</p>
+<p t="235277" d="2886" w="1"><s> machine-driven</s><s t="785"> thinking</s><s t="1257"> will</s><s t="1519"> be</s><s t="1676"> more</s></p>
+<p t="237163" d="1000" w="1" a="1">
+</p>
+<p t="237215" d="3043" w="1"><s> than</s><s t="262"> 1,000</s><s t="576"> times</s><s t="891"> that</s><s t="1153"> of</s><s t="1310"> human</s><s t="1624"> thinking</s></p>
+<p t="239258" d="1000" w="1" a="1">
+</p>
+<p t="239258" d="2726" w="1"><s>.</s><s t="153"> This</s><s t="377"> is</s><s t="512"> something</s><s t="962"> that</s><s t="1186"> has</s><s t="1366"> actually</s></p>
+<p t="240984" d="1000" w="1" a="1">
+</p>
+<p t="241029" d="2753" w="1"><s> already</s><s t="359"> happened</s><s t="764"> in</s><s t="899"> the</s><s t="1078"> physical</s><s t="1483"> world</s><s t="1708">,</s></p>
+<p t="242782" d="1000" w="1" a="1">
+</p>
+<p t="242827" d="2737" w="1"><s> starting</s><s t="404"> with</s><s t="629"> steam</s><s t="854">.</s><s t="999"> The</s><s t="1245"> earliest</s></p>
+<p t="244564" d="1000" w="1" a="1">
+</p>
+<p t="244625" d="3154" w="1"><s> inventions</s><s t="677"> of</s><s t="862"> that</s><s t="1169"> era</s><s t="1415"> ushered</s><s t="1908"> in</s><s t="2092"> a</s></p>
+<p t="246779" d="1000" w="1" a="1">
+</p>
+<p t="246840" d="3257" w="1"><s> brand-new</s><s t="615"> age</s><s t="800">.</s><s t="962"> As</s><s t="1147"> for</s><s t="1393"> machine</s><s t="1887"> power</s><s t="2195">,</s></p>
+<p t="249097" d="1000" w="1" a="1">
+</p>
+<p t="249158" d="3282" w="1"><s> all</s><s t="247"> the</s><s t="494"> mechanical</s><s t="1172"> power</s><s t="1542"> carrying</s><s t="2097"> out</s></p>
+<p t="251440" d="1000" w="1" a="1">
+</p>
+<p t="251502" d="3343" w="1"><s> the</s><s t="247"> world&#39;s</s><s t="740"> physical</s><s t="1295"> work</s><s t="1603"> now</s><s t="1850"> actually</s></p>
+<p t="253845" d="1000" w="1" a="1">
+</p>
+<p t="253907" d="3048" w="1"><s> accounts</s><s t="555"> for</s><s t="802"> nearly</s><s t="1233"> 99.9</s><s t="1480">%</s><s t="1542">.</s><s t="1704"> In</s><s t="1876"> the</s></p>
+<p t="255955" d="1000" w="1" a="1">
+</p>
+<p t="256012" d="2895" w="1"><s> future</s><s t="345">,</s><s t="460"> the</s><s t="689"> total</s><s t="1034"> volume</s><s t="1435"> of</s><s t="1608"> human</s></p>
+<p t="257907" d="1000" w="1" a="1">
+</p>
+<p t="257964" d="3067" w="1"><s> thinking</s><s t="517"> may</s><s t="746"> still</s><s t="1091"> continue</s><s t="1607"> to</s><s t="1779"> grow</s><s t="2009">.</s></p>
+<p t="260031" d="1000" w="1" a="1">
+</p>
+<p t="260131" d="3519" w="1"><s> But</s><s t="258"> the</s><s t="516"> total</s><s t="904"> scale</s><s t="1292"> of</s><s t="1486"> machine</s><s t="2003"> thinking</s></p>
+<p t="262650" d="1000" w="1" a="1">
+</p>
+<p t="262715" d="3455" w="1"><s> will</s><s t="323"> expand</s><s t="775"> at</s><s t="969"> a</s><s t="1099"> much</s><s t="1422"> faster</s><s t="1874"> rate</s><s t="2132">,</s><s t="2262"> and</s></p>
+<p t="265170" d="1000" w="1" a="1">
+</p>
+<p t="265235" d="3455" w="1"><s> we</s><s t="194"> believe</s><s t="711"> that</s><s t="1034"> in</s><s t="1228"> the</s><s t="1486"> future</s><s t="1874">,</s><s t="2003"> machine</s></p>
+<p t="267690" d="1000" w="1" a="1">
+</p>
+<p t="267755" d="3455" w="1"><s> thinking</s><s t="581"> will</s><s t="905"> also</s><s t="1228"> account</s><s t="1745"> for</s><s t="2003"> 99.9</s><s t="2261">%</s><s t="2326">of</s></p>
+<p t="270210" d="1000" w="1" a="1">
+</p>
+<p t="270275" d="3206" w="1"><s> the</s><s t="258"> world&#39;s</s><s t="775"> total</s><s t="1163"> thinking</s><s t="1680">.</s><s t="1845"> We</s><s t="2025"> can</s></p>
+<p t="272481" d="1000" w="1" a="1">
+</p>
+<p t="272541" d="3106" w="1"><s> deduce</s><s t="421"> this</s><s t="722"> from</s><s t="1023"> the</s><s t="1264"> two</s><s t="1504"> aspects</s><s t="1986"> of</s></p>
+<p t="274647" d="1000" w="1" a="1">
+</p>
+<p t="274707" d="3814" w="1"><s> supply</s><s t="422"> and</s><s t="662"> demand</s><s t="1023">.</s><s t="1184"> First</s><s t="1698"> is</s><s t="1956"> the</s><s t="2299"> change</s></p>
+<p t="277521" d="1000" w="1" a="1">
+</p>
+<p t="277607" d="3839" w="1"><s> in</s><s t="257"> supply</s><s t="772">.</s><s t="958"> The</s><s t="1226"> supply</s><s t="1697"> of</s><s t="1898"> top-tier</s><s t="2503"> human</s></p>
+<p t="280446" d="1000" w="1" a="1">
+</p>
+<p t="280513" d="3284" w="1"><s> thinking</s><s t="604"> is</s><s t="806"> actually</s><s t="1411"> very</s><s t="1747"> limited</s><s t="2217">;</s></p>
+<p t="282797" d="1000" w="1" a="1">
+</p>
+<p t="282864" d="3419" w="1"><s> world-renowned</s><s t="1008"> scientists</s><s t="1747"> and</s><s t="2016"> senior</s></p>
+<p t="285283" d="1000" w="1" a="1">
+</p>
+<p t="285350" d="3083" w="1"><s> experts</s><s t="537"> are</s><s t="806"> quite</s><s t="1209"> few</s><s t="1478"> globally</s><s t="2015">.</s></p>
+<p t="287433" d="1000" w="1" a="1">
+</p>
+<p t="287533" d="3928" w="1"><s> Cultivating</s><s t="901"> a</s><s t="1051"> top</s><s t="1351"> scientist</s><s t="2102"> or</s><s t="2327"> industry</s></p>
+<p t="290461" d="1000" w="1" a="1">
+</p>
+<p t="290536" d="3703" w="1"><s> expert</s><s t="526"> requires</s><s t="1201"> decades</s><s t="1802"> of</s><s t="2027"> study</s><s t="2478"> and</s></p>
+<p t="293239" d="1000" w="1" a="1">
+</p>
+<p t="293314" d="3779" w="1"><s> practice</s><s t="601">,</s><s t="751"> as</s><s t="976"> well</s><s t="1352"> as</s><s t="1577"> talent</s><s t="2103"> and</s><s t="2403"> luck</s><s t="2703">.</s></p>
+<p t="296093" d="1000" w="1" a="1">
+</p>
+<p t="296524" d="3323" w="1"><s> This</s><s t="331"> leaves</s><s t="796"> many</s><s t="1128"> fields</s><s t="1593"> of</s><s t="1792"> research</s></p>
+<p t="298847" d="1000" w="1" a="1">
+</p>
+<p t="298913" d="2859" w="1"><s> long-term</s><s t="664"> lacking</s><s t="1195"> sufficient</s></p>
+<p t="300772" d="1000" w="1" a="1">
+</p>
+<p t="300838" d="3485" w="1"><s> intellectual</s><s t="863"> input</s><s t="1195">.</s><s t="1362"> For</s><s t="1598"> example</s><s t="2012">,</s><s t="2130"> a</s><s t="2249"> rare</s></p>
+<p t="303323" d="1000" w="1" a="1">
+</p>
+<p t="303382" d="3307" w="1"><s> disease</s><s t="474"> like</s><s t="769"> neonatal</s><s t="1302"> progeria</s><s t="1834"> may</s><s t="2070"> have</s></p>
+<p t="305689" d="1000" w="1" a="1">
+</p>
+<p t="305748" d="3129" w="1"><s> only</s><s t="296"> a</s><s t="414"> few</s><s t="651"> dozen</s><s t="1006"> new</s><s t="1242"> cases</s><s t="1597"> worldwide</s></p>
+<p t="307877" d="1000" w="1" a="1">
+</p>
+<p t="307936" d="3011" w="1"><s> each</s><s t="296"> year</s><s t="533">,</s><s t="651"> with</s><s t="947"> perhaps</s><s t="1420"> only</s><s t="1716"> a</s><s t="1834"> few</s></p>
+<p t="309947" d="1000" w="1" a="1">
+</p>
+<p t="310006" d="3071" w="1"><s> hundred</s><s t="474"> recorded</s><s t="1006"> patients</s><s t="1538"> globally</s><s t="2011">.</s></p>
+<p t="312077" d="1000" w="1" a="1">
+</p>
+<p t="312177" d="2872" w="1"><s> Such</s><s t="267"> rare</s><s t="534"> diseases</s><s t="1016"> actually</s><s t="1497"> find</s><s t="1765"> it</s></p>
+<p t="314049" d="1000" w="1" a="1">
+</p>
+<p t="314102" d="2873" w="1"><s> very</s><s t="268"> difficult</s><s t="803"> to</s><s t="963"> obtain</s><s t="1338"> sufficient</s></p>
+<p t="315975" d="1000" w="1" a="1">
+</p>
+<p t="316028" d="3024" w="1"><s> research</s><s t="482"> resources</s><s t="963">.</s><s t="1117"> From</s><s t="1383"> the</s><s t="1597"> business</s></p>
+<p t="318052" d="1000" w="1" a="1">
+</p>
+<p t="318105" d="2922" w="1"><s> logic</s><s t="321"> of</s><s t="481"> the</s><s t="694"> existing</s><s t="1175"> pharmaceutical</s></p>
+<p t="320027" d="1000" w="1" a="1">
+</p>
+<p t="320081" d="3028" w="1"><s> industry</s><s t="427">,</s><s t="534"> few</s><s t="747"> companies</s><s t="1281"> are</s><s t="1494"> willing</s><s t="1922"> to</s></p>
+<p t="322109" d="1000" w="1" a="1">
+</p>
+<p t="322163" d="3028" w="1"><s> spend</s><s t="320"> decades</s><s t="747"> and</s><s t="961"> vast</s><s t="1228"> sums</s><s t="1494"> to</s><s t="1655"> develop</s></p>
+<p t="324191" d="1000" w="1" a="1">
+</p>
+<p t="324245" d="2761" w="1"><s> a</s><s t="106"> new</s><s t="320"> drug</s><s t="587"> for</s><s t="800"> just</s><s t="1067"> a</s><s t="1174"> few</s><s t="1388"> hundred</s></p>
+<p t="326006" d="1000" w="1" a="1">
+</p>
+<p t="326060" d="3192" w="1"><s> people</s><s t="320">.</s><s t="474"> But</s><s t="695"> when</s><s t="973"> AI</s><s t="1139"> possesses</s><s t="1693"> the</s><s t="1915"> level</s></p>
+<p t="328252" d="1000" w="1" a="1">
+</p>
+<p t="328308" d="2552" w="1"><s> of</s><s t="166"> intelligence</s><s t="887"> required</s><s t="1386"> for</s></p>
+<p t="329860" d="1000" w="1" a="1">
+</p>
+<p t="329916" d="3162" w="1"><s> professional</s><s t="721"> research</s><s t="1164">,</s><s t="1275"> as</s><s t="1441"> long</s><s t="1719"> as</s><s t="1885"> there</s></p>
+<p t="332078" d="1000" w="1" a="1">
+</p>
+<p t="332134" d="3051" w="1"><s> is</s><s t="166"> enough</s><s t="554"> affordable</s><s t="1164"> computing</s><s t="1719"> power</s><s t="1996">,</s></p>
+<p t="334185" d="1000" w="1" a="1">
+</p>
+<p t="334241" d="2940" w="1"><s> every</s><s t="332"> niche</s><s t="665"> field</s><s t="998"> could</s><s t="1331"> potentially</s></p>
+<p t="336181" d="1000" w="1" a="1">
+</p>
+<p t="336237" d="2663" w="1"><s> organize</s><s t="499"> millions</s><s t="998"> of</s><s t="1164"> agents</s><s t="1552"> to</s></p>
+<p t="337900" d="1000" w="1" a="1">
+</p>
+<p t="337956" d="3162" w="1"><s> continuously</s><s t="721"> research</s><s t="1164">,</s><s t="1275"> simulate</s><s t="1719">,</s><s t="1830"> verify</s></p>
+<p t="340118" d="1000" w="1" a="1">
+</p>
+<p t="340118" d="2886" w="1"><s>,</s><s t="111"> and</s><s t="333"> explore</s><s t="777"> different</s><s t="1331"> solutions</s><s t="1830">.</s></p>
+<p t="342004" d="1000" w="1" a="1">
+</p>
+<p t="342104" d="2792" w="1"><s> These</s><s t="336"> previously</s><s t="952"> under-resourced</s></p>
+<p t="343896" d="1000" w="1" a="1">
+</p>
+<p t="343952" d="3185" w="1"><s> research</s><s t="504"> directions</s><s t="1120"> will</s><s t="1344">,</s><s t="1456"> for</s><s t="1681"> the</s><s t="1905"> first</s></p>
+<p t="346137" d="1000" w="1" a="1">
+</p>
+<p t="346193" d="3128" w="1"><s> time</s><s t="224">,</s><s t="336"> receive</s><s t="784"> large-scale</s><s t="1456"> intellectual</s></p>
+<p t="348321" d="1000" w="1" a="1">
+</p>
+<p t="348377" d="2817" w="1"><s> supply</s><s t="336">.</s><s t="493"> Top-tier</s><s t="1034"> thinking</s><s t="1576"> will</s></p>
+<p t="350194" d="1000" w="1" a="1">
+</p>
+<p t="350254" d="3348" w="1"><s> transform</s><s t="602"> from</s><s t="903"> a</s><s t="1024"> luxury</s><s t="1445"> into</s><s t="1746"> a</s><s t="1867"> scalable</s></p>
+<p t="352602" d="1000" w="1" a="1">
+</p>
+<p t="352602" d="3360" w="1"><s>,</s><s t="121"> supplied</s><s t="662"> commodity</s><s t="1204">.</s><s t="1365"> Imagine</s><s t="1862"> a</s><s t="1986"> future</s></p>
+<p t="354962" d="1000" w="1" a="1">
+</p>
+<p t="355024" d="3239" w="1"><s> where</s><s t="373"> every</s><s t="746"> niche</s><s t="1119"> field</s><s t="1492"> in</s><s t="1679"> our</s><s t="1928"> world</s></p>
+<p t="357263" d="1000" w="1" a="1">
+</p>
+<p t="357325" d="3052" w="1"><s> has</s><s t="249"> millions</s><s t="808"> of</s><s t="995"> AI</s><s t="1182"> scientists</s><s t="1866"> and</s></p>
+<p t="359377" d="1000" w="1" a="1">
+</p>
+<p t="359440" d="3176" w="1"><s> experts</s><s t="497"> continuously</s><s t="1306"> innovating</s><s t="1990"> and</s></p>
+<p t="361616" d="1000" w="1" a="1">
+</p>
+<p t="361678" d="3302" w="1"><s> tackling</s><s t="560"> difficult</s><s t="1182"> problems</s><s t="1680">;</s><s t="1804"> consider</s></p>
+<p t="363980" d="1000" w="1" a="1">
+</p>
+<p t="364042" d="3177" w="1"><s> how</s><s t="249"> much</s><s t="560"> change</s><s t="995"> this</s><s t="1306"> would</s><s t="1679"> bring</s><s t="2052"> to</s></p>
+<p t="366219" d="1000" w="1" a="1">
+</p>
+<p t="366281" d="3514" w="1"><s> human</s><s t="373"> society</s><s t="808">.</s><s t="971"> Secondly</s><s t="1532">,</s><s t="1672"> there</s><s t="2093"> is</s><s t="2304"> the</s></p>
+<p t="368795" d="1000" w="1" a="1">
+</p>
+<p t="368866" d="3465" w="1"><s> change</s><s t="491"> in</s><s t="701"> demand</s><s t="1122">.</s><s t="1293"> In</s><s t="1460"> the</s><s t="1683"> industrial</s><s t="2297"> era</s></p>
+<p t="371331" d="1000" w="1" a="1">
+</p>
+<p t="371331" d="3176" w="1"><s>,</s><s t="111"> we</s><s t="279"> saw</s><s t="502"> human</s><s t="837"> consumption</s><s t="1506"> of</s><s t="1674"> goods</s><s t="2009"> was</s></p>
+<p t="373507" d="1000" w="1" a="1">
+</p>
+<p t="373563" d="3177" w="1"><s> dependent</s><s t="558"> on</s><s t="726"> the</s><s t="949"> size</s><s t="1228"> of</s><s t="1395"> the</s><s t="1619"> population</s></p>
+<p t="375740" d="1000" w="1" a="1">
+</p>
+<p t="375740" d="3029" w="1"><s>.</s><s t="156"> Coffee</s><s t="553"> needs</s><s t="894"> someone</s><s t="1348"> to</s><s t="1518"> drink</s><s t="1859"> it</s><s t="1972">,</s></p>
+<p t="377769" d="1000" w="1" a="1">
+</p>
+<p t="377826" d="3175" w="1"><s> right</s><s t="284">?</s><s t="441"> A</s><s t="552"> person</s><s t="944"> might</s><s t="1280"> drink</s><s t="1615"> one</s><s t="1783">,</s><s t="1895"> maybe</s></p>
+<p t="380001" d="1000" w="1" a="1">
+</p>
+<p t="380057" d="3182" w="1"><s> three</s><s t="336"> or</s><s t="504"> five</s><s t="783"> cups</s><s t="1063"> of</s><s t="1231"> coffee</s><s t="1623"> a</s><s t="1734"> day</s><s t="1902">,</s><s t="2014"> but</s></p>
+<p t="382239" d="1000" w="1" a="1">
+</p>
+<p t="382295" d="3014" w="1"><s> there</s><s t="336"> is</s><s t="504"> always</s><s t="895"> an</s><s t="1063"> upper</s><s t="1399"> limit</s><s t="1679">;</s><s t="1790"> cars</s></p>
+<p t="384309" d="1000" w="1" a="1">
+</p>
+<p t="384365" d="3015" w="1"><s> need</s><s t="280"> drivers</s><s t="672">,</s><s t="784"> and</s><s t="1007"> phones</s><s t="1399"> need</s><s t="1679"> users</s><s t="1959">.</s></p>
+<p t="386380" d="1000" w="1" a="1">
+</p>
+<p t="386480" d="3382" w="1"><s> The</s><s t="244"> amount</s><s t="672"> of</s><s t="855"> physical</s><s t="1405"> goods</s><s t="1771"> one</s><s t="2016"> person</s></p>
+<p t="388862" d="1000" w="1" a="1">
+</p>
+<p t="388923" d="3139" w="1"><s> can</s><s t="245"> consume</s><s t="733"> in</s><s t="917"> a</s><s t="1039"> lifetime</s><s t="1589"> is</s><s t="1772"> always</s></p>
+<p t="391062" d="1000" w="1" a="1">
+</p>
+<p t="391123" d="3249" w="1"><s> limited</s><s t="427">.</s><s t="589"> But</s><s t="818"> as</s><s t="989"> AI</s><s t="1161"> capabilities</s><s t="1906"> become</s></p>
+<p t="393372" d="1000" w="1" a="1">
+</p>
+<p t="393430" d="2546" w="1"><s> increasingly</s><s t="744"> powerful</s><s t="1202">,</s><s t="1317"> this</s></p>
+<p t="394976" d="1000" w="1" a="1">
+</p>
+<p t="395033" d="3233" w="1"><s> relationship</s><s t="744"> will</s><s t="1031"> undergo</s><s t="1489"> a</s><s t="1603"> fundamental</s></p>
+<p t="397266" d="1000" w="1" a="1">
+</p>
+<p t="397324" d="3819" w="1"><s> change</s><s t="343">.</s><s t="501"> Imagine</s><s t="1099"> a</s><s t="1248"> future</s><s t="1772"> scenario</s><s t="2445"> where</s></p>
+<p t="400143" d="1000" w="1" a="1">
+</p>
+<p t="400218" d="3618" w="1"><s> we</s><s t="224"> task</s><s t="598"> AI</s><s t="823"> to</s><s t="1047"> build</s><s t="1496"> a</s><s t="1645"> spacecraft</s><s t="2468"> to</s></p>
+<p t="402836" d="1000" w="1" a="1">
+</p>
+<p t="402910" d="3618" w="1"><s> Mars</s><s t="300">—</s><s t="524">a</s><s t="673"> complex</s><s t="1272"> mission</s><s t="1870"> that</s><s t="2244"> seems</s></p>
+<p t="405528" d="1000" w="1" a="1">
+</p>
+<p t="405603" d="4171" w="1"><s> like</s><s t="374"> a</s><s t="523"> fantasy</s><s t="1122"> today</s><s t="1496">.</s><s t="2638"> AI</s><s t="2838"> might</s></p>
+<p t="408774" d="1000" w="1" a="1">
+</p>
+<p t="408841" d="3333" w="1"><s> eventually</s><s t="733"> break</s><s t="1133"> such</s><s t="1466"> complex</s><s t="2000"> tasks</s></p>
+<p t="411174" d="1000" w="1" a="1">
+</p>
+<p t="411241" d="3533" w="1"><s> down</s><s t="333"> into</s><s t="667"> thousands</s><s t="1333"> of</s><s t="1533"> sub-tasks</s><s t="2133">,</s><s t="2267"> with</s></p>
+<p t="413774" d="1000" w="1" a="1">
+</p>
+<p t="413841" d="3467" w="1"><s> millions</s><s t="600"> of</s><s t="800"> agents</s><s t="1267"> working</s><s t="1800"> tirelessly</s></p>
+<p t="416308" d="1000" w="1" a="1">
+</p>
+<p t="416375" d="3818" w="1"><s> until</s><s t="400"> the</s><s t="666"> mission</s><s t="1200"> is</s><s t="1400"> completed</s><s t="2000">.</s><s t="2700"> By</s></p>
+<p t="419193" d="1000" w="1" a="1">
+</p>
+<p t="419252" d="3244" w="1"><s> simply</s><s t="413"> providing</s><s t="1004"> AI</s><s t="1181"> with</s><s t="1476"> an</s><s t="1653"> idea</s><s t="1949"> and</s><s t="2185"> a</s></p>
+<p t="421496" d="1000" w="1" a="1">
+</p>
+<p t="421555" d="3304" w="1"><s> goal</s><s t="236">,</s><s t="355"> it</s><s t="532"> can</s><s t="768"> mobilize</s><s t="1300"> vast</s><s t="1595"> intellectual</s></p>
+<p t="423859" d="1000" w="1" a="1">
+</p>
+<p t="423918" d="2476" w="1"><s> resources</s><s t="531">,</s><s t="649"> allowing</s><s t="1181"> every</s></p>
+<p t="425394" d="1000" w="1" a="1">
+</p>
+<p t="425453" d="3245" w="1"><s> super-individual</s><s t="1004"> to</s><s t="1182"> leverage</s><s t="1713"> thousands</s></p>
+<p t="427698" d="1000" w="1" a="1">
+</p>
+<p t="427757" d="2949" w="1"><s> of</s><s t="177"> times</s><s t="531"> more</s><s t="827"> intelligence</s><s t="1595"> in</s><s t="1772"> the</s></p>
+<p t="429706" d="1000" w="1" a="1">
+</p>
+<p t="429765" d="3213" w="1"><s> future</s><s t="354">.</s><s t="514"> The</s><s t="733"> consumption</s><s t="1391"> of</s><s t="1555"> thought</s><s t="1994"> will</s></p>
+<p t="431978" d="1000" w="1" a="1">
+</p>
+<p t="432033" d="3139" w="1"><s> no</s><s t="165"> longer</s><s t="549"> be</s><s t="713"> proportional</s><s t="1426"> to</s><s t="1591"> population</s></p>
+<p t="434172" d="1000" w="1" a="1">
+</p>
+<p t="434227" d="2754" w="1"><s> size</s><s t="219">,</s><s t="329"> but</s><s t="548"> rather</s><s t="932"> to</s><s t="1096"> the</s><s t="1316"> depth</s><s t="1645"> of</s></p>
+<p t="435981" d="1000" w="1" a="1">
+</p>
+<p t="436036" d="3029" w="1"><s> machine</s><s t="439"> intelligence</s><s t="1152"> and</s><s t="1371"> the</s><s t="1591"> scale</s><s t="1920"> of</s></p>
+<p t="438065" d="1000" w="1" a="1">
+</p>
+<p t="438120" d="3293" w="1"><s> the</s><s t="219"> collective</s><s t="823"> effort</s><s t="1152">.</s><s t="1307"> The</s><s t="1553"> total</s><s t="1923"> volume</s></p>
+<p t="440413" d="1000" w="1" a="1">
+</p>
+<p t="440474" d="3404" w="1"><s> of</s><s t="185"> machine</s><s t="678"> thought</s><s t="1171"> will</s><s t="1479"> far</s><s t="1726"> exceed</s><s t="2157"> that</s></p>
+<p t="442878" d="1000" w="1" a="1">
+</p>
+<p t="442939" d="4860" w="1"><s> of</s><s t="185"> human</s><s t="555"> thought</s><s t="1048"> in</s><s t="1233"> the</s><s t="1479"> future</s><s t="1849">.</s><s t="3551"> If</s><s t="3736"> we</s></p>
+<p t="446799" d="1000" w="1" a="1">
+</p>
+<p t="446860" d="3226" w="1"><s> do</s><s t="186"> some</s><s t="495"> simple</s><s t="928"> arithmetic</s><s t="1546">,</s><s t="1670"> the</s><s t="1917"> total</s></p>
+<p t="449086" d="1000" w="1" a="1">
+</p>
+<p t="449148" d="3102" w="1"><s> volume</s><s t="433"> of</s><s t="618"> machine</s><s t="1113"> thought</s><s t="1608"> today</s><s t="1978"> is</s></p>
+<p t="451250" d="1000" w="1" a="1">
+</p>
+<p t="451312" d="3288" w="1"><s> likely</s><s t="433"> less</s><s t="742"> than</s><s t="1051"> 3</s><s t="1113">%</s><s t="1175">of</s><s t="1360"> that</s><s t="1669"> of</s><s t="1855"> humans</s><s t="2226">.</s></p>
+<p t="453600" d="1000" w="1" a="1">
+</p>
+<p t="453700" d="2856" w="1"><s> If</s><s t="146"> the</s><s t="341"> total</s><s t="634"> volume</s><s t="976"> of</s><s t="1123"> machine</s><s t="1514"> thought</s></p>
+<p t="455556" d="1000" w="1" a="1">
+</p>
+<p t="455604" d="2808" w="1"><s> reaches</s><s t="391"> 1,000</s><s t="684"> times</s><s t="977"> that</s><s t="1221"> of</s><s t="1368"> humans</s><s t="1710"> in</s></p>
+<p t="457412" d="1000" w="1" a="1">
+</p>
+<p t="457460" d="2759" w="1"><s> the</s><s t="196"> future</s><s t="489">,</s><s t="586"> a</s><s t="684"> simple</s><s t="1026"> deduction</s><s t="1515"> shows</s></p>
+<p t="459219" d="1000" w="1" a="1">
+</p>
+<p t="459268" d="2807" w="1"><s> that</s><s t="244"> there</s><s t="537"> is</s><s t="683"> still</s><s t="976"> tens</s><s t="1221"> of</s><s t="1367"> thousands</s></p>
+<p t="461075" d="1000" w="1" a="1">
+</p>
+<p t="461124" d="2758" w="1"><s> of</s><s t="146"> times</s><s t="439"> more</s><s t="683"> room</s><s t="928"> for</s><s t="1123"> growth</s><s t="1465"> in</s><s t="1611"> the</s></p>
+<p t="462882" d="1000" w="1" a="1">
+</p>
+<p t="462931" d="2986" w="1"><s> demand</s><s t="342"> for</s><s t="537"> machine</s><s t="928"> thought</s><s t="1270">.</s><s t="1419"> The</s><s t="1645"> second</s></p>
+<p t="464917" d="1000" w="1" a="1">
+</p>
+<p t="464974" d="2759" w="1"><s> judgment</s><s t="510"> is</s><s t="681"> that</s><s t="964"> we</s><s t="1134"> believe</s><s t="1588"> the</s></p>
+<p t="466733" d="1000" w="1" a="1">
+</p>
+<p t="466789" d="3100" w="1"><s> representative</s><s t="852"> product</s><s t="1305"> of</s><s t="1476"> the</s><s t="1703"> machine</s></p>
+<p t="468889" d="1000" w="1" a="1">
+</p>
+<p t="468946" d="3198" w="1"><s> intelligence</s><s t="737"> era</s><s t="964"> has</s><s t="1191"> yet</s><s t="1418"> to</s><s t="1588"> emerge</s><s t="1929">.</s><s t="2086"> It</s></p>
+<p t="471144" d="1000" w="1" a="1">
+</p>
+<p t="471200" d="3082" w="1"><s> might</s><s t="338"> seem</s><s t="619"> strange</s><s t="1069"> to</s><s t="1238"> say</s><s t="1463"> this</s><s t="1745"> today</s><s t="2026">,</s></p>
+<p t="473282" d="1000" w="1" a="1">
+</p>
+<p t="473339" d="3194" w="1"><s> given</s><s t="337"> that</s><s t="619"> AI</s><s t="787"> applications</s><s t="1519"> are</s><s t="1744"> emerging</s></p>
+<p t="475533" d="1000" w="1" a="1">
+</p>
+<p t="475589" d="3195" w="1"><s> one</s><s t="226"> after</s><s t="563"> another</s><s t="1013"> and</s><s t="1238"> usage</s><s t="1576"> is</s><s t="1745"> growing</s><s t="2139">,</s></p>
+<p t="477784" d="1000" w="1" a="1">
+</p>
+<p t="477840" d="3026" w="1"><s> but</s><s t="225"> if</s><s t="394"> we</s><s t="563"> look</s><s t="844"> back</s><s t="1126"> at</s><s t="1295"> the</s><s t="1520"> past</s><s t="1745">,</s><s t="1857"> the</s></p>
+<p t="479866" d="1000" w="1" a="1">
+</p>
+<p t="479922" d="2745" w="1"><s> earliest</s><s t="507"> use</s><s t="732"> of</s><s t="901"> electricity</s><s t="1576"> was</s></p>
+<p t="481667" d="1000" w="1" a="1">
+</p>
+<p t="481723" d="2857" w="1"><s> actually</s><s t="507"> to</s><s t="675"> replace</s><s t="1126"> oil</s><s t="1351"> lamps</s><s t="1688"> and</s></p>
+<p t="483580" d="1000" w="1" a="1">
+</p>
+<p t="483636" d="3567" w="1"><s> candles</s><s t="394">.</s><s t="551"> It</s><s t="765"> was</s><s t="1050"> used</s><s t="1407"> for</s><s t="1692"> lighting</s><s t="2263">.</s><s t="2435"> In</s></p>
+<p t="486203" d="1000" w="1" a="1">
+</p>
+<p t="486269" d="3311" w="1"><s> 1882</s><s t="264">,</s><s t="396"> Edison</s><s t="858"> built</s><s t="1254"> the</s><s t="1518"> Pearl</s><s t="1915"> Street</s></p>
+<p t="488580" d="1000" w="1" a="1">
+</p>
+<p t="488646" d="3377" w="1"><s> Station</s><s t="462">,</s><s t="594"> lighting</s><s t="1189"> up</s><s t="1387"> about</s><s t="1783"> 400</s><s t="2047"> lamps</s></p>
+<p t="491023" d="1000" w="1" a="1">
+</p>
+<p t="491089" d="3083" w="1"><s> nearby</s><s t="396">.</s><s t="563"> What&#39;s</s><s t="917"> interesting</s><s t="1525"> is</s><s t="1677"> that</s><s t="1880">,</s><s t="1982"> in</s></p>
+<p t="493172" d="1000" w="1" a="1">
+</p>
+<p t="493223" d="2925" w="1"><s> the</s><s t="202"> early</s><s t="506"> days</s><s t="709">,</s><s t="810"> when</s><s t="1064"> Edison</s><s t="1419"> sold</s><s t="1672"> light</s></p>
+<p t="495148" d="1000" w="1" a="1">
+</p>
+<p t="495199" d="2673" w="1"><s> bulbs</s><s t="254">,</s><s t="355"> he</s><s t="507"> gave</s><s t="760"> away</s><s t="1014"> six</s><s t="1216"> months</s><s t="1571"> of</s></p>
+<p t="496872" d="1000" w="1" a="1">
+</p>
+<p t="496922" d="2943" w="1"><s> electricity</s><s t="608"> for</s><s t="811"> free</s><s t="1014">.</s><s t="1165"> It’s</s><s t="1505"> just</s><s t="1748"> like</s></p>
+<p t="498865" d="1000" w="1" a="1">
+</p>
+<p t="498914" d="2557" w="1"><s> the</s><s t="194"> marketing</s><s t="681"> wars</s><s t="924"> of</s><s t="1070"> today&#39;s</s><s t="1460"> AI</s></p>
+<p t="500471" d="1000" w="1" a="1">
+</p>
+<p t="500520" d="2897" w="1"><s> software</s><s t="389">,</s><s t="486"> where</s><s t="778"> downloading</s><s t="1362"> an</s><s t="1508"> app</s><s t="1703"> gets</s></p>
+<p t="502417" d="1000" w="1" a="1">
+</p>
+<p t="502466" d="2800" w="1"><s> you</s><s t="195"> a</s><s t="292"> month</s><s t="584"> of</s><s t="730"> free</s><s t="973"> access</s><s t="1314"> or</s><s t="1460"> a</s><s t="1557"> month</s></p>
+<p t="504266" d="1000" w="1" a="1">
+</p>
+<p t="504315" d="2987" w="1"><s> of</s><s t="146"> free</s><s t="389"> tokens</s><s t="681">,</s><s t="779"> right</s><s t="1022">?</s><s t="1171"> I</s><s t="1287"> believe</s><s t="1754"> many</s></p>
+<p t="506302" d="1000" w="1" a="1">
+</p>
+<p t="506360" d="3216" w="1"><s> things</s><s t="408"> that</s><s t="700"> changed</s><s t="1166"> the</s><s t="1400"> world</s><s t="1749"> actually</s></p>
+<p t="508576" d="1000" w="1" a="1">
+</p>
+<p t="508634" d="3323" w="1"><s> appeared</s><s t="525"> much</s><s t="817"> later</s><s t="1108">.</s><s t="1267"> Air</s><s t="1531"> conditioning</s></p>
+<p t="510957" d="1000" w="1" a="1">
+</p>
+<p t="511023" d="3019" w="1"><s> didn&#39;t</s><s t="462"> appear</s><s t="924"> until</s><s t="1320"> 1902</s><s t="1584">.</s><s t="1750"> Later</s><s t="1974">,</s></p>
+<p t="513042" d="1000" w="1" a="1">
+</p>
+<p t="513087" d="2527" w="1"><s> appliances</s><s t="494"> that</s><s t="719"> everyone</s><s t="1123"> takes</s><s t="1392"> for</s></p>
+<p t="514614" d="1000" w="1" a="1">
+</p>
+<p t="514659" d="2662" w="1"><s> granted</s><s t="315">,</s><s t="404"> such</s><s t="629"> as</s><s t="764"> washing</s><s t="1123"> machines</s><s t="1527"> and</s></p>
+<p t="516321" d="1000" w="1" a="1">
+</p>
+<p t="516366" d="2437" w="1"><s> refrigerators</s><s t="584">,</s><s t="674"> gradually</s><s t="1123"> entered</s></p>
+<p t="517803" d="1000" w="1" a="1">
+</p>
+<p t="517848" d="3338" w="1"><s> households</s><s t="450">.</s><s t="595"> The</s><s t="873"> first</s><s t="1292"> computer</s><s t="1920"> didn&#39;t</s></p>
+<p t="520186" d="1000" w="1" a="1">
+</p>
+<p t="520256" d="3580" w="1"><s> arrive</s><s t="488"> until</s><s t="906"> 1946</s><s t="1185">,</s><s t="1325"> more</s><s t="1673"> than</s><s t="2022"> 60</s><s t="2231"> years</s></p>
+<p t="522836" d="1000" w="1" a="1">
+</p>
+<p t="522906" d="3679" w="1"><s> after</s><s t="418"> those</s><s t="837"> lights</s><s t="1325"> at</s><s t="1534"> Pearl</s><s t="1952"> Street</s><s t="2371">.</s><s t="2541"> Of</s></p>
+<p t="525585" d="1000" w="1" a="1">
+</p>
+<p t="525654" d="3354" w="1"><s> course</s><s t="415">,</s><s t="554"> we</s><s t="762"> believe</s><s t="1315"> the</s><s t="1592"> progress</s><s t="2215"> of</s></p>
+<p t="528008" d="1000" w="1" a="1">
+</p>
+<p t="528077" d="3699" w="1"><s> today&#39;s</s><s t="553"> AI</s><s t="761"> era</s><s t="1038"> will</s><s t="1384"> be</s><s t="1592"> much</s><s t="1938"> faster</s><s t="2422"> than</s></p>
+<p t="530776" d="1000" w="1" a="1">
+</p>
+<p t="530845" d="3720" w="1"><s> that</s><s t="277">.</s><s t="871"> The</s><s t="1117"> representative</s><s t="2042"> products</s><s t="2597"> of</s></p>
+<p t="533565" d="1000" w="1" a="1">
+</p>
+<p t="533627" d="3281" w="1"><s> the</s><s t="246"> machine</s><s t="740"> intelligence</s><s t="1541"> era</s><s t="1788"> probably</s></p>
+<p t="535908" d="1000" w="1" a="1">
+</p>
+<p t="535970" d="3639" w="1"><s> won&#39;t</s><s t="370"> be</s><s t="555"> what</s><s t="863"> we</s><s t="1048"> see</s><s t="1295"> today</s><s t="1603">.</s><s t="1988"> I</s><s t="2118"> think</s><s t="2509"> AI</s></p>
+<p t="538609" d="1000" w="1" a="1">
+</p>
+<p t="538674" d="3149" w="1"><s> coding</s><s t="456"> is</s><s t="651"> very</s><s t="977"> similar</s><s t="1433">;</s><s t="1563"> to</s><s t="1759"> use</s><s t="2019"> an</s></p>
+<p t="540823" d="1000" w="1" a="1">
+</p>
+<p t="540889" d="3540" w="1"><s> analogy</s><s t="456">,</s><s t="586"> it’s</s><s t="1042"> like</s><s t="1367"> the</s><s t="1628"> early</s><s t="2019"> electric</s></p>
+<p t="543429" d="1000" w="1" a="1">
+</p>
+<p t="543494" d="2759" w="1"><s> light</s><s t="391"> in</s><s t="586"> the</s><s t="847"> age</s><s t="1107"> of</s><s t="1303"> machine</s></p>
+<p t="545253" d="1000" w="1" a="1">
+</p>
+<p t="545318" d="3238" w="1"><s> intelligence</s><s t="781">.</s><s t="947"> It</s><s t="1131"> replaces</s><s t="1685"> work</s><s t="1992"> that</s></p>
+<p t="547556" d="1000" w="1" a="1">
+</p>
+<p t="547618" d="3398" w="1"><s> humans</s><s t="430"> currently</s><s t="1045"> do</s><s t="1168">,</s><s t="1291"> replacing</s><s t="1906"> existing</s></p>
+<p t="550016" d="1000" w="1" a="1">
+</p>
+<p t="550078" d="3152" w="1"><s> jobs</s><s t="307"> in</s><s t="492"> human</s><s t="861"> society</s><s t="1291">,</s><s t="1414"> whether</s><s t="1906"> it&#39;s</s></p>
+<p t="552230" d="1000" w="1" a="1">
+</p>
+<p t="552292" d="3091" w="1"><s> traditional</s><s t="738"> programming</s><s t="1476"> or</s><s t="1660"> writing</s></p>
+<p t="554383" d="1000" w="1" a="1">
+</p>
+<p t="554444" d="3824" w="1"><s> reports</s><s t="431">.</s><s t="593"> However</s><s t="1131">,</s><s t="1285"> as</s><s t="1516"> AI</s><s t="1747"> enters</s><s t="2286"> broader</s></p>
+<p t="557268" d="1000" w="1" a="1">
+</p>
+<p t="557345" d="3463" w="1"><s> office</s><s t="539"> domains</s><s t="1078">,</s><s t="1232"> merely</s><s t="1771"> replacing</s></p>
+<p t="559808" d="1000" w="1" a="1">
+</p>
+<p t="559885" d="3925" w="1"><s> existing</s><s t="693"> work</s><s t="1078"> won&#39;t</s><s t="1539"> create</s><s t="2078"> a</s><s t="2232"> truly</s><s t="2694"> new</s></p>
+<p t="562810" d="1000" w="1" a="1">
+</p>
+<p t="562887" d="4901" w="1"><s> era</s><s t="231">.</s><s t="1873"> Today</s><s t="2189">,</s><s t="2316"> it&#39;s</s><s t="2633"> hard</s><s t="2950"> to</s><s t="3140"> predict</s><s t="3647"> what</s></p>
+<p t="566788" d="1000" w="1" a="1">
+</p>
+<p t="566851" d="3409" w="1"><s> new</s><s t="254"> products</s><s t="824"> or</s><s t="1015"> inventions</s><s t="1712"> will</s><s t="2029"> emerge</s></p>
+<p t="569260" d="1000" w="1" a="1">
+</p>
+<p t="569323" d="3282" w="1"><s> after</s><s t="381"> machine</s><s t="888"> intelligence</s><s t="1712"> explodes</s><s t="2219">,</s></p>
+<p t="571605" d="1000" w="1" a="1">
+</p>
+<p t="571669" d="3282" w="1"><s> just</s><s t="317"> as</s><s t="507"> if</s><s t="697"> we</s><s t="887"> were</s><s t="1204"> standing</s><s t="1775"> under</s><s t="2155"> an</s></p>
+<p t="573951" d="1000" w="1" a="1">
+</p>
+<p t="574014" d="3219" w="1"><s> electric</s><s t="571"> light</s><s t="951"> in</s><s t="1141"> 1882</s><s t="1395">,</s><s t="1522"> it</s><s t="1712"> would</s><s t="2092"> be</s></p>
+<p t="576233" d="1000" w="1" a="1">
+</p>
+<p t="576296" d="3219" w="1"><s> hard</s><s t="317"> to</s><s t="507"> imagine</s><s t="1014"> all</s><s t="1268"> the</s><s t="1522"> diverse</s><s t="2029"> and</s></p>
+<p t="578515" d="1000" w="1" a="1">
+</p>
+<p t="578578" d="3346" w="1"><s> innovative</s><s t="697"> products</s><s t="1268"> of</s><s t="1458"> the</s><s t="1712"> electrical</s></p>
+<p t="580924" d="1000" w="1" a="1">
+</p>
+<p t="580987" d="4215" w="1"><s> age</s><s t="190">.</s><s t="1658"> But</s><s t="1897"> no</s><s t="2077"> matter</s><s t="2496"> how</s><s t="2736"> many</s><s t="3036"> new</s></p>
+<p t="584202" d="1000" w="1" a="1">
+</p>
+<p t="584262" d="3337" w="1"><s> inventions</s><s t="659"> appear</s><s t="1079"> later</s><s t="1379">,</s><s t="1498"> the</s><s t="1738"> first</s><s t="2098"> step</s></p>
+<p t="586599" d="1000" w="1" a="1">
+</p>
+<p t="586659" d="3337" w="1"><s> is</s><s t="180"> to</s><s t="360"> build</s><s t="719"> enough</s><s t="1139"> power</s><s t="1498"> plants</s><s t="1918"> and</s><s t="2157"> lay</s></p>
+<p t="588996" d="1000" w="1" a="1">
+</p>
+<p t="589056" d="3432" w="1"><s> a</s><s t="120"> sufficiently</s><s t="899"> wide</s><s t="1198"> power</s><s t="1558"> grid</s><s t="1798">.</s><s t="2012"> Around</s></p>
+<p t="591488" d="1000" w="1" a="1">
+</p>
+<p t="591558" d="3666" w="1"><s> 1900</s><s t="281">,</s><s t="421"> electricity</s><s t="1263"> had</s><s t="1544"> already</s><s t="2105"> begun</s><s t="2525"> to</s></p>
+<p t="594224" d="1000" w="1" a="1">
+</p>
+<p t="594294" d="3244" w="1"><s> enter</s><s t="421"> households</s><s t="1122">,</s><s t="1262"> but</s><s t="1543"> the</s><s t="1823"> entire</s></p>
+<p t="596538" d="1000" w="1" a="1">
+</p>
+<p t="596608" d="3736" w="1"><s> world&#39;s</s><s t="562"> annual</s><s t="1053"> power</s><s t="1473"> generation</s><s t="2245"> at</s><s t="2455"> that</s></p>
+<p t="599344" d="1000" w="1" a="1">
+</p>
+<p t="599414" d="3385" w="1"><s> time</s><s t="351"> would</s><s t="772"> only</s><s t="1122"> last</s><s t="1473"> the</s><s t="1753"> world</s><s t="2174"> two</s></p>
+<p t="601799" d="1000" w="1" a="1">
+</p>
+<p t="601869" d="2919" w="1"><s> hours</s><s t="421"> today</s><s t="771">.</s><s t="942"> The</s><s t="1159"> age</s><s t="1376"> of</s><s t="1539"> machine</s></p>
+<p t="603788" d="1000" w="1" a="1">
+</p>
+<p t="603842" d="2954" w="1"><s> intelligence</s><s t="705"> similarly</s><s t="1248"> requires</s><s t="1737"> more</s></p>
+<p t="605796" d="1000" w="1" a="1">
+</p>
+<p t="605850" d="3009" w="1"><s> powerful</s><s t="489"> infrastructure</s><s t="1303"> construction</s><s t="1954">.</s></p>
+<p t="607859" d="1000" w="1" a="1">
+</p>
+<p t="607959" d="3278" w="1"><s> The</s><s t="239"> three</s><s t="599"> major</s><s t="959"> pillars</s><s t="1439"> of</s><s t="1618"> the</s><s t="1858"> machine</s></p>
+<p t="610237" d="1000" w="1" a="1">
+</p>
+<p t="610297" d="3338" w="1"><s> intelligence</s><s t="779"> era</s><s t="959">,</s><s t="1079"> as</s><s t="1259"> we</s><s t="1439"> see</s><s t="1679"> it</s><s t="1859"> now</s><s t="2038">,</s><s t="2158"> are</s></p>
+<p t="612635" d="1000" w="1" a="1">
+</p>
+<p t="612695" d="2919" w="1"><s> AI</s><s t="180"> models</s><s t="540">,</s><s t="660"> AI</s><s t="840"> chips</s><s t="1139">,</s><s t="1259"> and</s><s t="1499"> AI</s><s t="1679"> data</s></p>
+<p t="614614" d="1000" w="1" a="1">
+</p>
+<p t="614674" d="3335" w="1"><s> centers</s><s t="420">.</s><s t="580"> They</s><s t="872"> are</s><s t="1106"> the</s><s t="1340"> prerequisites</s><s t="2159"> for</s></p>
+<p t="617009" d="1000" w="1" a="1">
+</p>
+<p t="617067" d="2989" w="1"><s> machine</s><s t="468"> thinking</s><s t="995"> to</s><s t="1170"> be</s><s t="1346"> supplied</s><s t="1872"> at</s></p>
+<p t="619056" d="1000" w="1" a="1">
+</p>
+<p t="619115" d="3203" w="1"><s> scale</s><s t="292">.</s><s t="451"> Only</s><s t="743"> when</s><s t="1035"> AI</s><s t="1210"> infrastructure</s><s t="2086"> is</s></p>
+<p t="621318" d="1000" w="1" a="1">
+</p>
+<p t="621376" d="3103" w="1"><s> sufficiently</s><s t="760"> mature</s><s t="1169"> and</s><s t="1402"> advanced</s><s t="1928"> can</s></p>
+<p t="623479" d="1000" w="1" a="1">
+</p>
+<p t="623538" d="2986" w="1"><s> various</s><s t="467"> AI</s><s t="642"> products</s><s t="1168"> and</s><s t="1402"> inventions</s></p>
+<p t="625524" d="1000" w="1" a="1">
+</p>
+<p t="625582" d="3278" w="1"><s> emerge</s><s t="409"> one</s><s t="643"> after</s><s t="993"> another</s><s t="1402">.</s><s t="1561"> If</s><s t="1726"> we</s><s t="1892"> look</s><s t="2168"> at</s></p>
+<p t="627860" d="1000" w="1" a="1">
+</p>
+<p t="627915" d="3098" w="1"><s> the</s><s t="221"> history</s><s t="663"> of</s><s t="828"> electricity</s><s t="1436">,</s><s t="1546"> the</s><s t="1767"> demand</s></p>
+<p t="630013" d="1000" w="1" a="1">
+</p>
+<p t="630068" d="3098" w="1"><s> for</s><s t="221"> AI</s><s t="387"> infrastructure</s><s t="1215"> in</s><s t="1380"> the</s><s t="1601"> future</s><s t="1987"> of</s></p>
+<p t="632166" d="1000" w="1" a="1">
+</p>
+<p t="632221" d="2656" w="1"><s> machine</s><s t="442"> intelligence</s><s t="1159"> is</s><s t="1325"> almost</s></p>
+<p t="633877" d="1000" w="1" a="1">
+</p>
+<p t="633932" d="2988" w="1"><s> limitless</s><s t="552"> compared</s><s t="1049"> to</s><s t="1215"> today&#39;s</s><s t="1656"> scale</s><s t="1932">.</s></p>
+<p t="635920" d="1000" w="1" a="1">
+</p>
+<p t="636020" d="3101" w="1"><s> Alibaba</s><s t="579"> will</s><s t="941"> firmly</s><s t="1449"> invest</s><s t="1956"> in</s></p>
+<p t="638121" d="1000" w="1" a="1">
+</p>
+<p t="638193" d="3826" w="1"><s> infrastructure</s><s t="1087"> represented</s><s t="1956"> by</s><s t="2174"> AI</s><s t="2391"> models</s></p>
+<p t="641019" d="1000" w="1" a="1">
+</p>
+<p t="641019" d="3680" w="1"><s>,</s><s t="145"> AI</s><s t="362"> chips</s><s t="724">,</s><s t="869"> and</s><s t="1159"> AI</s><s t="1376"> data</s><s t="1738"> centers</s><s t="2246">;</s><s t="2391"> this</s></p>
+<p t="643699" d="1000" w="1" a="1">
+</p>
+<p t="643772" d="3832" w="1"><s> is</s><s t="217"> our</s><s t="507"> long-term</s><s t="1231"> strategy</s><s t="1811">.</s><s t="1984"> Let&#39;s</s><s t="2447"> start</s></p>
+<p t="646604" d="1000" w="1" a="1">
+</p>
+<p t="646682" d="3896" w="1"><s> with</s><s t="386"> the</s><s t="694"> first</s><s t="1157"> pillar</s><s t="1620">:</s><s t="1775"> AI</s><s t="2006"> models</s><s t="2469">.</s><s t="2647"> Last</s></p>
+<p t="649578" d="1000" w="1" a="1">
+</p>
+<p t="649640" d="3184" w="1"><s> year</s><s t="312"> we</s><s t="500"> talked</s><s t="936"> about</s><s t="1311"> AI</s><s t="1498"> moving</s><s t="1934"> from</s></p>
+<p t="651824" d="1000" w="1" a="1">
+</p>
+<p t="651886" d="3246" w="1"><s> autonomous</s><s t="687"> action</s><s t="1123"> to</s><s t="1310"> self-iteration</s><s t="2184">,</s></p>
+<p t="654132" d="1000" w="1" a="1">
+</p>
+<p t="654195" d="3433" w="1"><s> and</s><s t="249"> this</s><s t="561"> year</s><s t="873"> we</s><s t="1060"> see</s><s t="1310"> that</s><s t="1622"> the</s><s t="1871"> technical</s></p>
+<p t="656628" d="1000" w="1" a="1">
+</p>
+<p t="656690" d="3433" w="1"><s> path</s><s t="312"> toward</s><s t="749"> AGI</s><s t="998"> has</s><s t="1248"> become</s><s t="1684"> even</s><s t="1996"> clearer</s></p>
+<p t="659123" d="1000" w="1" a="1">
+</p>
+<p t="659123" d="2958" w="1"><s>.</s><s t="163"> From</s><s t="462"> coding</s><s t="881"> and</s><s t="1120"> office</s><s t="1539"> work</s><s t="1838"> to</s></p>
+<p t="661081" d="1000" w="1" a="1">
+</p>
+<p t="661141" d="3275" w="1"><s> scientific</s><s t="658"> research</s><s t="1137">,</s><s t="1257"> models</s><s t="1676"> are</s><s t="1915"> taking</s></p>
+<p t="663416" d="1000" w="1" a="1">
+</p>
+<p t="663475" d="3036" w="1"><s> on</s><s t="180"> more</s><s t="479"> and</s><s t="719"> more</s><s t="1018"> real-world</s><s t="1676"> tasks</s><s t="1976">.</s></p>
+<p t="665511" d="1000" w="1" a="1">
+</p>
+<p t="665611" d="3260" w="1"><s> These</s><s t="387"> real-world</s><s t="1097"> tasks</s><s t="1485"> and</s><s t="1743"> feedback</s></p>
+<p t="667871" d="1000" w="1" a="1">
+</p>
+<p t="667936" d="2808" w="1"><s> make</s><s t="323"> models</s><s t="775"> stronger</s><s t="1291">,</s><s t="1420"> and</s><s t="1679"> AI</s></p>
+<p t="669744" d="1000" w="1" a="1">
+</p>
+<p t="669809" d="3260" w="1"><s> researchers</s><s t="775"> are</s><s t="1033"> gradually</s><s t="1679"> exploring</s></p>
+<p t="672069" d="1000" w="1" a="1">
+</p>
+<p t="672134" d="3002" w="1"><s> concrete</s><s t="581"> technical</s><s t="1227"> paths</s><s t="1614"> toward</s></p>
+<p t="674136" d="1000" w="1" a="1">
+</p>
+<p t="674200" d="2615" w="1"><s> superintelligence</s><s t="1163"> through</s></p>
+<p t="675815" d="1000" w="1" a="1">
+</p>
+<p t="675880" d="3325" w="1"><s> self-improvement</s><s t="1033">,</s><s t="1162"> which</s><s t="1550"> the</s><s t="1808"> industry</s></p>
+<p t="678205" d="1000" w="1" a="1">
+</p>
+<p t="678269" d="3591" w="1"><s> calls</s><s t="388"> SI</s><s t="517">.</s><s t="749"> Models</s><s t="1193"> can</s><s t="1448"> discover</s><s t="2020"> their</s><s t="2401"> own</s></p>
+<p t="680860" d="1000" w="1" a="1">
+</p>
+<p t="680924" d="3478" w="1"><s> shortcomings</s><s t="826"> from</s><s t="1144"> real</s><s t="1462"> feedback</s><s t="1970">,</s><s t="2097"> design</s></p>
+<p t="683402" d="1000" w="1" a="1">
+</p>
+<p t="683466" d="3415" w="1"><s> their</s><s t="381"> own</s><s t="636"> experiments</s><s t="1335">,</s><s t="1462"> build</s><s t="1843"> their</s><s t="2224"> own</s></p>
+<p t="685881" d="1000" w="1" a="1">
+</p>
+<p t="685944" d="3415" w="1"><s> data</s><s t="255">,</s><s t="382"> evaluate</s><s t="954"> results</s><s t="1399">,</s><s t="1526"> and</s><s t="1780"> cyclically</s></p>
+<p t="688359" d="1000" w="1" a="1">
+</p>
+<p t="688423" d="3034" w="1"><s> drive</s><s t="381"> the</s><s t="635"> model&#39;s</s><s t="1144"> own</s><s t="1398"> evolution</s><s t="1970">.</s></p>
+<p t="690457" d="1000" w="1" a="1">
+</p>
+<p t="690557" d="3242" w="1"><s> Currently</s><s t="630">,</s><s t="770"> our</s><s t="1050"> Qwen</s><s t="1401"> team</s><s t="1751"> is</s><s t="1961"> also</s></p>
+<p t="692799" d="1000" w="1" a="1">
+</p>
+<p t="692869" d="3382" w="1"><s> exploring</s><s t="700"> SI</s><s t="910"> and</s><s t="1191"> has</s><s t="1471"> achieved</s><s t="2102"> some</s></p>
+<p t="695251" d="1000" w="1" a="1">
+</p>
+<p t="695321" d="3887" w="1"><s> progress</s><s t="560">.</s><s t="1287"> The</s><s t="1553"> team</s><s t="1887"> is</s><s t="2087"> continuously</s></p>
+<p t="698208" d="1000" w="1" a="1">
+</p>
+<p t="698274" d="2800" w="1"><s> advancing</s><s t="667"> research</s><s t="1267"> on</s><s t="1467"> model</s></p>
+<p t="700074" d="1000" w="1" a="1">
+</p>
+<p t="700141" d="3333" w="1"><s> architecture</s><s t="867"> and</s><s t="1133"> data</s><s t="1467"> optimization</s><s t="2267">,</s></p>
+<p t="702474" d="1000" w="1" a="1">
+</p>
+<p t="702541" d="3400" w="1"><s> planning</s><s t="600"> to</s><s t="800"> train</s><s t="1200"> a</s><s t="1333"> new</s><s t="1600"> model</s><s t="2000"> at</s><s t="2200"> the</s></p>
+<p t="704941" d="1000" w="1" a="1">
+</p>
+<p t="705008" d="2933" w="1"><s> 5-10</s><s t="333"> T</s><s t="466"> scale</s><s t="866"> with</s><s t="1200"> the</s><s t="1466"> goal</s><s t="1800"> of</s></p>
+<p t="706941" d="1000" w="1" a="1">
+</p>
+<p t="707008" d="3266" w="1"><s> completing</s><s t="733"> more</s><s t="1066"> complex</s><s t="1600"> and</s><s t="1866"> longer</s></p>
+<p t="709274" d="1000" w="1" a="1">
+</p>
+<p t="709341" d="3732" w="1"><s> tasks</s><s t="400"> as</s><s t="600"> we</s><s t="800"> move</s><s t="1133"> toward</s><s t="1600"> AGI</s><s t="1800">.</s><s t="2343"> If</s><s t="2537"> the</s></p>
+<p t="712073" d="1000" w="1" a="1">
+</p>
+<p t="712138" d="3080" w="1"><s> trajectory</s><s t="715"> of</s><s t="910"> LLMs</s><s t="1235"> is</s><s t="1430"> to</s><s t="1625"> build</s><s t="2015"> a</s></p>
+<p t="714218" d="1000" w="1" a="1">
+</p>
+<p t="714283" d="2689" w="1"><s> top-tier</s><s t="519">,</s><s t="649"> intelligent</s><s t="1364">,</s><s t="1494"> and</s></p>
+<p t="715972" d="1000" w="1" a="1">
+</p>
+<p t="716037" d="3339" w="1"><s> self-evolving</s><s t="910"> brain</s><s t="1234">,</s><s t="1364"> then</s><s t="1689"> multimodal</s></p>
+<p t="718376" d="1000" w="1" a="1">
+</p>
+<p t="718441" d="3014" w="1"><s> capability</s><s t="715"> is</s><s t="910"> another</s><s t="1430"> essential</s></p>
+<p t="720455" d="1000" w="1" a="1">
+</p>
+<p t="720520" d="4084" w="1"><s> direction</s><s t="650"> for</s><s t="910"> machine</s><s t="1430"> intelligence</s><s t="2210">.</s><s t="2939"> We</s></p>
+<p t="723604" d="1000" w="1" a="1">
+</p>
+<p t="723677" d="3471" w="1"><s> believe</s><s t="581"> a</s><s t="726"> smart</s><s t="1163"> brain</s><s t="1599"> alone</s><s t="2035"> is</s><s t="2253"> not</s></p>
+<p t="726148" d="1000" w="1" a="1">
+</p>
+<p t="726221" d="3762" w="1"><s> enough</s><s t="436">;</s><s t="581"> AI</s><s t="799"> must</s><s t="1163"> also</s><s t="1526"> master</s><s t="2035"> human-like</s></p>
+<p t="728983" d="1000" w="1" a="1">
+</p>
+<p t="729055" d="3690" w="1"><s> interaction</s><s t="873"> and</s><s t="1163"> perception</s><s t="1890">,</s><s t="2036"> as</s><s t="2254"> humans</s></p>
+<p t="731745" d="1000" w="1" a="1">
+</p>
+<p t="731817" d="3472" w="1"><s> communicate</s><s t="873"> through</s><s t="1454"> voice</s><s t="1818">,</s><s t="1963"> images</s><s t="2399">,</s></p>
+<p t="734289" d="1000" w="1" a="1">
+</p>
+<p t="734361" d="3858" w="1"><s> expressions</s><s t="800">,</s><s t="945"> and</s><s t="1236"> actions</s><s t="1745">.</s><s t="2142"> We</s><s t="2337"> also</s><s t="2662"> use</s></p>
+<p t="737219" d="1000" w="1" a="1">
+</p>
+<p t="737284" d="3539" w="1"><s> these</s><s t="390"> methods</s><s t="911"> to</s><s t="1106"> express</s><s t="1627"> intentions</s><s t="2343"> and</s></p>
+<p t="739823" d="1000" w="1" a="1">
+</p>
+<p t="739888" d="2978" w="1"><s> emotions</s><s t="520">.</s><s t="686"> Models</s><s t="1079"> require</s><s t="1529"> stronger</s></p>
+<p t="741866" d="1000" w="1" a="1">
+</p>
+<p t="741923" d="3080" w="1"><s> multimodal</s><s t="618"> capabilities</s><s t="1349"> to</s><s t="1517"> understand</s></p>
+<p t="744003" d="1000" w="1" a="1">
+</p>
+<p t="744059" d="3136" w="1"><s> and</s><s t="225"> express</s><s t="674"> this</s><s t="955"> information</s><s t="1630"> just</s><s t="1911"> like</s></p>
+<p t="746195" d="1000" w="1" a="1">
+</p>
+<p t="746251" d="3192" w="1"><s> humans</s><s t="394"> do</s><s t="506">,</s><s t="618"> aligning</s><s t="1124"> with</s><s t="1405"> human</s><s t="1743"> culture</s><s t="2136">,</s></p>
+<p t="748443" d="1000" w="1" a="1">
+</p>
+<p t="748500" d="3221" w="1"><s> aesthetics</s><s t="562">,</s><s t="674"> and</s><s t="899"> values</s><s t="1236">.</s><s t="1393"> In</s><s t="1570"> the</s><s t="1807"> future</s><s t="2162">,</s></p>
+<p t="750721" d="1000" w="1" a="1">
+</p>
+<p t="750780" d="3308" w="1"><s> people</s><s t="414"> will</s><s t="710"> be</s><s t="888"> able</s><s t="1184"> to</s><s t="1361"> interact</s><s t="1894"> with</s><s t="2190"> AI</s></p>
+<p t="753088" d="1000" w="1" a="1">
+</p>
+<p t="753147" d="3249" w="1"><s> just</s><s t="296"> like</s><s t="592"> they</s><s t="888"> do</s><s t="1065"> with</s><s t="1361"> humans</s><s t="1716">,</s><s t="1834"> without</s></p>
+<p t="755396" d="1000" w="1" a="1">
+</p>
+<p t="755455" d="3247" w="1"><s> needing</s><s t="473"> complex</s><s t="947"> interfaces</s><s t="1538">.</s><s t="1698"> This</s><s t="2003"> will</s></p>
+<p t="757702" d="1000" w="1" a="1">
+</p>
+<p t="757763" d="3078" w="1"><s> allow</s><s t="367"> AI</s><s t="550"> to</s><s t="734"> better</s><s t="1161"> serve</s><s t="1528"> humanity</s><s t="2017">,</s></p>
+<p t="759841" d="1000" w="1" a="1">
+</p>
+<p t="759902" d="3138" w="1"><s> making</s><s t="428"> integrated</s><s t="1100"> understanding</s><s t="1955"> and</s></p>
+<p t="762040" d="1000" w="1" a="1">
+</p>
+<p t="762101" d="3322" w="1"><s> generation</s><s t="672"> models</s><s t="1100"> another</s><s t="1589"> key</s><s t="1833"> research</s></p>
+<p t="764423" d="1000" w="1" a="1">
+</p>
+<p t="764484" d="3791" w="1"><s> focus</s><s t="367"> for</s><s t="611"> us</s><s t="733">.</s><s t="895"> The</s><s t="1224"> second</s><s t="1802"> pillar</s><s t="2379"> is</s><s t="2626"> AI</s></p>
+<p t="767275" d="1000" w="1" a="1">
+</p>
+<p t="767358" d="3402" w="1"><s> chips</s><s t="412">.</s><s t="595"> If</s><s t="764"> tokens</s><s t="1159"> are</s><s t="1385"> the</s><s t="1611"> electricity</s><s t="2289"> of</s></p>
+<p t="769760" d="1000" w="1" a="1">
+</p>
+<p t="769816" d="3034" w="1"><s> the</s><s t="226"> AI</s><s t="396"> era</s><s t="565">,</s><s t="678"> then</s><s t="961"> chips</s><s t="1299"> are</s><s t="1525"> the</s><s t="1751"> power</s></p>
+<p t="771850" d="1000" w="1" a="1">
+</p>
+<p t="771906" d="2783" w="1"><s> generators</s><s t="565">.</s><s t="722"> In</s><s t="881"> the</s><s t="1093"> future</s><s t="1465"> era</s><s t="1677"> of</s></p>
+<p t="773689" d="1000" w="1" a="1">
+</p>
+<p t="773742" d="2911" w="1"><s> machine</s><s t="425"> intelligence</s><s t="1062">,</s><s t="1168"> the</s><s t="1380"> demand</s><s t="1752"> for</s></p>
+<p t="775653" d="1000" w="1" a="1">
+</p>
+<p t="775706" d="3017" w="1"><s> tokens</s><s t="372"> will</s><s t="637"> be</s><s t="796"> virtually</s><s t="1327"> limitless</s><s t="1805">,</s><s t="1911"> so</s></p>
+<p t="777723" d="1000" w="1" a="1">
+</p>
+<p t="777776" d="2646" w="1"><s> chips</s><s t="319"> must</s><s t="584"> continuously</s><s t="1274"> improve</s></p>
+<p t="779422" d="1000" w="1" a="1">
+</p>
+<p t="779475" d="3170" w="1"><s> performance</s><s t="637"> and</s><s t="849"> scale</s><s t="1168"> up</s><s t="1327"> supply</s><s t="1645">.</s><s t="1799"> Today</s><s t="2108">,</s></p>
+<p t="781645" d="1000" w="1" a="1">
+</p>
+<p t="781707" d="3413" w="1"><s> T-Head</s><s t="433"> is</s><s t="618"> making</s><s t="1051"> a</s><s t="1175"> comprehensive</s><s t="2041"> layout</s></p>
+<p t="784120" d="1000" w="1" a="1">
+</p>
+<p t="784181" d="3227" w="1"><s> for</s><s t="248"> data</s><s t="557"> center</s><s t="990"> chips</s><s t="1300">.</s><s t="1462"> Our</s><s t="1768"> Zhenwu</s></p>
+<p t="786408" d="1000" w="1" a="1">
+</p>
+<p t="786485" d="3908" w="1"><s> series</s><s t="535"> are</s><s t="842"> our</s><s t="1148"> GPU</s><s t="1454"> chips</s><s t="1837">,</s><s t="1990"> while</s><s t="2449"> Yitian</s></p>
+<p t="789393" d="1000" w="1" a="1">
+</p>
+<p t="789470" d="3444" w="1"><s> is</s><s t="229"> our</s><s t="536"> CPU</s><s t="842"> chip</s><s t="1148">.</s><s t="1325"> Panmai</s><s t="1737"> is</s><s t="1914"> our</s><s t="2150"> smart</s></p>
+<p t="791914" d="1000" w="1" a="1">
+</p>
+<p t="791973" d="3181" w="1"><s> network</s><s t="472"> interface</s><s t="1061"> card</s><s t="1297">,</s><s t="1415"> alongside</s><s t="2004"> our</s></p>
+<p t="794154" d="1000" w="1" a="1">
+</p>
+<p t="794213" d="3045" w="1"><s> interconnect</s><s t="766"> chips</s><s t="1061">.</s><s t="1220"> We</s><s t="1410"> have</s><s t="1728"> fully</s></p>
+<p t="796258" d="1000" w="1" a="1">
+</p>
+<p t="796322" d="3159" w="1"><s> covered</s><s t="508"> the</s><s t="762"> core</s><s t="1080"> chips</s><s t="1461"> required</s><s t="2032"> to</s></p>
+<p t="798481" d="1000" w="1" a="1">
+</p>
+<p t="798545" d="3393" w="1"><s> build</s><s t="381"> large-scale</s><s t="1143"> AI</s><s t="1334"> clusters</s><s t="1842">.</s><s t="2006"> At</s><s t="2199"> the</s></p>
+<p t="800938" d="1000" w="1" a="1">
+</p>
+<p t="801002" d="3258" w="1"><s> same</s><s t="323"> time</s><s t="581">,</s><s t="710"> we</s><s t="903"> are</s><s t="1161"> optimizing</s><s t="1871"> chips</s><s t="2194">,</s></p>
+<p t="803260" d="1000" w="1" a="1">
+</p>
+<p t="803325" d="3516" w="1"><s> servers</s><s t="451">,</s><s t="580"> super-nodes</s><s t="1290">,</s><s t="1419"> networks</s><s t="1935">,</s><s t="2064"> models</s><s t="2451">,</s></p>
+<p t="805841" d="1000" w="1" a="1">
+</p>
+<p t="805905" d="3387" w="1"><s> and</s><s t="258"> inference</s><s t="904"> systems</s><s t="1420"> to</s><s t="1613"> continuously</s></p>
+<p t="808292" d="1000" w="1" a="1">
+</p>
+<p t="808357" d="3387" w="1"><s> boost</s><s t="387"> the</s><s t="645"> efficiency</s><s t="1355"> of</s><s t="1548"> the</s><s t="1806"> entire</s><s t="2258"> AI</s></p>
+<p t="810744" d="1000" w="1" a="1">
+</p>
+<p t="810809" d="3188" w="1"><s> cluster&#39;s</s><s t="645"> token</s><s t="1032"> output</s><s t="1419">.</s><s t="1584"> Alibaba’s</s></p>
+<p t="812997" d="1000" w="1" a="1">
+</p>
+<p t="813052" d="3034" w="1"><s> self-developed</s><s t="825"> M890</s><s t="1100"> AI</s><s t="1264"> super-node</s><s t="1869"> has</s></p>
+<p t="815086" d="1000" w="1" a="1">
+</p>
+<p t="815141" d="3144" w="1"><s> successfully</s><s t="715"> supported</s><s t="1264"> the</s><s t="1484"> inference</s><s t="2034"> of</s></p>
+<p t="817285" d="1000" w="1" a="1">
+</p>
+<p t="817340" d="2814" w="1"><s> large</s><s t="330"> models</s><s t="715"> with</s><s t="989"> over</s><s t="1264"> 2</s><s t="1374"> trillion</s></p>
+<p t="819154" d="1000" w="1" a="1">
+</p>
+<p t="819209" d="3034" w="1"><s> parameters</s><s t="550">,</s><s t="660"> making</s><s t="1044"> us</s><s t="1209"> one</s><s t="1429"> of</s><s t="1594"> the</s><s t="1814"> very</s></p>
+<p t="821243" d="1000" w="1" a="1">
+</p>
+<p t="821298" d="2759" w="1"><s> few</s><s t="220"> companies</s><s t="769"> globally</s><s t="1264"> with</s><s t="1539"> such</s></p>
+<p t="823057" d="1000" w="1" a="1">
+</p>
+<p t="823112" d="4236" w="1"><s> capabilities</s><s t="660">.</s><s t="1707"> Starting</s><s t="2332"> this</s><s t="2680"> quarter</s><s t="3167">,</s></p>
+<p t="826348" d="1000" w="1" a="1">
+</p>
+<p t="826418" d="3642" w="1"><s> Alibaba</s><s t="556"> Cloud</s><s t="973"> has</s><s t="1252"> begun</s><s t="1669"> scaling</s><s t="2225"> up</s><s t="2434"> our</s></p>
+<p t="829060" d="1000" w="1" a="1">
+</p>
+<p t="829130" d="3295" w="1"><s> M890</s><s t="278">-</s><s t="348">based</s><s t="765"> super-nodes</s><s t="1599"> across</s><s t="2086"> our</s></p>
+<p t="831425" d="1000" w="1" a="1">
+</p>
+<p t="831494" d="3365" w="1"><s> entire</s><s t="487"> data</s><s t="835"> center</s><s t="1321"> infrastructure</s><s t="2295">.</s></p>
+<p t="833859" d="1000" w="1" a="1">
+</p>
+<p t="835096" d="3801" w="1"><s> Today</s><s t="437">,</s><s t="612"> we</s><s t="875"> are</s><s t="1225"> announcing</s><s t="2188"> our</s><s t="2539"> new</s></p>
+<p t="837897" d="1000" w="1" a="1">
+</p>
+<p t="837985" d="4065" w="1"><s> generation</s><s t="963"> AI</s><s t="1226"> chip</s><s t="1576">:</s><s t="1751"> the</s><s t="2101"> Zhenwu</s><s t="2714"> 900</s><s t="2977">.</s></p>
+<p t="841050" d="1000" w="1" a="1">
+</p>
+<p t="841150" d="3354" w="1"><s> This</s><s t="309"> is</s><s t="495"> currently</s><s t="1115"> the</s><s t="1363"> most</s><s t="1673"> powerful</s><s t="2231"> AI</s></p>
+<p t="843504" d="1000" w="1" a="1">
+</p>
+<p t="843566" d="2922" w="1"><s> chip</s><s t="310"> in</s><s t="496"> China</s><s t="806">,</s><s t="930"> with</s><s t="1240"> performance</s></p>
+<p t="845488" d="1000" w="1" a="1">
+</p>
+<p t="845550" d="3355" w="1"><s> reaching</s><s t="557"> three</s><s t="929"> times</s><s t="1301"> that</s><s t="1611"> of</s><s t="1797"> the</s><s t="2045"> M890</s><s t="2293">.</s></p>
+<p t="847905" d="1000" w="1" a="1">
+</p>
+<p t="848005" d="3428" w="1"><s> A</s><s t="127"> single</s><s t="575"> cluster</s><s t="1086"> built</s><s t="1470"> on</s><s t="1661"> it</s><s t="1853"> can</s><s t="2109"> scale</s></p>
+<p t="850433" d="1000" w="1" a="1">
+</p>
+<p t="850497" d="3493" w="1"><s> to</s><s t="192"> 500,000</s><s t="703"> GPUs</s><s t="1023"> to</s><s t="1215"> support</s><s t="1726"> the</s><s t="1982"> training</s></p>
+<p t="852990" d="1000" w="1" a="1">
+</p>
+<p t="853054" d="3321" w="1"><s> and</s><s t="256"> inference</s><s t="895"> of</s><s t="1087"> frontier</s><s t="1662"> models</s><s t="2046">.</s><s t="2210"> As</s></p>
+<p t="855375" d="1000" w="1" a="1">
+</p>
+<p t="855431" d="3007" w="1"><s> T-Head’s</s><s t="613"> chip</s><s t="892"> product</s><s t="1338"> line</s><s t="1617"> matures</s></p>
+<p t="857438" d="1000" w="1" a="1">
+</p>
+<p t="857494" d="3063" w="1"><s> and</s><s t="223"> sees</s><s t="502"> wide</s><s t="781"> adoption</s><s t="1282"> by</s><s t="1450"> clients</s><s t="1840">,</s><s t="1952"> we</s></p>
+<p t="859557" d="1000" w="1" a="1">
+</p>
+<p t="859613" d="3063" w="1"><s> expect</s><s t="390"> T-Head’s</s><s t="1004"> annual</s><s t="1394"> shipments</s><s t="1951"> to</s></p>
+<p t="861676" d="1000" w="1" a="1">
+</p>
+<p t="861732" d="3007" w="1"><s> increase</s><s t="502"> significantly</s><s t="1282"> in</s><s t="1450"> the</s><s t="1673"> coming</s></p>
+<p t="863739" d="1000" w="1" a="1">
+</p>
+<p t="863795" d="2917" w="1"><s> years</s><s t="279">.</s><s t="435"> Intelligence</s><s t="1176"> in</s><s t="1347"> the</s><s t="1575"> future</s></p>
+<p t="865712" d="1000" w="1" a="1">
+</p>
+<p t="865769" d="2938" w="1"><s> should</s><s t="399"> be</s><s t="570"> ubiquitous</s><s t="1140">,</s><s t="1254"> thriving</s><s t="1767"> far</s></p>
+<p t="867707" d="1000" w="1" a="1">
+</p>
+<p t="867764" d="3223" w="1"><s> beyond</s><s t="399"> the</s><s t="627"> server</s><s t="1026"> rooms</s><s t="1368"> of</s><s t="1539"> data</s><s t="1824"> centers</s></p>
+<p t="869987" d="1000" w="1" a="1">
+</p>
+<p t="869987" d="3078" w="1"><s>.</s><s t="157"> AI</s><s t="326"> will</s><s t="609"> further</s><s t="1061"> integrate</s><s t="1626"> into</s><s t="1908"> the</s></p>
+<p t="872065" d="1000" w="1" a="1">
+</p>
+<p t="872121" d="3147" w="1"><s> desktop</s><s t="452"> and</s><s t="678"> mobile</s><s t="1074"> environments</s><s t="1808"> we</s><s t="1978"> are</s></p>
+<p t="874268" d="1000" w="1" a="1">
+</p>
+<p t="874325" d="3008" w="1"><s> accustomed</s><s t="621"> to</s><s t="734">.</s><s t="891"> On</s><s t="1067"> the</s><s t="1302"> desktop</s><s t="1714">,</s><s t="1831"> our</s></p>
+<p t="876333" d="1000" w="1" a="1">
+</p>
+<p t="876392" d="3235" w="1"><s> open-source</s><s t="705"> Qwen</s><s t="941">-</s><s t="1000">2.5</s><s t="1235"> model</s><s t="1588"> is</s><s t="1764"> the</s><s t="1999"> most</s></p>
+<p t="878627" d="1000" w="1" a="1">
+</p>
+<p t="878685" d="3235" w="1"><s> popular</s><s t="471"> among</s><s t="824"> developers</s><s t="1471"> worldwide</s><s t="2000">;</s><s t="2118"> we</s></p>
+<p t="880920" d="1000" w="1" a="1">
+</p>
+<p t="880979" d="3235" w="1"><s> will</s><s t="294"> continue</s><s t="823"> to</s><s t="1000"> optimize</s><s t="1529"> these</s><s t="1882"> models</s></p>
+<p t="883214" d="1000" w="1" a="1">
+</p>
+<p t="883273" d="2823" w="1"><s> to</s><s t="176"> support</s><s t="647"> local</s><s t="999"> deployment</s><s t="1646"> for</s></p>
+<p t="885096" d="1000" w="1" a="1">
+</p>
+<p t="885155" d="3064" w="1"><s> developers</s><s t="647"> and</s><s t="882"> enterprises</s><s t="1529">.</s><s t="1688"> On</s><s t="1876"> the</s></p>
+<p t="887219" d="1000" w="1" a="1">
+</p>
+<p t="887282" d="2881" w="1"><s> mobile</s><s t="439"> side</s><s t="690">,</s><s t="815"> we</s><s t="1003"> are</s><s t="1254"> officially</s></p>
+<p t="889163" d="1000" w="1" a="1">
+</p>
+<p t="889226" d="3447" w="1"><s> launching</s><s t="627"> Intelligence</s><s t="1443"> today</s><s t="1819"> to</s><s t="2007"> provide</s></p>
+<p t="891673" d="1000" w="1" a="1">
+</p>
+<p t="891735" d="3384" w="1"><s> our</s><s t="251"> partners</s><s t="816"> with</s><s t="1129"> mobile</s><s t="1569"> AI</s><s t="1757"> solutions</s><s t="2321">,</s></p>
+<p t="894119" d="1000" w="1" a="1">
+</p>
+<p t="894182" d="3070" w="1"><s> enabling</s><s t="564"> mobile</s><s t="1003"> devices</s><s t="1505"> to</s><s t="1693"> handle</s></p>
+<p t="896252" d="1000" w="1" a="1">
+</p>
+<p t="896314" d="4450" w="1"><s> various</s><s t="502"> complex</s><s t="1004"> tasks</s><s t="1318">.</s><s t="1481"> Third</s><s t="2465"> is</s><s t="2957"> AI</s><s t="3285">.</s></p>
+<p t="899764" d="1000" w="1" a="1">
+</p>
+<p t="899864" d="2621" w="1"><s> Chips</s><s t="277"> are</s><s t="463"> responsible</s><s t="1018"> for</s><s t="1204"> producing</s></p>
+<p t="901485" d="1000" w="1" a="1">
+</p>
+<p t="901531" d="2667" w="1"><s> tokens</s><s t="278">,</s><s t="370"> and</s><s t="556"> the</s><s t="741"> cloud</s><s t="1019"> is</s><s t="1158"> responsible</s></p>
+<p t="903198" d="1000" w="1" a="1">
+</p>
+<p t="903244" d="2807" w="1"><s> for</s><s t="186"> delivering</s><s t="695"> them</s><s t="927"> to</s><s t="1066"> every</s><s t="1344"> place</s><s t="1621"> that</s></p>
+<p t="905051" d="1000" w="1" a="1">
+</p>
+<p t="905097" d="3058" w="1"><s> needs</s><s t="278"> them</s><s t="463">.</s><s t="610"> Models</s><s t="1015"> require</s><s t="1479"> continuous</s></p>
+<p t="907155" d="1000" w="1" a="1">
+</p>
+<p t="907213" d="3261" w="1"><s> training</s><s t="522"> and</s><s t="754"> inference</s><s t="1276">,</s><s t="1391"> and</s><s t="1623"> AI</s><s t="1797"> needs</s><s t="2145"> to</s></p>
+<p t="909474" d="1000" w="1" a="1">
+</p>
+<p t="909532" d="3202" w="1"><s> execute</s><s t="463"> tasks</s><s t="811"> over</s><s t="1101"> long</s><s t="1391"> periods</s><s t="1797">.</s><s t="1955"> There</s></p>
+<p t="911734" d="1000" w="1" a="1">
+</p>
+<p t="911784" d="2683" w="1"><s> will</s><s t="247"> be</s><s t="396"> more</s><s t="643"> and</s><s t="841"> more</s><s t="1089"> AI-developed</s></p>
+<p t="913467" d="1000" w="1" a="1">
+</p>
+<p t="913517" d="2683" w="1"><s> software</s><s t="396">,</s><s t="495"> and</s><s t="693"> they</s><s t="941"> will</s><s t="1188"> all</s><s t="1386"> become</s></p>
+<p t="915200" d="1000" w="1" a="1">
+</p>
+<p t="915250" d="2733" w="1"><s> residents</s><s t="495"> of</s><s t="644"> the</s><s t="842"> AI</s><s t="990"> infrastructure</s><s t="1683">,</s></p>
+<p t="916983" d="1000" w="1" a="1">
+</p>
+<p t="917032" d="2833" w="1"><s> continuously</s><s t="644"> invoking</s><s t="1090"> computing</s><s t="1585"> power</s></p>
+<p t="918865" d="1000" w="1" a="1">
+</p>
+<p t="918914" d="2887" w="1"><s> and</s><s t="198"> consuming</s><s t="693"> resources</s><s t="1139">.</s><s t="1289"> We</s><s t="1468"> need</s><s t="1767"> to</s></p>
+<p t="920801" d="1000" w="1" a="1">
+</p>
+<p t="920861" d="3335" w="1"><s> build</s><s t="359"> an</s><s t="539"> AI</s><s t="719"> infrastructure</s><s t="1617"> designed</s><s t="2155"> for</s></p>
+<p t="923196" d="1000" w="1" a="1">
+</p>
+<p t="923256" d="3275" w="1"><s> the</s><s t="239"> continuous</s><s t="898"> operation</s><s t="1497"> of</s><s t="1676"> models</s><s t="2095"> and</s></p>
+<p t="925531" d="1000" w="1" a="1">
+</p>
+<p t="925591" d="3036" w="1"><s> agents</s><s t="419"> around</s><s t="838"> these</s><s t="1197"> new</s><s t="1437"> workloads</s><s t="1976">.</s></p>
+<p t="927627" d="1000" w="1" a="1">
+</p>
+<p t="927727" d="3321" w="1"><s> Today</s><s t="305">,</s><s t="427"> we</s><s t="610"> rarely</s><s t="1038"> notice</s><s t="1466"> the</s><s t="1710"> power</s><s t="2076"> grid</s></p>
+<p t="930048" d="1000" w="1" a="1">
+</p>
+<p t="930109" d="3077" w="1"><s> itself</s><s t="366">,</s><s t="489"> but</s><s t="733"> we</s><s t="916"> can</s><s t="1161"> get</s><s t="1405"> electricity</s></p>
+<p t="932186" d="1000" w="1" a="1">
+</p>
+<p t="932247" d="3119" w="1"><s> anywhere</s><s t="550"> just</s><s t="855"> by</s><s t="1038"> plugging</s><s t="1588"> in</s><s t="1710">.</s><s t="1872"> If</s><s t="2020"> we</s></p>
+<p t="934366" d="1000" w="1" a="1">
+</p>
+<p t="934415" d="2927" w="1"><s> didn&#39;t</s><s t="346"> have</s><s t="593"> the</s><s t="790"> power</s><s t="1087"> grid</s><s t="1334"> and</s><s t="1531"> outlets</s><s t="1877">,</s></p>
+<p t="936342" d="1000" w="1" a="1">
+</p>
+<p t="936391" d="2778" w="1"><s> I</s><s t="99"> fear</s><s t="346"> we</s><s t="494"> wouldn&#39;t</s><s t="939"> be</s><s t="1087"> able</s><s t="1334"> to</s><s t="1482"> endure</s></p>
+<p t="938169" d="1000" w="1" a="1">
+</p>
+<p t="938219" d="2756" w="1"><s> life</s><s t="247"> for</s><s t="444"> even</s><s t="691"> a</s><s t="790"> single</s><s t="1136"> day</s><s t="1284">.</s><s t="1434"> In</s><s t="1595"> the</s></p>
+<p t="939975" d="1000" w="1" a="1">
+</p>
+<p t="940029" d="2828" w="1"><s> future</s><s t="322">,</s><s t="430"> using</s><s t="752"> machine</s><s t="1183"> intelligence</s></p>
+<p t="941857" d="1000" w="1" a="1">
+</p>
+<p t="941910" d="3089" w="1"><s> should</s><s t="377"> be</s><s t="538"> just</s><s t="807"> as</s><s t="968"> convenient</s><s t="1506">.</s><s t="1660"> As</s><s t="1844"> long</s></p>
+<p t="943999" d="1000" w="1" a="1">
+</p>
+<p t="944060" d="3148" w="1"><s> as</s><s t="184"> all</s><s t="430"> devices</s><s t="921"> are</s><s t="1166"> connected</s><s t="1779"> to</s><s t="1963"> the</s></p>
+<p t="946208" d="1000" w="1" a="1">
+</p>
+<p t="946269" d="2656" w="1"><s> cloud</s><s t="307">,</s><s t="429"> they</s><s t="736"> can</s><s t="981"> use</s><s t="1227"> machine</s></p>
+<p t="947925" d="1000" w="1" a="1">
+</p>
+<p t="947987" d="3319" w="1"><s> intelligence</s><s t="797"> anytime</s><s t="1288"> and</s><s t="1533"> anywhere</s><s t="2024">.</s><s t="2186"> To</s></p>
+<p t="950306" d="1000" w="1" a="1">
+</p>
+<p t="950373" d="3602" w="1"><s> achieve</s><s t="533"> this</s><s t="800">,</s><s t="934"> we</s><s t="1134"> need</s><s t="1468"> to</s><s t="1668"> build</s><s t="2068"> a</s><s t="2202"> highly</s></p>
+<p t="952975" d="1000" w="1" a="1">
+</p>
+<p t="953042" d="3402" w="1"><s> efficient</s><s t="667"> super-network</s><s t="1601"> covering</s><s t="2201"> the</s></p>
+<p t="955444" d="1000" w="1" a="1">
+</p>
+<p t="955510" d="3469" w="1"><s> globe</s><s t="334">,</s><s t="467"> jointly</s><s t="1001"> optimizing</s><s t="1735"> GPUs</s><s t="2002">,</s><s t="2135"> CPUs</s><s t="2402">,</s></p>
+<p t="957979" d="1000" w="1" a="1">
+</p>
+<p t="958046" d="3202" w="1"><s> networks</s><s t="534">,</s><s t="667"> storage</s><s t="1134">,</s><s t="1268"> databases</s><s t="1868">,</s><s t="2001"> and</s></p>
+<p t="960248" d="1000" w="1" a="1">
+</p>
+<p t="960314" d="3346" w="1"><s> various</s><s t="534"> tools</s><s t="868">.</s><s t="1035"> The</s><s t="1284"> more</s><s t="1597"> perfect</s><s t="2096"> this</s></p>
+<p t="962660" d="1000" w="1" a="1">
+</p>
+<p t="962722" d="3186" w="1"><s> network</s><s t="500"> becomes</s><s t="937">,</s><s t="1062"> the</s><s t="1312"> more</s><s t="1624"> users</s><s t="1999"> and</s></p>
+<p t="964908" d="1000" w="1" a="1">
+</p>
+<p t="964971" d="3060" w="1"><s> agents</s><s t="437"> will</s><s t="749"> use</s><s t="999"> it</s><s t="1124">,</s><s t="1249"> forming</s><s t="1748"> scale</s></p>
+<p t="967031" d="1000" w="1" a="1">
+</p>
+<p t="967094" d="3504" w="1"><s> effects</s><s t="500"> and</s><s t="749"> network</s><s t="1249"> effects</s><s t="1686">.</s><s t="1849"> Currently</s><s t="2439">,</s></p>
+<p t="969598" d="1000" w="1" a="1">
+</p>
+<p t="969664" d="3557" w="1"><s> we</s><s t="196"> see</s><s t="459"> very</s><s t="786"> strong</s><s t="1245"> customer</s><s t="1835"> demand</s><s t="2229">,</s><s t="2360"> and</s></p>
+<p t="972221" d="1000" w="1" a="1">
+</p>
+<p t="972286" d="3361" w="1"><s> we</s><s t="197"> will</s><s t="525"> spare</s><s t="918"> no</s><s t="1115"> effort</s><s t="1574"> to</s><s t="1770"> deploy</s><s t="2229"> AI</s></p>
+<p t="974647" d="1000" w="1" a="1">
+</p>
+<p t="974712" d="3557" w="1"><s> computing</s><s t="656"> power</s><s t="1049"> to</s><s t="1246"> meet</s><s t="1574"> our</s><s t="1836"> customers</s><s t="2492"> &#39;</s></p>
+<p t="977269" d="1000" w="1" a="1">
+</p>
+<p t="977269" d="4032" w="1"><s>needs</s><s t="328">.</s><s t="1010"> As</s><s t="1226"> a</s><s t="1371"> result</s><s t="1804">,</s><s t="1949"> Alibaba</s><s t="2526"> Cloud&#39;s</s></p>
+<p t="980301" d="1000" w="1" a="1">
+</p>
+<p t="980373" d="3240" w="1"><s> revenue</s><s t="578"> from</s><s t="939"> AI</s><s t="1156"> is</s><s t="1373"> continuously</s></p>
+<p t="982613" d="1000" w="1" a="1">
+</p>
+<p t="982685" d="3384" w="1"><s> accelerating</s><s t="867">,</s><s t="1011"> but</s><s t="1300"> we</s><s t="1517"> see</s><s t="1806"> that</s><s t="2167"> the</s></p>
+<p t="985069" d="1000" w="1" a="1">
+</p>
+<p t="985141" d="3745" w="1"><s> industry&#39;s</s><s t="794"> mid-to-long-term</s><s t="2022"> demand</s><s t="2528"> far</s></p>
+<p t="987886" d="1000" w="1" a="1">
+</p>
+<p t="987958" d="3601" w="1"><s> exceeds</s><s t="578"> our</s><s t="867"> current</s><s t="1445"> supply</s><s t="1950"> capacity</s><s t="2528">.</s></p>
+<p t="990559" d="1000" w="1" a="1">
+</p>
+<p t="991212" d="3145" w="1"><s> The</s><s t="231"> current</s><s t="695"> global</s><s t="1101"> shortage</s><s t="1623"> in</s><s t="1797"> the</s><s t="2029"> AI</s></p>
+<p t="993357" d="1000" w="1" a="1">
+</p>
+<p t="993415" d="3087" w="1"><s> data</s><s t="290"> center</s><s t="696"> supply</s><s t="1102"> chain</s><s t="1450"> is</s><s t="1623"> limiting</s></p>
+<p t="995502" d="1000" w="1" a="1">
+</p>
+<p t="995560" d="3146" w="1"><s> the</s><s t="232"> growth</s><s t="638"> speed</s><s t="986"> of</s><s t="1160"> our</s><s t="1392"> Alibaba</s><s t="1856"> Cloud</s></p>
+<p t="997706" d="1000" w="1" a="1">
+</p>
+<p t="997764" d="3131" w="1"><s> computing</s><s t="580"> power</s><s t="870">.</s><s t="1028"> Therefore</s><s t="1579">,</s><s t="1702"> Alibaba</s></p>
+<p t="999895" d="1000" w="1" a="1">
+</p>
+<p t="999956" d="3206" w="1"><s> will</s><s t="306"> work</s><s t="613"> with</s><s t="919"> all</s><s t="1164"> partners</s><s t="1716"> to</s><s t="1900"> fully</s></p>
+<p t="1002162" d="1000" w="1" a="1">
+</p>
+<p t="1002223" d="2655" w="1"><s> invest</s><s t="429"> in</s><s t="613"> AI</s><s t="797"> infrastructure</s></p>
+<p t="1003878" d="1000" w="1" a="1">
+</p>
+<p t="1003939" d="3390" w="1"><s> construction</s><s t="797"> and</s><s t="1042"> build</s><s t="1410"> a</s><s t="1532"> cloud</s><s t="1900"> oriented</s></p>
+<p t="1006329" d="1000" w="1" a="1">
+</p>
+<p t="1006390" d="3391" w="1"><s> toward</s><s t="429"> the</s><s t="675"> era</s><s t="920"> of</s><s t="1104"> machine</s><s t="1594"> intelligence</s><s t="2329">.</s></p>
+<p t="1008781" d="1000" w="1" a="1">
+</p>
+<p t="1009439" d="3957" w="1"><s> Our</s><s t="303"> goal</s><s t="682"> is</s><s t="909"> for</s><s t="1213"> the</s><s t="1516"> global</s><s t="2047"> data</s><s t="2426"> centers</s></p>
+<p t="1012396" d="1000" w="1" a="1">
+</p>
+<p t="1012471" d="3730" w="1"><s> operated</s><s t="683"> by</s><s t="910"> Alibaba</s><s t="1517"> Cloud</s><s t="1972"> to</s><s t="2199"> reach</s><s t="2654"> a</s></p>
+<p t="1015201" d="1000" w="1" a="1">
+</p>
+<p t="1015277" d="3805" w="1"><s> scale</s><s t="455"> of</s><s t="682"> over</s><s t="1061"> 20</s><s t="1289"> gigawatts</s><s t="2047"> by</s><s t="2275"> 2032</s><s t="2654"> to</s></p>
+<p t="1018082" d="1000" w="1" a="1">
+</p>
+<p t="1018158" d="3882" w="1"><s> meet</s><s t="379"> the</s><s t="683"> rapid</s><s t="1138"> growth</s><s t="1668"> of</s><s t="1896"> the</s><s t="2199"> industry</s><s t="2806">.</s></p>
+<p t="1021040" d="1000" w="1" a="1">
+</p>
+<p t="1023074" d="2764" w="1"><s> Finally</s><s t="374">,</s><s t="481"> when</s><s t="748"> machines</s><s t="1229"> become</s><s t="1603"> the</s></p>
+<p t="1024838" d="1000" w="1" a="1">
+</p>
+<p t="1024891" d="2978" w="1"><s> primary</s><s t="428"> force</s><s t="748"> for</s><s t="962"> thinking</s><s t="1390">,</s><s t="1497"> every</s><s t="1818"> one</s></p>
+<p t="1026869" d="1000" w="1" a="1">
+</p>
+<p t="1026922" d="2978" w="1"><s> of</s><s t="161"> us</s><s t="321"> will</s><s t="588"> ask</s><s t="802"> ourselves</s><s t="1337"> what</s><s t="1604"> kind</s><s t="1871"> of</s></p>
+<p t="1028900" d="1000" w="1" a="1">
+</p>
+<p t="1028954" d="3178" w="1"><s> changes</s><s t="427"> the</s><s t="641"> future</s><s t="1015"> will</s><s t="1283"> bring</s><s t="1550">.</s><s t="1704"> We</s><s t="1941"> can</s></p>
+<p t="1031132" d="1000" w="1" a="1">
+</p>
+<p t="1031211" d="3590" w="1"><s> look</s><s t="395"> back</s><s t="790"> at</s><s t="1027"> the</s><s t="1343"> past</s><s t="1659">.</s><s t="1839"> The</s><s t="2053"> Industrial</s></p>
+<p t="1033801" d="1000" w="1" a="1">
+</p>
+<p t="1033855" d="3039" w="1"><s> Revolution</s><s t="590"> allowed</s><s t="1019"> machines</s><s t="1503"> to</s><s t="1664"> take</s><s t="1932"> on</s></p>
+<p t="1035894" d="1000" w="1" a="1">
+</p>
+<p t="1035948" d="2965" w="1"><s> more</s><s t="268"> and</s><s t="483"> more</s><s t="751"> physical</s><s t="1234"> labor</s><s t="1503">.</s><s t="1657"> After</s></p>
+<p t="1037913" d="1000" w="1" a="1">
+</p>
+<p t="1037975" d="3097" w="1"><s> humans</s><s t="432"> were</s><s t="740"> liberated</s><s t="1357"> from</s><s t="1665"> mundane</s></p>
+<p t="1040072" d="1000" w="1" a="1">
+</p>
+<p t="1040134" d="3159" w="1"><s> physical</s><s t="555"> labor</s><s t="864">,</s><s t="987"> we</s><s t="1172"> actually</s><s t="1728"> saw</s><s t="1974"> the</s></p>
+<p t="1042293" d="1000" w="1" a="1">
+</p>
+<p t="1042355" d="3283" w="1"><s> development</s><s t="740"> of</s><s t="926"> more</s><s t="1234"> conscious</s><s t="1851"> sports</s><s t="2221">,</s></p>
+<p t="1044638" d="1000" w="1" a="1">
+</p>
+<p t="1044700" d="3309" w="1"><s> such</s><s t="308"> as</s><s t="493"> soccer</s><s t="925"> and</s><s t="1172"> basketball</s><s t="1789">.</s><s t="1951"> Now</s><s t="2155"> the</s></p>
+<p t="1047009" d="1000" w="1" a="1">
+</p>
+<p t="1047060" d="2842" w="1"><s> Olympics</s><s t="409">,</s><s t="511"> the</s><s t="716"> World</s><s t="1023"> Cup</s><s t="1176">,</s><s t="1279"> and</s><s t="1483"> the</s><s t="1688"> NBA</s></p>
+<p t="1048902" d="1000" w="1" a="1">
+</p>
+<p t="1048953" d="2995" w="1"><s> are</s><s t="204"> all</s><s t="409"> products</s><s t="869"> of</s><s t="1023"> the</s><s t="1228"> post-Industrial</s></p>
+<p t="1050948" d="1000" w="1" a="1">
+</p>
+<p t="1050999" d="3161" w="1"><s> Revolution</s><s t="563"> era</s><s t="716">.</s><s t="868"> In</s><s t="1036"> history</s><s t="1430">,</s><s t="1543"> such</s><s t="1824"> things</s></p>
+<p t="1053160" d="1000" w="1" a="1">
+</p>
+<p t="1053217" d="3138" w="1"><s> have</s><s t="281"> actually</s><s t="787"> happened</s><s t="1294"> time</s><s t="1575"> and</s><s t="1800"> again</s><s t="2081">.</s></p>
+<p t="1055355" d="1000" w="1" a="1">
+</p>
+<p t="1055455" d="2779" w="1"><s> The</s><s t="237"> rise</s><s t="533"> of</s><s t="711"> printing</s><s t="1245"> led</s><s t="1483"> to</s><s t="1660"> an</s></p>
+<p t="1057234" d="1000" w="1" a="1">
+</p>
+<p t="1057293" d="3017" w="1"><s> explosive</s><s t="594"> growth</s><s t="1009"> in</s><s t="1187"> human</s><s t="1543"> cultural</s></p>
+<p t="1059310" d="1000" w="1" a="1">
+</p>
+<p t="1059370" d="2953" w="1"><s> creation</s><s t="474">.</s><s t="634"> When</s><s t="933"> cameras</s><s t="1413"> appeared</s><s t="1893">,</s></p>
+<p t="1061323" d="1000" w="1" a="1">
+</p>
+<p t="1061383" d="3159" w="1"><s> painting</s><s t="540"> did</s><s t="780"> not</s><s t="1020"> disappear</s><s t="1559">;</s><s t="1679"> instead</s><s t="2099">,</s></p>
+<p t="1063542" d="1000" w="1" a="1">
+</p>
+<p t="1063602" d="3279" w="1"><s> painters</s><s t="540"> stopped</s><s t="1020"> pursuing</s><s t="1559"> photorealism</s></p>
+<p t="1065881" d="1000" w="1" a="1">
+</p>
+<p t="1065941" d="2979" w="1"><s> and</s><s t="240"> instead</s><s t="720"> fostered</s><s t="1260"> the</s><s t="1499"> birth</s><s t="1859"> of</s></p>
+<p t="1067920" d="1000" w="1" a="1">
+</p>
+<p t="1067980" d="3152" w="1"><s> Impressionism</s><s t="840"> and</s><s t="1080"> abstract</s><s t="1620"> art</s><s t="1800">.</s><s t="1960"> The</s></p>
+<p t="1070132" d="1000" w="1" a="1">
+</p>
+<p t="1070197" d="3121" w="1"><s> emergence</s><s t="643"> of</s><s t="836"> streaming</s><s t="1478"> didn&#39;t</s><s t="1929"> put</s></p>
+<p t="1072318" d="1000" w="1" a="1">
+</p>
+<p t="1072383" d="3121" w="1"><s> singers</s><s t="514"> out</s><s t="771"> of</s><s t="964"> a</s><s t="1093"> job</s><s t="1286">;</s><s t="1414"> instead</s><s t="1864">,</s><s t="1993"> it</s></p>
+<p t="1074504" d="1000" w="1" a="1">
+</p>
+<p t="1074569" d="3379" w="1"><s> created</s><s t="514"> more</s><s t="836"> pop</s><s t="1093"> stars</s><s t="1479"> and</s><s t="1736"> made</s><s t="2057"> music</s></p>
+<p t="1076948" d="1000" w="1" a="1">
+</p>
+<p t="1077012" d="3273" w="1"><s> the</s><s t="257"> most</s><s t="579"> accessible</s><s t="1286"> art</s><s t="1543"> form</s><s t="1800">.</s><s t="2033"> When</s></p>
+<p t="1079285" d="1000" w="1" a="1">
+</p>
+<p t="1079345" d="3220" w="1"><s> machines</s><s t="540"> take</s><s t="840"> on</s><s t="1020"> more</s><s t="1320"> of</s><s t="1500"> the</s><s t="1740"> tasks</s><s t="2100"> we</s></p>
+<p t="1081565" d="1000" w="1" a="1">
+</p>
+<p t="1081625" d="3220" w="1"><s> have</s><s t="300"> to</s><s t="480"> do</s><s t="600">,</s><s t="720"> people</s><s t="1140"> will</s><s t="1440"> have</s><s t="1740"> the</s><s t="1980"> time</s></p>
+<p t="1083845" d="1000" w="1" a="1">
+</p>
+<p t="1083905" d="3238" w="1"><s> to</s><s t="180"> do</s><s t="360"> what</s><s t="660"> they</s><s t="960"> truly</s><s t="1320"> want</s><s t="1620"> to</s><s t="1800"> do</s><s t="1920">.</s><s t="2102"> In</s></p>
+<p t="1086143" d="1000" w="1" a="1">
+</p>
+<p t="1086211" d="3516" w="1"><s> the</s><s t="272"> future</s><s t="680">,</s><s t="816"> machine</s><s t="1360"> intelligence</s><s t="2244"> will</s></p>
+<p t="1088727" d="1000" w="1" a="1">
+</p>
+<p t="1088795" d="3108" w="1"><s> open</s><s t="340"> up</s><s t="544"> greater</s><s t="1088"> space</s><s t="1496"> for</s><s t="1768"> human</s></p>
+<p t="1090903" d="1000" w="1" a="1">
+</p>
+<p t="1090971" d="3630" w="1"><s> curiosity</s><s t="680"> and</s><s t="952"> creativity</s><s t="1632">.</s><s t="1964"> It</s><s t="2164"> is</s><s t="2364"> hard</s></p>
+<p t="1093601" d="1000" w="1" a="1">
+</p>
+<p t="1093668" d="3533" w="1"><s> for</s><s t="267"> us</s><s t="467"> to</s><s t="667"> picture</s><s t="1200"> what</s><s t="1533"> the</s><s t="1800"> future</s><s t="2267"> will</s></p>
+<p t="1096201" d="1000" w="1" a="1">
+</p>
+<p t="1096268" d="4547" w="1"><s> look</s><s t="333"> like</s><s t="667"> today</s><s t="1000">.</s><s t="2046"> It’s</s><s t="2546"> like</s><s t="2904"> if</s><s t="3118"> I</s><s t="3261"> were</s></p>
+<p t="1099815" d="1000" w="1" a="1">
+</p>
+<p t="1099887" d="3645" w="1"><s> a</s><s t="143"> farmer</s><s t="643"> 300</s><s t="929"> years</s><s t="1358"> ago</s><s t="1573">,</s><s t="1716"> I</s><s t="1859"> could</s><s t="2288"> never</s></p>
+<p t="1102532" d="1000" w="1" a="1">
+</p>
+<p t="1102604" d="3502" w="1"><s> have</s><s t="357"> imagined</s><s t="1001"> someone</s><s t="1573"> in</s><s t="1787"> the</s><s t="2073"> future</s></p>
+<p t="1105106" d="1000" w="1" a="1">
+</p>
+<p t="1105178" d="3645" w="1"><s> walking</s><s t="572"> into</s><s t="929"> a</s><s t="1072"> place</s><s t="1501"> called</s><s t="2002"> a</s><s t="2145"> gym</s><s t="2431"> and</s></p>
+<p t="1107823" d="1000" w="1" a="1">
+</p>
+<p t="1107895" d="3808" w="1"><s> paying</s><s t="500"> to</s><s t="715"> do</s><s t="929"> manual</s><s t="1430"> labor</s><s t="1787">.</s><s t="2010"> Last</s><s t="2342"> year</s><s t="2675"> we</s></p>
+<p t="1110703" d="1000" w="1" a="1">
+</p>
+<p t="1110769" d="3594" w="1"><s> said</s><s t="333"> that</s><s t="665"> the</s><s t="931"> more</s><s t="1264"> powerful</s><s t="1862"> AI</s><s t="2062"> becomes</s><s t="2528">,</s></p>
+<p t="1113363" d="1000" w="1" a="1">
+</p>
+<p t="1113430" d="3545" w="1"><s> the</s><s t="266"> more</s><s t="598"> powerful</s><s t="1197"> humanity</s><s t="1795"> becomes</s><s t="2261">.</s><s t="2428"> We</s></p>
+<p t="1115975" d="1000" w="1" a="1">
+</p>
+<p t="1116033" d="3169" w="1"><s> still</s><s t="352"> believe</s><s t="821"> this</s><s t="1114"> today</s><s t="1407">,</s><s t="1524"> and</s><s t="1759"> this</s><s t="2052"> is</s></p>
+<p t="1118202" d="1000" w="1" a="1">
+</p>
+<p t="1118261" d="3227" w="1"><s> the</s><s t="234"> meaning</s><s t="703"> behind</s><s t="1113"> our</s><s t="1348"> push</s><s t="1641"> toward</s><s t="2051"> the</s></p>
+<p t="1120488" d="1000" w="1" a="1">
+</p>
+<p t="1120546" d="3283" w="1"><s> era</s><s t="235"> of</s><s t="411"> machine</s><s t="880"> intelligence</s><s t="1583">.</s><s t="1742"> Leave</s><s t="2102"> the</s></p>
+<p t="1122829" d="1000" w="1" a="1">
+</p>
+<p t="1122889" d="3165" w="1"><s> heavy</s><s t="361"> lifting</s><s t="842"> to</s><s t="1022"> machines</s><s t="1503">,</s><s t="1624"> and</s><s t="1864"> leave</s></p>
+<p t="1125054" d="1000" w="1" a="1">
+</p>
+<p t="1125114" d="3285" w="1"><s> the</s><s t="241"> time</s><s t="481">,</s><s t="601"> creativity</s><s t="1203">,</s><s t="1323"> and</s><s t="1564"> appreciation</s></p>
+<p t="1127399" d="1000" w="1" a="1">
+</p>
+<p t="1127459" d="3519" w="1"><s> of</s><s t="181"> beauty</s><s t="602"> to</s><s t="782"> humanity</s><s t="1263">.</s><s t="1424"> All</s><s t="1736"> of</s><s t="1971"> this</s><s t="2362"> is</s></p>
+<p t="1129978" d="1000" w="1" a="1">
+</p>
+<p t="1130056" d="3228" w="1"><s> just</s><s t="391"> beginning</s><s t="1095">.</s><s t="1274"> I</s><s t="1393"> wish</s><s t="1691"> you</s><s t="1930"> all</s><s t="2168"> a</s></p>
+<p t="1132284" d="1000" w="1" a="1">
+</p>
+<p t="1132344" d="2789" w="1"><s> fulfilling</s><s t="656"> and</s><s t="894"> enjoyable</s><s t="1491"> Cloud</s></p>
+<p t="1134133" d="1000" w="1" a="1">
+</p>
+<p t="1134193" d="3420" w="1"><s> Computing</s><s t="596"> Conference</s><s t="1193">.</s><s t="1353"> Thank</s><s t="1993"> you</s><s t="2313">.</s></p>
+</body>
+</timedtext>

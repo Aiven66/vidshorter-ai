@@ -23,8 +23,11 @@ import {
   Target,
   PlayCircle,
   Share2,
+  BookOpen,
+  AlignLeft,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import type { TranscriptSegmentLite } from '@/components/video-notes/transcript-panel';
 
 const VideoPlayer = dynamic(() => import('@/components/video-notes/video-player'), {
   ssr: false,
@@ -37,6 +40,10 @@ const SharePosterModal = dynamic(
   () => import('@/components/video-notes/share-poster-modal'),
   { ssr: false, loading: () => null },
 );
+const TranscriptPanel = dynamic(() => import('@/components/video-notes/transcript-panel'), {
+  ssr: false,
+  loading: () => null,
+});
 
 type HighlightItem = {
   timestamp: string;
@@ -94,6 +101,13 @@ export default function NoteDetailPage() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [annotations, setAnnotations] = useState<CorePointAnnotation[]>([]);
   const [posterOpen, setPosterOpen] = useState(false);
+  // 右栏页签：笔记 / 逐字稿（逐字稿不落库，切到该页签时按需拉取）
+  const [rightTab, setRightTab] = useState<'notes' | 'transcript'>('notes');
+  const [transcriptSegments, setTranscriptSegments] = useState<TranscriptSegmentLite[] | null>(null);
+  const [transcriptLoading, setTranscriptLoading] = useState(false);
+  const [transcriptTruncated, setTranscriptTruncated] = useState(false);
+  const [transcriptError, setTranscriptError] = useState<string | null>(null);
+  const [transcriptDiag, setTranscriptDiag] = useState<{ source: string; attempts: string[] } | null>(null);
 
   const playerRef = useRef<{
     seekTo: (t: number, autoplay?: boolean) => void;
@@ -185,6 +199,38 @@ export default function NoteDetailPage() {
   const handleAnnotationChange = useCallback((next: CorePointAnnotation[]) => {
     setAnnotations(next);
   }, []);
+
+  /** 切到「逐字稿」页签：首次进入时按 videoUrl 实时拉取（不扣积分、不生成笔记）。 */
+  const handleOpenTranscriptTab = useCallback(async () => {
+    setRightTab('transcript');
+    if (transcriptSegments !== null || transcriptLoading || !note) return;
+    setTranscriptLoading(true);
+    setTranscriptError(null);
+    try {
+      const res = await fetch('/api/video-notes/transcript', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          videoUrl: note.video_url,
+          sourceType: note.source_type,
+          locale: typeof navigator !== 'undefined' ? navigator.language : undefined,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || t('notes.transcriptLoadFailed'));
+      setTranscriptSegments(Array.isArray(data?.segments) ? data.segments : []);
+      setTranscriptTruncated(!!data?.transcriptTruncated);
+      setTranscriptDiag(data?.transcriptDiag ?? null);
+    } catch (e: any) {
+      setTranscriptError(e?.message || t('notes.transcriptLoadFailed'));
+      setTranscriptSegments([]);
+    } finally {
+      setTranscriptLoading(false);
+    }
+  }, [transcriptSegments, transcriptLoading, note, accessToken, t]);
 
   const handleDownloadMarkdown = useCallback(() => {
     if (!note) return;
@@ -356,8 +402,65 @@ export default function NoteDetailPage() {
               )}
             </div>
 
-            {/* 右：笔记 */}
+            {/* 右：笔记 / 逐字稿（页签切换） */}
             <div className="lg:col-span-2 p-4 md:p-5 max-h-[75vh] overflow-y-auto print:max-h-none print:overflow-visible">
+              {/* 页签 */}
+              <div className="flex items-center gap-1 mb-4 border-b border-border print:hidden">
+                <button
+                  type="button"
+                  onClick={() => setRightTab('notes')}
+                  className={
+                    'inline-flex items-center gap-1.5 px-3 py-2 -mb-px text-sm font-medium border-b-2 transition-colors ' +
+                    (rightTab === 'notes'
+                      ? 'border-primary text-primary'
+                      : 'border-transparent text-muted-foreground hover:text-foreground')
+                  }
+                >
+                  <BookOpen className="h-3.5 w-3.5" />
+                  {t('notes.notesTab')}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleOpenTranscriptTab}
+                  className={
+                    'inline-flex items-center gap-1.5 px-3 py-2 -mb-px text-sm font-medium border-b-2 transition-colors ' +
+                    (rightTab === 'transcript'
+                      ? 'border-primary text-primary'
+                      : 'border-transparent text-muted-foreground hover:text-foreground')
+                  }
+                >
+                  <AlignLeft className="h-3.5 w-3.5" />
+                  {t('notes.transcriptTab')}
+                  {transcriptSegments && transcriptSegments.length > 0 && (
+                    <span className="text-[10px] text-muted-foreground/70">
+                      ({transcriptSegments.length})
+                    </span>
+                  )}
+                </button>
+              </div>
+
+              {rightTab === 'transcript' ? (
+                transcriptLoading ? (
+                  <div className="text-center py-12 text-sm text-muted-foreground">
+                    <Loader2 className="h-6 w-6 animate-spin mx-auto mb-3 text-primary" />
+                    {t('notes.transcriptLoading')}
+                  </div>
+                ) : transcriptError ? (
+                  <p className="text-xs text-destructive mb-3 px-2 py-1.5 rounded bg-destructive/10">
+                    {transcriptError}
+                  </p>
+                ) : TranscriptPanel ? (
+                  <TranscriptPanel
+                    segments={transcriptSegments ?? []}
+                    truncated={transcriptTruncated}
+                    activeTime={playerCurrentTime}
+                    onJump={(sec) => handleJumpTimestamp(formatSeconds(sec))}
+                    accessToken={accessToken}
+                    emptyHint={transcriptDiag?.source === 'none' ? t('notes.transcriptBlocked') : null}
+                  />
+                ) : null
+              ) : (
+              <>
               {content.summary && (
                 <section className="mb-5">
                   <h3 className="text-sm font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
@@ -414,6 +517,8 @@ export default function NoteDetailPage() {
                 <p>Source: {note.video_url}</p>
                 <p>Generated: {new Date(note.created_at).toLocaleString()}</p>
               </div>
+              </>
+              )}
             </div>
           </div>
         </div>

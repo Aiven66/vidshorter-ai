@@ -131,3 +131,7 @@ config/
 # Build artifacts
 release/
 dist/
+
+# Vercel CLI pulled env (local only)
+.env.production
+.data/

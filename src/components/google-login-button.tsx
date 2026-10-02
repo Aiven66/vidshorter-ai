@@ -79,11 +79,11 @@ export function GoogleLoginButton({ className = '', size = 'default', onGoogleCl
       </Button>
 
       {localError && (
-        <div className="text-red-500 text-sm text-center p-2 bg-red-50 rounded border border-red-200">
+        <div className="text-destructive text-sm text-center p-2 bg-destructive/10 rounded border border-destructive/20">
           ⚠️ {localError}
           <button
             onClick={() => { setLocalError(null); clearError(); }}
-            className="ml-2 text-blue-500 hover:underline"
+            className="ml-2 text-primary hover:underline"
           >
             {t('common.cancel')}
           </button>

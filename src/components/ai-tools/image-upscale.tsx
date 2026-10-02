@@ -17,12 +17,15 @@ import {
   type AiImageResult,
 } from '@/lib/ai-tools/client-api';
 import { downloadBlob, loadImageElement } from '@/lib/ai-tools/image-utils';
+import { useAiToolCredit, AI_TOOL_COST } from '@/lib/ai-tools/use-ai-tool-credit';
+import { InsufficientCreditsDialog } from '@/components/insufficient-credits-dialog';
 import { Download, Loader2, ImagePlus, Sparkles, LogIn } from 'lucide-react';
 import Link from 'next/link';
 
 export function ImageUpscale() {
   const { t } = useLocale();
   const { user, accessToken, loading: authLoading } = useAuth();
+  const { requestSpend, insufficientOpen, setInsufficientOpen, balance } = useAiToolCredit();
   const [file, setFile] = useState<File | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
@@ -67,6 +70,8 @@ export function ImageUpscale() {
       setError(t('aiTools.needsLogin'));
       return;
     }
+    // P0: AI 工具积分化 — 每次推理前扣积分
+    if (!(await requestSpend())) return;
     setProcessing(true);
     setError(null);
 
@@ -208,6 +213,12 @@ export function ImageUpscale() {
           </div>
         </div>
       )}
+      <InsufficientCreditsDialog
+        open={insufficientOpen}
+        onOpenChange={setInsufficientOpen}
+        currentBalance={balance}
+        requiredCredits={AI_TOOL_COST}
+      />
     </div>
   );
 }

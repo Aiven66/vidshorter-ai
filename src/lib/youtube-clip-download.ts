@@ -25,6 +25,9 @@
  *   - Works at ANY position in the video (not just <170s)
  */
 
+import type { SubtitleStyle } from '@/lib/server/subtitles';
+import type { RecapScript } from '@/lib/recap';
+
 export interface ResolvedStream {
   streamUrl: string;
   userAgent: string;
@@ -436,9 +439,11 @@ export async function downloadYouTubeClip(params: {
   endTime: number;
   title: string;
   resolved?: ResolvedStream;
+  /** P0 导出即付费墙：当前用户 plan，服务端据此门控（免费用户 403 export_requires_paid） */
+  exportPlan?: string;
   onProgress?: (msg: string) => void;
 }): Promise<{ blob: Blob; extension: string }> {
-  const { videoId, startTime, endTime, title, resolved, onProgress } = params;
+  const { videoId, startTime, endTime, title, resolved, exportPlan, onProgress } = params;
   const duration = Math.max(1, endTime - startTime);
 
   // ── Primary path: server-side ffmpeg clipper ───────────────────────────────
@@ -455,6 +460,8 @@ export async function downloadYouTubeClip(params: {
     apiUrl.searchParams.set('startTime', String(startTime));
     apiUrl.searchParams.set('endTime', String(endTime));
     apiUrl.searchParams.set('title', title);
+    // P0 导出即付费墙：服务端据此门控（免费用户返回 403 export_requires_paid）
+    apiUrl.searchParams.set('plan', exportPlan || 'free');
     const meta = streamMeta ?? resolved;
     if (meta?.streamUrl) {
       apiUrl.searchParams.set('streamUrl', meta.streamUrl);
@@ -472,7 +479,11 @@ export async function downloadYouTubeClip(params: {
 
     if (!res.ok) {
       const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-      throw new Error(body.error || `Server clip failed: HTTP ${res.status}`);
+      // 导出即付费墙：优先带上 reason（export_requires_paid），前端据此弹付费引导
+      const detail = body.reason
+        ? `${body.error || 'Export requires a paid plan'} (${body.reason})`
+        : (body.error || `Server clip failed: HTTP ${res.status}`);
+      throw new Error(detail);
     }
 
     const data = await res.json();
@@ -703,9 +714,21 @@ export async function downloadClipViaBrowser(params: {
   endTime: number;
   title: string;
   resolved?: ResolvedStream;
+  /** P0: 当前用户 plan（free/starter/pro），用于导出分辨率+水印差异 */
+  exportPlan?: string;
+  /** 9:16 竖屏重构（Starter+ 权益）：'vertical' 时服务端做竖屏裁剪 */
+  orientation?: 'landscape' | 'vertical';
+  /** AI 自动字幕（Starter+）：true 时服务端烧录官方字幕 */
+  subtitles?: boolean;
+  /** 字幕样式（Starter+）：静态字幕烧录的样式（字号/位置/描边/背景） */
+  subtitleStyle?: SubtitleStyle;
+  /** 字幕翻译（Starter+）：翻译目标语言（白名单代码，如 zh-CN）；空 = 不翻译 */
+  subtitleLang?: string;
+  /** AI 粗剪清理（Starter+）：true 时服务端按逐字稿剪掉长停顿与纯语气词 */
+  jumpCut?: boolean;
   onProgress?: (msg: string) => void;
 }): Promise<void> {
-  const { videoId, startTime, endTime, title, resolved, onProgress } = params;
+  const { videoId, startTime, endTime, title, resolved, exportPlan, orientation, subtitles, subtitleStyle, subtitleLang, jumpCut, onProgress } = params;
   const clipDuration = Math.max(1, Math.min(endTime - startTime, 90));
 
   // Step 1: Resolve muxed stream via CF Worker /resolve (from browser)
@@ -726,6 +749,12 @@ export async function downloadClipViaBrowser(params: {
       startTime,
       endTime,
       clipDuration,
+      exportPlan,
+      orientation,
+      subtitles,
+      subtitleStyle,
+      subtitleLang,
+      jumpCut,
       onProgress,
     });
     if (result) {
@@ -734,7 +763,10 @@ export async function downloadClipViaBrowser(params: {
       return;
     }
   } catch (err) {
-    console.warn('[downloadClipViaBrowser] v48 server-download+cut failed:', err instanceof Error ? err.message : err);
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn('[downloadClipViaBrowser] v48 server-download+cut failed:', msg);
+    // 导出即付费墙：不可回落到 captureStream 录制（否则免费用户仍能拿到文件）
+    if (msg.includes('export_requires_paid')) throw new Error('export_requires_paid');
   }
 
   // Step 3: Fallback to browser captureStream + MediaRecorder + remux
@@ -745,6 +777,16 @@ export async function downloadClipViaBrowser(params: {
   // We MUST remux to standard progressive MP4 via /api/remux-mp4.
   // If remux fails, we THROW instead of downloading fMP4 as .mp4 (which would
   // produce a non-playable file — the user's reported issue).
+  // The browser recorder captures the landscape source as-is: it cannot produce
+  // 9:16 output and cannot burn captions. Falling back here for a vertical /
+  // subtitled export would silently hand the user a wrong-aspect, caption-less
+  // file, so fail loudly instead (same principle as the remux guard below).
+  if (orientation === 'vertical' || subtitles) {
+    throw new Error(
+      'Vertical export failed on the server. Please retry — the browser fallback cannot produce 9:16 video with captions.',
+    );
+  }
+
   onProgress?.('Falling back to browser recording + remux...');
   const streamUrl = buildStreamProxyUrl(videoId, streamMeta);
   const clipBlob = await cutClipFromStream(streamUrl, startTime, clipDuration, onProgress);
@@ -781,6 +823,646 @@ export async function downloadClipViaBrowser(params: {
 }
 
 /**
+ * AI 配音/旁白 (TTS, Starter+ 权益)：把神经人声配音作为音频轨合并进片段。
+ * 复用剪裁同款 muxed 流 fast path（命中 5h resolve 缓存），POST /api/voiceover-clip
+ * 流式返回标准 MP4。无脚本时服务端自动从官方字幕提取旁白原文。
+ */
+export async function downloadClipWithVoiceover(params: {
+  videoId: string;
+  startTime: number;
+  endTime: number;
+  title: string;
+  resolved?: ResolvedStream;
+  exportPlan?: string;
+  orientation?: 'landscape' | 'vertical';
+  /** 可选的用户自写旁白脚本；留空则服务端自动从字幕生成 */
+  script?: string;
+  /** 可选的 msedge-tts 声线 ID（如 en-US-GuyNeural / zh-CN-YunxiNeural） */
+  voice?: string;
+  onProgress?: (msg: string) => void;
+}): Promise<void> {
+  const { videoId, startTime, endTime, title, resolved, exportPlan, orientation, script, voice, onProgress } = params;
+  const clipDuration = Math.max(1, Math.min(endTime - startTime, 90));
+
+  let streamMeta = resolved;
+  if (!streamMeta) {
+    onProgress?.('Resolving YouTube stream...');
+    streamMeta = await resolveYouTubeStream(videoId, 1);
+  }
+  if (!streamMeta?.streamUrl) {
+    throw new Error('No stream URL available (CF Worker /resolve failed)');
+  }
+
+  onProgress?.('Generating AI voiceover (server-side, may take a minute)...');
+  const res = await fetch('/api/voiceover-clip', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      plan: exportPlan || 'free',
+      videoId,
+      startTime,
+      duration: clipDuration,
+      streamUrl: streamMeta.streamUrl,
+      ...(streamMeta.audioUrl ? { audioUrl: streamMeta.audioUrl } : {}),
+      userAgent: streamMeta.userAgent,
+      visitorData: streamMeta.visitorData,
+      xClientName: streamMeta.xClientName,
+      clientVersion: streamMeta.clientVersion,
+      clientName: streamMeta.client,
+      orientation: orientation === 'vertical' ? 'vertical' : 'landscape',
+      ...(script ? { script } : {}),
+      ...(voice ? { voice } : {}),
+    }),
+    signal: AbortSignal.timeout(280_000),
+  });
+
+  if (!res.ok) {
+    let msg = `Voiceover failed (HTTP ${res.status})`;
+    try {
+      const data = await res.json();
+      if (data?.error) msg = String(data.error);
+    } catch { /* non-json */ }
+    throw new Error(msg);
+  }
+
+  const buf = await res.arrayBuffer();
+  if (buf.byteLength < 5000) {
+    throw new Error('Voiceover clip too small.');
+  }
+  if (buf.byteLength >= 8) {
+    const view = new DataView(buf);
+    const boxType = String.fromCharCode(view.getUint8(4), view.getUint8(5), view.getUint8(6), view.getUint8(7));
+    if (boxType !== 'ftyp') {
+      throw new Error('Voiceover clip output is not a valid MP4.');
+    }
+  }
+
+  onProgress?.('Voiceover clip ready. Downloading...');
+  triggerDownload(new Blob([buf], { type: 'video/mp4' }), `${title}_voiceover`);
+  onProgress?.('Download complete!');
+}
+
+/**
+ * AI 背景音乐 BGM (Starter+ 权益)：把内置免版权 BGM 叠加进片段（原声保留，BGM 压低混音）。
+ * 复用剪裁同款 muxed 流 fast path（命中 5h resolve 缓存），POST /api/bgm-clip 流式返回 MP4。
+ */
+export async function downloadClipWithBgm(params: {
+  videoId: string;
+  startTime: number;
+  endTime: number;
+  title: string;
+  resolved?: ResolvedStream;
+  exportPlan?: string;
+  orientation?: 'landscape' | 'vertical';
+  /** calm | energetic | warm（默认 calm） */
+  mood?: 'calm' | 'energetic' | 'warm';
+  /** 0-100 原声音量（默认 70） */
+  originalVolume?: number;
+  onProgress?: (msg: string) => void;
+}): Promise<void> {
+  const { videoId, startTime, endTime, title, resolved, exportPlan, orientation, mood, originalVolume, onProgress } = params;
+  const clipDuration = Math.max(1, Math.min(endTime - startTime, 90));
+
+  let streamMeta = resolved;
+  if (!streamMeta) {
+    onProgress?.('Resolving YouTube stream...');
+    streamMeta = await resolveYouTubeStream(videoId, 1);
+  }
+  if (!streamMeta?.streamUrl) {
+    throw new Error('No stream URL available (CF Worker /resolve failed)');
+  }
+
+  onProgress?.('Adding AI background music (server-side, may take a minute)...');
+  const res = await fetch('/api/bgm-clip', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      plan: exportPlan || 'free',
+      videoId,
+      startTime,
+      duration: clipDuration,
+      streamUrl: streamMeta.streamUrl,
+      ...(streamMeta.audioUrl ? { audioUrl: streamMeta.audioUrl } : {}),
+      userAgent: streamMeta.userAgent,
+      visitorData: streamMeta.visitorData,
+      xClientName: streamMeta.xClientName,
+      clientVersion: streamMeta.clientVersion,
+      clientName: streamMeta.client,
+      orientation: orientation === 'vertical' ? 'vertical' : 'landscape',
+      mood: mood || 'calm',
+      originalVolume: originalVolume ?? 70,
+    }),
+    signal: AbortSignal.timeout(280_000),
+  });
+
+  if (!res.ok) {
+    let msg = `BGM failed (HTTP ${res.status})`;
+    try {
+      const data = await res.json();
+      if (data?.error) msg = String(data.error);
+    } catch { /* non-json */ }
+    throw new Error(msg);
+  }
+
+  const buf = await res.arrayBuffer();
+  if (buf.byteLength < 5000) {
+    throw new Error('BGM clip too small.');
+  }
+  if (buf.byteLength >= 8) {
+    const view = new DataView(buf);
+    const boxType = String.fromCharCode(view.getUint8(4), view.getUint8(5), view.getUint8(6), view.getUint8(7));
+    if (boxType !== 'ftyp') {
+      throw new Error('BGM clip output is not a valid MP4.');
+    }
+  }
+
+  onProgress?.('BGM clip ready. Downloading...');
+  triggerDownload(new Blob([buf], { type: 'video/mp4' }), `${title}_bgm`);
+  onProgress?.('Download complete!');
+}
+
+/**
+ * 卡拉OK 动态字幕（Starter+ 权益）：逐词高亮字幕烧录进片段。
+ * 错误码 no_subtitles（422）时抛 'no_subtitles'，前端据此提示。
+ */
+export async function downloadClipWithKaraoke(params: {
+  videoId: string;
+  startTime: number;
+  endTime: number;
+  title: string;
+  resolved?: ResolvedStream;
+  exportPlan?: string;
+  orientation?: 'landscape' | 'vertical';
+  /** 字幕样式（Starter+）：卡拉OK 高亮色/字号/位置/描边/背景 */
+  style?: SubtitleStyle;
+  /** 字幕翻译（Starter+）：翻译目标语言（白名单代码，如 zh-CN）；空 = 不翻译 */
+  lang?: string;
+  onProgress?: (msg: string) => void;
+}): Promise<void> {
+  const { videoId, startTime, endTime, title, resolved, exportPlan, orientation, style, lang, onProgress } = params;
+  const clipDuration = Math.max(1, Math.min(endTime - startTime, 90));
+
+  let streamMeta = resolved;
+  if (!streamMeta) {
+    onProgress?.('Resolving YouTube stream...');
+    streamMeta = await resolveYouTubeStream(videoId, 1);
+  }
+  if (!streamMeta?.streamUrl) {
+    throw new Error('No stream URL available (CF Worker /resolve failed)');
+  }
+
+  onProgress?.('Burning karaoke subtitles (server-side, may take a minute)...');
+  const res = await fetch('/api/karaoke-clip', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      plan: exportPlan || 'free',
+      videoId,
+      startTime,
+      duration: clipDuration,
+      streamUrl: streamMeta.streamUrl,
+      ...(streamMeta.audioUrl ? { audioUrl: streamMeta.audioUrl } : {}),
+      userAgent: streamMeta.userAgent,
+      visitorData: streamMeta.visitorData,
+      xClientName: streamMeta.xClientName,
+      clientVersion: streamMeta.clientVersion,
+      clientName: streamMeta.client,
+      orientation: orientation === 'vertical' ? 'vertical' : 'landscape',
+      // 字幕样式（Starter+）：卡拉OK 高亮色/字号/位置/描边/背景
+      ...(style ? { style } : {}),
+      // 字幕翻译（Starter+）：翻译目标语言（zh-CN 等）
+      ...(lang ? { lang } : {}),
+    }),
+    signal: AbortSignal.timeout(280_000),
+  });
+
+  if (!res.ok) {
+    let msg = `Karaoke failed (HTTP ${res.status})`;
+    try {
+      const data = await res.json();
+      if (data?.error) msg = data.error === 'no_subtitles' ? 'no_subtitles' : String(data.error);
+    } catch { /* non-json */ }
+    throw new Error(msg);
+  }
+
+  const buf = await res.arrayBuffer();
+  if (buf.byteLength < 5000) {
+    throw new Error('Karaoke clip too small.');
+  }
+  if (buf.byteLength >= 8) {
+    const view = new DataView(buf);
+    const boxType = String.fromCharCode(view.getUint8(4), view.getUint8(5), view.getUint8(6), view.getUint8(7));
+    if (boxType !== 'ftyp') {
+      throw new Error('Karaoke clip output is not a valid MP4.');
+    }
+  }
+
+  onProgress?.('Karaoke clip ready. Downloading...');
+  triggerDownload(new Blob([buf], { type: 'video/mp4' }), `${title}_karaoke`);
+  onProgress?.('Download complete!');
+}
+
+/**
+ * 按服务端 /api/export-all 的单次请求约束切分批次的纯函数：
+ * 每批最多 10 段、每段最多 90s、每批总时长最多 300s。
+ * 超出时拆成多批（part1/part2…），而不是让用户手动取消勾选。
+ */
+export function planExportBatches(
+  clips: { videoId: string; startTime: number; endTime: number; title: string }[],
+): { videoId: string; startTime: number; endTime: number; title: string; duration: number }[][] {
+  const CLIP_MAX_SEC = 90;
+  const CLIP_MAX_PER_REQUEST = 10;
+  const REQUEST_MAX_TOTAL_SEC = 300;
+
+  const normalized = clips.map((c) => ({
+    ...c,
+    duration: Math.max(1, Math.min(c.endTime - c.startTime, CLIP_MAX_SEC)),
+  }));
+
+  const batches: (typeof normalized)[] = [];
+  let currentBatch: typeof normalized = [];
+  let currentTotal = 0;
+  for (const c of normalized) {
+    if (
+      currentBatch.length > 0 &&
+      (currentTotal + c.duration > REQUEST_MAX_TOTAL_SEC || currentBatch.length >= CLIP_MAX_PER_REQUEST)
+    ) {
+      batches.push(currentBatch);
+      currentBatch = [];
+      currentTotal = 0;
+    }
+    currentBatch.push(c);
+    currentTotal += c.duration;
+  }
+  if (currentBatch.length > 0) batches.push(currentBatch);
+  return batches;
+}
+
+/**
+ * 批量打包导出 (Starter+ 权益)：把当前视频的全部高光片段打包下载为 zip。
+ * 前端把已 resolve 的 muxed 流元数据 + 片段时间轴交给 /api/export-all，
+ * 服务端逐段裁剪后流式打包 zip（复用 5h resolve 缓存，免二次 /resolve）。
+ *
+ * 片段多 / 总时长长时（例如 10 条 × 60s = 600s）不再直接失败：按服务端约束
+ * 自动分批请求，逐包下载为 clipopai-clips-part1.zip、part2.zip…，保证全部片段都能拿到。
+ */
+export async function downloadAllClipsAsZip(params: {
+  clips: { videoId: string; startTime: number; endTime: number; title: string }[];
+  resolved?: ResolvedStream;
+  exportPlan?: string;
+  template?: string;
+  onProgress?: (msg: string) => void;
+}): Promise<void> {
+  const { clips, resolved, exportPlan, template, onProgress } = params;
+  if (clips.length === 0) return;
+
+  let streamMeta = resolved;
+  if (!streamMeta) {
+    onProgress?.('Resolving YouTube stream...');
+    streamMeta = await resolveYouTubeStream(clips[0].videoId, 1);
+  }
+  if (!streamMeta?.streamUrl) {
+    throw new Error('No stream URL available (CF Worker /resolve failed)');
+  }
+
+  // 服务端 /api/export-all 单次请求有约束（最多 10 段 / 每段 ≤90s / 总时长 ≤300s），
+  // 超出时自动分批，逐包下载为 clipopai-clips-part1.zip、part2.zip…，保证全部片段都能拿到。
+  const batches = planExportBatches(clips);
+  const multiPart = batches.length > 1;
+
+  for (let i = 0; i < batches.length; i++) {
+    onProgress?.(
+      multiPart
+        ? `Cutting clips & packing ZIP — part ${i + 1}/${batches.length} (server-side, may take a minute)...`
+        : 'Cutting clips & packing ZIP (server-side, may take a minute)...',
+    );
+    const res = await fetch('/api/export-all', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        plan: exportPlan || 'free',
+        ...(template ? { template } : {}),
+        clips: batches[i].map((c) => ({
+          videoId: c.videoId,
+          startTime: c.startTime,
+          duration: c.duration,
+          title: c.title,
+        })),
+        resolved: {
+          streamUrl: streamMeta.streamUrl,
+          userAgent: streamMeta.userAgent,
+          visitorData: streamMeta.visitorData,
+          xClientName: streamMeta.xClientName,
+          clientVersion: streamMeta.clientVersion,
+          clientName: streamMeta.client,
+        },
+      }),
+      signal: AbortSignal.timeout(290_000),
+    });
+
+    if (!res.ok) {
+      let msg = `Batch export failed (HTTP ${res.status})`;
+      try {
+        const data = await res.json();
+        if (data?.error) msg = String(data.error);
+      } catch { /* non-json */ }
+      throw new Error(multiPart ? `${msg} (part ${i + 1}/${batches.length})` : msg);
+    }
+
+    const buf = await res.arrayBuffer();
+    if (buf.byteLength < 2000) {
+      throw new Error(multiPart ? `ZIP output too small (part ${i + 1}/${batches.length}).` : 'ZIP output too small.');
+    }
+
+    onProgress?.(
+      multiPart
+        ? `ZIP part ${i + 1}/${batches.length} ready. Downloading...`
+        : 'ZIP ready. Downloading...',
+    );
+    triggerDownload(
+      new Blob([buf], { type: 'application/zip' }),
+      multiPart ? `clipopai-clips-part${i + 1}` : 'clipopai-clips',
+    );
+  }
+
+  onProgress?.(multiPart ? `Download complete! (${batches.length} ZIP parts)` : 'Download complete!');
+}
+
+/**
+ * Auto Compile (#3/#4, Starter+ 权益)：把用户选中的多条高光片段交给服务端
+ * /api/compile-clips 按源顺序裁剪 + 交叉淡化拼接成一部成片，流式下载 MP4。
+ *
+ * 每个 clip 需是 YouTube 视频（提供 videoId + startTime + endTime）。服务端要求
+ * streamUrl 等流元数据，因此对每个去重后的 videoId 调 resolveYouTubeStream（命中
+ * 模块级缓存，不额外触发 CF Worker /resolve）。失败会 throw，由调用方提示。
+ */
+export async function compileClips(params: {
+  clips: Array<{ videoId: string; startTime: number; endTime: number; title: string }>;
+  /** 当前用户 plan（导出分辨率/水印差异由服务端处理） */
+  exportPlan?: string;
+  /** 9:16 竖版合片（Starter+） */
+  orientation?: 'landscape' | 'vertical';
+  onProgress?: (msg: string) => void;
+}): Promise<void> {
+  const { clips, exportPlan, orientation, onProgress } = params;
+  if (clips.length === 0) throw new Error('No clips selected to compile.');
+
+  // 1) 按 videoId 去重解析流元数据（命中缓存，避免重复 /resolve）
+  const streamMetaMap = new Map<string, ResolvedStream>();
+  for (const clip of clips) {
+    if (streamMetaMap.has(clip.videoId)) continue;
+    onProgress?.(`Resolving stream...`);
+    const meta = await resolveYouTubeStream(clip.videoId, 1);
+    if (!meta?.streamUrl) throw new Error(`Could not resolve stream for video ${clip.videoId}`);
+    streamMetaMap.set(clip.videoId, meta);
+  }
+
+  // 2) 组装服务端所需的 clip 载荷
+  const serverClips = clips.map((clip) => {
+    const meta = streamMetaMap.get(clip.videoId)!;
+    const duration = Math.max(1, Math.min(clip.endTime - clip.startTime, 30));
+    return {
+      videoId: clip.videoId,
+      startTime: clip.startTime,
+      duration,
+      streamUrl: meta.streamUrl,
+      audioUrl: meta.audioUrl,
+      userAgent: meta.userAgent,
+      visitorData: meta.visitorData,
+      xClientName: meta.xClientName,
+      clientVersion: meta.clientVersion,
+      clientName: meta.client,
+    };
+  });
+
+  onProgress?.(`Compiling ${clips.length} clips (server-side, may take a minute or two)...`);
+
+  // 3) 请求服务端拼接，流式返回 MP4
+  const res = await fetch('/api/compile-clips', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      plan: exportPlan || 'free',
+      orientation: orientation === 'vertical' ? 'vertical' : 'landscape',
+      clips: serverClips,
+    }),
+    signal: AbortSignal.timeout(280_000),
+  });
+
+  if (!res.ok) {
+    let msg = `Compile failed (HTTP ${res.status})`;
+    try {
+      const data = await res.json();
+      if (data?.error) msg = data.error;
+    } catch { /* non-json */ }
+    throw new Error(msg);
+  }
+
+  const buf = await res.arrayBuffer();
+  if (buf.byteLength < 5000) {
+    throw new Error('Compiled video too small.');
+  }
+  if (buf.byteLength >= 8) {
+    const view = new DataView(buf);
+    const boxType = String.fromCharCode(view.getUint8(4), view.getUint8(5), view.getUint8(6), view.getUint8(7));
+    if (boxType !== 'ftyp') {
+      throw new Error('Compiled output is not a valid MP4.');
+    }
+  }
+
+  onProgress?.('Compiled video ready. Downloading...');
+  triggerDownload(new Blob([buf], { type: 'video/mp4' }), 'compiled');
+  onProgress?.('Download complete!');
+}
+
+/**
+ * Recap Studio (P0-2)：带 HTTP 状态码的 API 错误，供页面区分 403（需升级 Pro）
+ * 与其它失败（503 无 AI 通道 / 502 生成失败 / 422 无字幕 …）。
+ */
+export class RecapApiError extends Error {
+  status: number;
+  code: string | null;
+  constructor(message: string, status: number, code?: string | null) {
+    super(message);
+    this.name = 'RecapApiError';
+    this.status = status;
+    this.code = code ?? null;
+  }
+}
+
+async function recapApiError(res: Response, fallback: string): Promise<RecapApiError> {
+  let detail = fallback;
+  let code: string | null = null;
+  try {
+    const data = await res.json();
+    if (typeof data?.detail === 'string' && data.detail) detail = data.detail;
+    else if (typeof data?.error === 'string' && data.error) detail = data.error;
+    if (typeof data?.error === 'string' && data.error) code = data.error;
+  } catch { /* non-json */ }
+  return new RecapApiError(detail, res.status, code);
+}
+
+export interface RecapScriptResponse {
+  script: RecapScript;
+  /** 稿子来源：'llm' = AI 生成；'local' = 本地启发式草稿（未配置 AI 通道） */
+  engine: 'llm' | 'local';
+  transcript: { cueCount: number; lang: string | null };
+  /** 源视频时长（秒），render 阶段回传用于音画对齐 */
+  sourceDuration: number;
+}
+
+/**
+ * Recap Studio 第一步：生成解说稿（可编辑）。
+ *
+ * 服务端优先走 LLM；生产未配置 AI 通道时**不静默降级**——返回 503
+ * `recap_ai_unavailable`，需显式传 `allowLocalDraft: true` 才走本地启发式草稿。
+ * 返回体始终带 `engine` 字段，前端据此显示来源徽章。
+ */
+export async function generateRecapScriptApi(params: {
+  videoId: string;
+  videoTitle?: string;
+  targetDurationSec?: number;
+  locale?: string;
+  /** 客户端已分析出的高光区间（供可选素材打分，非必需） */
+  highlights?: Array<{ start: number; end: number }>;
+  /** 既有 AI 配置通道（localStorage clipop_ai_config），生产恒为 null */
+  aiConfig?: unknown;
+  /** 显式允许本地启发式草稿（engine='local'） */
+  allowLocalDraft?: boolean;
+  exportPlan?: string;
+  accessToken?: string | null;
+}): Promise<RecapScriptResponse> {
+  const {
+    videoId,
+    videoTitle,
+    targetDurationSec,
+    locale,
+    highlights,
+    aiConfig,
+    allowLocalDraft,
+    exportPlan,
+    accessToken,
+  } = params;
+  if (!videoId) throw new Error('videoId is required.');
+
+  const res = await fetch('/api/recap-studio', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+    },
+    body: JSON.stringify({
+      mode: 'script',
+      videoId,
+      videoTitle,
+      targetDurationSec,
+      locale,
+      highlights,
+      aiConfig,
+      allowLocalDraft: allowLocalDraft === true,
+      plan: exportPlan || 'free',
+    }),
+    signal: AbortSignal.timeout(120_000),
+  });
+
+  if (!res.ok) throw await recapApiError(res, `Recap script failed (HTTP ${res.status})`);
+
+  const data = (await res.json()) as RecapScriptResponse;
+  if (!data?.script?.chapters?.length) throw new Error('Recap script response is empty.');
+  return data;
+}
+
+/**
+ * Recap Studio 第二步：按解说稿渲染成片（≤3 分钟），返回 MP4 Blob。
+ *
+ * 复用 `compileClips` 的范式：客户端先 `resolveYouTubeStream`（命中 5h 缓存）
+ * 拿到 muxed 流元数据，再把 streamUrl / UA / visitorData 等交给服务端逐片裁剪。
+ * 调用方负责预览用的 object URL 与下载。
+ */
+export async function renderRecapFilmApi(params: {
+  videoId: string;
+  script: RecapScript;
+  sourceDuration?: number;
+  locale?: string;
+  orientation?: 'landscape' | 'vertical';
+  voice?: string;
+  style?: Partial<SubtitleStyle>;
+  /** 原声音量百分比 0-100（默认 20，解说是主线） */
+  originalVolume?: number;
+  bgmMood?: 'calm' | 'energetic' | 'warm' | null;
+  highlights?: Array<{ start: number; end: number }>;
+  exportPlan?: string;
+  accessToken?: string | null;
+  onProgress?: (msg: string) => void;
+}): Promise<Blob> {
+  const {
+    videoId,
+    script,
+    sourceDuration,
+    locale,
+    orientation,
+    voice,
+    style,
+    originalVolume,
+    bgmMood,
+    highlights,
+    exportPlan,
+    accessToken,
+    onProgress,
+  } = params;
+  if (!videoId) throw new Error('videoId is required.');
+  if (!script?.chapters?.length) throw new Error('A recap script is required.');
+  if (script.chapters.length > 6) throw new Error('Too many chapters (max 6).');
+
+  onProgress?.('Resolving source stream...');
+  const meta = await resolveYouTubeStream(videoId, 1);
+  if (!meta?.streamUrl) throw new Error(`Could not resolve stream for video ${videoId}`);
+
+  onProgress?.('Rendering recap film (server-side, may take a few minutes)...');
+
+  const res = await fetch('/api/recap-studio', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+    },
+    body: JSON.stringify({
+      mode: 'render',
+      videoId,
+      script,
+      sourceDuration,
+      locale,
+      plan: exportPlan || 'free',
+      orientation: orientation === 'vertical' ? 'vertical' : 'landscape',
+      voice,
+      style,
+      originalVolume,
+      bgmMood: bgmMood || null,
+      highlights,
+      streamUrl: meta.streamUrl,
+      audioUrl: meta.audioUrl,
+      userAgent: meta.userAgent,
+      visitorData: meta.visitorData,
+      xClientName: meta.xClientName,
+      clientVersion: meta.clientVersion,
+      clientName: meta.client,
+    }),
+    signal: AbortSignal.timeout(290_000),
+  });
+
+  if (!res.ok) throw await recapApiError(res, `Recap render failed (HTTP ${res.status})`);
+
+  const buf = await res.arrayBuffer();
+  if (buf.byteLength < 20_000) throw new Error('Rendered recap is too small.');
+  const view = new DataView(buf);
+  const boxType = String.fromCharCode(view.getUint8(4), view.getUint8(5), view.getUint8(6), view.getUint8(7));
+  if (boxType !== 'ftyp') throw new Error('Rendered output is not a valid MP4.');
+
+  onProgress?.('Recap film ready.');
+  return new Blob([buf], { type: 'video/mp4' });
+}
+
+/**
  * v48 core: Send streamUrl + metadata (JSON) to /api/cut-clip.
  * Server downloads the video bytes itself (no browser download), then
  * ffmpeg cuts [startTime, startTime+duration] from the local file.
@@ -794,9 +1476,20 @@ async function downloadAndCutOnServer(params: {
   startTime: number;
   endTime: number;
   clipDuration: number;
+  exportPlan?: string;
+  /** 9:16 竖屏重构 */
+  orientation?: 'landscape' | 'vertical';
+  /** AI 自动字幕（Starter+） */
+  subtitles?: boolean;
+  /** 字幕样式（Starter+）：透传给 /api/cut-clip 的 style 字段 */
+  subtitleStyle?: SubtitleStyle;
+  /** 字幕翻译（Starter+）：透传给 /api/cut-clip 的 subtitleLang 字段 */
+  subtitleLang?: string;
+  /** AI 粗剪清理（Starter+）：按逐字稿剪掉长停顿与纯语气词 */
+  jumpCut?: boolean;
   onProgress?: (msg: string) => void;
 }): Promise<Blob | null> {
-  const { streamMeta, videoId, startTime, clipDuration, onProgress } = params;
+  const { streamMeta, videoId, startTime, clipDuration, exportPlan, orientation, subtitles, subtitleStyle, subtitleLang, jumpCut, onProgress } = params;
 
   // v48: send JSON body with streamUrl + metadata.
   // Server downloads via CF Worker /stream (Node.js fetch, modern TLS),
@@ -827,6 +1520,18 @@ async function downloadAndCutOnServer(params: {
         startTime,
         duration: clipDuration,
         endTime: params.endTime,
+        // P0: 让服务端按 plan 注入分辨率 cap + 水印
+        plan: exportPlan || 'free',
+        // 9:16 竖屏重构（Starter+）
+        ...(orientation === 'vertical' ? { orientation: 'vertical' } : {}),
+        // AI 自动字幕（Starter+）
+        ...(subtitles ? { subtitles: true } : {}),
+        // 字幕样式（Starter+）：静态字幕烧录样式
+        ...(subtitleStyle ? { style: subtitleStyle } : {}),
+        // 字幕翻译（Starter+）：翻译目标语言（zh-CN 等）
+        ...(subtitleLang ? { subtitleLang } : {}),
+        // AI 粗剪清理（Starter+）
+        ...(jumpCut ? { jumpCut: true } : {}),
       }),
       // v55: increased from 90s to 180s to match the server's maxDuration=300s.
       // The previous 90s timeout was too tight: when the v55 direct-read path
@@ -838,6 +1543,10 @@ async function downloadAndCutOnServer(params: {
     if (!res.ok) {
       const errBody = await res.text().catch(() => '');
       console.warn('[downloadAndCutOnServer] /api/cut-clip failed:', res.status, errBody.slice(0, 300));
+      // 导出即付费墙：免费用户被服务端拒绝 → 必须抛错，禁止静默回落到浏览器录制（否则仍能拿到文件）
+      if (res.status === 403 && errBody.includes('export_requires_paid')) {
+        throw new Error('export_requires_paid');
+      }
       return null;
     }
 
@@ -872,7 +1581,8 @@ async function downloadAndCutOnServer(params: {
  */
 function triggerDownload(blob: Blob, title: string): void {
   const safeName = (title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50) || 'clip');
-  const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
+  // 扩展名必须跟随真实类型：zip 包若被当成 webm 命名，用户双击打不开（历史缺陷）。
+  const ext = blob.type.includes('zip') ? 'zip' : blob.type.includes('mp4') ? 'mp4' : 'webm';
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = `${safeName}.${ext}`;
@@ -983,8 +1693,9 @@ async function cutClipFromStream(
         return;
       }
 
-      const hasAudio = stream.getAudioTracks().length > 0;
-      const hasVideo = stream.getVideoTracks().length > 0;
+      const activeStream: MediaStream = stream!;
+      const hasAudio = activeStream.getAudioTracks().length > 0;
+      const hasVideo = activeStream.getVideoTracks().length > 0;
       if (!hasVideo) {
         fail(new Error('captureStream returned no video track'));
         return;
@@ -1005,7 +1716,7 @@ async function cutClipFromStream(
       }) || 'video/webm';
 
       try {
-        recorder = new MediaRecorder(stream, {
+        recorder = new MediaRecorder(activeStream, {
           mimeType,
           videoBitsPerSecond: 2_000_000,
           audioBitsPerSecond: 128_000,

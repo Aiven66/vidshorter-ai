@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Shield, Lock, AlertCircle } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
+import { normalizeAuthInput } from '@/lib/auth-context';
 import { isAdminUser } from '@/lib/admin-gate';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -18,6 +19,13 @@ export default function AxLoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // 登录成功后 context 的 user 是异步更新的，闭包里直接读 `user` 拿到的
+  // 永远是提交前的旧值（null），导致管理员也被误判 "not admin"。
+  // 用 ref 跟踪最新值。
+  const userRef = useRef(user);
+  useEffect(() => { userRef.current = user; }, [user]);
+
+  // user 就绪且为管理员 → 立即进入后台（主路径）
   useEffect(() => {
     if (user && isAdminUser(user)) {
       router.replace('/ax');
@@ -36,13 +44,19 @@ export default function AxLoginPage() {
         return;
       }
 
+      // 登录成功。user 更新后上方 useEffect 会自动跳 /ax；
+      // 这里兜底处理"已登录但非管理员"的情况（用 ref 读最新 user）。
       setTimeout(() => {
-        if (user && isAdminUser(user)) {
+        const latest = userRef.current;
+        if (latest && isAdminUser(latest)) {
           router.replace('/ax');
-        } else {
+        } else if (latest) {
           setError('This account does not have admin access.');
+        } else {
+          // user 尚未同步（网络慢）——继续等 useEffect，不误报
+          setError('Signed in. Verifying admin access…');
         }
-      }, 500);
+      }, 800);
 
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sign-in failed.');
@@ -80,7 +94,7 @@ export default function AxLoginPage() {
                   id="email"
                   type="email"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => setEmail(normalizeAuthInput(e.target.value))}
                   placeholder="admin@example.com"
                   className="bg-slate-700/50 border-slate-600 text-white placeholder:text-slate-500"
                   autoComplete="email"

@@ -7,6 +7,7 @@ import { UsersPage } from '@/components/admin-users';
 import { PaymentsPage } from '@/components/admin-payments';
 import { BlogPage } from '@/components/admin-blog';
 import { EventsPage } from '@/components/admin-events';
+import { ModelsPage } from '@/components/admin-models';
 import { AdminGate } from '@/lib/admin-gate';
 
 export default function AxAdminPage() {
@@ -32,6 +33,8 @@ export default function AxAdminPage() {
         return <BlogPage locale={locale} />;
       case 'events':
         return <EventsPage locale={locale} />;
+      case 'models':
+        return <ModelsPage locale={locale} />;
       default:
         return <StatsPage locale={locale} />;
     }

@@ -18,7 +18,7 @@ export const metadata: Metadata = {
     template: '%s | Clipop AI',
   },
   description:
-    'Clipop AI is an AI-powered video tool to auto generate highlight shorts from long videos. Paste YouTube & Bilibili links or upload local videos, get auto captions for TikTok, Reels and more. New users gain 100 free credits.',
+    'Clipop AI is an AI-powered video tool to auto generate highlight shorts from long videos. Paste YouTube & Bilibili links or upload local videos, get auto captions for TikTok, Reels and more. New users gain 60 free credits.',
   keywords: [
     'Clipop AI',
     'AI video clipper',
@@ -34,7 +34,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'Clipop AI - AI Video Clipper | Turn Long Videos into Viral Shorts',
     description:
-      'Clipop AI is an AI-powered video tool to auto generate highlight shorts from long videos. Paste YouTube & Bilibili links or upload local videos, get auto captions for TikTok, Reels and more. New users gain 100 free credits.',
+      'Clipop AI is an AI-powered video tool to auto generate highlight shorts from long videos. Paste YouTube & Bilibili links or upload local videos, get auto captions for TikTok, Reels and more. New users gain 60 free credits.',
     url: siteUrl,
     siteName: 'Clipop AI',
     type: 'website',
@@ -66,7 +66,8 @@ export default function RootLayout({
   const serverTranslations = enTranslations;
 
   return (
-    <html lang={serverLocale} suppressHydrationWarning data-build-version="2026-08-06-waffo-payment">
+    // className="dark"：服务端直出深色，保证首屏（脚本执行前）即为深色，无浅色闪屏
+    <html lang={serverLocale} className="dark" suppressHydrationWarning data-build-version="2026-08-06-waffo-payment">
       <head>
         {/* Inline CF Worker config — plain script tag (no Script component overhead) */}
         <script dangerouslySetInnerHTML={{ __html: `window.__CF_WORKER_URL__ = ${JSON.stringify(cfWorkerUrl)};` }} />

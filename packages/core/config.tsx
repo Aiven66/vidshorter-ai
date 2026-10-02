@@ -10,7 +10,7 @@
  */
 
 import { createContext, useContext, ReactNode, useMemo } from 'react';
-import type { PlanConfig, PaymentChannelConfig, Locale } from './types';
+import type { PlanConfig, PaymentChannelConfig, Locale, CreditPackConfig } from './types';
 
 /** Admin gate configuration — admin recognition rules. */
 export interface AdminGateConfig {
@@ -62,6 +62,8 @@ export interface AppConfig {
   // ── Payments ─────────────────────────────────────────────
   /** Available subscription plans. */
   plans: PlanConfig[];
+  /** One-time (non-recurring) credit packs. */
+  creditPacks: CreditPackConfig[];
   /** Configured payment channels. */
   paymentChannels: PaymentChannelConfig[];
   /** Daily free credits granted to anonymous/free users. */
@@ -114,6 +116,13 @@ function buildDefault(): AppConfig {
       { id: 'starter', name: 'Starter', priceIntl: 9.9, priceCny: 49, dailyCredits: 500, badge: 'Popular', features: [] },
       { id: 'pro', name: 'Pro', priceIntl: 19.9, priceCny: 99, dailyCredits: 1_000_000, unlimitedCredits: true, features: [] },
     ],
+    // NOTE: keep ids/credits/prices in sync with src/lib/server/subscriptions.ts CREDIT_PACKS.
+    // Creem purchases require a product ID per pack in the CREEM_PRODUCT_IDS env mapping.
+    creditPacks: [
+      { id: 'credits_120', name: 'Starter Pack', credits: 120, priceIntl: 2.99, priceCny: 19 },
+      { id: 'credits_300', name: 'Boost Pack', credits: 300, priceIntl: 6.99, priceCny: 49, badge: 'Best Value' },
+      { id: 'credits_900', name: 'Creator Pack', credits: 900, priceIntl: 16.99, priceCny: 119 },
+    ],
     paymentChannels: [],
     dailyFreeCredits: 100,
     adminCredits: 10_000,
@@ -157,4 +166,12 @@ export function isAdminEmail(email: string | null | undefined, config: AppConfig
 /** Convenience helper: find a plan config by id. */
 export function getPlanConfig(planId: string, config: AppConfig): PlanConfig | undefined {
   return config.plans.find((p) => p.id === planId);
+}
+
+/** Convenience helper: find a credit pack config by id. */
+export function getCreditPackConfig(
+  packId: string,
+  config: AppConfig,
+): CreditPackConfig | undefined {
+  return config.creditPacks.find((p) => p.id === packId);
 }

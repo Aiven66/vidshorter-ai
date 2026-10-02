@@ -11,7 +11,7 @@
 
 import sharp from 'sharp';
 import { Tensor } from 'onnxruntime-node';
-import { getModelSession } from './inference';
+import { acquireModelSession, releaseModelSession } from './inference';
 import {
   fetchImageRaw,
   labToRgbInto,
@@ -58,35 +58,42 @@ export async function colorizeServer(
     input[i] = (smallL[i] - 50) / 100; // SIGGRAPH17 归一化约定
   }
 
-  // 4. ONNX 推理（NHWC）
-  const session = await getModelSession('colorize');
-  const results = await session.run({
-    'inputs:0': new Tensor('float32', input, [1, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE, 1]),
-  });
-  const output = results[session.outputNames[0]];
-  const ab = output.data as Float32Array;
-  const plane = MODEL_INPUT_SIZE * MODEL_INPUT_SIZE;
+  // 4. ONNX 推理（NHWC）— 会话借出，ab 数据消费完即归还
+  const session = await acquireModelSession('colorize');
+  let ab: Float32Array;
+  let aFull: Float32Array;
+  let bFull: Float32Array;
+  try {
+    const results = await session.run({
+      'inputs:0': new Tensor('float32', input, [1, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE, 1]),
+    });
+    const output = results[session.outputNames[0]];
+    ab = output.data as Float32Array;
+    const plane = MODEL_INPUT_SIZE * MODEL_INPUT_SIZE;
 
-  // 5. 输出幅值自适应：±1 约定 ×128；否则视为原生 Lab ab
-  let maxAbs = 0;
-  const sampleStep = Math.max(1, Math.floor(plane / 4096));
-  for (let i = 0; i < plane; i += sampleStep) {
-    const va = Math.abs(ab[i * 2]);
-    const vb = Math.abs(ab[i * 2 + 1]);
-    if (va > maxAbs) maxAbs = va;
-    if (vb > maxAbs) maxAbs = vb;
-  }
-  const abRange = maxAbs <= 1.5 ? 128 : 1;
+    // 5. 输出幅值自适应：±1 约定 ×128；否则视为原生 Lab ab
+    let maxAbs = 0;
+    const sampleStep = Math.max(1, Math.floor(plane / 4096));
+    for (let i = 0; i < plane; i += sampleStep) {
+      const va = Math.abs(ab[i * 2]);
+      const vb = Math.abs(ab[i * 2 + 1]);
+      if (va > maxAbs) maxAbs = va;
+      if (vb > maxAbs) maxAbs = vb;
+    }
+    const abRange = maxAbs <= 1.5 ? 128 : 1;
 
-  // 6. 分离 a/b（NHWC 交错）→ 上采样回原分辨率
-  const aSmall = new Float32Array(plane);
-  const bSmall = new Float32Array(plane);
-  for (let i = 0; i < plane; i++) {
-    aSmall[i] = ab[i * 2] * abRange;
-    bSmall[i] = ab[i * 2 + 1] * abRange;
+    // 6. 分离 a/b（NHWC 交错）→ 上采样回原分辨率
+    const aSmall = new Float32Array(plane);
+    const bSmall = new Float32Array(plane);
+    for (let i = 0; i < plane; i++) {
+      aSmall[i] = ab[i * 2] * abRange;
+      bSmall[i] = ab[i * 2 + 1] * abRange;
+    }
+    aFull = await resizeFloatChannel(aSmall, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE, outW, outH, 128);
+    bFull = await resizeFloatChannel(bSmall, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE, outW, outH, 128);
+  } finally {
+    releaseModelSession('colorize');
   }
-  const aFull = await resizeFloatChannel(aSmall, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE, outW, outH, 128);
-  const bFull = await resizeFloatChannel(bSmall, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE, outW, outH, 128);
 
   // 7. L + ab → RGB 合成
   const outPixels = new Uint8ClampedArray(n * 4);

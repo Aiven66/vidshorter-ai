@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { verifyWebhook, WebhookEventType } from '@waffo/pancake-ts';
-import { applyPlanPurchase } from '@/lib/server/subscriptions';
-import { trackSubscribeSuccess } from '@/lib/server/track-event';
+import { applyPlanPurchase, applySubscriptionLapse, applySubscriptionRestore } from '@/lib/server/subscriptions';
+import { trackSubscribeSuccess, trackSubscriptionLapsed } from '@/lib/server/track-event';
 import { getWaffoConfig } from '@/lib/waffo';
 
 // Force dynamic — prevents Next.js from trying to statically generate this API route at build time.
@@ -72,6 +72,21 @@ export async function POST(request: NextRequest) {
     }
   };
 
+  // 订阅回收：落库降级 + 埋点（与 Creem 共用同一套 handler，避免"只打日志不落库"）
+  const lapseAndTrack = async (reason: 'canceled' | 'expired') => {
+    if (!userId) {
+      console.warn('[Waffo Webhook] Lapse without userId:', event.eventType, orderId);
+      return;
+    }
+    try {
+      const applied = await applySubscriptionLapse({ userId, reason, orderId });
+      console.log('[Waffo Webhook] Subscription lapsed:', { userId, reason, applied });
+      await trackSubscriptionLapsed({ userId, reason, planId, orderId });
+    } catch (err) {
+      console.error('[Waffo Webhook] lapse failed:', err);
+    }
+  };
+
   switch (event.eventType) {
     case WebhookEventType.OrderCompleted:
     case WebhookEventType.SubscriptionActivated:
@@ -79,10 +94,26 @@ export async function POST(request: NextRequest) {
       await applyAndTrack();
       break;
 
+    // 用户发起取消：不再续订，但已付周期内仍有效（宽限到 current_period_end）
     case WebhookEventType.SubscriptionCanceling:
-    case WebhookEventType.SubscriptionCanceled:
-      console.log('[Waffo Webhook] Subscription canceled:', { userId, eventType: event.eventType });
+      await lapseAndTrack('canceled');
       break;
+
+    // SDK 语义：subscription fully terminated → 立即回收
+    case WebhookEventType.SubscriptionCanceled:
+      await lapseAndTrack('expired');
+      break;
+
+    // 用户撤回取消：必须恢复 active，否则周期末会被每日扫描误降级
+    case WebhookEventType.SubscriptionUncanceled: {
+      if (!userId) {
+        console.warn('[Waffo Webhook] Uncanceled without userId:', orderId);
+        break;
+      }
+      const restored = await applySubscriptionRestore(userId);
+      console.log('[Waffo Webhook] Subscription restored:', { userId, restored });
+      break;
+    }
 
     default:
       console.log('[Waffo Webhook] Unhandled event type:', event.eventType);

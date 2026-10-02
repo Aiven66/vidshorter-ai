@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readFile, unlink } from 'fs/promises';
+import { verifyPaidEligibility } from '@/lib/server/plan-gate';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -78,6 +79,21 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       { error: `Clip duration too long: ${duration.toFixed(1)}s (max ${API_MAX_CLIP_DURATION}s)` },
       { status: 400, headers: CORS_HEADERS },
+    );
+  }
+
+  // 导出即付费墙：本端点直接产出可下载成片，必须与 cut-clip 同口径门控。
+  // 免费用户只能在线预览，任何导出都要先升级（订阅优先 + 积分包兜底）。
+  // 注意：预览渲染管线 /api/regenerate-clip 故意不门控——它只服务「在线预览」。
+  const plan = url.searchParams.get('plan') || 'free';
+  const paidElig = await verifyPaidEligibility(request, plan);
+  if (!paidElig.ok) {
+    return NextResponse.json(
+      {
+        error: 'Exporting clips requires a paid plan. Upgrade to Starter or Pro to download.',
+        reason: 'export_requires_paid',
+      },
+      { status: 403, headers: CORS_HEADERS },
     );
   }
 

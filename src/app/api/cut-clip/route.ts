@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { readFile, writeFile, unlink, access, constants as fsConstants } from 'fs/promises';
+import { stat, writeFile, unlink, access, constants as fsConstants } from 'fs/promises';
+import { createReadStream } from 'node:fs';
+import { Readable } from 'node:stream';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { execFile } from 'child_process';
@@ -14,6 +16,83 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 const execFileAsync = promisify(execFile);
+
+import {
+  resolveExportTarget,
+  buildExportVf,
+  buildVerticalComplex,
+  getWatermarkPngPath,
+  buildWatermarkArgs,
+} from '@/lib/server/video-export';
+import {
+  buildAssFile,
+  fetchClipCuesTranslated,
+  setupFontConfig,
+  normalizeSubtitleStyle,
+  subtitleFilterForceStyle,
+  DEFAULT_SUBTITLE_STYLE,
+  type SubtitleCue,
+  type SubtitleStyle,
+} from '@/lib/server/subtitles';
+import { planKeepSegments, buildJumpCutGraph, remapCuesForSegments, type KeepSegment } from '@/lib/server/jump-cut';
+import {
+  analyzeSubjectPath,
+  buildReframeComplex,
+  remapReframePath,
+  type ReframePath,
+} from '@/lib/server/reframe';
+import { normalizeSubtitleLang } from '@/lib/subtitle-langs';
+import { verifyPaidEligibility, verifyStarterEligibility } from '@/lib/server/plan-gate';
+
+/** 竖屏门控（兼容旧调用）：统一走泛化函数。 */
+async function verifyVerticalEligibility(
+  request: NextRequest,
+  clientPlan: string,
+): Promise<{ ok: boolean; reason?: string }> {
+  return verifyStarterEligibility(request, clientPlan, 'vertical');
+}
+
+/** 「导出即付费墙」：免费用户不得产出任何视频文件的统一 403 响应。 */
+function exportPaywallResponse() {
+  return NextResponse.json(
+    {
+      error: 'Exporting clips requires a paid plan (export_requires_paid). Upgrade to Starter or Pro to download.',
+      reason: 'export_requires_paid',
+    },
+    { status: 403 },
+  );
+}
+
+/**
+ * P0 竖屏智能追焦：分析源画面里人物的水平位置，得到裁切路径。
+ *
+ * 返回 null 表示「不确定」（幻灯片/无人/置信度低/源比 9:16 还窄）→ 调用方回落 blur-fit。
+ * 任何异常都吞掉并回落，绝不因为追焦分析失败而让整次导出失败。
+ */
+async function resolveReframePath(
+  ffmpegPath: string,
+  input: { source: string; inputArgs?: string[] },
+  opts: { startTime: number; duration: number },
+  enabled: boolean,
+): Promise<ReframePath | null> {
+  if (!enabled) return null;
+  const t0 = Date.now();
+  try {
+    const path = await analyzeSubjectPath(ffmpegPath, input, opts);
+    if (path) {
+      console.log(
+        `[cut-clip] reframe: tracking path ready (conf=${path.confidence}, knots=${path.times.length}, coverage=${path.coverage}, ${Date.now() - t0}ms)`,
+      );
+    } else {
+      console.log(`[cut-clip] reframe: no confident subject → blur-fit (${Date.now() - t0}ms)`);
+    }
+    return path;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[cut-clip] reframe: analysis error → blur-fit: ${msg.slice(0, 200)}`);
+    return null;
+  }
+}
 
 /**
  * /api/cut-clip — Server-side ffmpeg clip cutting (v58 muxed-single-input-audio-sync)
@@ -65,6 +144,9 @@ export async function POST(request: NextRequest) {
   const inputPath = join(tmpdir(), `cut-input-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp4`);
   const audioPath = join(tmpdir(), `cut-audio-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.m4a`);
   const outputPath = join(tmpdir(), `cut-output-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp4`);
+  let fontConfigPath: string | null = null;
+  // ★ 必须在 POST 顶部（try 外）声明：finally 引用它，try 内 let 在 finally 不可见。
+  let subtitlePath: string | null = null;
 
   try {
     const contentType = request.headers.get('content-type') || '';
@@ -79,10 +161,23 @@ export async function POST(request: NextRequest) {
     let videoId = '';
     let startTime = 0;
     let duration = 30;
+    let plan = '';
+    let vertical = false;
+    let wantSubtitles = false;
+    let subtitleStyle: SubtitleStyle = DEFAULT_SUBTITLE_STYLE;
+    let subtitleLang: string | null = null;
+    /** AI 粗剪清理（Starter+）：按逐字稿剪掉长停顿与纯语气词 */
+    let jumpCut = false;
 
     // Support both JSON and multipart/form-data (for backwards compat)
     if (contentType.includes('application/json')) {
       const body = await request.json();
+      plan = String(body.plan || '');
+      vertical = body.orientation === 'vertical' || body.vertical === true;
+      wantSubtitles = body.subtitles === true;
+      jumpCut = body.jumpCut === true;
+      subtitleStyle = normalizeSubtitleStyle(body.style); // 字幕样式（Starter+）
+      subtitleLang = normalizeSubtitleLang(body.subtitleLang); // 字幕翻译（Starter+）
       streamUrl = body.streamUrl || '';
       audioUrl = body.audioUrl || '';
       userAgent = body.userAgent || '';
@@ -108,9 +203,36 @@ export async function POST(request: NextRequest) {
         await writeFile(inputPath, Buffer.from(arrayBuffer));
         startTime = Number(formData.get('startTime')) || 0;
         duration = Math.min(Number(formData.get('duration')) || 30, 90);
+        plan = String(formData.get('plan') || '');
+        vertical = String(formData.get('orientation') || '') === 'vertical' || formData.get('vertical') === 'true';
+        wantSubtitles = formData.get('subtitles') === 'true';
+        jumpCut = formData.get('jumpCut') === 'true';
+        subtitleLang = normalizeSubtitleLang(String(formData.get('subtitleLang') || ''));
+
+        // 「导出即付费墙」：任何导出一律先过付费门控（在 ffmpeg/下载之前）。
+        const uploadPaid = await verifyPaidEligibility(request, plan);
+        if (!uploadPaid.ok) return exportPaywallResponse();
+
+        // 9:16 竖屏 = Starter+ 付费权益
+        if (vertical) {
+          const elig = await verifyVerticalEligibility(request, plan);
+          if (!elig.ok) return NextResponse.json({ error: elig.reason, detail: '9:16 vertical export requires Starter or Pro.' }, { status: 403 });
+        }
+        // AI 粗剪清理 = Starter+ 付费权益
+        if (jumpCut) {
+          const elig = await verifyStarterEligibility(request, plan, 'jumpcut');
+          if (!elig.ok) return NextResponse.json({ error: elig.reason, detail: 'AI jump-cut requires Starter or Pro.' }, { status: 403 });
+        }
 
         // Skip the download step — file already uploaded
-        return await cutLocalFile(inputPath, outputPath, startTime, duration, null);
+        const expTarget = resolveExportTarget(plan);
+        const expWm = (expTarget.watermark && !vertical) ? await getWatermarkPngPath() : null;
+        // 竖屏走 blur-fit 复合滤镜（vertical=true 时由 cutLocalFile 内部构建）；
+        // 横屏走 plan 分辨率 cap + 水印。
+        return await cutLocalFile(
+          inputPath, outputPath, startTime, duration, null,
+          vertical ? null : buildExportVf(expTarget), expWm, null, undefined, vertical,
+        );
       }
       streamUrl = String(formData.get('streamUrl') || '');
       audioUrl = String(formData.get('audioUrl') || '');
@@ -119,10 +241,71 @@ export async function POST(request: NextRequest) {
       videoId = String(formData.get('videoId') || '');
       startTime = Number(formData.get('startTime')) || 0;
       duration = Math.min(Number(formData.get('duration')) || 30, 90);
+      plan = String(formData.get('plan') || '');
+      vertical = String(formData.get('orientation') || '') === 'vertical' || formData.get('vertical') === 'true';
     }
+
+    // 「导出即付费墙」：所有导出分支（横屏/竖屏/字幕）统一门控，在 ffmpeg/下载之前拦截。
+    // 覆盖 JSON 与 multipart(streamUrl) 两种入参；multipart 文件直传分支已单独门控。
+    const paidElig = await verifyPaidEligibility(request, plan);
+    if (!paidElig.ok) return exportPaywallResponse();
 
     if (!streamUrl) {
       return NextResponse.json({ error: 'No streamUrl provided' }, { status: 400 });
+    }
+
+    // P0: 按 plan 计算导出分辨率 cap + 水印（仅 free 需水印）
+    const exportTarget = resolveExportTarget(plan);
+    const exportVf = buildExportVf(exportTarget);
+    // 9:16 竖屏 = Starter+ 付费权益：先服务端校验，再走专门滤镜（无水印）
+    if (vertical) {
+      const elig = await verifyVerticalEligibility(request, plan);
+      if (!elig.ok) return NextResponse.json({ error: elig.reason, detail: '9:16 vertical export requires Starter or Pro.' }, { status: 403 });
+    }
+    // AI 粗剪清理（jump-cut）= Starter+ 付费权益：先服务端校验，再按逐字稿规划保留区间。
+    // 无字幕/剪得太狠 → 安全阀返回 disabled，整段原样输出（宁可不动，不可毁片）。
+    if (jumpCut) {
+      const elig = await verifyStarterEligibility(request, plan, 'jumpcut');
+      if (!elig.ok) return NextResponse.json({ error: elig.reason, detail: 'AI jump-cut requires Starter or Pro.' }, { status: 403 });
+    }
+
+    // AI 自动字幕 = Starter+ 付费权益：先服务端校验，再尝试拉 YouTube 官方字幕生成 ASS。
+    // 无字幕/拉取失败 → subtitlePath 为 null，优雅跳过（不致命）。
+    if (wantSubtitles) {
+      const elig = await verifyStarterEligibility(request, plan, 'subtitle');
+      if (!elig.ok) return NextResponse.json({ error: elig.reason, detail: 'AI subtitles require Starter or Pro.' }, { status: 403 });
+    }
+
+    // 逐字稿：字幕与粗剪共用同一份 cues（避免重复拉取 YouTube）。
+    // 粗剪需要它来定位停顿与语气词；字幕需要它来烧录。
+    let clipCues: SubtitleCue[] = [];
+    if ((wantSubtitles || jumpCut) && videoId) {
+      clipCues = await fetchClipCuesTranslated(videoId, startTime, duration, wantSubtitles ? subtitleLang : null);
+    }
+
+    // 粗剪保留区间（null = 不做粗剪：未请求，或被安全阀判定不该剪）
+    let jumpSegments: KeepSegment[] | null = null;
+    if (jumpCut) {
+      const planJc = planKeepSegments(clipCues, duration);
+      if (planJc.disabled) {
+        console.log(`[cut-clip] jump-cut disabled: ${planJc.reason} — exporting the full clip`);
+      } else {
+        jumpSegments = planJc.segments;
+        console.log(`[cut-clip] jump-cut planned: ${planJc.segments.length} segments, removed ${planJc.removedSec}s of ${duration}s`);
+      }
+    }
+
+    if (wantSubtitles && videoId) {
+      // 粗剪会把时间轴压短 → 字幕必须同步重映射，否则整体错位。
+      const cues = jumpSegments ? remapCuesForSegments(clipCues, jumpSegments) : clipCues;
+      subtitlePath = await buildAssFile(cues, subtitleStyle);
+      // ★ serverless 无 fontconfig，libass 找不到字体 → 字幕静默不渲染。
+      // setupFontConfig 写最小 config 指向捆绑字体，ffmpeg 子进程继承 env 生效。
+      fontConfigPath = await setupFontConfig();
+    }
+    const watermarkPng = (exportTarget.watermark && !vertical) ? await getWatermarkPngPath() : null;
+    if (exportTarget.watermark && !watermarkPng && !vertical) {
+      console.warn('[cut-clip] Watermark requested but PNG could not be materialized — exporting without watermark (non-fatal).');
     }
 
     console.log(`[cut-clip] v59 videoId=${videoId}, startTime=${startTime}s, duration=${duration}s, hasAudioUrl=${!!audioUrl} (IGNORED — v59 uses muxed single input + streamUrl fast path)`);
@@ -138,25 +321,35 @@ export async function POST(request: NextRequest) {
     // to jump to startTime. Only ~5-10MB of data is downloaded.
     // v58: ALWAYS use muxed single input (ignore audioUrl) to guarantee
     // audio/video sync. Dual-input + -ss caused 5.353s drift in v56/v57.
-    try {
-      const result = await cutFromStreamUrl({
-        cfWorkerUrl,
-        streamUrl,
-        audioUrl,
-        userAgent,
-        visitorData,
-        xClientName,
-        clientVersion,
-        clientName,
-        videoId,
-        startTime,
-        duration,
-        outputPath,
-      });
-      if (result) return result;
-    } catch (directErr) {
-      const msg = directErr instanceof Error ? directErr.message : String(directErr);
-      console.warn(`[cut-clip] v58 direct stream read failed, falling back to v51 download+cut: ${msg.slice(0, 300)}`);
+    // jump-cut 需要「先下载再本地多次裁剪」，直读快路径的流式 seek 不适用 → 主动让路。
+    if (!jumpSegments) {
+      try {
+        const result = await cutFromStreamUrl({
+          cfWorkerUrl,
+          streamUrl,
+          audioUrl,
+          userAgent,
+          visitorData,
+          xClientName,
+          clientVersion,
+          clientName,
+          videoId,
+          startTime,
+          duration,
+          outputPath,
+          exportVf: vertical ? null : exportVf, // 竖屏由 cutFromStreamUrl 内部构建 blur-fit 复合滤镜
+          watermarkPng,
+          vertical,
+          subtitlePath,
+          subtitleStyle,
+        });
+        if (result) return result;
+      } catch (directErr) {
+        const msg = directErr instanceof Error ? directErr.message : String(directErr);
+        console.warn(`[cut-clip] v58 direct stream read failed, falling back to v51 download+cut: ${msg.slice(0, 300)}`);
+      }
+    } else {
+      console.log(`[cut-clip] jump-cut active (${jumpSegments.length} segments) — skipping direct stream path, using download+cut`);
     }
 
     // ── v51 FALLBACK PATH: download + cut ──────────────────────────────────
@@ -165,7 +358,7 @@ export async function POST(request: NextRequest) {
     // v58: ALWAYS use single muxed input (download with muxed=1 in
     // downloadStreamViaCfWorker). Do NOT download audio separately —
     // dual-input cut caused 5.353s audio drift in v56/v57.
-    const videoBuf = await downloadStreamViaCfWorker(
+    let videoBuf = await downloadStreamViaCfWorker(
       cfWorkerUrl, videoId, streamUrl, userAgent, visitorData, /*audio*/ false, /*audioUrl*/ null,
     );
     if (!videoBuf || videoBuf.length < 50_000) {
@@ -173,8 +366,11 @@ export async function POST(request: NextRequest) {
         error: `Video download failed or too small: ${videoBuf ? videoBuf.length : 0} bytes`,
       }, { status: 502 });
     }
+    const videoBytes = videoBuf.length;
     await writeFile(inputPath, videoBuf);
-    console.log(`[cut-clip] Video downloaded (muxed, contains audio): ${videoBuf.length} bytes (${(videoBuf.length / 1024 / 1024).toFixed(1)}MB)`);
+    console.log(`[cut-clip] Video downloaded (muxed, contains audio): ${videoBytes} bytes (${(videoBytes / 1024 / 1024).toFixed(1)}MB)`);
+    // 尽早释放 ~80MB 的 videoBuf，避免它与后续 ffmpeg 及流式响应叠加导致 serverless OOM。
+    videoBuf = null;
 
     // v58: Skip separate audio download — the muxed stream already contains
     // audio. Using dual-input cutLocalFile would reintroduce the 5.353s drift
@@ -182,7 +378,11 @@ export async function POST(request: NextRequest) {
     console.log(`[cut-clip] v58 fallback: using single-input cut (no separate audio)`);
 
     // Cut the clip using ffmpeg with single-input mode (audioPath=null)
-    return await cutLocalFile(inputPath, outputPath, startTime, duration, /*audioPath*/ null);
+    return await cutLocalFile(
+      inputPath, outputPath, startTime, duration, /*audioPath*/ null,
+      vertical ? null : exportVf, watermarkPng, subtitlePath, subtitleStyle, vertical,
+      jumpSegments,
+    );
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error('[cut-clip] Error:', msg.slice(0, 1000));
@@ -194,6 +394,8 @@ export async function POST(request: NextRequest) {
     await unlink(inputPath).catch(() => {});
     await unlink(audioPath).catch(() => {});
     await unlink(outputPath).catch(() => {});
+    if (subtitlePath) await unlink(subtitlePath).catch(() => {});
+    if (fontConfigPath) await unlink(fontConfigPath).catch(() => {});
   }
 }
 
@@ -229,13 +431,21 @@ async function cutFromStreamUrl(params: {
   clientName: string;
   videoId: string;
   startTime: number;
-  duration: number;
+  duration?: number;
   outputPath: string;
+  exportVf?: string | null;
+  watermarkPng?: string | null;
+  /** 9:16 竖屏导出：cutFromStreamUrl 内 best-effort 计算人物跟踪取景 */
+  vertical?: boolean;
+  /** AI 自动字幕（Starter+）：已生成的 ASS 文件路径；无字幕时为 null（烧录可选） */
+  subtitlePath?: string | null;
+  /** 字幕样式（Starter+）：白名单归一化后透传给 ASS 生成 + force_style */
+  subtitleStyle?: SubtitleStyle;
 }): Promise<NextResponse | null> {
   const {
     cfWorkerUrl, streamUrl, audioUrl, userAgent, visitorData,
     xClientName, clientVersion, clientName, videoId,
-    startTime, duration, outputPath,
+    startTime, duration, outputPath, exportVf, watermarkPng, vertical, subtitlePath, subtitleStyle,
   } = params;
 
   const ffmpegPath = await findFfmpegBinary();
@@ -275,13 +485,58 @@ async function cutFromStreamUrl(params: {
   // HTTP input headers for ffmpeg (CF Worker doesn't need special headers,
   // but we set Accept and Accept-Encoding for clean Range handling)
   const httpHeaders = 'Accept: */*\r\nAccept-Encoding: identity\r\n';
+  // 供追焦抽帧复用同一套 HTTP 输入参数（-ss 会按 Range 做输入 seek，与裁切一致）。
+  const urlInputArgs = [
+    '-rw_timeout', '30000000', '-reconnect', '1', '-reconnect_at_eof', '1',
+    '-reconnect_streamed', '1', '-reconnect_delay_max', '5', '-headers', httpHeaders,
+  ];
+
+  // 9:16 竖屏：blur-fit 合成（整幅 contain + 模糊背景），绝不裁切人物/内容。
+  // 竖屏图必须走 filter_complex（含 split），字幕因此需在滤镜图内追加。
+  let finalVf = exportVf;
+  let verticalGraph: string | null = null;
+  // AI 自动字幕（Starter+）：把 ASS 烧录进视频。subtitles 滤镜追加到最终滤镜之后，
+  // 并设置 force_style 让其跟随输出分辨率（先 scale 再烧字幕，保证清晰）。
+  // ★ execFile 不经 shell，filtergraph 无引号机制：force_style 值内逗号必须 \, 转义
+  // （路径由我们生成，tmpdir 无空格/冒号/逗号，无需转义）。
+  let subFilter: string | null = null;
+  if (subtitlePath) {
+    const assPath = subtitlePath.replace(/\\/g, '/');
+    // ★ fontsdir：serverless 无 fontconfig，libass 靠 fontsdir 直扫字体目录渲染文字
+    const fontsDir = join(process.cwd(), 'public', 'fonts');
+    // force_style 由 subtitleStyle 生成（逗号必须 \, 转义：filtergraph 无引号机制）
+    subFilter = `subtitles=${assPath}:fontsdir=${fontsDir}:force_style=${subtitleFilterForceStyle(subtitleStyle ?? DEFAULT_SUBTITLE_STYLE, false).replace(/,/g, '\\,')}`;
+    console.log(`[cut-clip] subtitles enabled: ${assPath}`);
+  }
+  if (vertical) {
+    // P0 竖屏智能追焦（Auto-Reframe）：先分析人物水平位置得到裁切路径；
+    // 置信度不足（幻灯片/无人）时自动回落 blur-fit —— 绝不静默降级到错误裁切。
+    const reframePath = await resolveReframePath(
+      ffmpegPath,
+      { source: muxedStreamEndpoint.toString(), inputArgs: urlInputArgs },
+      { startTime, duration: duration && duration > 0 ? duration : 30 },
+      true,
+    );
+    verticalGraph = reframePath
+      ? buildReframeComplex(reframePath, subFilter)
+      : buildVerticalComplex(subFilter);
+    finalVf = null;
+  } else if (subFilter) {
+    finalVf = finalVf ? `${finalVf},${subFilter}` : subFilter;
+  }
 
   let cutSuccess = false;
   let lastError = '';
 
-  // Attempt 1: -c copy (fast remux) with -ss BEFORE -i (input fast seek)
-  // -ss before -i = input seek (fast, jumps to keyframe near startTime)
-  // -t after -i = output duration limit
+  // Attempt 1: RE-ENCODE — guaranteed playable output.
+  // v59 root-cause fix: the previous PRIMARY was `-c copy` on the CF Worker
+  // LIVE HTTP stream. ffmpeg often exits 0 while silently producing a
+  // container with a valid ftyp/moov but truncated/corrupt media (live-stream +
+  // `-reconnect` packet-boundary issues). ftyp/audio checks still passed, so the
+  // "unplayable download" shipped without any fallback triggering.
+  // Re-encoding fully decodes the stream then re-wraps as H.264/AAC with
+  // +faststart, eliminating container/timestamp corruption regardless of input
+  // quirks. Slightly slower (ultrafast on ≤90s 360p is ~seconds) but definitive.
   try {
     const args: string[] = ['-y'];
     args.push('-ss', String(startTime));
@@ -289,29 +544,44 @@ async function cutFromStreamUrl(params: {
                '-reconnect_streamed', '1', '-reconnect_delay_max', '5');
     args.push('-headers', httpHeaders);
     args.push('-i', muxedStreamEndpoint.toString());
+    // free 水印：追加第二输入（水印 PNG，loop 覆盖整段，overlay eof_action=pass）
+    const wmArg = watermarkPng ? buildWatermarkArgs(finalVf ?? null, watermarkPng) : null;
+    if (wmArg) args.push(...wmArg.extraInputs);
     args.push('-t', String(duration));
-    args.push('-c', 'copy');
+    args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28', '-pix_fmt', 'yuv420p');
+    // P0: 按 plan 注入分辨率 cap / 9:16 竖屏滤镜 + 水印。watermark → 两输入 overlay；
+    // 否则仅 scale/-crop -vf。滤镜失败会抛错并落到 -c copy 回退 → 非致命。
+    if (wmArg) {
+      args.push('-filter_complex', wmArg.filterComplex, '-map', '[out]', '-map', '0:a?');
+    } else if (verticalGraph) {
+      args.push('-filter_complex', verticalGraph, '-map', '[vout]', '-map', '0:a?');
+    } else if (finalVf) {
+      args.push('-vf', finalVf);
+    }
+    args.push('-c:a', 'aac', '-b:a', '128k');
     args.push('-movflags', '+faststart', '-avoid_negative_ts', 'make_zero', outputPath);
 
-    console.log(`[cut-clip] v58 attempt 1 (-c copy + -ss): ${args.length} args`);
+    console.log(`[cut-clip] v59 attempt 1 (re-encode + -ss): ${args.length} args`);
     await execFileAsync(ffmpegPath, args, {
       maxBuffer: 50 * 1024 * 1024,
-      // v58: Increased from 60s to 180s — CF Worker may need to resolve a fresh
-      // muxed stream URL from YouTube (no streamUrl fast path), which can take
-      // 30-60s on cold cache. Plus ffmpeg -ss seek + -c copy time (~5-10s).
-      timeout: 180_000,
+      // Increased to 210s: re-encode adds encode time on top of the stream
+      // read/seek. CF Worker may resolve a fresh stream (30-60s cold cache).
+      timeout: 210_000,
       env: { ...process.env, LANG: 'C' },
     });
     cutSuccess = true;
-    console.log('[cut-clip] v58 -c copy succeeded');
+    console.log('[cut-clip] v59 re-encode succeeded');
   } catch (execErr: any) {
     const stderr = String(execErr?.stderr || '');
-    lastError = `copy: ${execErr?.message?.slice(0, 150)} | STDERR: ${stderr.slice(0, 500)}`;
-    console.warn(`[cut-clip] v58 -c copy failed: ${lastError.slice(0, 300)}`);
+    lastError = `reencode: ${execErr?.message?.slice(0, 150)} | STDERR: ${stderr.slice(-800)}`;
+    console.warn(`[cut-clip] v59 re-encode failed, trying -c copy: ${lastError.slice(0, 300)}`);
   }
 
-  // Attempt 2: re-encode (fallback, slower but handles edge cases)
-  if (!cutSuccess) {
+  // Attempt 2: -c copy (last resort). Only reached if re-encode failed; on a
+  // cleanly-decoded input this is fine, but we keep it strictly behind re-encode.
+  // NOTE: vertical 无法 -c copy（copy 不能套 crop/scale 滤镜）→ 直接跳过，落到 v51
+  // 下载+cut（cutLocalFile 的 re-encode 分支会应用竖屏滤镜）。
+  if (!cutSuccess && !vertical) {
     try {
       const args: string[] = ['-y'];
       args.push('-ss', String(startTime));
@@ -320,22 +590,21 @@ async function cutFromStreamUrl(params: {
       args.push('-headers', httpHeaders);
       args.push('-i', muxedStreamEndpoint.toString());
       args.push('-t', String(duration));
-      args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28');
-      args.push('-c:a', 'aac', '-b:a', '128k');
+      args.push('-c', 'copy');
       args.push('-movflags', '+faststart', '-avoid_negative_ts', 'make_zero', outputPath);
 
-      console.log(`[cut-clip] v58 attempt 2 (re-encode + -ss): ${args.length} args`);
+      console.log(`[cut-clip] v59 attempt 2 (-c copy + -ss): ${args.length} args`);
       await execFileAsync(ffmpegPath, args, {
         maxBuffer: 50 * 1024 * 1024,
         timeout: 120_000,
         env: { ...process.env, LANG: 'C' },
       });
       cutSuccess = true;
-      console.log('[cut-clip] v58 re-encode succeeded');
+      console.log('[cut-clip] v59 -c copy (fallback) succeeded');
     } catch (execErr2: any) {
       const stderr2 = String(execErr2?.stderr || '');
-      lastError = `copy+reencode: ${lastError} || reencode: ${execErr2?.message?.slice(0, 150)} | STDERR: ${stderr2.slice(0, 500)}`;
-      console.warn(`[cut-clip] v58 re-encode failed: ${lastError.slice(0, 300)}`);
+      lastError = `reencode+copy: ${lastError} || copy: ${execErr2?.message?.slice(0, 150)} | STDERR: ${stderr2.slice(-800)}`;
+      console.warn(`[cut-clip] v59 -c copy failed: ${lastError.slice(0, 300)}`);
     }
   }
 
@@ -344,16 +613,22 @@ async function cutFromStreamUrl(params: {
     return null;
   }
 
-  const outputData = await readFile(outputPath);
-  if (outputData.length < 5_000) {
-    console.warn(`[cut-clip] v58 output too small: ${outputData.length} bytes`);
+  const outStat = await stat(outputPath).catch(() => null);
+  if (!outStat) {
+    console.warn('[cut-clip] v58 output stat failed, will fall back to v51 path');
+    return null;
+  }
+  if (outStat.size < 5_000) {
+    console.warn(`[cut-clip] v58 output too small: ${outStat.size} bytes`);
     return null;
   }
 
-  // Validate output is a real MP4 (ftyp box at offset 4)
-  if (outputData.length >= 8) {
+  // Validate output is a real MP4 (ftyp box at offset 4) — read only 8 header
+  // bytes (metadata), not the whole file, to avoid loading it all into memory.
+  const header = await readFileHead(outputPath, 8);
+  if (header.length >= 8) {
     const boxType = String.fromCharCode(
-      outputData[4], outputData[5], outputData[6], outputData[7],
+      header[4], header[5], header[6], header[7],
     );
     if (boxType !== 'ftyp') {
       console.warn(`[cut-clip] v58 output missing ftyp header (got: ${boxType})`);
@@ -369,17 +644,9 @@ async function cutFromStreamUrl(params: {
     return null;
   }
 
-  console.log(`[cut-clip] v58 success: ${outputData.length} bytes`);
+  console.log(`[cut-clip] v58 success: ${outStat.size} bytes (streamed)`);
 
-  return new NextResponse(outputData, {
-    status: 200,
-    headers: {
-      'Content-Type': 'video/mp4',
-      'Content-Disposition': 'attachment; filename="clip.mp4"',
-      'Content-Length': String(outputData.length),
-      'Cache-Control': 'no-store',
-    },
-  });
+  return streamMp4Response(outputPath, outStat.size);
 }
 
 /**
@@ -566,6 +833,13 @@ async function cutLocalFile(
   startTime: number,
   duration: number,
   audioPath: string | null,
+  exportVf?: string | null,
+  watermarkPng?: string | null,
+  subtitlePath?: string | null,
+  subtitleStyle?: SubtitleStyle,
+  vertical?: boolean,
+  /** AI 粗剪清理（Starter+）：保留区间；null/undefined = 不做粗剪 */
+  jumpCutSegments?: KeepSegment[] | null,
 ): Promise<NextResponse> {
   const ffmpegPath = await findFfmpegBinary();
   if (!ffmpegPath) {
@@ -576,8 +850,16 @@ async function cutLocalFile(
 
   let cutSuccess = false;
   let lastError = '';
+  // 诊断用：把本次实际交给 ffmpeg 的竖屏滤镜图原样回带到错误信息里，
+  // 便于区分「服务端函数输出的图」与「ffmpeg 实际收到的图」是否一致。
+  let verticalGraphEcho: string | null = null;
 
-  // Attempt 1: -c copy (fast remux) — single or dual input
+  // P0: 免费水印必须 re-encode（-c copy 无法叠加 overlay）。同理只要有滤镜要套
+// （水印 / 分辨率 cap / 9:16 竖屏 / AI 粗剪）就跳过 copy 快速路径，强制 re-encode。
+if (watermarkPng || exportVf || vertical || jumpCutSegments) {
+    console.warn('[cut-clip] filter/watermark requested → skip -c copy fast path, force re-encode');
+  } else {
+    // Attempt 1: -c copy (fast remux) — single or dual input
   try {
     const args: string[] = ['-y', '-ss', String(startTime)];
     if (audioPath) {
@@ -605,14 +887,22 @@ async function cutLocalFile(
     cutSuccess = true;
   } catch (execErr: any) {
     const stderr = String(execErr?.stderr || '');
-    lastError = `copy: ${execErr?.message?.slice(0, 150)} | STDERR: ${stderr.slice(0, 500)}`;
+    lastError = `copy: ${execErr?.message?.slice(0, 150)} | STDERR: ${stderr.slice(-800)}`;
     console.warn(`[cut-clip] -c copy failed, trying re-encode: ${lastError.slice(0, 200)}`);
+  }
   }
 
   // Attempt 2: re-encode (fallback, slower but handles edge cases)
   if (!cutSuccess) {
     try {
       const args: string[] = ['-y', '-ss', String(startTime)];
+      // AI 粗剪：把保留区间先拼成连贯的 [vjc]/[ajc]，后续滤镜一律挂到 [vjc] 上。
+      // 输入已由 `-ss startTime`（在 -i 之前）seek 到 clip 起点，故 trim 用 clip 相对时间。
+      const jc = jumpCutSegments && jumpCutSegments.length > 0 ? buildJumpCutGraph(jumpCutSegments) : null;
+      const jcVLabel = jc ? jc.vLabel : '[0:v]';
+      const audioMap = jc ? jc.aLabel : '0:a?';
+      // P0 水印仅支持单输入（muxed）分支，避免改动双输入音频路径
+      const wmArg = !audioPath && watermarkPng ? buildWatermarkArgs(exportVf ?? null, watermarkPng, jcVLabel) : null;
       if (audioPath) {
         // v56: seek audio input to startTime too (see attempt 1 comment)
         args.push('-i', inputPath);
@@ -622,9 +912,63 @@ async function cutLocalFile(
         args.push('-c:a', 'aac', '-b:a', '128k');
         args.push('-map', '0:v:0', '-map', '1:a:0');
       } else {
-        args.push('-i', inputPath, '-t', String(duration));
+        args.push('-i', inputPath);
+        if (wmArg) args.push(...wmArg.extraInputs); // 第二输入：水印 PNG（loop）
+        args.push('-t', String(duration));
         args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28');
         args.push('-c:a', 'aac', '-b:a', '128k');
+      }
+      // P0: 按 plan 注入分辨率 cap + 水印（仅单输入分支叠加 overlay）。
+      // AI 字幕（Starter+）：追加 subtitles 滤镜烧录 ASS 到视频（\, 转义 force_style 逗号，
+      // fontsdir 直扫字体目录，serverless 无 fontconfig）。force_style 由 subtitleStyle 生成。
+      const fontsDir = join(process.cwd(), 'public', 'fonts');
+      const subFilter = subtitlePath
+        ? `subtitles=${subtitlePath.replace(/\\/g, '/')}:fontsdir=${fontsDir}:force_style=${subtitleFilterForceStyle(subtitleStyle ?? DEFAULT_SUBTITLE_STYLE, false).replace(/,/g, '\\,')}`
+        : null;
+      // 9:16 竖屏：P0 智能追焦优先（裁切窗跟随人物水平移动），不可信时回落
+      // blur-fit 复合滤镜（含 split → 必须 filter_complex）；双输入分支不走竖屏。
+      let verticalGraph: string | null = null;
+      if (vertical && !audioPath) {
+        const rp = await resolveReframePath(
+          ffmpegPath,
+          { source: inputPath },
+          { startTime, duration },
+          true,
+        );
+        // 与 AI 粗剪组合时，裁切路径必须重映射到剪后时间轴，否则整体错位。
+        const path = rp && jumpCutSegments && jumpCutSegments.length > 0
+          ? remapReframePath(rp, jumpCutSegments)
+          : rp;
+        verticalGraph = path
+          ? buildReframeComplex(path, subFilter, jcVLabel)
+          : buildVerticalComplex(subFilter, jcVLabel);
+      }
+      verticalGraphEcho = verticalGraph;
+      const finalVf = verticalGraph
+        ? null
+        : (subFilter ? `${exportVf ?? ''}${exportVf ? ',' : ''}${subFilter}` : exportVf);
+
+      // 组装 filter_complex：粗剪前置链（若有）永远在最前。
+      const graphParts: string[] = [];
+      if (jc) graphParts.push(jc.videoChain, jc.audioChain);
+
+      if (wmArg) {
+        graphParts.push(wmArg.filterComplex);
+        args.push('-filter_complex', graphParts.join(';'), '-map', '[out]', '-map', audioMap);
+      } else if (verticalGraph) {
+        graphParts.push(verticalGraph);
+        args.push('-filter_complex', graphParts.join(';'), '-map', '[vout]', '-map', audioMap);
+      } else if (finalVf) {
+        if (jc) {
+          // 有粗剪前置链时无法用 -vf（多链路图）→ 把 finalVf 显式挂到 [vjc] 之后。
+          graphParts.push(`${jcVLabel}${finalVf}[vout]`);
+          args.push('-filter_complex', graphParts.join(';'), '-map', '[vout]', '-map', audioMap);
+        } else {
+          args.push('-vf', finalVf);
+        }
+      } else if (jc) {
+        // 纯粗剪（无其他滤镜）：直接输出拼接结果。
+        args.push('-filter_complex', graphParts.join(';'), '-map', jcVLabel, '-map', audioMap);
       }
       args.push('-movflags', '+faststart', '-avoid_negative_ts', 'make_zero', outputPath);
 
@@ -637,36 +981,28 @@ async function cutLocalFile(
       console.log('[cut-clip] Re-encode fallback succeeded');
     } catch (execErr2: any) {
       const stderr2 = String(execErr2?.stderr || '');
-      lastError = `copy+reencode: ${lastError} || reencode: ${execErr2?.message?.slice(0, 150)} | STDERR: ${stderr2.slice(0, 500)}`;
+      lastError = `copy+reencode: ${lastError} || reencode: ${execErr2?.message?.slice(0, 150)} | GRAPH: ${verticalGraphEcho ?? '(none)'} | STDERR: ${stderr2.slice(-800)}`;
     }
   }
 
   if (!cutSuccess) {
     return NextResponse.json(
-      { error: `ffmpeg both attempts failed: ${lastError.slice(0, 1000)}` },
+      { error: `ffmpeg both attempts failed: ${lastError.slice(-1500)}` },
       { status: 500 },
     );
   }
 
-  const outputData = await readFile(outputPath);
-  if (outputData.length < 5_000) {
+  const outStat = await stat(outputPath);
+  if (outStat.size < 5_000) {
     return NextResponse.json(
-      { error: `Output file too small: ${outputData.length} bytes` },
+      { error: `Output file too small: ${outStat.size} bytes` },
       { status: 500 },
     );
   }
 
-  console.log(`[cut-clip] Success: ${outputData.length} bytes`);
+  console.log(`[cut-clip] Success: ${outStat.size} bytes (streamed)`);
 
-  return new NextResponse(outputData, {
-    status: 200,
-    headers: {
-      'Content-Type': 'video/mp4',
-      'Content-Disposition': 'attachment; filename="clip.mp4"',
-      'Content-Length': String(outputData.length),
-      'Cache-Control': 'no-store',
-    },
-  });
+  return streamMp4Response(outputPath, outStat.size);
 }
 
 /**
@@ -703,4 +1039,42 @@ async function findFfmpegBinary(): Promise<string> {
   } catch { /* fall through */ }
 
   return '';
+}
+
+/**
+ * Stream an MP4 from disk via a Web ReadableStream instead of loading the whole
+ * file into memory. This avoids OOM in serverless envs where the ffmpeg output
+ * could otherwise be read as one giant Buffer (successful but killed before the
+ * response is sent, producing the "500 empty body" signature).
+ *
+ * Cleanup: the returned stream unlinks the temp file on `close` (then upload is
+ * consumed / aborted). The outer POST `finally` also keeps a silent unlink as a
+ * safe backstop — on POSIX an already-open fd keeps reading even after unlink.
+ */
+function streamMp4Response(filePath: string, size: number): NextResponse {
+  const rs = createReadStream(filePath);
+  rs.on('close', () => {
+    unlink(filePath).catch(() => {});
+  });
+  const webStream = Readable.toWeb(rs) as unknown as BodyInit;
+  return new NextResponse(webStream as unknown as BodyInit, {
+    status: 200,
+    headers: {
+      'Content-Type': 'video/mp4',
+      'Content-Disposition': 'attachment; filename="clip.mp4"',
+      'Content-Length': String(size),
+      'Cache-Control': 'no-store',
+    },
+  });
+}
+
+/** Read only the first `len` bytes of a file (metadata/payload header check). */
+function readFileHead(filePath: string, len: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    const rs = createReadStream(filePath, { start: 0, end: len - 1 });
+    rs.on('data', (chunk) => chunks.push(chunk as Buffer));
+    rs.on('end', () => resolve(Buffer.concat(chunks)));
+    rs.on('error', reject);
+  });
 }

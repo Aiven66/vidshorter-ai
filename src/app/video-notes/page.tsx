@@ -25,6 +25,8 @@ import {
   Quote,
   Target,
   Share2,
+  BookOpen,
+  AlignLeft,
 } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
@@ -38,6 +40,12 @@ const SharePosterModal = dynamic(
   () => import('@/components/video-notes/share-poster-modal'),
   { ssr: false, loading: () => null },
 );
+const TranscriptPanel = dynamic(
+  () => import('@/components/video-notes/transcript-panel'),
+  { ssr: false, loading: () => null },
+);
+
+import type { TranscriptSegmentLite } from '@/components/video-notes/transcript-panel';
 
 type HighlightLevel = 'critical' | 'important';
 
@@ -78,6 +86,11 @@ type GenerateResponse = {
   videoTitle?: string;
   videoUrl: string;
   sourceType: 'youtube' | 'bilibili' | 'local';
+  /** 视频逐字稿（带时间锚点），用于「逐字稿」页签与翻译 */
+  transcript?: TranscriptSegmentLite[];
+  transcriptTruncated?: boolean;
+  /** 服务端取字幕的明文诊断（source='none' 表示所有字幕源都失败了） */
+  transcriptDiag?: { source: string; attempts: string[] };
 };
 
 interface AiConfig {
@@ -608,6 +621,13 @@ function NoteResultView({
 }) {
   const { note, videoTitle, videoUrl, sourceType } = result;
 
+  // 右栏页签：笔记 / 逐字稿（同一个视频切换时回到「笔记」）
+  const [rightTab, setRightTab] = useState<'notes' | 'transcript'>('notes');
+  useEffect(() => {
+    setRightTab('notes');
+  }, [videoUrl]);
+  const transcriptSegments = result.transcript ?? [];
+
   const corePointsAnnotator = (note.corePoints && note.corePoints.length > 0 && CorePointsAnnotator) ? (
     <CorePointsAnnotator
       corePoints={note.corePoints}
@@ -736,8 +756,52 @@ function NoteResultView({
           )}
         </div>
 
-        {/* 右：笔记（带颜色标记） */}
+        {/* 右：笔记 / 逐字稿（页签切换） */}
         <div className="lg:col-span-2 p-4 md:p-5 max-h-[75vh] overflow-y-auto print:max-h-none print:overflow-visible">
+          {/* 页签 */}
+          <div className="flex items-center gap-1 mb-4 border-b border-border print:hidden">
+            <button
+              type="button"
+              onClick={() => setRightTab('notes')}
+              className={
+                'inline-flex items-center gap-1.5 px-3 py-2 -mb-px text-sm font-medium border-b-2 transition-colors ' +
+                (rightTab === 'notes'
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-muted-foreground hover:text-foreground')
+              }
+            >
+              <BookOpen className="h-3.5 w-3.5" />
+              {t('notes.notesTab')}
+            </button>
+            <button
+              type="button"
+              onClick={() => setRightTab('transcript')}
+              className={
+                'inline-flex items-center gap-1.5 px-3 py-2 -mb-px text-sm font-medium border-b-2 transition-colors ' +
+                (rightTab === 'transcript'
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-muted-foreground hover:text-foreground')
+              }
+            >
+              <AlignLeft className="h-3.5 w-3.5" />
+              {t('notes.transcriptTab')}
+              {transcriptSegments.length > 0 && (
+                <span className="text-[10px] text-muted-foreground/70">({transcriptSegments.length})</span>
+              )}
+            </button>
+          </div>
+
+          {rightTab === 'transcript' && TranscriptPanel ? (
+            <TranscriptPanel
+              segments={transcriptSegments}
+              truncated={result.transcriptTruncated}
+              activeTime={playerCurrentTime}
+              onJump={(sec) => onJumpTimestamp(formatSeconds(sec))}
+              accessToken={accessToken}
+              emptyHint={result.transcriptDiag?.source === 'none' ? t('notes.transcriptBlocked') : null}
+            />
+          ) : (
+          <>
           {/* 概述 */}
           {note.summary && (
             <section className="mb-5">
@@ -809,6 +873,8 @@ function NoteResultView({
             <p>Source: {videoUrl}</p>
             <p>Generated: {new Date().toLocaleString()}</p>
           </div>
+          </>
+          )}
         </div>
       </div>
     </div>

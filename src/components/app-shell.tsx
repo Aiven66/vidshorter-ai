@@ -21,12 +21,14 @@ import {
   PanelLeftOpen,
   Download,
   ShoppingBag,
-  TrendingUp,
-  BookOpen,
   Bot,
   Wrench,
-  Megaphone,
   Podcast,
+  MessageSquare,
+  Smartphone,
+  Home,
+  Wand2,
+  PersonStanding,
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { useCredits } from '@/lib/credits-context';
@@ -34,6 +36,9 @@ import { useAuth } from '@/lib/auth-context';
 import { useLocale } from '@/lib/locale-context';
 import { AnnouncementBanner } from '@/components/announcement-banner';
 import { RegistrationBanner } from '@/components/registration-banner';
+
+// 用户反馈入口（Tally 表单）— 顶栏右上角常驻入口
+const USER_FEEDBACK_URL = 'https://tally.so/r/5BMYVb';
 
 const NavbarUserSection = dynamic(
   () => import('@/components/navbar/navbar-user-section').then(m => ({ default: m.NavbarUserSection })),
@@ -62,7 +67,7 @@ const LanguageSwitcher = dynamic(
 type NavItem = {
   href: string;
   // 通过 useLocale().t('nav.xxx') 读取翻译
-  labelKey: 'clips' | 'notes' | 'blog' | 'pricing' | 'about' | 'download' | 'marketing' | 'news' | 'article' | 'digitalHuman' | 'digitalHumanLive' | 'aiTools' | 'podcast';
+  labelKey: 'home' | 'clips' | 'shorts' | 'notes' | 'blog' | 'pricing' | 'about' | 'download' | 'marketing' | 'news' | 'article' | 'digitalHuman' | 'digitalHumanLive' | 'aiTools' | 'podcast' | 'aiVideo';
   icon: typeof Scissors;
   badge?: 'NEW';
   // 外部链接（如 Podcast AI）: web 端新标签页打开，桌面端经 setWindowOpenHandler 用系统浏览器打开
@@ -70,13 +75,14 @@ type NavItem = {
 };
 
 const NAV_ITEMS: NavItem[] = [
+  { href: '/', labelKey: 'home', icon: Home },
+  { href: '/ai-video', labelKey: 'aiVideo', icon: Wand2, badge: 'NEW' },
+  { href: '/shorts', labelKey: 'shorts', icon: Smartphone, badge: 'NEW' },
   { href: '/video-clips', labelKey: 'clips', icon: Scissors },
   { href: '/video-notes', labelKey: 'notes', icon: FileText, badge: 'NEW' },
   { href: '/marketing-video', labelKey: 'marketing', icon: ShoppingBag, badge: 'NEW' },
   { href: '/digital-human', labelKey: 'digitalHuman', icon: Bot },
-  { href: '/digital-human-live', labelKey: 'digitalHumanLive', icon: Megaphone, badge: 'NEW' },
-  { href: '/news-video', labelKey: 'news', icon: TrendingUp, badge: 'NEW' },
-  { href: '/article-to-video', labelKey: 'article', icon: BookOpen, badge: 'NEW' },
+  { href: '/digital-human-live', labelKey: 'digitalHumanLive', icon: PersonStanding, badge: 'NEW' },
   { href: 'https://podcastai.clipopai.com/', labelKey: 'podcast', icon: Podcast, badge: 'NEW', external: true },
   { href: '/ai-tools', labelKey: 'aiTools', icon: Wrench, badge: 'NEW' },
   { href: '/blog', labelKey: 'blog', icon: Newspaper },
@@ -113,7 +119,7 @@ function AppSidebarContent({
       {/* Logo + 收起按钮 区 */}
       <div className={`flex items-center border-b border-border ${collapsed ? 'justify-center px-1 py-3' : 'justify-between px-3 py-3'}`}>
         <Link
-          href="/video-clips"
+          href="/"
           className="flex items-center gap-2"
           onClick={onNavigate}
           title={collapsed ? 'Clipop AI' : undefined}
@@ -135,6 +141,21 @@ function AppSidebarContent({
         )}
       </div>
 
+      {/* 收起状态下，展开按钮固定在顶部（Logo 下方），保持与收缩按钮同一视觉位置 */}
+      {collapsed && onToggleCollapse && (
+        <div className="flex justify-center border-b border-border px-1 py-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onToggleCollapse}
+            className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-accent"
+            title="Expand sidebar"
+          >
+            <PanelLeftOpen className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
+
       {/* 主导航入口 */}
       <div className={`flex flex-col gap-1 flex-1 ${collapsed ? 'px-1' : 'px-2'}`}>
         {NAV_ITEMS.map((item) => {
@@ -155,7 +176,7 @@ function AppSidebarContent({
                 </span>
               )}
               {item.badge === 'NEW' && !collapsed && (
-                <span className="ml-auto text-[10px] font-bold bg-destructive text-white px-1.5 py-0.5 rounded">
+                <span className="ml-auto text-[10px] font-bold bg-gold text-black px-1.5 py-0.5 rounded">
                   NEW
                 </span>
               )}
@@ -207,7 +228,10 @@ function SidebarLabel({ labelKey }: { labelKey: NavItem['labelKey'] }) {
   // 如果 i18n 缺失该 key，t() 会返回 key 本身；这里提供中文回退避免显示 nav.xxx
   const key = `nav.${labelKey}`;
   const fallback: Record<NavItem['labelKey'], string> = {
+    home: '首页',
+    aiVideo: 'AI 成片',
     clips: '高光剪辑',
+    shorts: 'Shorts 成片',
     notes: '高光笔记',
     marketing: '营销视频',
     digitalHuman: '普通带货短视频',
@@ -268,6 +292,7 @@ function SidebarCreditsCard({ mounted, collapsed = false }: { mounted: boolean; 
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { theme, setTheme } = useTheme();
+  const { t } = useLocale();
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -299,6 +324,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   const toggleTheme = () => setTheme(theme === 'dark' ? 'light' : 'dark');
   const toggleSidebar = () => setCollapsed((v) => !v);
+  // i18n 缺失该 key 时 t() 会原样返回 key，这里兜底英文
+  const feedbackLabel = t('nav.feedback') === 'nav.feedback' ? 'Feedback' : t('nav.feedback');
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -317,20 +344,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           collapsed={collapsed}
           onToggleCollapse={toggleSidebar}
         />
-        {/* 收起状态下，在 Logo 下方放一个展开按钮 */}
-        {collapsed && (
-          <div className="px-1 py-1 flex justify-center border-b border-border">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={toggleSidebar}
-              className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-accent"
-              title="Expand sidebar"
-            >
-              <PanelLeftOpen className="h-4 w-4" />
-            </Button>
-          </div>
-        )}
         <SidebarCreditsCard mounted={mounted} collapsed={collapsed} />
       </aside>
 
@@ -362,6 +375,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </div>
 
             {/* 右上角用户区 */}
+            {/* 用户反馈入口 — 常驻醒目按钮，新标签页打开 Tally 表单 */}
+            <Button variant="outline" size="sm" asChild className="hidden md:inline-flex">
+              <a href={USER_FEEDBACK_URL} target="_blank" rel="noopener noreferrer">
+                <MessageSquare className="h-4 w-4 mr-1.5" />
+                {feedbackLabel}
+              </a>
+            </Button>
+
             <Button variant="ghost" size="icon" onClick={toggleTheme} title="Toggle theme" className="hidden md:inline-flex">
               {mounted && theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
             </Button>
@@ -376,6 +397,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
             {/* 移动端简化 */}
             <div className="md:hidden flex items-center gap-1">
+              <Button variant="ghost" size="icon" asChild title={feedbackLabel}>
+                <a href={USER_FEEDBACK_URL} target="_blank" rel="noopener noreferrer">
+                  <MessageSquare className="h-5 w-5" />
+                </a>
+              </Button>
               <Button variant="ghost" size="icon" onClick={toggleTheme}>
                 {mounted && theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
               </Button>

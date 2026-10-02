@@ -99,6 +99,8 @@ export function Navbar() {
         { href: `${process.env.NEXT_PUBLIC_APP_URL || DESKTOP_WEB_APP_URL}/blog`, label: t('nav.blog'), external: true },
         { href: `${process.env.NEXT_PUBLIC_APP_URL || DESKTOP_WEB_APP_URL}/about`, label: t('nav.about'), external: true },
         { href: '/ai-tools', label: t('nav.aiTools') },
+        { href: '/recap', label: t('nav.recap') },
+        { href: '/batch', label: t('nav.batch') },
       ]
     : [
         { href: '/', label: t('nav.home') },
@@ -108,6 +110,8 @@ export function Navbar() {
         { href: '/blog', label: t('nav.blog') },
         { href: '/about', label: t('nav.about') },
         { href: '/ai-tools', label: t('nav.aiTools') },
+        { href: '/recap', label: t('nav.recap') },
+        { href: '/batch', label: t('nav.batch') },
       ];
 
   const isActive = (path: string) => path === '/' ? pathname === '/' : pathname?.startsWith(path);

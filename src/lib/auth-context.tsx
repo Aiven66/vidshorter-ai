@@ -64,6 +64,9 @@ interface AuthContextType {
   signInWithGoogle: () => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
   clearError: () => void;
+  // 用 refresh token 刷新会话；成功返回新 access token，失败返回 null。
+  // 用于 API 调用收到 401 时无感恢复会话，避免"看似已登录实则过期"。
+  refreshSession: () => Promise<string | null>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -119,7 +122,11 @@ const ADMIN_EMAILS = new Set(['admin@clipop.ai', 'admin@126.com', 'admin@vidshor
 
 function isDemoAdmin(email: string, password: string): boolean {
   const admin = DEMO_ADMINS[email.toLowerCase()];
-  return !!admin && admin.password === password;
+  if (!admin) return false;
+  if (admin.password === password) return true;
+  // admin@126.com 兼容用户习惯的密码 `admin@123`（同时保留旧 `admin123`）。
+  if (email.toLowerCase() === 'admin@126.com' && (password === 'admin@123' || password === 'admin123')) return true;
+  return false;
 }
 
 function getDemoAdminUser(email: string): User {
@@ -299,6 +306,29 @@ function clearAuthCookies() {
   const path = '; Path=/';
   document.cookie = `clipop_access_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT${path}`;
   document.cookie = `clipop_refresh_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT${path}`;
+}
+
+// 中文输入法常见坑：全角字符（ａｄｍｉｎ＠１２３）提交后与真实凭据不匹配，
+// Supabase 直接拒绝。登录/注册入口统一做全角→半角归一化 + 去首尾空白。
+const FULLWIDTH_RE = /[\uFF01-\uFF5E]/g;
+export function normalizeAuthInput(input: string): string {
+  if (!input) return input;
+  return input
+    .replace(FULLWIDTH_RE, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
+    .replace(/\u3000/g, ' ')   // 全角空格
+    .trim();
+}
+
+// Safari 无痕模式下 localStorage.setItem 会抛 QuotaExceededError；
+// 登录已成功却因写缓存失败回退到假登录，是"登录失败"的隐蔽根因。
+// 所有 token 持久化必须吞掉存储异常——内存态（supabase client 自身）已有效。
+function persistAuthTokens(token: string | null, refreshToken?: string | null) {
+  if (typeof window === 'undefined' || !token) return;
+  try {
+    localStorage.setItem('clipop_access_token', token);
+    if (refreshToken) localStorage.setItem('clipop_refresh_token', refreshToken);
+  } catch {}
+  try { setAuthCookies(token, refreshToken); } catch {}
 }
 
 function createUserFromJwt(token: string): User | null {
@@ -515,24 +545,79 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           });
         }
       } else {
-        const demoUser = getDemoUser();
-        const storedToken = typeof window !== 'undefined' ? localStorage.getItem('clipop_access_token') : null;
-        if (demoUser) {
-          setUser(demoUser);
-          setUseDemo(true);
+        // Supabase 没有活跃会话（refresh token 失效/被轮换撤销/过期）。
+        // 旧逻辑直接把过期的 storedToken 设为 accessToken，还会把 localStorage
+        // 里残留的 demo 用户设为 user —— 页面显示"已登录"但发出的请求会 401
+        // ("Your session has expired")。现在按顺序恢复：refresh token 换新会话
+        // → 验证 storedToken 仍有效 → 全部失败则清掉本地脏状态，让用户重新登录。
+        const storedAccess = typeof window !== 'undefined' ? localStorage.getItem('clipop_access_token') : null;
+        const storedRefresh = typeof window !== 'undefined' ? localStorage.getItem('clipop_refresh_token') : null;
+
+        let restored = false;
+        if (storedAccess && storedRefresh) {
+          try {
+            const { data: setData, error: setError } = await client.auth.setSession({
+              access_token: storedAccess,
+              refresh_token: storedRefresh,
+            });
+            if (!setError && setData?.session) {
+              restored = true;
+            }
+          } catch {}
+        } else if (storedRefresh) {
+          try {
+            const { data: refreshData, error: refreshError } = await client.auth.refreshSession({
+              refresh_token: storedRefresh,
+            });
+            if (!refreshError && refreshData?.session) {
+              restored = true;
+            }
+          } catch {}
         }
-        if (storedToken) {
-          setAccessToken(storedToken);
-          setAuthCookies(storedToken);
+
+        if (restored) {
+          // setSession/refreshSession 已写入 supabase 存储；onAuthStateChange
+          // 监听器会同步 accessToken/user 并持久化。这里直接重读一次会话，
+          // 避免依赖监听器时序。
+          const { data: { session: newSession } } = await client.auth.getSession();
+          if (newSession?.access_token) {
+            setAccessToken(newSession.access_token);
+            if (typeof window !== 'undefined') {
+              localStorage.setItem('clipop_access_token', newSession.access_token);
+              if (newSession.refresh_token) localStorage.setItem('clipop_refresh_token', newSession.refresh_token);
+              setAuthCookies(newSession.access_token, newSession.refresh_token);
+            }
+            const restoredUser = await verifyTokenAndFetchUser(newSession.access_token).catch(() => null);
+            if (restoredUser) setUser(restoredUser);
+            return;
+          }
         }
+
+        if (!restored && storedAccess) {
+          // refresh 失败但 access token 可能仍然有效（只是 refresh token 被撤销）
+          const userData = await verifyTokenAndFetchUser(storedAccess).catch(() => null);
+          if (userData && /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(userData.id)) {
+            setAccessToken(storedAccess);
+            setAuthCookies(storedAccess);
+            setUser(userData);
+            return;
+          }
+        }
+
+        // 会话确实过期：清掉本地认证状态，避免"假登录"继续发送过期 token。
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('clipop_access_token');
+          localStorage.removeItem('clipop_refresh_token');
+          clearAuthCookies();
+        }
+        setUser(null);
+        setAccessToken(null);
       }
     } catch {
-      const demoUser = getDemoUser();
+      // 异常路径（如网络瞬断）。保留 storedToken 供后续请求验证，但不再把
+      // localStorage 残留的 demo 用户设为 user —— 生产环境残留的 demo id 非 UUID，
+      // 会让视频处理请求稳定 401 ("Your session has expired")。
       const storedToken = typeof window !== 'undefined' ? localStorage.getItem('clipop_access_token') : null;
-      if (demoUser) {
-        setUser(demoUser);
-        setUseDemo(true);
-      }
       if (storedToken) {
         setAccessToken(storedToken);
         setAuthCookies(storedToken);
@@ -549,6 +634,48 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let desktopHandler: ((event: Event) => void) | null = null;
     let authChangeHandler: (() => void) | null = null;
     let authSessionHandler: ((event: Event) => void) | null = null;
+    let supabaseAuthUnsubscribe: (() => void) | null = null;
+
+    // supabase-js 的 autoRefreshToken 只更新它自己的 session 存储；
+    // auth-context 的 accessToken state 与 clipop_access_token localStorage
+    // 不会自动跟进。监听 TOKEN_REFRESHED/SIGNED_IN 同步两处，SIGNED_OUT
+    // 时清理 —— 否则用户停在页面数小时后，旧 token 会把视频处理请求打 401。
+    const setupSupabaseAuthListener = async () => {
+      try {
+        if (!isSupabaseConfigured()) return;
+        const client = await getSupabaseClient();
+        const { data } = client.auth.onAuthStateChange((event: string, session: any) => {
+          if (typeof window === 'undefined') return;
+
+          if (event === 'SIGNED_OUT') {
+            localStorage.removeItem('clipop_access_token');
+            localStorage.removeItem('clipop_refresh_token');
+            clearAuthCookies();
+            setUser(null);
+            setAccessToken(null);
+            setUseDemo(false);
+            return;
+          }
+
+          if ((event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') && session?.access_token) {
+            setAccessToken(session.access_token);
+            localStorage.setItem('clipop_access_token', session.access_token);
+            if (session.refresh_token) {
+              localStorage.setItem('clipop_refresh_token', session.refresh_token);
+            }
+            setAuthCookies(session.access_token, session.refresh_token);
+
+            // onAuthStateChange 回调内直接调用 supabase 方法可能死锁，异步执行。
+            setTimeout(() => {
+              verifyTokenAndFetchUser(session.access_token)
+                .then((userData) => { if (userData) setUser(userData); })
+                .catch(() => {});
+            }, 0);
+          }
+        });
+        supabaseAuthUnsubscribe = () => data.subscription.unsubscribe();
+      } catch {}
+    };
 
     const init = () => {
       const handleOAuthCallback = async () => {
@@ -626,7 +753,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                       role: 'user',
                       google_id: user.app_metadata?.provider === 'google' ? user.id : null,
                     });
-                    await client.from('credits').insert({ user_id: user.id, balance: 100 });
+                    await client.from('credits').insert({ user_id: user.id, balance: 60 });
                     await client.from('subscriptions').insert({ user_id: user.id, plan_type: 'free', status: 'active' });
                   } catch {}
                 }
@@ -689,6 +816,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           detail.name
         );
         if (detail.refreshToken) {
+          // 持久化 refresh token，供会话过期后 refreshSession() 无感恢复。
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('clipop_refresh_token', detail.refreshToken);
+          }
           try {
             const client = await getSupabaseClient();
             await client.auth.setSession({
@@ -742,6 +873,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.addEventListener('clipop-desktop-login', desktopHandler);
     window.addEventListener('clipop-auth-change', authChangeHandler);
     window.addEventListener('clipop-auth-session', authSessionHandler);
+    setupSupabaseAuthListener();
     };
 
     if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
@@ -754,11 +886,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (desktopHandler) window.removeEventListener('clipop-desktop-login', desktopHandler);
       if (authChangeHandler) window.removeEventListener('clipop-auth-change', authChangeHandler);
       if (authSessionHandler) window.removeEventListener('clipop-auth-session', authSessionHandler);
+      if (supabaseAuthUnsubscribe) supabaseAuthUnsubscribe();
     };
   }, [checkAuthState]);
 
   async function signIn(email: string, password: string) {
     setError(null);
+
+    // 归一化：中文输入法的全角字符（ａｄｍｉｎ＠１２３）和首尾空白是
+    // "凭据正确却登录失败"的头号客户端根因，统一在入口转换。
+    email = normalizeAuthInput(email).toLowerCase();
+    password = normalizeAuthInput(password);
 
     if (!isSupabaseConfigured() || useDemo) {
       if (isDemoAdmin(email, password)) {
@@ -801,19 +939,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { data, error: authError } = await client.auth.signInWithPassword({ email, password });
 
       if (authError) {
-        if (isDemoAdmin(email, password)) {
-          const adminUser = getDemoAdminUser(email);
-          const demoToken = generateDemoToken(adminUser);
-          setUser(adminUser);
-          saveDemoUser(adminUser);
-          setUseDemo(true);
-          setAccessToken(demoToken);
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('clipop_access_token', demoToken);
-          }
-          return { error: null, token: demoToken, email: adminUser.email };
-        }
-
+        // 注意：这里不再走 demo 管理员兜底。admin@126.com / admin@clipop.ai
+        // 已有真实 Supabase 账号，密码错误时若走兜底会产生"假登录成功 →
+        // 跳转后被清除 → 又变未登录"的死循环（用户感知: 怎么都登录不上）。
+        // 密码错就明确报错，让用户改用正确密码。
         if (authError.message.toLowerCase().includes('invalid login credentials')) {
           const providerHint = await getSignInProviderHint(email);
           if (providerHint === 'google') {
@@ -833,11 +962,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const token = data.session.access_token || null;
         const refreshToken = data.session.refresh_token || null;
         setAccessToken(token);
-        if (token && typeof window !== 'undefined') {
-          localStorage.setItem('clipop_access_token', token);
-          if (refreshToken) localStorage.setItem('clipop_refresh_token', refreshToken);
-          setAuthCookies(token, refreshToken);
-        }
+        persistAuthTokens(token, refreshToken);
         const userData = await verifyTokenAndFetchUser(data.session.access_token!);
         if (userData) {
           setUser(userData);
@@ -847,44 +972,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       return { error: null, token: null };
     } catch {
-      if (isDemoAdmin(email, password)) {
-        const adminUser = getDemoAdminUser(email);
-        const demoToken = generateDemoToken(adminUser);
-        setUser(adminUser);
-        saveDemoUser(adminUser);
-        setUseDemo(true);
-        setAccessToken(demoToken);
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('clipop_access_token', demoToken);
-          setAuthCookies(demoToken);
-        }
-        return { error: null, token: demoToken, email: adminUser.email };
-      }
-      const registered = findRegisteredUser(email, password);
-      if (registered) {
-        const demoUser: User = {
-          id: registered.id,
-          email: registered.email,
-          name: registered.name,
-          role: 'user',
-          avatarUrl: null,
-        };
-        const demoToken = generateDemoToken(demoUser);
-        setUser(demoUser);
-        saveDemoUser(demoUser);
-        setUseDemo(true);
-        setAccessToken(demoToken);
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('clipop_access_token', demoToken);
-        }
-        return { error: null, token: demoToken, email: demoUser.email };
-      }
+      // 网络异常时绝不回落 demo 假登录（会话会被清除，制造"登录失败"错觉），
+      // 直接如实报错让用户重试。
       return { error: 'Network error. Please try again later.' };
     }
   }
 
   async function signUp(email: string, password: string, name: string) {
     setError(null);
+
+    // 同 signIn：全角→半角归一化，防中文输入法导致的注册失败
+    email = normalizeAuthInput(email).toLowerCase();
+    password = normalizeAuthInput(password);
 
     if (!isSupabaseConfigured() || useDemo) {
       const existingUsers = getRegisteredUsers();
@@ -961,7 +1060,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             role: 'user',
             google_id: null,
           }, { onConflict: 'id' });
-          await client.from('credits').insert({ user_id: authData.user.id, balance: 100 });
+          await client.from('credits').insert({ user_id: authData.user.id, balance: 60 });
           await client.from('subscriptions').insert({ user_id: authData.user.id, plan_type: 'free', status: 'active' });
         } catch {}
       }
@@ -971,10 +1070,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const token = session.access_token || null;
         const refreshToken = session.refresh_token || null;
         setAccessToken(token);
-        if (token && typeof window !== 'undefined') {
-          localStorage.setItem('clipop_access_token', token);
-          if (refreshToken) localStorage.setItem('clipop_refresh_token', refreshToken);
-        }
+        persistAuthTokens(token, refreshToken);
         const userData = await verifyTokenAndFetchUser(session.access_token!);
         if (userData) {
           setUser(userData);
@@ -987,10 +1083,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const token = signInData.session.access_token || null;
         const refreshToken = signInData.session.refresh_token || null;
         setAccessToken(token);
-        if (token && typeof window !== 'undefined') {
-          localStorage.setItem('clipop_access_token', token);
-          if (refreshToken) localStorage.setItem('clipop_refresh_token', refreshToken);
-        }
+        persistAuthTokens(token, refreshToken);
         const userData = await verifyTokenAndFetchUser(signInData.session.access_token!);
         if (userData) {
           setUser(userData);
@@ -1109,8 +1202,51 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {}
   }
 
+  // 用 refresh token 刷新会话：API 调用收到 401 时先无感恢复，避免用户
+  // 在"看似已登录"的状态下被过期 token 反复拒绝。成功返回新 access token。
+  const refreshSession = useCallback(async (): Promise<string | null> => {
+    if (!isSupabaseConfigured()) return null;
+    try {
+      const client = await getSupabaseClient();
+      let { data: { session }, error } = await client.auth.refreshSession();
+
+      // storage 里没有可刷新的会话时，用 localStorage 备份的 token 引导。
+      if (!session) {
+        const storedAccess = typeof window !== 'undefined' ? localStorage.getItem('clipop_access_token') : null;
+        const storedRefresh = typeof window !== 'undefined' ? localStorage.getItem('clipop_refresh_token') : null;
+        if (!storedAccess && !storedRefresh) return null;
+        try {
+          const result = await client.auth.setSession({
+            access_token: storedAccess || 'x',
+            refresh_token: storedRefresh || 'x',
+          });
+          session = result.data.session;
+          error = result.error ?? null;
+        } catch {
+          return null;
+        }
+      }
+
+      if (error || !session?.access_token) return null;
+
+      setAccessToken(session.access_token);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('clipop_access_token', session.access_token);
+        if (session.refresh_token) {
+          localStorage.setItem('clipop_refresh_token', session.refresh_token);
+        }
+        setAuthCookies(session.access_token, session.refresh_token);
+      }
+      const userData = await verifyTokenAndFetchUser(session.access_token).catch(() => null);
+      if (userData) setUser(userData);
+      return session.access_token;
+    } catch {
+      return null;
+    }
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, accessToken, loading, error, signIn, signUp, signInWithGoogle, signOut, clearError }}>
+    <AuthContext.Provider value={{ user, accessToken, loading, error, signIn, signUp, signInWithGoogle, signOut, clearError, refreshSession }}>
       {children}
     </AuthContext.Provider>
   );

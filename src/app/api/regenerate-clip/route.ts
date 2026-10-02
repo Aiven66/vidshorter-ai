@@ -40,6 +40,10 @@ export async function POST(request: NextRequest) {
     // concatenated=true 表示上传的文件是拼接的 [moov] + [fragment]，
     // ffmpeg 需要使用慢速 seek 和错误容忍模式
     const concatenated = formData.get('concatenated') === 'true';
+    // 注意：本端点**故意不做付费门控**。它是「真实画质在线预览」的渲染管线
+    // （把 fallback/link_only 占位成片升级为可放映 mp4），免费用户必须能用，
+    // 否则只能看 YouTube embed / 模糊缩略图占位。
+    // 「导出即付费墙」统一挂在下载语义的端点上：cut-clip / download-youtube-clip。
 
     if (!file) {
       return NextResponse.json({ error: 'No file uploaded' }, { status: 400 });

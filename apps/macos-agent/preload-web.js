@@ -45,6 +45,16 @@ const desktopBridge = {
     const r = await ipcRenderer.invoke('get-media-base-url');
     return r?.baseUrl || '';
   },
+  realHumanStatus: () => ipcRenderer.invoke('realhuman:status'),
+  realHumanDownloadModels: () => ipcRenderer.invoke('realhuman:download-models'),
+  realHumanListHosts: () => ipcRenderer.invoke('realhuman:list-hosts'),
+  realHumanGenerate: (input) => ipcRenderer.invoke('realhuman:generate', input),
+  realHumanCancel: () => ipcRenderer.invoke('realhuman:cancel'),
+  onRealHumanEvent: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('realhuman:event', handler);
+    return () => ipcRenderer.removeListener('realhuman:event', handler);
+  },
 };
 
 contextBridge.exposeInMainWorld('vidshorterDesktop', desktopBridge);

@@ -25,6 +25,8 @@ import {
   downloadClipViaBrowser,
   extractYouTubeVideoId,
 } from '@/lib/youtube-clip-download';
+import { isAdminUser } from '@/lib/admin-gate';
+import { InsufficientCreditsDialog } from '@/components/insufficient-credits-dialog';
 
 // 从 linkOnlyUrl (https://youtu.be/<id>?t=<seconds>s) 提取 videoId 和 startTime
 function parseYouTubeLink(url: string): { videoId: string; startTime: number } | null {
@@ -142,12 +144,15 @@ function fmt(sec: number): string {
 function ClipPlayerDialog({
   clip, open, onClose,
 }: { clip: VideoClip | null; open: boolean; onClose: () => void }) {
-    const { accessToken } = useAuth();
+    const { accessToken, user } = useAuth();
+    const { plan } = useCredits();
     const { t } = useLocale();
   const [resolved, setResolved] = useState<string>('');
   const [resolving, setResolving] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState<string | null>(null);
+  // 导出即付费墙：免费用户导出时弹出升级引导
+  const [exportPaywallOpen, setExportPaywallOpen] = useState(false);
 
   useEffect(() => {
     if (open) return;
@@ -248,7 +253,14 @@ function ClipPlayerDialog({
   // but that videoUrl could be fMP4 (from MediaRecorder) or webm — unplayable
   // in desktop players. Now ALL YouTube clips go through server-side ffmpeg.
   const handleDownload = async () => {
-    const ytVideoId = extractYouTubeVideoId(clip.linkOnlyUrl);
+    // 导出即付费墙：免费用户只能在线预览，导出前先弹升级引导（管理员豁免）
+    if (plan === 'free' && !isAdminUser(user)) {
+      setExportPaywallOpen(true);
+      return;
+    }
+    // linkOnlyUrl first, videoUrl fallback — covers records where only the
+    // youtu.be page URL was saved in videoUrl.
+    const ytVideoId = extractYouTubeVideoId(clip.linkOnlyUrl) || extractYouTubeVideoId(clip.videoUrl || undefined);
     if (!ytVideoId) {
       if (clip.linkOnlyUrl) window.open(clip.linkOnlyUrl, '_blank');
       return;
@@ -262,11 +274,20 @@ function ClipPlayerDialog({
         startTime: clip.startTime,
         endTime: clip.endTime,
         title: clip.title,
+        // P0 导出即付费墙：服务端据此门控
+        exportPlan: plan,
         onProgress: (msg) => setDownloadProgress(msg),
       });
       success = true;
     } catch (e) {
-      console.warn('[Dashboard Download] Server cut failed:', e instanceof Error ? e.message : e);
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn('[Dashboard Download] Server cut failed:', msg);
+      if (msg.includes('export_requires_paid')) {
+        setExportPaywallOpen(true);
+        setDownloading(false);
+        setDownloadProgress(null);
+        return;
+      }
     }
 
     // Fallback 1: downloadYouTubeClip (alternative server path)
@@ -278,11 +299,20 @@ function ClipPlayerDialog({
           startTime: clip.startTime,
           endTime: clip.endTime,
           title: clip.title,
+          // P0 导出即付费墙：服务端据此门控
+          exportPlan: plan,
           onProgress: (msg) => setDownloadProgress(msg),
         });
         success = true;
       } catch (e2) {
-        console.warn('[Dashboard Download] Fallback failed:', e2 instanceof Error ? e2.message : e2);
+        const msg2 = e2 instanceof Error ? e2.message : String(e2);
+        console.warn('[Dashboard Download] Fallback failed:', msg2);
+        if (msg2.includes('export_requires_paid')) {
+          setExportPaywallOpen(true);
+          setDownloading(false);
+          setDownloadProgress(null);
+          return;
+        }
       }
     }
 
@@ -348,7 +378,10 @@ function ClipPlayerDialog({
             )}
             {/* v50: YouTube clips always go through server-side ffmpeg cut */}
             {(() => {
-              const ytId = extractYouTubeVideoId(clip.linkOnlyUrl);
+              // linkOnlyUrl first, videoUrl fallback — a videoUrl holding a
+              // youtu.be page URL must NOT be direct-downloaded via video-proxy
+              // (it would save the YouTube HTML page as .mp4 — unplayable).
+              const ytId = extractYouTubeVideoId(clip.linkOnlyUrl) || extractYouTubeVideoId(clip.videoUrl || undefined);
               if (ytId) {
                 return (
                   <Button
@@ -365,13 +398,26 @@ function ClipPlayerDialog({
                   </Button>
                 );
               }
-              // Non-YouTube clip — direct download
+              // Non-YouTube clip (本地上传) — direct download，同样受导出即付费墙约束
               if (downloadUrl) {
                 return (
-                  <Button size="sm" variant="outline" asChild>
-                    <a href={downloadUrl} download={`${clip.title}.mp4`}>
-                      <Download className="h-4 w-4 mr-1" />{t('video.download')}
-                    </a>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      if (plan === 'free' && !isAdminUser(user)) {
+                        setExportPaywallOpen(true);
+                        return;
+                      }
+                      const a = document.createElement('a');
+                      a.href = downloadUrl;
+                      a.download = `${clip.title}.mp4`;
+                      document.body.appendChild(a);
+                      a.click();
+                      a.remove();
+                    }}
+                  >
+                    <Download className="h-4 w-4 mr-1" />{t('video.download')}
                   </Button>
                 );
               }
@@ -380,6 +426,13 @@ function ClipPlayerDialog({
           </div>
         </div>
       </DialogContent>
+
+      {/* 导出即付费墙：免费用户导出拦截（订阅优先 + 积分包兜底） */}
+      <InsufficientCreditsDialog
+        open={exportPaywallOpen}
+        onOpenChange={setExportPaywallOpen}
+        reason="export"
+      />
     </Dialog>
   );
 }
@@ -738,7 +791,7 @@ export default function DashboardPage() {
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-bold">{creditsLoading ? '...' : balance.toLocaleString()}</div>
-              <p className="text-xs text-muted-foreground mt-1">{t('dashboard.credits.reset')}</p>
+              <p className="text-xs text-muted-foreground mt-1">{t('dashboard.creditsReset')}</p>
             </CardContent>
           </Card>
 

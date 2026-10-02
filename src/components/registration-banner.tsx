@@ -70,7 +70,7 @@ export function RegistrationBanner() {
         <div
           className="h-1 w-full"
           style={{
-            background: 'linear-gradient(90deg, #667eea, #764ba2, #f093fb, #4facfe)',
+            background: 'linear-gradient(90deg, var(--gold-dim), var(--gold), var(--gold-light))',
           }}
         />
 
@@ -87,10 +87,10 @@ export function RegistrationBanner() {
           {/* Header */}
           <div className="mb-4 flex items-start gap-3">
             <div
-              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-white shadow-lg"
+              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-primary-foreground shadow-lg"
               style={{
-                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                boxShadow: '0 8px 24px -6px rgba(102, 126, 234, 0.5)',
+                background: 'linear-gradient(135deg, var(--gold-light) 0%, var(--gold-dim) 100%)',
+                boxShadow: '0 8px 24px -6px color-mix(in oklab, var(--gold) 45%, transparent)',
               }}
             >
               <Gift className="h-6 w-6" />
@@ -103,7 +103,7 @@ export function RegistrationBanner() {
                 <span
                   className="text-2xl font-extrabold tracking-tight"
                   style={{
-                    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                    background: 'linear-gradient(135deg, var(--gold-light) 0%, var(--gold-dim) 100%)',
                     WebkitBackgroundClip: 'text',
                     WebkitTextFillColor: 'transparent',
                   }}
@@ -133,10 +133,10 @@ export function RegistrationBanner() {
           <div className="space-y-2">
             <Link
               href="/register"
-              className="flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white shadow-lg transition-all hover:shadow-xl active:scale-[0.98]"
+              className="flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-lg transition-all hover:shadow-xl active:scale-[0.98]"
               style={{
-                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                boxShadow: '0 8px 24px -6px rgba(102, 126, 234, 0.5)',
+                background: 'linear-gradient(135deg, var(--gold-light) 0%, var(--gold) 100%)',
+                boxShadow: '0 8px 24px -6px color-mix(in oklab, var(--gold) 45%, transparent)',
               }}
             >
               <Crown className="h-4 w-4" />

@@ -48,7 +48,9 @@ export function Providers({ children, initialLocale, initialTranslations }: { ch
     <ThemeProvider
       attribute="class"
       defaultTheme="dark"
-      enableSystem
+      // 平台默认深色：不跟随系统偏好（避免 OS 浅色时把默认主题拉成浅色）
+      // 使用独立 storageKey，忽略历史遗留的 theme=light 偏好，保证新老访客首屏都是深色
+      storageKey="clipop-theme"
       disableTransitionOnChange
     >
       <ProviderErrorBoundary name="Locale">

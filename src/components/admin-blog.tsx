@@ -198,6 +198,12 @@ export function BlogPage({ locale }: BlogPageProps) {
   const [blogContent, setBlogContent] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
+  // 自动分类：发布时根据文章内容 LLM 提炼分类
+  const [autoCategorize, setAutoCategorize] = useState(true);
+  const [htmlAutoCategorize, setHtmlAutoCategorize] = useState(true);
+  // 存量一键全部分类
+  const [autoCatBusy, setAutoCatBusy] = useState(false);
+  const [autoCatResult, setAutoCatResult] = useState<string | null>(null);
 
   // ========= HTML upload mode state =========
   const [createMode, setCreateMode] = useState<'traditional' | 'html'>('traditional');
@@ -229,6 +235,37 @@ export function BlogPage({ locale }: BlogPageProps) {
 
 
   const isAdmin = user?.role === 'admin' || user?.email === 'admin@126.com' || user?.email === 'admin@clipop.ai' || user?.email === 'admin@vidshorter.ai';
+
+  // 一键为存量文章自动提炼分类（LLM）
+  async function runAutoCategorize() {
+    if (!accessToken || !isAdmin) return;
+    setAutoCatBusy(true);
+    setAutoCatResult(null);
+    try {
+      const res = await fetch('/api/admin/blog/auto-categorize', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setAutoCatResult(
+          locale === 'zh'
+            ? `已处理 ${data.processed} 篇，更新 ${data.updated} 条，失败 ${data.failed}，跳过 ${data.skipped}`
+            : `Processed ${data.processed}, updated ${data.updated} rows, failed ${data.failed}, skipped ${data.skipped}`
+        );
+        await fetchPosts();
+      } else {
+        setError(data.error || 'Auto-categorize failed');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Auto-categorize failed');
+    } finally {
+      setAutoCatBusy(false);
+    }
+  }
 
   const fetchPosts = useCallback(async (page: number = 1) => {
     setLoading(true);
@@ -681,7 +718,8 @@ export function BlogPage({ locale }: BlogPageProps) {
           // 新建模式：使用 POST 创建新文章
           const payload = {
             title: blogTitle.trim(),
-            category: blogCategory.trim() || 'AI Video Clipping',
+            category: autoCategorize ? '' : blogCategory.trim() || 'AI Video Clipping',
+            autoCategorize,
             coverImage: blogCoverImage.trim(),
             content: blogContent.trim(),
             publish: true,
@@ -873,8 +911,10 @@ export function BlogPage({ locale }: BlogPageProps) {
       if (htmlTitle.trim()) {
         formData.append('title', htmlTitle.trim());
       }
-      // 分类可选，如果用户没有输入则由后端从HTML提取
-      if (htmlCategory.trim()) {
+      // 分类可选：开启自动分类时交给后端根据 HTML 内容 LLM 提炼；否则用用户输入
+      if (htmlAutoCategorize) {
+        formData.append('autoCategorize', 'true');
+      } else if (htmlCategory.trim()) {
         formData.append('category', htmlCategory.trim());
       }
       formData.append('htmlFile', htmlFile, htmlFile.name || 'article.html');
@@ -977,8 +1017,23 @@ export function BlogPage({ locale }: BlogPageProps) {
               <RefreshCw className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
               {locale === 'zh' ? '同步内置文章' : 'Sync Built-in'}
             </Button>
+            <Button
+              variant="outline"
+              onClick={runAutoCategorize}
+              disabled={autoCatBusy}
+              className="flex items-center gap-2"
+            >
+              {autoCatBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Tag className="h-4 w-4" />}
+              {locale === 'zh' ? '一键全部分类' : 'Auto-categorize all'}
+            </Button>
           </div>
         </div>
+
+        {autoCatResult && (
+          <div className="mb-4 p-3 bg-emerald-50 text-emerald-700 rounded-lg text-sm">
+            {autoCatResult}
+          </div>
+        )}
 
         {error && (
           <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-lg text-sm">
@@ -1200,6 +1255,15 @@ export function BlogPage({ locale }: BlogPageProps) {
               onChange={(e) => setBlogCategory(e.target.value)}
               placeholder={locale === 'zh' ? 'AI Video Clipping' : 'AI Video Clipping'}
             />
+            <label className="flex items-center gap-2 text-xs text-muted-foreground pt-1 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={autoCategorize}
+                onChange={(e) => setAutoCategorize(e.target.checked)}
+                className="h-4 w-4"
+              />
+              {locale === 'zh' ? '按内容自动分类（推荐）' : 'Auto-categorize by content (recommended)'}
+            </label>
           </div>
           <div className="md:col-span-2">
             <CoverImageUploader
@@ -1326,6 +1390,15 @@ export function BlogPage({ locale }: BlogPageProps) {
             onChange={(e) => setHtmlCategory(e.target.value)}
             placeholder={locale === 'zh' ? 'AI Video Clipping' : 'AI Video Clipping'}
           />
+          <label className="flex items-center gap-2 text-xs text-muted-foreground pt-1 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={htmlAutoCategorize}
+              onChange={(e) => setHtmlAutoCategorize(e.target.checked)}
+              className="h-4 w-4"
+            />
+            {locale === 'zh' ? '按文章内容自动提炼分类（推荐）' : 'Auto-categorize from HTML content (recommended)'}
+          </label>
         </div>
 
         {/* HTML 文件拖拽/点击上传区 */}

@@ -9,7 +9,7 @@
 
 import sharp from 'sharp';
 import { Tensor } from 'onnxruntime-node';
-import { getModelSession } from './inference';
+import { acquireModelSession, releaseModelSession } from './inference';
 import { fitSize, roundToMultiple } from './image-ops';
 
 const MAX_INPUT_SIDE = 960;
@@ -51,21 +51,29 @@ async function upscale2x(input: RawImage): Promise<RawImage> {
     floatInput[2 * plane + i] = data[i * 3 + 2] / 255;
   }
 
-  const session = await getModelSession('swin2sr');
-  const results = await session.run({
-    pixel_values: new Tensor('float32', floatInput, [1, 3, height, width]),
-  });
-  const output = results[session.outputNames[0]];
-  const outData = output.data as Float32Array;
-  const outH = output.dims[2] as number;
-  const outW = output.dims[3] as number;
-  const outPlane = outW * outH;
+  // 会话借出 → 推理+解码完成即归还，允许驱逐器回收内存
+  const session = await acquireModelSession('swin2sr');
+  let out: Buffer;
+  let outW: number;
+  let outH: number;
+  try {
+    const results = await session.run({
+      pixel_values: new Tensor('float32', floatInput, [1, 3, height, width]),
+    });
+    const output = results[session.outputNames[0]];
+    const outData = output.data as Float32Array;
+    outH = output.dims[2] as number;
+    outW = output.dims[3] as number;
+    const outPlane = outW * outH;
 
-  const out = Buffer.alloc(outPlane * 3);
-  for (let i = 0; i < outPlane; i++) {
-    out[i * 3] = Math.min(255, Math.max(0, Math.round(outData[i] * 255)));
-    out[i * 3 + 1] = Math.min(255, Math.max(0, Math.round(outData[outPlane + i] * 255)));
-    out[i * 3 + 2] = Math.min(255, Math.max(0, Math.round(outData[2 * outPlane + i] * 255)));
+    out = Buffer.alloc(outPlane * 3);
+    for (let i = 0; i < outPlane; i++) {
+      out[i * 3] = Math.min(255, Math.max(0, Math.round(outData[i] * 255)));
+      out[i * 3 + 1] = Math.min(255, Math.max(0, Math.round(outData[outPlane + i] * 255)));
+      out[i * 3 + 2] = Math.min(255, Math.max(0, Math.round(outData[2 * outPlane + i] * 255)));
+    }
+  } finally {
+    releaseModelSession('swin2sr');
   }
   return { data: out, width: outW, height: outH };
 }

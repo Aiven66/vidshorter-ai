@@ -17,11 +17,16 @@
     "test:alipay-payment": "node --import tsx scripts/check-alipay-payment-flow.ts",
     "test:blog-feedback": "node --import tsx scripts/check-blog-feedback-flow.ts",
     "test:blog-routing": "node --import tsx scripts/check-blog-routing.ts",
+    "test:batch": "node --import tsx scripts/check-batch.ts",
     "test:creem-payment": "node --import tsx scripts/check-creem-payment-flow.ts",
+    "test:credits": "node --import tsx scripts/check-credits.ts",
     "test:desktop-auth": "node --import tsx scripts/check-desktop-auth-flow.ts",
     "test:download-latest": "node --import tsx scripts/check-download-latest-route.ts",
     "test:home-i18n": "node --import tsx scripts/check-home-i18n.ts",
     "test:paypal-payment": "node --import tsx scripts/check-paypal-payment-flow.ts",
+    "test:recap": "node --import tsx scripts/check-recap.ts",
+    "test:scenarios": "node --import tsx scripts/check-scenarios.ts",
+    "test:video-notes": "node --import tsx scripts/check-video-notes.ts",
     "test:web-auth": "node --import tsx scripts/check-web-auth-regressions.ts",
     "test:windows-agent": "node --import tsx scripts/check-windows-agent.ts",
     "start": "bash ./scripts/start.sh",
@@ -66,7 +71,9 @@
     "@tiptap/extension-placeholder": "^3.26.1",
     "@tiptap/react": "^3.26.1",
     "@tiptap/starter-kit": "^3.26.1",
+    "@upstash/qstash": "^2.11.3",
     "@waffo/pancake-ts": "^0.17.0",
+    "archiver": "^8.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
@@ -113,6 +120,7 @@
     "@types/pg": "^8.16.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@vercel/nft": "0.27.1",
     "critters": "^0.0.25",
     "eslint": "^9",
     "eslint-config-next": "16.1.1",
@@ -123,10 +131,17 @@
     "tailwindcss": "^4",
     "tsup": "^8.3.5",
     "tsx": "^4.19.2",
-    "typescript": "^5"
+    "typescript": "^5",
+    "undici": "^8.10.1"
   },
   "packageManager": "pnpm@9.0.0",
   "engines": {
-    "node": "20.x"
+    "node": "24.x"
+  },
+  "optionalDependencies": {
+    "@img/sharp-darwin-arm64": "0.35.3",
+    "@img/sharp-libvips-darwin-arm64": "1.3.2",
+    "@img/sharp-libvips-linux-x64": "1.3.2",
+    "@img/sharp-linux-x64": "0.35.3"
   }
 }

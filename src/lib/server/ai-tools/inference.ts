@@ -16,7 +16,7 @@ import { InferenceSession } from 'onnxruntime-node';
 const GH_RELEASE_BASE =
   'https://github.com/Aiven66/vidshorter-ai/releases/download/ai-models-v1';
 
-export type AiModelName = 'lama' | 'swin2sr' | 'colorize';
+export type AiModelName = 'lama' | 'swin2sr' | 'colorize' | 'modnet';
 
 interface ModelSource {
   file: string;
@@ -48,9 +48,53 @@ export const MODEL_SOURCES: Record<AiModelName, ModelSource> = {
     primary: `${GH_RELEASE_BASE}/colorize_fp32.onnx`,
     size: 128975480,
   },
+  // Xenova/modnet — 人像前景分割（肖像抠图）。25MB 小模型，直接走 HF 主源。
+  modnet: {
+    file: 'modnet.onnx',
+    primary:
+      'https://huggingface.co/Xenova/modnet/resolve/main/onnx/model.onnx',
+    size: 25888640,
+  },
 };
 
 const sessionCache = new Map<AiModelName, Promise<InferenceSession>>();
+/** 活跃借出计数 — 正在被请求使用（或正在创建）的会话不可驱逐 */
+const activeCount = new Map<AiModelName, number>();
+
+/** 回收除 keep 外所有空闲会话（active=0）。
+ *  函数实例内存装不下多个 fp32 模型常驻（lama+swin2sr+colorize 累积会 OOM
+ *  500，生产实测），所以单会话驻留: 加载新模型前先 release 旧会话。
+ *  在途请求引用计数保护，不会被中途回收。 */
+async function evictIdleSessions(keep: AiModelName): Promise<void> {
+  for (const [name, promise] of [...sessionCache]) {
+    if (name === keep || (activeCount.get(name) ?? 0) > 0) continue;
+    sessionCache.delete(name);
+    try {
+      await promise.then((session) => session.release());
+    } catch {
+      /* 创建失败的 promise 无需释放 */
+    }
+  }
+}
+
+/** 借出模型会话（带活跃计数）。用完必须调 releaseModelSession归还。 */
+export async function acquireModelSession(
+  name: AiModelName
+): Promise<InferenceSession> {
+  // 先计数再创建: 创建期间（下载可达 30s+）驱逐器必须跳过本会话
+  activeCount.set(name, (activeCount.get(name) ?? 0) + 1);
+  try {
+    return await getModelSession(name);
+  } catch (error) {
+    activeCount.set(name, Math.max(0, (activeCount.get(name) ?? 0) - 1));
+    throw error;
+  }
+}
+
+/** 归还借出的模型会话（活跃计数-1；会话留在缓存，空闲后可被驱逐） */
+export function releaseModelSession(name: AiModelName): void {
+  activeCount.set(name, Math.max(0, (activeCount.get(name) ?? 0) - 1));
+}
 
 /** 流式下载模型到 /tmp（带重试），返回本地文件路径 */
 async function downloadModel(source: ModelSource): Promise<string> {
@@ -97,6 +141,7 @@ export function getModelSession(name: AiModelName): Promise<InferenceSession> {
   let promise = sessionCache.get(name);
   if (!promise) {
     promise = (async () => {
+      await evictIdleSessions(name); // 先回收旧会话腾内存，再加载新模型
       const source = MODEL_SOURCES[name];
       const file = await downloadModel(source);
       try {

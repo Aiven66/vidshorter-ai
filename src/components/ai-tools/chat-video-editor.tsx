@@ -19,6 +19,8 @@ import {
   uploadAiInput,
 } from '@/lib/ai-tools/client-api';
 import { formatBytes } from '@/lib/ai-tools/image-utils';
+import { useAiToolCredit, AI_TOOL_COST } from '@/lib/ai-tools/use-ai-tool-credit';
+import { InsufficientCreditsDialog } from '@/components/insufficient-credits-dialog';
 import {
   Send,
   Loader2,
@@ -71,6 +73,7 @@ function getAdminAiConfig(): Record<string, unknown> | null {
 export function ChatVideoEditor() {
   const { t, locale } = useLocale();
   const { user, accessToken, loading: authLoading } = useAuth();
+  const { requestSpend, insufficientOpen, setInsufficientOpen, balance } = useAiToolCredit();
   const [videos, setVideos] = useState<VideoEntry[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -201,6 +204,9 @@ export function ChatVideoEditor() {
     const text = input.trim();
     if (!text || processing || !allUploaded) return;
 
+    // P0: AI 工具积分化 — 每次推理前扣积分
+    if (!(await requestSpend())) return;
+
     setInput('');
     setError(null);
 
@@ -267,7 +273,7 @@ export function ChatVideoEditor() {
       setProcessing(false);
       setStage('');
     }
-  }, [input, processing, allUploaded, videos, messages, accessToken, locale, t]);
+  }, [input, processing, allUploaded, videos, messages, accessToken, locale, t, requestSpend]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -320,7 +326,7 @@ export function ChatVideoEditor() {
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold flex items-center gap-1.5">
                 <ListVideo className="h-4 w-4 text-emerald-500" />
-                {t('aiTools.videoList', { count: videos.length })}
+                {t('aiTools.videoList').replace('{count}', String(videos.length))}
               </h3>
               {videos.length > 0 && (
                 <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={handleReset}>
@@ -382,7 +388,7 @@ export function ChatVideoEditor() {
                       <div className="p-2 flex items-center justify-between">
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-medium truncate">
-                            {t('aiTools.videoN', { n: i + 1 })}
+                            {t('aiTools.videoN').replace('{n}', String(i + 1))}
                           </p>
                           <p className="text-xs text-muted-foreground truncate">
                             {v.file.name} ({formatBytes(v.file.size)})
@@ -613,6 +619,12 @@ export function ChatVideoEditor() {
           </div>
         </Card>
       </div>
+      <InsufficientCreditsDialog
+        open={insufficientOpen}
+        onOpenChange={setInsufficientOpen}
+        currentBalance={balance}
+        requiredCredits={AI_TOOL_COST}
+      />
     </div>
   );
 }

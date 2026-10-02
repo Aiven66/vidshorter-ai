@@ -543,7 +543,7 @@ export const translations: Record<Locale, Record<string, string>> = {
         a5: '国内用户支持支付宝扫码支付，海外用户支持 Creem（Visa、Mastercard、Apple Pay、Google Pay）。',
       },
       mostPopular: '最受欢迎',
-      free: { title: '免费版', price: '$0', period: '/月', desc: '适合试用', feature1: '每天100积分', feature2: '基础视频剪辑', feature3: '720p导出质量', feature4: '含水印', cta: '开始使用' },
+      free: { title: '免费版', price: '$0', period: '/月', desc: '适合试用', feature1: '每天60积分（1次生成）', feature2: '基础视频剪辑', feature3: '720p导出质量', feature4: '含水印', cta: '开始使用' },
       starter: { title: '入门版', price: '$9.9', period: '/月', desc: '适合内容创作者', feature1: '每天500积分', feature2: '优先处理', feature3: '1080p导出质量', feature4: '无水印', feature5: '邮件支持', cta: '立即订阅' },
       pro: { title: '专业版', price: '$19.9', period: '/月', desc: '适合专业人士和团队', feature1: '无限积分', feature2: '最快处理速度', feature3: '4K导出质量', feature4: '无水印', feature5: 'API访问', feature6: '优先支持', cta: '立即订阅' },
     },

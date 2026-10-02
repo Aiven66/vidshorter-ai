@@ -197,25 +197,66 @@ async function testFfmpegDelogo() {
 
   const workDir = await mkdtemp(path.join(tmpdir(), 'ai-ffmpeg-test-'));
   try {
-    // 2 秒 testsrc 视频（640x360），叠加白色水印区域，再用 delogo 去除
+    // 2 秒 testsrc 视频（320x240），左上叠白色水印块，再走路由同构的羽化 delogo 管线
     const inputPath = path.join(workDir, 'input.mp4');
     const outputPath = path.join(workDir, 'output.mp4');
+    const midFrame = path.join(workDir, 'mid.png');
+    const inFrame = path.join(workDir, 'in.png');
+
+    // 与路由 toPixelCoords 一致的坐标计算
+    const videoW = 320, videoH = 240;
+    const rect = { x: 0.05, y: 0.06, w: 0.25, h: 0.17 };
+    const px = Math.max(2, Math.round(rect.x * videoW) & ~1);
+    const py = Math.max(2, Math.round(rect.y * videoH) & ~1);
+    const pw = Math.max(2, Math.min(Math.round(rect.w * videoW) & ~1, videoW - px - 2));
+    const ph = Math.max(2, Math.min(Math.round(rect.h * videoH) & ~1, videoH - py - 2));
+    let m = Math.max(12, Math.round(Math.min(pw, ph) / 3));
+    m = Math.min(m, px, py, videoW - px - pw, videoH - py - ph, 64);
+    if (m < 2) m = 2;
+    const cropX = px - m, cropY = py - m, cropW = pw + 2 * m, cropH = ph + 2 * m;
+    const blurRadius = Math.max(3, Math.min(16, Math.round(Math.min(pw, ph) / 6)));
 
     await execFileAsync(ffmpeg, [
       '-y', '-hide_banner',
-      '-f', 'lavfi', '-i', 'testsrc=duration=2:size=640x360:rate=15',
-      '-vf', 'drawbox=x=40:y=40:w=120:h=50:color=white@0.9:t=fill',
+      '-f', 'lavfi', '-i', 'testsrc=duration=2:size=320x240:rate=12',
+      '-vf', `drawbox=x=${px}:y=${py}:w=${pw}:h=${ph}:color=white@0.95:t=fill`,
       '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
       '-an', inputPath,
     ], { timeout: 60_000 });
 
+    // 羽化掩码（与路由 buildFeatherMask 同构）
+    const gray = Buffer.alloc(cropW * cropH, 0);
+    const bx0 = Math.max(0, Math.floor(m - 2));
+    const by0 = Math.max(0, Math.floor(m - 2));
+    const bx1 = Math.min(cropW, Math.ceil(m + pw + 2));
+    const by1 = Math.min(cropH, Math.ceil(m + ph + 2));
+    for (let y = by0; y < by1; y++) gray.fill(255, y * cropW + bx0, y * cropW + bx1);
+    const feather = Math.max(2, Math.min(m, m, cropW - (m + pw), cropH - (m + ph)) / 2.2);
+    let maskPipeline = sharp(gray, { raw: { width: cropW, height: cropH, channels: 1 } });
+    if (feather >= 1) maskPipeline = maskPipeline.blur(Math.min(feather, 60));
+    const maskPath = path.join(workDir, 'mask0.png');
+    await writeFile(maskPath, await maskPipeline.png().toBuffer());
+
+    // 羽化滤镜图（与路由 v2 一致）
+    const filter = [
+      `[0:v]split=2[vbase][c0]`,
+      `[c0]crop=${cropW}:${cropH}:${cropX}:${cropY},delogo=x=${m}:y=${m}:w=${pw}:h=${ph},boxblur=luma_radius=${blurRadius}:luma_power=1:chroma_radius=${blurRadius}:chroma_power=1,noise=alls=3:allf=t,format=yuva420p[f0]`,
+      `[1:v]format=gray[fm0]`,
+      `[f0][fm0]alphamerge[am0]`,
+      `[vbase][am0]overlay=${cropX}:${cropY}[ov0]`,
+      `[ov0]format=yuv420p[vout]`,
+    ].join(';');
+
     await execFileAsync(ffmpeg, [
       '-y', '-hide_banner',
       '-i', inputPath,
-      '-vf', 'delogo=x=42:y=42:w=116:h=46',
-      '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
-      '-an', outputPath,
-    ], { timeout: 60_000 });
+      '-i', maskPath,
+      '-filter_complex', filter,
+      '-map', '[vout]',
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21',
+      '-an', '-movflags', '+faststart',
+      outputPath,
+    ], { timeout: 120_000, maxBuffer: 16 * 1024 * 1024 });
 
     const out = await readFile(outputPath);
     assert.ok(out.byteLength > 1024, 'delogo output too small');
@@ -228,7 +269,27 @@ async function testFfmpegDelogo() {
       const { stderr } = await execFileAsync(ffmpeg, ['-hide_banner', '-i', outputPath], { timeout: 30_000 }).catch((e) => e);
       assert.ok(/Video:/.test(String(stderr)), 'output must contain decodable video stream');
     }
-    console.log(`✓ ffmpeg delogo: ${out.byteLength} bytes output, decodable`);
+
+    // 效果验证: 提取输入/输出的第 1s 帧，水印中心必须不再是白色，区域外基本不变
+    await execFileAsync(ffmpeg, ['-y', '-hide_banner', '-ss', '1', '-i', inputPath, '-frames:v', '1', inFrame], { timeout: 30_000 });
+    await execFileAsync(ffmpeg, ['-y', '-hide_banner', '-ss', '1', '-i', outputPath, '-frames:v', '1', midFrame], { timeout: 30_000 });
+    const inRaw = await sharp(inFrame).raw().toBuffer({ resolveWithObject: true });
+    const outRaw = await sharp(midFrame).raw().toBuffer({ resolveWithObject: true });
+    const cx = px + Math.floor(pw / 2);
+    const cy = py + Math.floor(ph / 2);
+    const cIdx = (cy * outRaw.info.width + cx) * outRaw.info.channels;
+    const [or, og, ob] = [outRaw.data[cIdx], outRaw.data[cIdx + 1], outRaw.data[cIdx + 2]];
+    const iIdx = (cy * inRaw.info.width + cx) * inRaw.info.channels;
+    const [ir, ig, ib] = [inRaw.data[iIdx], inRaw.data[iIdx + 1], inRaw.data[iIdx + 2]];
+    assert.ok(!(or > 240 && og > 240 && ob > 240), `watermark NOT removed, center still white: ${or},${og},${ob}`);
+    assert.ok(ir > 200 && ig > 200 && ib > 200, `input watermark center should be white: ${ir},${ig},${ib}`);
+    // 区域外像素（右下角）变化应很小（重编码误差 + 噪点）
+    const ox = videoW - 30, oy = videoH - 30;
+    const oIdx = (oy * outRaw.info.width + ox) * outRaw.info.channels;
+    const oiIdx = (oy * inRaw.info.width + ox) * inRaw.info.channels;
+    const diff = Math.abs(outRaw.data[oIdx] - inRaw.data[oiIdx]);
+    assert.ok(diff < 40, `outside-region pixel changed too much: ${diff}`);
+    console.log(`✓ ffmpeg feathered delogo: watermark removed (center ${ir},${ig},${ib} → ${or},${og},${ob}), outside diff ${diff}, ${out.byteLength} bytes`);
   } finally {
     await rm(workDir, { recursive: true, force: true }).catch(() => {});
   }

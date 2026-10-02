@@ -10,7 +10,7 @@ import { Suspense, lazy, useState } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useLocale } from '@/lib/locale-context';
-import { Eraser, Video, Wand2, Palette, ShieldCheck, MessageSquare } from 'lucide-react';
+import { Eraser, Video, Wand2, Palette, Scissors, ShieldCheck, MessageSquare } from 'lucide-react';
 
 const ImageDewatermark = lazy(() =>
   import('@/components/ai-tools/image-dewatermark').then((m) => ({ default: m.ImageDewatermark }))
@@ -23,6 +23,9 @@ const ImageUpscale = lazy(() =>
 );
 const ImageColorization = lazy(() =>
   import('@/components/ai-tools/image-colorization').then((m) => ({ default: m.ImageColorization }))
+);
+const ImageRemoveBg = lazy(() =>
+  import('@/components/ai-tools/image-remove-bg').then((m) => ({ default: m.ImageRemoveBg }))
 );
 const ChatVideoEditor = lazy(() =>
   import('@/components/ai-tools/chat-video-editor').then((m) => ({ default: m.ChatVideoEditor }))
@@ -55,26 +58,30 @@ export default function AIToolsPage() {
       </div>
 
       <Tabs value={tab} onValueChange={setTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-5 h-auto mb-6">
-          <TabsTrigger value="image-dewatermark" className="flex flex-col gap-1 py-2.5 sm:flex-row sm:gap-2">
-            <Eraser className="h-4 w-4" />
-            <span className="text-xs sm:text-sm">{t('aiTools.tabImageDewatermark')}</span>
+        <TabsList className="grid w-full grid-cols-2 gap-1 sm:grid-cols-3 md:grid-cols-6 h-auto mb-6">
+          <TabsTrigger value="image-dewatermark" className="h-auto min-w-0 flex-col gap-1 px-1.5 py-2.5">
+            <Eraser className="h-4 w-4 shrink-0" />
+            <span className="text-center text-xs leading-tight sm:text-[13px] whitespace-normal break-words">{t('aiTools.tabImageDewatermark')}</span>
           </TabsTrigger>
-          <TabsTrigger value="video-dewatermark" className="flex flex-col gap-1 py-2.5 sm:flex-row sm:gap-2">
-            <Video className="h-4 w-4" />
-            <span className="text-xs sm:text-sm">{t('aiTools.tabVideoDewatermark')}</span>
+          <TabsTrigger value="video-dewatermark" className="h-auto min-w-0 flex-col gap-1 px-1.5 py-2.5">
+            <Video className="h-4 w-4 shrink-0" />
+            <span className="text-center text-xs leading-tight sm:text-[13px] whitespace-normal break-words">{t('aiTools.tabVideoDewatermark')}</span>
           </TabsTrigger>
-          <TabsTrigger value="image-upscale" className="flex flex-col gap-1 py-2.5 sm:flex-row sm:gap-2">
-            <Wand2 className="h-4 w-4" />
-            <span className="text-xs sm:text-sm">{t('aiTools.tabUpscale')}</span>
+          <TabsTrigger value="image-upscale" className="h-auto min-w-0 flex-col gap-1 px-1.5 py-2.5">
+            <Wand2 className="h-4 w-4 shrink-0" />
+            <span className="text-center text-xs leading-tight sm:text-[13px] whitespace-normal break-words">{t('aiTools.tabUpscale')}</span>
           </TabsTrigger>
-          <TabsTrigger value="image-colorization" className="flex flex-col gap-1 py-2.5 sm:flex-row sm:gap-2">
-            <Palette className="h-4 w-4" />
-            <span className="text-xs sm:text-sm">{t('aiTools.tabColorize')}</span>
+          <TabsTrigger value="image-colorization" className="h-auto min-w-0 flex-col gap-1 px-1.5 py-2.5">
+            <Palette className="h-4 w-4 shrink-0" />
+            <span className="text-center text-xs leading-tight sm:text-[13px] whitespace-normal break-words">{t('aiTools.tabColorize')}</span>
           </TabsTrigger>
-          <TabsTrigger value="chat-video-edit" className="flex flex-col gap-1 py-2.5 sm:flex-row sm:gap-2">
-            <MessageSquare className="h-4 w-4" />
-            <span className="text-xs sm:text-sm">{t('aiTools.tabChatVideoEdit')}</span>
+          <TabsTrigger value="image-remove-bg" className="h-auto min-w-0 flex-col gap-1 px-1.5 py-2.5">
+            <Scissors className="h-4 w-4 shrink-0" />
+            <span className="text-center text-xs leading-tight sm:text-[13px] whitespace-normal break-words">{t('aiTools.tabRemoveBg')}</span>
+          </TabsTrigger>
+          <TabsTrigger value="chat-video-edit" className="h-auto min-w-0 flex-col gap-1 px-1.5 py-2.5">
+            <MessageSquare className="h-4 w-4 shrink-0" />
+            <span className="text-center text-xs leading-tight sm:text-[13px] whitespace-normal break-words">{t('aiTools.tabChatVideoEdit')}</span>
           </TabsTrigger>
         </TabsList>
 
@@ -96,6 +103,11 @@ export default function AIToolsPage() {
         <TabsContent value="image-colorization">
           <Suspense fallback={<ToolSkeleton />}>
             <ImageColorization />
+          </Suspense>
+        </TabsContent>
+        <TabsContent value="image-remove-bg">
+          <Suspense fallback={<ToolSkeleton />}>
+            <ImageRemoveBg />
           </Suspense>
         </TabsContent>
         <TabsContent value="chat-video-edit">

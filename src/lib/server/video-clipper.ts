@@ -4088,27 +4088,15 @@ async function createClipFromYouTubeStream(params: {
   // /stream fast path — this only proxies the video stream, no tryClient needed,
   // so it never triggers YouTube rate-limiting. This is the most reliable path.
   if (preResolvedStreamUrl && cfWorkerUrl) {
-    // 关键：在传入 streamUrl 之前剥离 ip= 参数并设置 ipbits=0。
-    // streamUrl 绑定到前端浏览器调用 /resolve 时的 CF Worker 出口 IP。
-    // 但 Vercel 调用 /stream 时会路由到不同的 CF colo（colo-mismatch），
-    // 导致 IP 不匹配、YouTube 返回 403。剥离 ip= + ipbits=0 让 YouTube
-    // 跳过 IP 验证（签名/HMAC 不受影响，因为 ip/ipbits 不在签名参数中）。
-    // 测试确认：预先剥离比让 CF Worker 内部重试更可靠。
-    const strippedStreamUrl = (() => {
-      try {
-        const u = new URL(preResolvedStreamUrl);
-        u.searchParams.delete('ip');
-        u.searchParams.set('ipbits', '0');
-        return u.toString();
-      } catch {
-        return preResolvedStreamUrl;
-      }
-    })();
+    // 关键（2026-09 修正）：之前在此剥离 ip= 并设置 ipbits=0，据称让 YouTube 跳过 IP 验证。
+    // 但实测（对照：保留 ip= -> googlevideo 302->200 video/mp4 11.8MB；剥离 -> HTTP 403）
+    // 当前 YouTube 对 googlevideo streamUrl 是【强校验 ip=】的，剥离即被 403。
+    // 因此直传原始 streamUrl（含 ip=）；CF Worker /stream 的 fetch 会 follow 302 重签 URL。
     const endpoint = new URL(cfWorkerUrl);
     endpoint.pathname = `${endpoint.pathname.replace(/\/$/, '')}/stream`;
     endpoint.searchParams.set('videoId', videoId);
     endpoint.searchParams.set('maxHeight', '360');
-    endpoint.searchParams.set('streamUrl', strippedStreamUrl);
+    endpoint.searchParams.set('streamUrl', preResolvedStreamUrl);
     if (preResolvedMetadata?.userAgent) endpoint.searchParams.set('userAgent', preResolvedMetadata.userAgent);
     if (preResolvedMetadata?.visitorData) endpoint.searchParams.set('visitorData', preResolvedMetadata.visitorData);
     if (preResolvedMetadata?.xClientName !== undefined) endpoint.searchParams.set('xClientName', String(preResolvedMetadata.xClientName));
@@ -4121,21 +4109,11 @@ async function createClipFromYouTubeStream(params: {
 
     // If there's a separate audio URL, add it as audio input
     if (preResolvedMetadata?.audioUrl) {
-      const strippedAudioUrl = (() => {
-        try {
-          const u = new URL(preResolvedMetadata.audioUrl);
-          u.searchParams.delete('ip');
-          u.searchParams.set('ipbits', '0');
-          return u.toString();
-        } catch {
-          return preResolvedMetadata.audioUrl;
-        }
-      })();
       const audioEndpoint = new URL(cfWorkerUrl);
       audioEndpoint.pathname = `${audioEndpoint.pathname.replace(/\/$/, '')}/stream`;
       audioEndpoint.searchParams.set('videoId', videoId);
       audioEndpoint.searchParams.set('maxHeight', '360');
-      audioEndpoint.searchParams.set('streamUrl', strippedAudioUrl);
+      audioEndpoint.searchParams.set('streamUrl', preResolvedMetadata.audioUrl);
       audioEndpoint.searchParams.set('audio', '1');
       if (preResolvedMetadata?.userAgent) audioEndpoint.searchParams.set('userAgent', preResolvedMetadata.userAgent);
       if (preResolvedMetadata?.visitorData) audioEndpoint.searchParams.set('visitorData', preResolvedMetadata.visitorData);

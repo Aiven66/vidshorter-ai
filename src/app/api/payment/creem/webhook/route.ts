@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { createHmac, timingSafeEqual } from 'crypto';
-import { applyPlanPurchase } from '@/lib/server/subscriptions';
-import { trackSubscribeSuccess } from '@/lib/server/track-event';
+import { applyPlanPurchase, applyCreditPackage, applySubscriptionLapse, isCreditPack, CREDIT_PACKS } from '@/lib/server/subscriptions';
+import { trackSubscribeSuccess, trackSubscriptionLapsed } from '@/lib/server/track-event';
 
 // Force dynamic — prevents Next.js from trying to statically generate this API route at build time.
 export const dynamic = 'force-dynamic';
@@ -42,6 +42,27 @@ export async function POST(request: NextRequest) {
       orderId: string;
     }) => {
       try {
+        // Dispatch: one-time credit pack vs recurring subscription.
+        if (isCreditPack(params.planId)) {
+          await applyCreditPackage({
+            userId: params.userId,
+            packId: params.planId,
+            provider: 'creem',
+            orderId: params.orderId,
+          });
+          const pack = CREDIT_PACKS[params.planId];
+          console.log('[Creem Webhook] Credit pack applied:', params);
+          await trackSubscribeSuccess({
+            userId: params.userId,
+            paymentMethod: 'creem',
+            planId: params.planId,
+            planName: pack?.name || params.planId,
+            amountUsd: pack?.priceIntl,
+            orderId: params.orderId,
+          });
+          return;
+        }
+
         await applyPlanPurchase({
           userId: params.userId,
           planId: params.planId,
@@ -59,7 +80,7 @@ export async function POST(request: NextRequest) {
           orderId: params.orderId,
         });
       } catch (err) {
-        console.error('[Creem Webhook] applyPlanPurchase failed:', err);
+        console.error('[Creem Webhook] applyPurchase failed:', err);
       }
     };
 
@@ -91,7 +112,17 @@ export async function POST(request: NextRequest) {
       const obj = event.object || {};
       const metadata = obj.metadata || {};
       const userId = metadata.user_id;
-      console.log('[Creem Webhook] Subscription canceled/expired:', { userId, eventType });
+      const reason = eventType === 'subscription.expired' ? 'expired' : 'canceled';
+      const orderId = obj.last_transaction_id || event.id || `creem_lapse_${Date.now()}`;
+
+      // 落库降级：canceled 宽限到周期末，expired 立即回收（见 applySubscriptionLapse）
+      if (userId) {
+        const applied = await applySubscriptionLapse({ userId, reason, orderId });
+        console.log('[Creem Webhook] Subscription lapsed:', { userId, reason, applied });
+        await trackSubscriptionLapsed({ userId, reason, planId: metadata.plan_id, orderId });
+      } else {
+        console.warn('[Creem Webhook] Subscription lapse without user_id metadata:', eventType, event.id);
+      }
     }
 
     return Response.json({ received: true });

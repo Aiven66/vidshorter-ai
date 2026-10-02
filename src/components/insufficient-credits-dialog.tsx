@@ -15,14 +15,26 @@ import {
   Shield,
   ArrowRight,
   Clock,
+  Plus,
 } from 'lucide-react';
+import { PaymentModal } from '@/components/payment-modal';
+import { useCredits } from '@/lib/credits-context';
+import { useLocale } from '@/lib/locale-context';
 
 interface InsufficientCreditsDialogProps {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   currentBalance?: number;
   requiredCredits?: number;
+  /** 'credits'（默认）= 积分不足；'export' = 免费用户导出拦截（导出即付费墙） */
+  reason?: 'credits' | 'export';
 }
+
+/** 弹窗内可直接购买的低价一次性积分包（ids 与 CREDIT_PACKS 保持一致）。 */
+const MINI_PACKS = [
+  { id: 'credits_120', name: 'Starter Pack', credits: 120, priceIntl: 2.99, priceCn: 19 },
+  { id: 'credits_300', name: 'Boost Pack', credits: 300, priceIntl: 6.99, priceCn: 49 },
+];
 
 /**
  * 积分不足时的强付费引导对话框
@@ -40,8 +52,14 @@ export function InsufficientCreditsDialog({
   onOpenChange,
   currentBalance = 0,
   requiredCredits = 60,
+  reason = 'credits',
 }: InsufficientCreditsDialogProps) {
+  const { t } = useLocale();
+  const isExport = reason === 'export';
   const [redirecting, setRedirecting] = useState(false);
+  const { refreshCredits } = useCredits();
+  const [selectedPack, setSelectedPack] = useState<(typeof MINI_PACKS)[number] | null>(null);
+  const [paymentOpen, setPaymentOpen] = useState(false);
 
   // 重置 redirecting 状态
   useEffect(() => {
@@ -51,11 +69,25 @@ export function InsufficientCreditsDialog({
     }
   }, [open]);
 
+  const handleBuyPack = (pack: (typeof MINI_PACKS)[number]) => {
+    setSelectedPack(pack);
+    setPaymentOpen(true);
+  };
+
+  // 支付成功后：刷新积分并关闭弹窗
+  const handlePackPaid = () => {
+    refreshCredits().catch(() => {});
+    setPaymentOpen(false);
+    onOpenChange(false);
+  };
+
   const handleUpgrade = () => {
     setRedirecting(true);
     // 跳转到定价页,并在 URL 中带上 source 参数,便于分析转化路径
     if (typeof window !== 'undefined') {
-      window.location.href = '/pricing?source=insufficient_credits';
+      window.location.href = isExport
+        ? '/pricing?source=export_paywall'
+        : '/pricing?source=insufficient_credits';
     }
   };
 
@@ -79,19 +111,25 @@ export function InsufficientCreditsDialog({
               </div>
               <div>
                 <DialogTitle className="text-lg font-semibold leading-tight">
-                  Unlock More Highlights
+                  {isExport ? t('exportPaywall.title') : 'Unlock More Highlights'}
                 </DialogTitle>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  Upgrade to keep creating
+                  {isExport ? t('exportPaywall.subtitle') : 'Upgrade to keep creating'}
                 </p>
               </div>
             </div>
             <DialogDescription className="text-sm text-muted-foreground">
-              You have{' '}
-              <span className="font-semibold text-foreground">{currentBalance} credits</span>{' '}
-              but need{' '}
-              <span className="font-semibold text-foreground">{requiredCredits}</span>{' '}
-              to generate this clip.
+              {isExport ? (
+                t('exportPaywall.desc')
+              ) : (
+                <>
+                  You have{' '}
+                  <span className="font-semibold text-foreground">{currentBalance} credits</span>{' '}
+                  but need{' '}
+                  <span className="font-semibold text-foreground">{requiredCredits}</span>{' '}
+                  to generate this clip.
+                </>
+              )}
             </DialogDescription>
           </DialogHeader>
         </div>
@@ -117,7 +155,7 @@ export function InsufficientCreditsDialog({
               </div>
               <ul className="space-y-1.5">
                 {[
-                  { icon: Coins, text: '500 credits daily (5x more)' },
+                  { icon: Coins, text: '6,000 credits monthly (100 clips)' },
                   { icon: Zap, text: 'Priority processing speed' },
                   { icon: CheckCircle, text: 'No watermark · 1080p export' },
                 ].map((item, i) => (
@@ -148,6 +186,32 @@ export function InsufficientCreditsDialog({
           </div>
         </div>
 
+        {/* 低价积分包快捷购买 */}
+        <div className="px-6 pb-3 pt-1">
+          <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground mb-2">
+            <Plus className="h-3.5 w-3.5" />
+            Or buy a small credit pack — no subscription
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            {MINI_PACKS.map((pack) => (
+              <button
+                key={pack.id}
+                onClick={() => handleBuyPack(pack)}
+                className="rounded-xl border-2 border-muted hover:border-primary/50 hover:bg-primary/5 p-3 text-left transition-all duration-200"
+              >
+                <div className="flex items-center gap-1.5 mb-1">
+                  <Coins className="h-3.5 w-3.5 text-amber-500" />
+                  <span className="text-sm font-semibold">{pack.credits} credits</span>
+                </div>
+                <div className="flex items-baseline gap-1">
+                  <span className="text-lg font-bold">${pack.priceIntl}</span>
+                  <span className="text-[10px] text-muted-foreground">one-time</span>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* CTA 区域 */}
         <div className="px-6 pb-5 pt-1 space-y-2.5">
           <Button
@@ -173,7 +237,7 @@ export function InsufficientCreditsDialog({
             variant="ghost"
             className="w-full h-9 text-xs text-muted-foreground hover:text-foreground"
           >
-            Maybe later, I&apos;ll wait for tomorrow&apos;s credits
+            {isExport ? t('exportPaywall.later') : <>Maybe later, I&apos;ll wait for tomorrow&apos;s credits</>}
           </Button>
         </div>
 
@@ -201,6 +265,24 @@ export function InsufficientCreditsDialog({
           </div>
         </div>
       </DialogContent>
+
+      {/* 内嵌支付弹窗：购买一次性积分包 */}
+      <PaymentModal
+        open={paymentOpen}
+        onOpenChange={setPaymentOpen}
+        plan={
+          selectedPack
+            ? {
+                id: selectedPack.id,
+                name: selectedPack.name,
+                price: { cn: selectedPack.priceCn, intl: selectedPack.priceIntl },
+                period: 'one-time',
+                credits: selectedPack.credits,
+              }
+            : null
+        }
+        onSuccess={handlePackPaid}
+      />
     </Dialog>
   );
 }

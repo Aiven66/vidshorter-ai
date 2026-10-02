@@ -39,6 +39,9 @@ const nextConfig: NextConfig = {
     'uuid',
     'coze-coding-dev-sdk',
     'msedge-tts',
+    // ffmpeg-static 必须外部化: 源码里的 require('ffmpeg-static') 让 nft 把
+    // 二进制打进 Vercel 函数（path.join 导出若被打包会指向错误路径）
+    'ffmpeg-static',
     '@langchain/core',
     '@langchain/openai',
     'langsmith',
@@ -48,9 +51,11 @@ const nextConfig: NextConfig = {
     '@smithy/util-utf8',
     '@smithy/util-stream',
   ],
-  // 注意：不设置 outputFileTracingIncludes/outputFileTracingExcludes，因为 pnpm 的
-  // node_modules 符号链接会导致 Vercel 打包时出现 "invalid deployment package" 错误。
-  // onnxruntime 的原生库通过 serverExternalPackages 外部化，Vercel 的 Next.js 运行时会自动处理。
+  // 注意: 不能用 outputFileTracingIncludes 打包 onnxruntime/ffmpeg 原生库 ——
+  // 任何路由级 tracing 配置都会让 Vercel 取消函数批处理（73 条路由逐个成函数），
+  // 触发 Hobby 计划 "No more than 12 Serverless Functions" 部署失败。
+  // 原生库（libonnxruntime.so.1 / libvips）由 scripts/patch-native-nft.mjs
+  // 在构建后写入 .nft.json 清单解决（dlopen 依赖对 nft 静态分析不可见）。
   images: {
     formats: ['image/avif', 'image/webp'],
     minimumCacheTTL: 86400,
@@ -76,6 +81,10 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   reactStrictMode: true,
   experimental: {
+    // The desktop standalone server runs from the signed macOS app bundle.
+    // Persisting ISR/fetch cache there mutates sealed resources after launch
+    // and makes Gatekeeper report the app as damaged on subsequent starts.
+    isrFlushToDisk: process.env.NEXT_PUBLIC_DESKTOP !== '1',
     optimizeCss: true,
     optimizePackageImports: [
       'lucide-react',

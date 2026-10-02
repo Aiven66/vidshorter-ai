@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { useLocale } from '@/lib/locale-context';
-import { useAuth } from '@/lib/auth-context';
+import { useAuth, normalizeAuthInput } from '@/lib/auth-context';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Video, CheckCircle, Mail, Lock, Monitor, Smartphone } from 'lucide-react';
@@ -232,7 +232,7 @@ function LoginContent() {
                   type="email"
                   placeholder={t('login.emailPlaceholder')}
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => setEmail(normalizeAuthInput(e.target.value))}
                   required
                   className="pl-10 h-11"
                 />

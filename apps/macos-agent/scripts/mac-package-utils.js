@@ -78,13 +78,12 @@ function removeBrokenSymlinks(root) {
 }
 
 function clearExtendedAttributes(root) {
+  // xattr -cr already removes every extended attribute recursively. The old
+  // implementation then spawned seven extra xattr processes for every file
+  // in the 700MB Electron bundle, turning packaging into an hour-long job and
+  // reintroducing Finder metadata through repeated filesystem traversal.
   runQuiet('/usr/bin/xattr', ['-cr', root]);
   runQuiet('/usr/bin/dot_clean', ['-m', root]);
-  walk(root, (item) => {
-    for (const attr of XATTRS_TO_REMOVE) {
-      runQuiet('/usr/bin/xattr', ['-d', attr, item]);
-    }
-  });
 }
 
 function resolveSigningIdentity() {

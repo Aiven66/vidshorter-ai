@@ -244,14 +244,29 @@ export async function POST(req: NextRequest) {
     content?: string;
     coverImage?: string;
     publish?: boolean;
+    /** 前端显式要求自动分类（据文章内容 LLM 提炼） */
+    autoCategorize?: boolean;
   } | null;
 
   const title = body?.title?.trim();
-  const category = body?.category?.trim() || 'AI Video Clipping';
+  let category = body?.category?.trim() || 'AI Video Clipping';
   const content = body?.content?.trim();
 
   if (!title || !content) {
     return NextResponse.json({ error: 'Title and content are required' }, { status: 400 });
+  }
+
+  // 未指定分类或显式开启自动分类时，根据文章内容 LLM 提炼分类
+  const requestAuto = body?.autoCategorize === true;
+  const isDefault = category === 'AI Video Clipping';
+  if (requestAuto || !body?.category?.trim() || isDefault) {
+    try {
+      const { classifyBlogCategory } = await import('@/lib/server/blog/categorize');
+      const auto = await classifyBlogCategory(title, content);
+      if (auto) category = auto;
+    } catch {
+      /* LLM 失败保留原值 */
+    }
   }
 
   try {

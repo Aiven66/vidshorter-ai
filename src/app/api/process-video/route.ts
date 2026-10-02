@@ -3,6 +3,14 @@ import { isSupabaseConfigured } from '@/storage/database/supabase-client';
 import videoClipper from '@/lib/server/video-clipper';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createClient } from '@supabase/supabase-js';
+import {
+  hasQuotaCrossed,
+  isLegacyPaidRow,
+  planQuota,
+  quotaResetDescription,
+  quotaTransactionType,
+  resetBoundary,
+} from '@/lib/plan-credits';
 
 // 获取 service role 客户端用于绕过 RLS 的关键积分操作（服务端专用，不会泄露密钥）
 function getServiceRoleClientForCredits(): SupabaseClient | null {
@@ -33,6 +41,11 @@ interface ProcessVideoRequest {
   jobId?: string;
   videoId?: string;
   quality?: 'sd' | 'hd';
+  // #2 时长分级：最大生成条数（免费限 1 条，Starter+ 可到 10 条），服务端会
+  // 根据订阅 plan 收紧（不信任客户端）。0 = 用系统推荐条数。
+  maxClips?: number;
+  // #2 时长分级：目标短片时长（秒）。>0 生成时把每个 clip 时长裁剪到该档位。
+  targetDuration?: number;
   // Pre-resolved stream URL from CF Worker /resolve (obtained by frontend).
   // When provided, Vercel uses it directly with CF Worker /stream fast path,
   // avoiding the need to call CF Worker /resolve from Vercel (which fails
@@ -181,6 +194,9 @@ export async function POST(request: NextRequest) {
   const clipOffset = clampInt(body.clipOffset, 0, 10_000, 0);
   const clipLimitFromRequest = clampInt(body.clipLimit, 1, 10, 0);
   const desiredClipCountFromRequest = clampInt(body.desiredClipCount, 1, 10, 0);
+  // #2 时长分级：客户端请求的最大条数与目标时长（服务端再按 plan 收紧）
+  const requestedMaxClips = clampInt(body.maxClips, 0, 10, 0);
+  const requestedTargetDuration = clampInt(body.targetDuration, 0, 90, 0);
   const suppliedHighlights = Array.isArray(body.highlights) ? (body.highlights as Highlight[]) : null;
   const suppliedDuration = clampInt(body.duration, 0, 100_000, 0);
   const suppliedTitle = typeof body.title === 'string' ? body.title.trim().slice(0, 120) : '';
@@ -233,33 +249,11 @@ export async function POST(request: NextRequest) {
         const isSupabaseMode = isSupabaseConfigured() && !!bearerToken && !requestedUserId?.startsWith('demo-');
         let userId = requestedUserId || '';
         let userRole = userId === 'demo-admin-id' ? 'admin' : 'user';
+        let userPlan: string | null = null;
         let supabaseClient: SupabaseClient | null = null;
 
-        const planDailyCredits = (planType: string | null | undefined) => {
-          if (planType === 'starter') return 500;
-          if (planType === 'pro') return 1_000_000;
-          return 100;
-        };
-
-        const utcMidnightIso = (now: Date) => new Date(Date.UTC(
-          now.getUTCFullYear(),
-          now.getUTCMonth(),
-          now.getUTCDate(),
-          0,
-          0,
-          0,
-          0,
-        )).toISOString();
-
-        const shouldResetUtc = (lastResetAt: string) => {
-          const last = new Date(lastResetAt);
-          const now = new Date();
-          return (
-            now.getUTCFullYear() !== last.getUTCFullYear()
-            || now.getUTCMonth() !== last.getUTCMonth()
-            || now.getUTCDate() !== last.getUTCDate()
-          );
-        };
+        // 额度与刷新边界定义统一在 @/lib/plan-credits（与 /api/videos/process 同一份真源，
+        // 避免桌面/本地路径与 Web 主路径按不同额度计费）。
 
         if (isSupabaseMode) {
           const { getSupabaseClient } = await import('@/storage/database/supabase-client');
@@ -289,6 +283,14 @@ export async function POST(request: NextRequest) {
           const isAdminEmail = user.email ? ADMIN_EMAILS.has(user.email.toLowerCase()) : false;
           if (isAdminEmail) userRole = 'admin';
 
+          // #2 时长分级门控：凭真实订阅 plan 决定最大条数与目标时长上限
+          const { data: planSub } = await client
+            .from('subscriptions')
+            .select('plan_type, status')
+            .eq('user_id', userId)
+            .maybeSingle();
+          userPlan = planSub?.plan_type ?? null;
+
           if (!isContinuation && clipOffset === 0 && userRole !== 'admin') {
             // 使用 service role client 进行积分操作，绕过 RLS 限制（解决新用户无 credits 行的 bug）
             const adminClient = getServiceRoleClientForCredits();
@@ -296,11 +298,16 @@ export async function POST(request: NextRequest) {
 
             const { data: sub } = await creditsClient
               .from('subscriptions')
-              .select('plan_type')
+              .select('plan_type, current_period_end')
               .eq('user_id', userId)
               .maybeSingle();
-            const dailyCredits = planDailyCredits(sub?.plan_type);
-            const resetAt = utcMidnightIso(new Date());
+            const plan = sub?.plan_type ?? null;
+            const legacyPaid = isLegacyPaidRow(
+              plan,
+              (sub as { current_period_end?: string | null } | null)?.current_period_end ?? null,
+            );
+            const quota = planQuota(plan, { legacyPaid });
+            const resetAt = resetBoundary(quota.period, new Date());
 
             const { data: creditsRow } = await creditsClient
               .from('credits')
@@ -308,14 +315,14 @@ export async function POST(request: NextRequest) {
               .eq('user_id', userId)
               .maybeSingle();
 
-            // 仅在跨 UTC 日时重置积分，避免每次点击都重置（修复"重置 bug"）
-            const shouldReset = !creditsRow || shouldResetUtc(creditsRow.last_reset_at);
+            // 仅在跨过当前计费周期边界时重置（免费档按日 / 付费档按月），避免每次点击都重置（修复"重置 bug"）
+            const shouldReset = !creditsRow || hasQuotaCrossed(quota.period, creditsRow.last_reset_at);
 
             if (!creditsRow) {
               // 新用户：插入 credits 行
               const { error: insertErr } = await creditsClient.from('credits').insert({
                 user_id: userId,
-                balance: dailyCredits,
+                balance: quota.amount,
                 last_reset_at: resetAt,
               });
               if (insertErr) {
@@ -323,21 +330,21 @@ export async function POST(request: NextRequest) {
               }
               await creditsClient.from('credit_transactions').insert({
                 user_id: userId,
-                amount: dailyCredits,
-                type: 'daily_reset',
-                description: 'Daily credits reset (new user)',
+                amount: quota.amount,
+                type: quotaTransactionType(quota.period),
+                description: quotaResetDescription(plan, quota, true),
               });
             } else if (shouldReset) {
-              // 跨日重置：仅在 UTC 日变更时重置
+              // 跨周期重置：仅在 UTC 日/月边界变更时重置
               await creditsClient
                 .from('credits')
-                .update({ balance: dailyCredits, last_reset_at: resetAt })
+                .update({ balance: quota.amount, last_reset_at: resetAt })
                 .eq('user_id', userId);
               await creditsClient.from('credit_transactions').insert({
                 user_id: userId,
-                amount: dailyCredits,
-                type: 'daily_reset',
-                description: 'Daily credits reset',
+                amount: quota.amount,
+                type: quotaTransactionType(quota.period),
+                description: quotaResetDescription(plan, quota),
               });
             }
 
@@ -348,7 +355,7 @@ export async function POST(request: NextRequest) {
               .maybeSingle();
 
             const currentBalance = latestCredits?.balance ?? 0;
-            console.log('[credits] user:', userId, 'balance:', currentBalance, 'dailyCredits:', dailyCredits, 'shouldReset:', shouldReset, 'usingAdmin:', !!adminClient);
+            console.log('[credits] user:', userId, 'balance:', currentBalance, 'quota:', quota.amount, quota.period, 'shouldReset:', shouldReset, 'usingAdmin:', !!adminClient);
             if (currentBalance < 60) {
               throw new Error(`Insufficient credits. You need at least 60 credits. Current balance: ${currentBalance}`);
             }
@@ -395,10 +402,21 @@ export async function POST(request: NextRequest) {
               'AI analysis timed out. Please retry or try another video.',
             );
         if (abortSignal.aborted) return;
+        // #2 时长分级门控：免费限 1 条 + 目标时长 ≤30s；Starter+/Pro/本地 可批量到 10 条、≤90s。
+        // 收紧随真实订阅（userPlan）与用户角色，不信任客户端传值。
+        const isPaidPlan = userPlan === 'starter' || userPlan === 'pro';
+        const isGatedFree = isSupabaseMode && userRole !== 'admin' && !isPaidPlan;
+        const maxAllowedClips = isGatedFree ? 1 : 10;
+        const effectiveMaxClips = requestedMaxClips > 0 ? Math.min(requestedMaxClips, maxAllowedClips) : maxAllowedClips;
+        const maxAllowedDuration = (isGatedFree || (isSupabaseMode && userRole !== 'admin')) ? (isPaidPlan ? 90 : 30) : 90;
+        const effectiveTargetDuration = Math.min(requestedTargetDuration, maxAllowedDuration);
         const recommendedCount =
-          desiredClipCountFromRequest ||
-          (suppliedHighlights && suppliedHighlights.length > 0 ? suppliedHighlights.length : 0) ||
-          recommendClipCount(analysis.duration);
+          Math.min(
+            desiredClipCountFromRequest || effectiveMaxClips ||
+            (suppliedHighlights && suppliedHighlights.length > 0 ? suppliedHighlights.length : 0) ||
+            recommendClipCount(analysis.duration),
+            effectiveMaxClips,
+          );
         const allHighlights = (analysis.highlights as Highlight[]).slice(0, recommendedCount);
         const remaining = Math.max(0, allHighlights.length - clipOffset);
         const batchLimit = Math.max(
@@ -654,7 +672,11 @@ export async function POST(request: NextRequest) {
           const rawStart = Math.max(0, Number.isFinite(highlight.start_time) ? highlight.start_time : 0);
           const rawEnd = Math.max(0, Number.isFinite(highlight.end_time) ? highlight.end_time : rawStart + 60);
           const safeStart = maxDuration > 0 ? Math.min(rawStart, Math.max(0, maxDuration - 1)) : rawStart;
-          const safeEnd = maxDuration > 0 ? Math.min(Math.max(rawEnd, safeStart + 1), maxDuration) : Math.max(rawEnd, safeStart + 1);
+          let safeEnd = maxDuration > 0 ? Math.min(Math.max(rawEnd, safeStart + 1), maxDuration) : Math.max(rawEnd, safeStart + 1);
+          // #2 时长分级：目标时长 >0 时把 clip 长度裁剪到该档位（安全上限已由服务端 clamp）
+          if (effectiveTargetDuration > 0 && safeEnd > safeStart + effectiveTargetDuration) {
+            safeEnd = safeStart + effectiveTargetDuration;
+          }
 
           const draftClip: ClipResult = {
             id: `${jobId}-clip-${clipOffset + index}`,

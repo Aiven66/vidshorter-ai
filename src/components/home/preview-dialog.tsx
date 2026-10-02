@@ -38,6 +38,8 @@ interface PreviewDialogProps {
   onClipUpdated?: (clip: VideoClip) => void;
   downloadingId: string | null;
   fmt: (sec: number) => string;
+  /** 9:16 竖屏成片（Shorts / 竖屏导出）：播放器按竖屏取景，不再用 16:9 容器 */
+  vertical?: boolean;
 }
 
 // 从 linkOnlyUrl (https://youtu.be/<id>?t=<seconds>s) 提取 videoId 和 startTime
@@ -79,6 +81,7 @@ export default function PreviewDialog({
   onClipUpdated,
   downloadingId,
   fmt,
+  vertical = false,
 }: PreviewDialogProps) {
   const { t } = useLocale();
   const [streamLoading, setStreamLoading] = useState(false);
@@ -185,6 +188,14 @@ export default function PreviewDialog({
     }
   }, [open]);
 
+  // 9:16 竖屏：容器按竖屏比例取景（高度受限，宽度由 aspect-ratio 推导），
+  // 媒体层用 object-cover 填满容器。横屏源（如 link_only 的 YouTube 流）因此也能
+  // 以竖屏观感预览，而不是被塞进 16:9 的横屏框里。
+  const frameCls = vertical
+    ? 'relative bg-black rounded-lg overflow-hidden mx-auto aspect-[9/16] h-[min(60vh,620px)]'
+    : 'relative bg-black rounded-lg overflow-hidden w-full aspect-video';
+  const mediaCls = `absolute inset-0 w-full h-full${vertical ? ' object-cover' : ''}`;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-3xl w-[94vw] max-h-[90vh] overflow-y-auto">
@@ -198,19 +209,19 @@ export default function PreviewDialog({
 
         {/* Video player area — fixed aspect ratio to prevent layout overflow */}
         {hasRealMp4 ? (
-          <div className="relative bg-black rounded-lg overflow-hidden w-full aspect-video">
+          <div className={frameCls}>
             <video
               key={clip.id}
               src={proxyUrl(clip)}
               controls
               playsInline
               preload="metadata"
-              className="absolute inset-0 w-full h-full"
+              className={mediaCls}
             />
           </div>
         ) : useYouTubeEmbed && ytInfo ? (
           // link_only clips: use CF Worker /stream (with audio) instead of YouTube iframe embed
-          <div className="relative bg-black rounded-lg overflow-hidden w-full aspect-video">
+          <div className={frameCls}>
             {streamLoading ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center text-white">
                 <Loader2 className="h-10 w-10 animate-spin mb-3" />
@@ -225,7 +236,7 @@ export default function PreviewDialog({
                 controls
                 playsInline
                 autoPlay
-                className="absolute inset-0 w-full h-full"
+                className={mediaCls}
                 crossOrigin="anonymous"
                 // SEEK to clip.startTime when metadata loads — without this,
                 // the video plays from 0:00 (the beginning of the full video),
@@ -271,14 +282,14 @@ export default function PreviewDialog({
             ) : null}
           </div>
         ) : clip.videoUrl ? (
-          <div className="relative bg-black rounded-lg overflow-hidden w-full aspect-video">
+          <div className={frameCls}>
             <video
               key={clip.id}
               src={proxyUrl(clip)}
               controls
               playsInline
               preload="metadata"
-              className="absolute inset-0 w-full h-full"
+              className={mediaCls}
             />
           </div>
         ) : (
@@ -291,9 +302,9 @@ export default function PreviewDialog({
 
         {/* Stream status / loading indicator */}
         {streamLoading && (
-          <div className="flex items-center gap-2 p-3 bg-blue-50 dark:bg-blue-950/30 rounded-lg border border-blue-200 dark:border-blue-800">
-            <Loader2 className="h-4 w-4 text-blue-500 animate-spin" />
-            <span className="text-sm font-medium text-blue-700 dark:text-blue-300">
+          <div className="flex items-center gap-2 p-3 bg-gold/10 rounded-lg border border-gold/25">
+            <Loader2 className="h-4 w-4 text-gold animate-spin" />
+            <span className="text-sm font-medium text-foreground">
               Loading video stream with audio...
             </span>
           </div>

@@ -5,7 +5,10 @@ import {
   fetchTranscript,
   fetchVideoTitle,
   generateNoteFromTranscript,
+  type LocalVideoNote,
+  type TranscriptDiagnostic,
 } from './local-note-generator';
+import { generateNoteWithLLM } from '@/lib/server/video-notes/llm-note-generator';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -48,6 +51,8 @@ interface VideoNoteContent {
   annotations?: CorePointAnnotation[];
   hasTranscript?: boolean;
   totalDuration?: number;
+  /** 笔记生成引擎：llm = doubao LLM，local = 本地启发式兜底（前端不读，仅供诊断/断言） */
+  engine?: 'llm' | 'local';
 }
 
 interface GenerateResponse {
@@ -55,7 +60,17 @@ interface GenerateResponse {
   videoTitle?: string;
   videoUrl: string;
   sourceType: 'youtube' | 'bilibili' | 'local';
+  engine?: 'llm' | 'local';
+  /** 视频逐字稿（带时间锚点），供前端「逐字稿」页签展示与翻译 */
+  transcript?: Array<{ start: number; duration: number; text: string }>;
+  /** 逐字稿超过上限被截断时为 true（前端会明文提示） */
+  transcriptTruncated?: boolean;
+  /** 逐字稿来源与失败原因（明文，便于排查；无字幕时前端可展示具体原因） */
+  transcriptDiag?: TranscriptDiagnostic;
 }
+
+/** 逐字稿返回上限：防止超长视频把响应体撑爆（超出时前端明文提示已截断） */
+const TRANSCRIPT_MAX = 1500;
 
 // service role client，用于绕过 RLS 进行积分扣减
 function getServiceRoleClient() {
@@ -215,24 +230,47 @@ export async function POST(request: NextRequest) {
     // 获取视频标题
     const videoTitle = await fetchVideoTitle(videoUrl, sourceType);
 
-    // 本地算法生成笔记（不依赖云端 LLM）
-    const transcript = await fetchTranscript(videoUrl, sourceType, clientLocale);
-    const localNote = generateNoteFromTranscript(
-      transcript,
-      videoTitle,
-      videoUrl,
-      sourceType,
-      clientLocale,
+    // 高光笔记生成：LLM(doubao) 优先（仅在有字幕时尝试），失败/无字幕回落本地启发式算法
+    const transcriptDiag: TranscriptDiagnostic = { source: 'none', attempts: [] };
+    const transcript = await fetchTranscript(videoUrl, sourceType, clientLocale, transcriptDiag);
+    console.log(
+      `[video-notes/generate] transcript source=${transcriptDiag.source} lines=${transcript.length} attempts=${JSON.stringify(transcriptDiag.attempts)}`,
     );
 
+    let engine: 'llm' | 'local' = 'local';
+    let generated: LocalVideoNote | null = null;
+    if (transcript.length > 0) {
+      const llmNote = await generateNoteWithLLM(
+        transcript,
+        videoTitle,
+        videoUrl,
+        sourceType,
+        clientLocale,
+      );
+      if (llmNote) {
+        engine = 'llm';
+        generated = llmNote;
+      }
+    }
+    if (!generated) {
+      generated = generateNoteFromTranscript(
+        transcript,
+        videoTitle,
+        videoUrl,
+        sourceType,
+        clientLocale,
+      );
+    }
+
     const note: VideoNoteContent = {
-      summary: localNote.summary,
-      highlights: localNote.highlights.slice(0, 15),
-      takeaways: localNote.takeaways.slice(0, 8),
-      corePoints: localNote.corePoints || [],
+      summary: generated.summary,
+      highlights: generated.highlights.slice(0, 15),
+      takeaways: generated.takeaways.slice(0, 8),
+      corePoints: generated.corePoints || [],
       annotations: [],
-      hasTranscript: localNote.hasTranscript,
-      totalDuration: localNote.totalDuration,
+      hasTranscript: generated.hasTranscript,
+      totalDuration: generated.totalDuration,
+      engine,
     };
 
     // 扣减积分（成功后扣减，管理员免扣）
@@ -266,6 +304,14 @@ export async function POST(request: NextRequest) {
       videoTitle,
       videoUrl,
       sourceType,
+      engine,
+      transcript: transcript.slice(0, TRANSCRIPT_MAX).map((s) => ({
+        start: Math.max(0, Math.round(s.start * 100) / 100),
+        duration: Math.max(0, Math.round(s.duration * 100) / 100),
+        text: s.text,
+      })),
+      transcriptTruncated: transcript.length > TRANSCRIPT_MAX,
+      transcriptDiag,
     };
     return Response.json(result);
   } catch (err: any) {

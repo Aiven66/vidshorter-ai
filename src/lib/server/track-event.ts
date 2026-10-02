@@ -108,4 +108,60 @@ export async function trackSubscribeSuccess(params: {
   }
 }
 
+/**
+ * 记录订阅流失事件（subscribe_lapsed）——订阅被取消 / 到期回收时写入。
+ * 与 subscribe_success 对称，幂等键：`server_lapse_${orderId}`。
+ */
+export async function trackSubscriptionLapsed(params: {
+  userId: string;
+  reason: 'canceled' | 'expired';
+  planId?: string;
+  orderId: string;
+}): Promise<void> {
+  try {
+    const client = getServiceRoleClient();
+    if (!client) return;
+
+    const idempotencyKey = `server_lapse_${params.orderId}`;
+    const { data: existing, error: queryError } = await client
+      .from('behavior_events')
+      .select('id')
+      .eq('session_id', idempotencyKey);
+
+    if (queryError) {
+      console.warn('[server/track] lapse dedup query error:', queryError.message);
+    }
+    if (existing && existing.length > 0) {
+      console.log('[server/track] subscribe_lapsed already recorded, skip:', idempotencyKey);
+      return;
+    }
+
+    const { error } = await client.from('behavior_events').insert({
+      event_name: 'subscribe_lapsed',
+      funnel_id: 'subscription',
+      step_index: 4,
+      event_data: {
+        reason: params.reason,
+        plan_id: params.planId || null,
+        order_id: params.orderId,
+        source: 'server_webhook',
+      },
+      session_id: idempotencyKey,
+      user_id: params.userId,
+      user_email: null,
+      page_url: '',
+      referrer: '',
+      user_agent: 'server/webhook',
+      ip: '',
+    });
+    if (error) {
+      console.warn('[server/track] subscribe_lapsed insert error:', error.message);
+    } else {
+      console.log('[server/track] subscribe_lapsed recorded:', params.reason, params.userId);
+    }
+  } catch (err) {
+    console.warn('[server/track] lapse error:', err);
+  }
+}
+
 export type TrackServerEvent = typeof trackSubscribeSuccess;

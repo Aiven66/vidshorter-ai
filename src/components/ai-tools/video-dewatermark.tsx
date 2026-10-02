@@ -17,6 +17,8 @@ import {
   type AiVideoResult,
 } from '@/lib/ai-tools/client-api';
 import { formatBytes } from '@/lib/ai-tools/image-utils';
+import { useAiToolCredit, AI_TOOL_COST } from '@/lib/ai-tools/use-ai-tool-credit';
+import { InsufficientCreditsDialog } from '@/components/insufficient-credits-dialog';
 import { Download, Loader2, Trash2, Video, Square, Sparkles, LogIn } from 'lucide-react';
 import Link from 'next/link';
 
@@ -32,6 +34,7 @@ const MAX_VIDEO_BYTES = 48 * 1024 * 1024; // Supabase 桶单文件上限 50MB
 export function VideoDewatermark() {
   const { t } = useLocale();
   const { user, accessToken, loading: authLoading } = useAuth();
+  const { requestSpend, insufficientOpen, setInsufficientOpen, balance } = useAiToolCredit();
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [videoSize, setVideoSize] = useState<{ w: number; h: number } | null>(null);
   const [rects, setRects] = useState<Rect[]>([]);
@@ -99,6 +102,7 @@ export function VideoDewatermark() {
     if (processing || !videoSize) return;
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
     const pt = toNorm(e.clientX, e.clientY);
+    if (!pt) return;
 
     // 点击已有矩形的删除角标 → 删除
     for (let i = rects.length - 1; i >= 0; i--) {
@@ -117,6 +121,7 @@ export function VideoDewatermark() {
   const handlePointerMove = (e: React.PointerEvent) => {
     if (!dragStartRef.current) return;
     const pt = toNorm(e.clientX, e.clientY);
+    if (!pt) return;
     const start = dragStartRef.current;
     setDragRect({
       x: Math.min(start.x, pt.x),
@@ -166,6 +171,8 @@ export function VideoDewatermark() {
       setError(t('aiTools.needsLogin'));
       return;
     }
+    // P0: AI 工具积分化 — 每次推理前扣积分
+    if (!(await requestSpend())) return;
     setProcessing(true);
     setError(null);
     setStage(t('aiTools.uploading'));
@@ -329,6 +336,12 @@ export function VideoDewatermark() {
           <video src={resultUrl} className="max-w-full max-h-[60vh] rounded-lg border" controls />
         </div>
       )}
+      <InsufficientCreditsDialog
+        open={insufficientOpen}
+        onOpenChange={setInsufficientOpen}
+        currentBalance={balance}
+        requiredCredits={AI_TOOL_COST}
+      />
     </div>
   );
 }

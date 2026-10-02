@@ -280,6 +280,7 @@ export async function GET(request: NextRequest) {
   }
   for (const tx of recentTx) {
     const title = tx.type === 'purchase' ? 'Payment completed'
+      : tx.type === 'monthly_reset' ? 'Monthly credits reset'
       : tx.type === 'daily_reset' ? 'Daily credits reset'
       : 'Credit transaction';
     recentActivity.push({

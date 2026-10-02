@@ -65,6 +65,10 @@ const REQUIRED_KEYS = [
   'aiTools.newImage',
   'aiTools.changeVideo',
   'aiTools.newVideo',
+  'aiTools.tabRemoveBg',
+  'aiTools.removeBgHint',
+  'aiTools.removeBgProcess',
+  'aiTools.removeBgSuccess',
 ];
 
 async function checkI18n() {
@@ -92,6 +96,7 @@ function checkFiles() {
     'src/components/ai-tools/video-dewatermark.tsx',
     'src/components/ai-tools/image-upscale.tsx',
     'src/components/ai-tools/image-colorization.tsx',
+    'src/components/ai-tools/image-remove-bg.tsx',
     // 前端云调用
     'src/lib/ai-tools/client-api.ts',
     'src/lib/ai-tools/image-utils.ts',
@@ -107,6 +112,8 @@ function checkFiles() {
     'src/app/api/ai-tools/video-dewatermark/route.ts',
     'src/app/api/ai-tools/image-upscale/route.ts',
     'src/app/api/ai-tools/image-colorization/route.ts',
+    'src/app/api/ai-tools/image-remove-bg/route.ts',
+    'src/lib/server/ai-tools/modnet.ts',
   ];
   for (const file of files) {
     assert.ok(existsSync(file), `missing file: ${file}`);

@@ -15,12 +15,10 @@ import {
   Loader2,
   Lock,
   Shield,
-  WalletCards,
   XCircle,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import { posthog } from '@/lib/posthog';
-import { PayPalCheckout } from '@/components/paypal-checkout';
 import { trackEvent, setAnalyticsUser, SUBSCRIBE_FUNNEL } from '@/lib/analytics';
 
 interface PlanInfo {
@@ -28,18 +26,22 @@ interface PlanInfo {
   name: string;
   price: { cn: number; intl: number };
   period: string;
+  /** When present, this is a one-time credit pack (not a subscription). */
+  credits?: number;
 }
 
 interface PaymentModalProps {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   plan: PlanInfo | null;
+  /** Fired once when a payment completes successfully (any channel). */
+  onSuccess?: () => void;
 }
 
 type PayMethod = 'creem' | 'paypal' | 'waffo';
 type PayState = 'selecting' | 'pending' | 'success' | 'failed';
 
-export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
+export function PaymentModal({ open, onOpenChange, plan, onSuccess }: PaymentModalProps) {
   const { user } = useAuth();
   const [method, setMethod] = useState<PayMethod>('creem');
   const [payState, setPayState] = useState<PayState>('selecting');
@@ -77,6 +79,14 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
       },
     });
   }, [plan]);
+
+  // 支付成功时触发 onSuccess（用于刷新积分等副作用）
+  useEffect(() => {
+    if (payState === 'success') {
+      onSuccess?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [payState]);
 
   const verifyRedirectPayment = useCallback(async (pollUrl: string, setAsSuccess = true) => {
     if (!pollUrl) return false;
@@ -194,15 +204,6 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
     setPaymentError('');
   };
 
-  const handlePayPalSuccess = useCallback(() => {
-    trackPaymentCompleted('paypal');
-    setPayState('success');
-  }, [trackPaymentCompleted]);
-
-  const handlePayPalError = useCallback((message: string) => {
-    setPaymentError(message);
-  }, []);
-
   if (!plan) return null;
 
   return (
@@ -213,10 +214,18 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-primary/70">
               <CreditCard className="h-5 w-5 text-primary-foreground" />
             </div>
-            Subscribe to {plan.name}
+            {plan.credits ? `Buy ${plan.credits} credits` : `Subscribe to ${plan.name}`}
           </DialogTitle>
           <DialogDescription className="flex items-center gap-2 text-sm">
-            <span className="font-semibold text-primary">${plan.price.intl}</span> / {plan.period}
+            {plan.credits ? (
+              <span className="font-semibold text-primary">
+                ${plan.price.intl} · one-time
+              </span>
+            ) : (
+              <>
+                <span className="font-semibold text-primary">${plan.price.intl}</span> / {plan.period}
+              </>
+            )}
             <span className="flex items-center gap-1 text-xs text-muted-foreground">
               <Lock className="h-3 w-3" />
               Secure Payment
@@ -232,7 +241,9 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
             <div className="space-y-2 text-center">
               <h3 className="text-xl font-bold text-foreground">Payment Successful!</h3>
               <p className="text-sm text-muted-foreground">
-                Your {plan.name} subscription is now active.<br />Credits have been added to your account.
+                {plan.credits
+                  ? `Your ${plan.credits} credits have been added to your balance.`
+                  : `Your ${plan.name} subscription is now active.<br />Credits have been added to your account.`}
               </p>
             </div>
             <Button className="mt-2 h-12 w-full text-base font-medium" onClick={() => onOpenChange(false)}>
@@ -274,8 +285,8 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
             )}
 
             <div className="flex flex-col items-center gap-6 py-8">
-              <div className="flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-violet-500 to-indigo-600 shadow-lg shadow-violet-500/30">
-                <ExternalLink className="h-10 w-10 text-white" />
+              <div className="flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-gold-light to-gold-dim shadow-lg shadow-gold/30">
+                <ExternalLink className="h-10 w-10 text-primary-foreground" />
               </div>
 
               <div className="space-y-3 text-center">
@@ -358,88 +369,14 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
-                    <span className="font-semibold text-primary">${plan.price.intl}/{plan.period}</span>
+                    <span className="font-semibold text-primary">
+                      ${plan.price.intl}{plan.credits ? '' : `/${plan.period}`}
+                    </span>
                     <ChevronRight className={`h-5 w-5 ${method === 'creem' ? 'text-primary' : 'text-muted-foreground'}`} />
                   </div>
                 </div>
               </button>
-
-              <button
-                onClick={() => setMethod('paypal')}
-                className={`w-full rounded-xl border-2 p-4 text-left transition-all duration-200 ${
-                  method === 'paypal'
-                    ? 'border-primary bg-primary/5 shadow-sm'
-                    : 'border-muted hover:border-muted-foreground/30 hover:bg-muted/50'
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#003087] shadow-md">
-                      <WalletCards className="h-6 w-6 text-white" />
-                    </div>
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold">PayPal</span>
-                        <Badge variant="secondary" className="bg-blue-100 text-xs text-blue-700">
-                          Secure
-                        </Badge>
-                      </div>
-                      <p className="text-xs text-muted-foreground">PayPal balance, cards, and PayPal wallet</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="font-semibold text-primary">${plan.price.intl}/{plan.period}</span>
-                    <ChevronRight className={`h-5 w-5 ${method === 'paypal' ? 'text-primary' : 'text-muted-foreground'}`} />
-                  </div>
-                </div>
-              </button>
-
-              <button
-                onClick={() => setMethod('waffo')}
-                className={`w-full rounded-xl border-2 p-4 text-left transition-all duration-200 ${
-                  method === 'waffo'
-                    ? 'border-primary bg-primary/5 shadow-sm'
-                    : 'border-muted hover:border-muted-foreground/30 hover:bg-muted/50'
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 shadow-md">
-                      <CreditCard className="h-6 w-6 text-white" />
-                    </div>
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold">Waffo</span>
-                        <Badge variant="secondary" className="bg-amber-100 text-xs text-amber-700">
-                          <CheckCircle className="mr-1 h-3 w-3" />
-                          MoR
-                        </Badge>
-                      </div>
-                      <p className="text-xs text-muted-foreground">Global cards & local payment methods</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="font-semibold text-primary">${plan.price.intl}/{plan.period}</span>
-                    <ChevronRight className={`h-5 w-5 ${method === 'waffo' ? 'text-primary' : 'text-muted-foreground'}`} />
-                  </div>
-                </div>
-              </button>
             </div>
-
-            {method === 'paypal' && user && (
-              <PayPalCheckout
-                planId={plan.id}
-                userId={user.id}
-                onSuccess={handlePayPalSuccess}
-                onError={handlePayPalError}
-              />
-            )}
-
-            {method === 'paypal' && !user && (
-              <div className="rounded-xl border bg-muted/30 p-4 text-sm text-muted-foreground">
-                Please sign in before using PayPal checkout.
-              </div>
-            )}
 
             {method === 'creem' && (
               <Button className="h-12 w-full gap-2 text-base font-medium" onClick={handleRedirectPay}>
@@ -449,32 +386,12 @@ export function PaymentModal({ open, onOpenChange, plan }: PaymentModalProps) {
               </Button>
             )}
 
-            {method === 'waffo' && (
-              <Button className="h-12 w-full gap-2 text-base font-medium" onClick={handleRedirectPay}>
-                <CreditCard className="h-5 w-5" />
-                Pay with Waffo
-                <ChevronRight className="ml-auto h-4 w-4" />
-              </Button>
-            )}
-
             <div className="flex items-center justify-center gap-4 border-t border-muted pt-4">
-              <div className="flex items-center gap-2">
-                <div className="flex h-5 w-8 items-center justify-center rounded bg-[#003087]">
-                  <span className="text-[8px] font-bold text-white">PP</span>
-                </div>
-                <span className="text-xs text-muted-foreground">PayPal</span>
-              </div>
               <div className="flex items-center gap-2">
                 <div className="flex h-5 w-8 items-center justify-center rounded bg-gradient-to-r from-violet-600 to-indigo-600">
                   <span className="text-[8px] font-bold text-white">CR</span>
                 </div>
                 <span className="text-xs text-muted-foreground">Creem</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="flex h-5 w-8 items-center justify-center rounded bg-gradient-to-r from-amber-400 to-orange-500">
-                  <span className="text-[8px] font-bold text-white">WF</span>
-                </div>
-                <span className="text-xs text-muted-foreground">Waffo</span>
               </div>
               <div className="flex items-center gap-1.5">
                 <Lock className="h-3 w-3 text-muted-foreground" />

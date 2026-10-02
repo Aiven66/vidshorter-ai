@@ -104,7 +104,7 @@ export default function AuthCallbackPage() {
                 role: 'user',
                 google_id: session.user.app_metadata?.provider === 'google' ? session.user.id : null,
               });
-              await supabase.from('credits').insert({ user_id: session.user.id, balance: 100 });
+              await supabase.from('credits').insert({ user_id: session.user.id, balance: 60 });
               await supabase.from('subscriptions').insert({
                 user_id: session.user.id,
                 plan_type: 'free',

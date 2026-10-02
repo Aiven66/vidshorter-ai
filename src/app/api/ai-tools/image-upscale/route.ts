@@ -5,7 +5,6 @@
  */
 
 import { NextRequest } from 'next/server';
-import { upscaleServer } from '@/lib/server/ai-tools/upscale';
 import {
   ApiError,
   assertUserStorageUrl,
@@ -25,6 +24,8 @@ export async function POST(req: NextRequest) {
     const scale = body.scale === 4 ? 4 : 2;
 
     const imageUrl = assertUserStorageUrl(body.imageUrl, userId, 'ai-tools');
+    // 延迟加载推理模块（sharp/onnxruntime 原生绑定）—— 加载失败返回可诊断 JSON 错误
+    const { upscaleServer } = await import('@/lib/server/ai-tools/upscale');
     const { png, width, height } = await upscaleServer(imageUrl, scale);
     const { signedUrl } = await uploadResult(userId, 'png', png, 'image/png');
 

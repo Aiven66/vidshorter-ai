@@ -869,12 +869,37 @@ function extractAmazonOriginalPrice(
  *   - 评分: "X.X out of 5 stars"
  *   - 评分数: "N,NNN ratings"（取最大值，即 global ratings）
  */
+
+/** Check if a URL looks like a valid product image (not icon/avatar/logo) */
+function isValidProductImage(url: string | undefined): boolean {
+  if (!url) return false;
+  const u = url.toLowerCase();
+  // Must be http(s) URL
+  if (!u.startsWith('http')) return false;
+  // Filter out common non-product images
+  const skipPatterns = ['icon', 'logo', 'avatar', 'sprite', 'pixel', '.svg', 'favicon', 'badge', 'button', 'banner-ad', 'promotion', 'recommend', 'similar', 'sponsored'];
+  for (const p of skipPatterns) {
+    if (u.includes(p)) return false;
+  }
+  // Amazon product images typically come from these CDN domains
+  if (u.includes('images.unsplash.com') || u.includes('m.media-amazon.com') || u.includes('images.pexels.com')) return true;
+  // Also accept other image CDNs if they have reasonable size hints
+  if (u.includes('SL') && u.endsWith('.jpg')) return true;
+  if (u.endsWith('.jpg') || u.endsWith('.png') || u.endsWith('.jpeg') || u.endsWith('.webp')) return true;
+  return false;
+}
+
 export function parseAmazonProduct(html: string, finalUrl: string): ProductInfo {
   // ---- 名称 ----
   const titleMatch = html.match(/id=["']productTitle["'][^>]*>([^<]+)</i);
   let name = titleMatch
     ? decodeHtmlEntities(titleMatch[1]).trim()
-    : (getTitleTag(html) || '').replace(/^Amazon\.[a-z.]+:\s*/i, '').split(/\s*[|–-]\s*Amazon\.com/i)[0].trim();
+    : (getTitleTag(html) || '')
+        .replace(/^Amazon\.[a-z.]+:\s*/i, '')
+        .split(/\s*[|–-]\s*Amazon\.com/i)[0]
+        // 移动版 SSR 页面 <title> 格式为 "商品名 : 分类"，去掉结尾的分类后缀
+        .replace(/\s+:\s+([A-Z][A-Za-z&,.'\u4e00-\u9fff ]{2,50})$/, '')
+        .trim();
 
   // ---- 价格（多级降级，兼容 US$/CNY/€ 等各站点格式）----
   const mainPriceInfo = extractAmazonMainPrice(html);
@@ -883,21 +908,95 @@ export function parseAmazonProduct(html: string, finalUrl: string): ProductInfo 
   // ---- 原价（划线价）----
   const originalPrice = extractAmazonOriginalPrice(html, price, mainPriceInfo.containerIdx);
 
-  // ---- 高清主图 ----
+  // ---- 高清主图（v0.9.39: 优先选择正确的主图，过滤干扰图片）----
   let image: string | undefined;
-  const oldHires = html.match(/data-old-hires=["']([^"']+)["']/i);
-  if (oldHires) {
-    image = decodeHtmlEntities(oldHires[1]);
-  } else {
+
+  // 1. 优先从 #landingImage 的 src 属性获取当前显示的主图
+  const landingSrc = html.match(/id=["']landingImage["'][^>]*src=["']([^"']+)["']/i);
+  if (landingSrc) {
+    const src = decodeHtmlEntities(landingSrc[1]);
+    if (isValidProductImage(src)) {
+      image = src;
+    }
+  }
+
+  // 2. 如果 landingImage src 无效，从 data-old-hires 获取高分辨率版本
+  if (!image) {
+    const oldHires = html.match(/data-old-hires=["']([^"']+)["']/i);
+    if (oldHires) {
+      const src = decodeHtmlEntities(oldHires[1]);
+      if (isValidProductImage(src)) {
+        image = src;
+      }
+    }
+  }
+
+  // 3. 再试 data-a-dynamic-image（包含多个分辨率，选最高分辨率）
+  if (!image) {
     const dyn = html.match(/id=["']landingImage["'][^>]*data-a-dynamic-image=["']([^"']+)["']/i);
     if (dyn) {
       const decoded = decodeHtmlEntities(dyn[1]);
-      const firstUrl = decoded.match(/(https?:[^",]+)/i);
-      if (firstUrl) image = firstUrl[1].trim();
+      const urls = Array.from(decoded.matchAll(/(https?:[^",]+)/gi))
+        .map((m) => m[1].trim())
+        .filter((u) => isValidProductImage(u));
+      if (urls.length > 0) {
+        // 选择分辨率最高的（URL 中 ._SLxxxx_. 后缀，数字越大分辨率越高）
+        urls.sort((a, b) => {
+          const sa = parseInt(a.match(/SL(\d+)/)?.[1] || '0', 10);
+          const sb = parseInt(b.match(/SL(\d+)/)?.[1] || '0', 10);
+          return sb - sa;
+        });
+        image = urls[0];
+      }
     }
-    if (!image) {
-      const src = html.match(/id=["']landingImage["'][^>]*src=["']([^"']+)["']/i);
-      if (src) image = decodeHtmlEntities(src[1]);
+  }
+
+  // 3.5 "hiRes" JSON（桌面版 colorImages 图库数据块）
+  if (!image) {
+    const hiRes = html.match(/"hiRes"\s*:\s*"(https:[^"]+)"/);
+    if (hiRes && isValidProductImage(decodeHtmlEntities(hiRes[1]))) {
+      image = decodeHtmlEntities(hiRes[1]);
+    }
+  }
+
+  // 3.6 alt 商品名匹配（移动版 SSR 页面无 landingImage/colorImages；
+  // 主图 <img> 的 alt 为完整商品名，而页首第一个 <img> 常是推荐位 banner）
+  if (!image) {
+    const nameWords = name
+      .split(/\s+/)
+      .filter((w) => w.replace(/[^A-Za-z0-9\u4e00-\u9fff]/g, '').length > 2)
+      .slice(0, 4);
+    if (nameWords.length >= 2) {
+      const altImgs: Array<{ alt: string; src: string }> = [];
+      for (const m of html.matchAll(/<img[^>]*alt=["']([^"']*)["'][^>]*src=["'](https?:\/\/m\.media-amazon\.com\/images\/I\/[^"']+)["']/gi)) {
+        altImgs.push({ alt: decodeHtmlEntities(m[1]), src: decodeHtmlEntities(m[2]) });
+      }
+      for (const m of html.matchAll(/<img[^>]*src=["'](https?:\/\/m\.media-amazon\.com\/images\/I\/[^"']+)["'][^>]*alt=["']([^"']*)["']/gi)) {
+        altImgs.push({ alt: decodeHtmlEntities(m[2]), src: decodeHtmlEntities(m[1]) });
+      }
+      const matched = altImgs.find((c) =>
+        isValidProductImage(c.src) &&
+        nameWords.every((w) => c.alt.toLowerCase().includes(w.toLowerCase())),
+      );
+      if (matched) {
+        // 用图片 ID 构造裸 URL（无尺寸修饰符 = 原始最高分辨率）
+        const imgId = matched.src.match(/\/I\/([A-Za-z0-9%+-]+?)\./)?.[1];
+        if (imgId) {
+          const fullUrl = `https://m.media-amazon.com/images/I/${imgId}.jpg`;
+          if (isValidProductImage(fullUrl)) image = fullUrl;
+        }
+        if (!image) image = matched.src;
+      }
+    }
+  }
+
+  // 4. 最后兜底：查找所有 img 中最大的主图
+  if (!image) {
+    const allImgs = Array.from(html.matchAll(/<img[^>]+src=["']([^"']+)["'][^>]*/gi))
+      .map((m) => decodeHtmlEntities(m[1]))
+      .filter((u) => isValidProductImage(u) && u.length > 40);
+    if (allImgs.length > 0) {
+      image = allImgs[0];
     }
   }
 

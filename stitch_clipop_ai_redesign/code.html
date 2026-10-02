@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="zh-CN"><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0" name="viewport"/><meta content="web_dashboard" name="shell-type"/><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap" rel="stylesheet"/><style>@layer base{html,body{margin:0;padding:0;}body{overscroll-behavior:none;}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}</style><script src="https://cdn.tailwindcss.com"></script><script id="tailwind-config">tailwind.config={darkMode:"class",theme:{extend:{"colors":{"inverse-primary":"#785a00","surface-container":"#1f1f23","surface-tint":"#f0c04d","text-secondary":"#94A3B8","surface-dim":"#121316","surface-container-lowest":"#0d0e11","on-tertiary":"#3b0091","on-primary-fixed":"#251a00","primary-fixed-dim":"#f0c04d","ai-cyan":"#38BDF8","tertiary-fixed":"#e9ddff","on-secondary-fixed-variant":"#5a4300","secondary-container":"#b48b03","surface-container-high":"#292a2d","on-tertiary-fixed":"#23005c","gold-dim":"#A37D1D","primary-fixed":"#ffdf9d","primary-container":"#f5c451","surface-variant":"#343538","on-error":"#690005","on-secondary-container":"#362800","on-tertiary-container":"#632fcd","on-background":"#e3e2e6","secondary-fixed":"#ffdf98","inverse-on-surface":"#303034","on-surface":"#e3e2e6","primary":"#ffe4af","surface-overlay":"#1C1F26","on-primary-container":"#6d5100","tertiary-fixed-dim":"#d0bcff","inverse-surface":"#e3e2e6","secondary-fixed-dim":"#f0c043","surface-base":"#0C0D10","text-tertiary":"#64748B","error-container":"#93000a","surface-raised":"#14161B","border-glass-gold":"rgba(245, 196, 81, 0.25)","tertiary-container":"#d4c1ff","border-glass":"rgba(255, 255, 255, 0.08)","gold-light":"#FFE79A","on-primary":"#3f2e00","on-surface-variant":"#d2c5b0","on-error-container":"#ffdad6","surface-bright":"#38393c","text-primary":"#F8FAFC","on-tertiary-fixed-variant":"#5417bf","secondary":"#f0c043","error":"#ffb4ab","on-primary-fixed-variant":"#5b4300","tertiary":"#ede2ff","background":"#121316","surface-container-low":"#1b1b1f","surface":"#121316","outline-variant":"#4e4635","surface-container-highest":"#343538","on-secondary":"#3e2e00","outline":"#9b8f7c","on-secondary-fixed":"#251a00"},"borderRadius":{"DEFAULT":"1rem","lg":"2rem","xl":"3rem","full":"9999px"},"spacing":{"space-2xl":"4rem","margin":"1rem","gutter":"1rem","space-xl":"2.5rem","space-md":"1rem","margin-md":"1.5rem","space-xs":"0.25rem","margin-lg":"2.5rem","gutter-lg":"1.5rem","space-lg":"1.5rem","space-sm":"0.5rem"},"fontFamily":{"label-sm":["Inter"],"display":["Inter"],"body-md":["Inter"],"headline-md":["Inter"],"headline-lg":["Inter"],"body-sm":["Inter"],"label-md":["Inter"],"display-mobile":["Inter"],"body-lg":["Inter"],"headline-sm":["Inter"],"headline-lg-mobile":["Inter"]},"fontSize":{"label-sm":["11px",{"lineHeight":"14px","letterSpacing":"0.04em","fontWeight":"600"}],"display":["48px",{"lineHeight":"56px","letterSpacing":"-0.03em","fontWeight":"600"}],"body-md":["14px",{"lineHeight":"20px","letterSpacing":"0","fontWeight":"400"}],"headline-md":["22px",{"lineHeight":"28px","letterSpacing":"-0.015em","fontWeight":"500"}],"headline-lg":["32px",{"lineHeight":"40px","letterSpacing":"-0.025em","fontWeight":"600"}],"body-sm":["12px",{"lineHeight":"16px","letterSpacing":"0.01em","fontWeight":"400"}],"label-md":["13px",{"lineHeight":"18px","letterSpacing":"0.01em","fontWeight":"500"}],"display-mobile":["32px",{"lineHeight":"40px","letterSpacing":"-0.02em","fontWeight":"600"}],"body-lg":["16px",{"lineHeight":"24px","letterSpacing":"-0.005em","fontWeight":"400"}],"headline-sm":["18px",{"lineHeight":"24px","letterSpacing":"-0.01em","fontWeight":"500"}],"headline-lg-mobile":["24px",{"lineHeight":"32px","letterSpacing":"-0.02em","fontWeight":"600"}]}}}}</script></head><body class="bg-surface-base text-on-surface font-body-md text-body-md antialiased selection:bg-primary-container selection:text-on-primary-container"><aside class="fixed left-0 top-0 h-screen w-64 bg-surface-container-lowest/90 backdrop-blur-2xl z-50 flex flex-col justify-between shadow-[0_1px_8px_rgba(0,0,0,0.5)]"><div class="flex flex-col h-full"><div class="h-16 px-space-md flex items-center justify-between"><div class="flex items-center gap-space-sm"><div class="w-8 h-8 rounded-full bg-primary-container flex items-center justify-center shadow-[0_0_16px_rgba(245,196,81,0.25)]"><span class="material-symbols-outlined text-on-primary-container text-[18px]">auto_awesome</span></div><div class="flex flex-col"><span class="font-headline-sm text-headline-sm tracking-tight font-semibold text-primary">Clipop AI</span></div></div><button class="w-8 h-8 flex items-center justify-center rounded-DEFAULT text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors"><span class="material-symbols-outlined text-[20px]">dock_to_left</span></button></div><div class="px-space-md py-space-xs"><span class="font-label-sm text-label-sm text-text-tertiary uppercase tracking-wider px-space-xs">核心功能</span></div><nav class="flex-1 px-space-sm space-y-space-xs overflow-y-auto" data-active-classes="bg-surface-container-high text-primary font-medium shadow-[inset_2px_0_0_0_#f5c451]"><a aria-current="page" class="flex items-center justify-between px-space-sm py-2 rounded-DEFAULT transition-all bg-surface-container-high text-primary font-medium shadow-[inset_2px_0_0_0_#f5c451]" data-path="home" href="#"><div class="flex items-center gap-space-sm"><span class="material-symbols-outlined text-[20px]">home</span><span class="font-label-md text-label-md">首页</span></div></a><a class="flex items-center justify-between px-space-sm py-2 rounded-DEFAULT text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-all" data-path="highlight-clips" href="#"><div class="flex items-center gap-space-sm"><span class="material-symbols-outlined text-[20px]">movie_edit</span><span class="font-label-md text-label-md">高光剪辑</span></div></a><a class="flex items-center justify-between px-space-sm py-2 rounded-DEFAULT text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-all" data-path="shorts-studio" href="#"><div class="flex items-center gap-space-sm"><span class="material-symbols-outlined text-[20px]">slow_motion_video</span><span class="font-label-md text-label-md">Shorts 成片</span></div><span class="font-label-sm text-label-sm px-space-xs py-0.5 rounded-full bg-primary-container text-on-primary-container font-semibold">NEW</span></a><a class="flex items-center justify-between px-space-sm py-2 rounded-DEFAULT text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-all" data-path="highlight-notes" href="#"><div class="flex items-center gap-space-sm"><span class="material-symbols-outlined text-[20px]">edit_note</span><span class="font-label-md text-label-md">高光笔记</span></div><span class="font-label-sm text-label-sm px-space-xs py-0.5 rounded-full bg-primary-container text-on-primary-container font-semibold">NEW</span></a><a class="flex items-center justify-between px-space-sm py-2 rounded-DEFAULT text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-all" data-path="marketing-video" href="#"><div class="flex items-center gap-space-sm"><span class="material-symbols-outlined text-[20px]">campaign</span><span class="font-label-md text-label-md">营销视频</span></div><span class="font-label-sm text-label-sm px-space-xs py-0.5 rounded-full bg-primary-container text-on-primary-container font-semibold">NEW</span></a><a class="flex items-center justify-between px-space-sm py-2 rounded-DEFAULT text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-all" data-path="selling-video" href="#"><div class="flex items-center gap-space-sm"><span class="material-symbols-outlined text-[20px]">shopping_bag</span><span class="font-label-md text-label-md">带货视频</span></div></a><a class="flex items-center justify-between px-space-sm py-2 rounded-DEFAULT text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-all" data-path="podcast-ai" href="#"><div class="flex items-center gap-space-sm"><span class="material-symbols-outlined text-[20px]">podcasts</span><span class="font-label-md text-label-md">播客</span></div><span class="font-label-sm text-label-sm px-space-xs py-0.5 rounded-full bg-primary-container text-on-primary-container font-semibold">NEW</span></a><a class="flex items-center justify-between px-space-sm py-2 rounded-DEFAULT text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-all" data-path="ai-toolbox" href="#"><div class="flex items-center gap-space-sm"><span class="material-symbols-outlined text-[20px]">home_repair_service</span><span class="font-label-md text-label-md">AI 工具箱</span></div><span class="font-label-sm text-label-sm px-space-xs py-0.5 rounded-full bg-primary-container text-on-primary-container font-semibold">NEW</span></a><div class="my-space-xs pt-space-xs"><span class="font-label-sm text-label-sm text-text-tertiary uppercase tracking-wider px-space-xs">生态与服务</span></div><a class="flex items-center justify-between px-space-sm py-2 rounded-DEFAULT text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-all" data-path="blog" href="#"><div class="flex items-center gap-space-sm"><span class="material-symbols-outlined text-[20px]">article</span><span class="font-label-md text-label-md">博客</span></div></a><a class="flex items-center justify-between px-space-sm py-2 rounded-DEFAULT text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-all" data-path="pricing" href="#"><div class="flex items-center gap-space-sm"><span class="material-symbols-outlined text-[20px]">payments</span><span class="font-label-md text-label-md">定价</span></div></a><a class="flex items-center justify-between px-space-sm py-2 rounded-DEFAULT text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-all" data-path="download-app" href="#"><div class="flex items-center gap-space-sm"><span class="material-symbols-outlined text-[20px]">download</span><span class="font-label-md text-label-md">下载客户端</span></div><span class="font-label-sm text-label-sm text-text-secondary">Mac/Win</span></a><a class="flex items-center justify-between px-space-sm py-2 rounded-DEFAULT text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-all" data-path="about-us" href="#"><div class="flex items-center gap-space-sm"><span class="material-symbols-outlined text-[20px]">info</span><span class="font-label-md text-label-md">关于我们</span></div></a></nav><div class="p-space-sm space-y-space-sm bg-surface-container-low/60 rounded-t-DEFAULT"><div class="p-space-sm rounded-DEFAULT bg-surface-container-high/60 backdrop-blur-md flex flex-col gap-space-xs"><div class="flex items-center justify-between"><span class="font-label-sm text-label-sm text-text-secondary">积分余额</span><button class="font-label-sm text-label-sm text-primary hover:text-gold-light transition-colors">充值</button></div><div class="flex items-center gap-1"><span class="material-symbols-outlined text-primary text-[18px]">monetization_on</span><span class="font-headline-sm text-headline-sm text-gold-light font-semibold tabular-nums">999,940</span></div></div><div class="flex items-center justify-between px-space-xs"><div class="flex items-center gap-space-sm"><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center"><span class="material-symbols-outlined text-on-primary text-[18px]">person</span></div><div class="flex flex-col"><span class="font-label-md text-label-md text-text-primary">Pro Creator</span><span class="font-label-sm text-label-sm text-text-tertiary">admin@clipop.ai</span></div></div><button class="w-7 h-7 flex items-center justify-center rounded-DEFAULT text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors"><span class="material-symbols-outlined text-[18px]">settings</span></button></div></div></div></aside><div class="pl-64 flex flex-col min-h-screen"><div class="fixed top-0 left-64 right-0 z-50 flex flex-col"><div class="h-10 bg-surface-container-lowest/95 backdrop-blur-xl px-space-md flex items-center justify-between shadow-[0_1px_4px_rgba(0,0,0,0.4)]"><div class="flex items-center gap-space-sm overflow-hidden"><div class="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-primary-container text-on-primary-container font-label-sm text-label-sm"><span class="material-symbols-outlined text-[14px]">workspace_premium</span><span>PRO 会员权益</span></div><span class="font-body-sm text-body-sm text-text-secondary truncate">升级 Pro 会员 — 享受独家极速处理队列、4K 超清导出 & 每月 20,000 积分 <span class="text-primary font-medium">[限时8折特惠]</span></span></div><div class="flex items-center gap-space-md shrink-0"><button class="font-label-sm text-label-sm text-primary hover:text-gold-light flex items-center gap-0.5 transition-colors"><span>立即升级</span><span class="material-symbols-outlined text-[14px]">arrow_forward</span></button><button class="text-text-tertiary hover:text-on-surface transition-colors flex items-center"><span class="material-symbols-outlined text-[16px]">close</span></button></div></div><header class="h-14 bg-surface-container-lowest/80 backdrop-blur-2xl px-space-md flex items-center justify-between shadow-[0_1px_8px_rgba(0,0,0,0.2)]"><div class="flex items-center gap-space-sm"><div class="flex items-center gap-1.5 px-space-sm py-1 rounded-full bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm"><span class="w-1.5 h-1.5 rounded-full bg-ai-cyan animate-pulse"></span><span>AI 驱动的智能视频处理引擎 v2.5</span></div></div><div class="flex items-center gap-space-md"><div class="flex items-center gap-1 px-space-sm py-1 rounded-full bg-surface-container-high"><span class="material-symbols-outlined text-primary text-[16px]">monetization_on</span><span class="font-label-sm text-label-sm text-gold-light tabular-nums font-semibold">999,940 积分</span></div><button class="flex items-center gap-1 px-space-sm py-1 rounded-full bg-surface-container-high hover:bg-surface-variant text-on-surface-variant hover:text-on-surface font-label-sm text-label-sm transition-colors"><span class="material-symbols-outlined text-[16px]">featured_seasonal_and_gifts</span><span>奖励</span></button><button class="flex items-center gap-1 px-space-sm py-1 rounded-full bg-surface-container-high hover:bg-surface-variant text-on-surface-variant hover:text-on-surface font-label-sm text-label-sm transition-colors"><span class="material-symbols-outlined text-[16px]">rate_review</span><span>用户反馈</span></button><button class="flex items-center gap-1 px-space-sm py-1 rounded-full bg-surface-container-high hover:bg-surface-variant text-on-surface-variant hover:text-on-surface font-label-sm text-label-sm transition-colors"><span class="material-symbols-outlined text-[16px]">language</span><span>中/EN</span></button><button class="w-8 h-8 flex items-center justify-center rounded-full bg-surface-container-high text-on-surface-variant hover:text-on-surface hover:bg-surface-variant transition-colors"><span class="material-symbols-outlined text-[18px]">dark_mode</span></button><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center cursor-pointer shadow-[0_0_8px_rgba(245,196,81,0.2)]"><span class="material-symbols-outlined text-on-primary text-[18px]">person</span></div></div></header></div><main class="w-full pt-24 px-space-md bg-surface-base flex-1"><div class="flex flex-col w-full pb-space-2xl">
+<!-- Atmospheric Ambient Glows contained inside parent -->
+<div class="relative w-full max-w-7xl mx-auto px-space-sm sm:px-space-md lg:px-space-lg flex flex-col gap-space-2xl">
+<!-- Ambient Radiance Background FX -->
+<div class="absolute -top-12 left-1/2 -translate-x-1/2 w-[720px] h-[360px] bg-gradient-to-b from-primary/10 via-primary-container/5 to-transparent blur-[120px] pointer-events-none -z-10 rounded-full"></div>
+<div class="absolute top-96 right-10 w-[380px] h-[380px] bg-tertiary-container/5 blur-[100px] pointer-events-none -z-10 rounded-full"></div>
+<!-- 1. HERO SECTION -->
+<section class="flex flex-col items-center text-center pt-space-md lg:pt-space-lg max-w-4xl mx-auto space-y-space-md">
+<!-- Floating Badge -->
+<div class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-surface-container-high/90 shadow-sm transition-all hover:bg-surface-variant">
+<span class="material-symbols-outlined text-primary text-[16px] animate-pulse">auto_awesome</span>
+<span class="font-label-sm text-label-sm text-on-surface tracking-normal">AI 驱动的高光提取引擎 v2.5 · 智能识别爆点与情绪峰值</span>
+<span class="px-1.5 py-0.2 rounded-full bg-primary-container text-on-primary-container font-label-sm text-label-sm font-semibold">NEW</span>
+</div>
+<!-- Main Headline -->
+<h1 class="font-display text-display text-text-primary tracking-tight max-w-3xl">
+        将长视频转换为
+        <span class="bg-gradient-to-r from-gold-light via-primary to-secondary bg-clip-text text-transparent">爆款短视频</span>
+</h1>
+<!-- Subtitle -->
+<p class="font-body-lg text-body-lg text-text-secondary max-w-2xl leading-relaxed">
+        粘贴 YouTube、B站或播客链接，或一键上传本地长视频。AI 自动切片、提炼精彩高光、生成多语种精美字幕与 9:16 竖屏成片。
+      </p>
+<!-- Trust Social Proof Bar -->
+<div class="flex flex-wrap items-center justify-center gap-y-2 gap-x-6 pt-space-xs text-text-tertiary font-label-md text-label-md">
+<div class="flex items-center -space-x-2">
+<div class="w-7 h-7 rounded-full bg-surface-variant flex items-center justify-center text-primary text-label-sm font-label-sm shadow-sm">AI</div>
+<div class="w-7 h-7 rounded-full bg-surface-container-high flex items-center justify-center text-secondary text-label-sm font-label-sm shadow-sm">YT</div>
+<div class="w-7 h-7 rounded-full bg-surface-container-highest flex items-center justify-center text-gold-light text-label-sm font-label-sm shadow-sm">Bili</div>
+</div>
+<div class="flex items-center gap-1.5 text-text-secondary">
+<span class="font-semibold text-text-primary">10,000+</span> 创作者与 MCN 机构信赖
+        </div>
+<div class="hidden sm:inline text-text-tertiary">·</div>
+<div class="flex items-center gap-1 text-gold-light">
+<span class="material-symbols-outlined text-[16px] text-primary" style="font-variation-settings: 'FILL' 1;">star</span>
+<span class="font-semibold text-text-primary">4.9/5</span> 行业口碑
+        </div>
+<div class="hidden sm:inline text-text-tertiary">·</div>
+<div class="flex items-center gap-1 text-text-secondary">
+<span class="material-symbols-outlined text-ai-cyan text-[16px]">speed</span>
+<span>10x 极速云渲染</span>
+</div>
+</div>
+</section>
+<!-- 2. FLAGSHIP WORKSPACE: CENTRAL INPUT & GENERATION SUITE -->
+<section class="w-full max-w-4xl mx-auto flex flex-col gap-space-md">
+<!-- Master Glass Card -->
+<div class="relative bg-surface-container-lowest/85 backdrop-blur-2xl rounded-2xl p-space-md sm:p-space-lg shadow-2xl flex flex-col gap-space-lg">
+<!-- Header Bar with Credit Telemetry -->
+<div class="flex flex-wrap items-center justify-between gap-space-sm pb-space-sm">
+<div class="flex items-center gap-space-sm">
+<div class="w-8 h-8 rounded-xl bg-surface-container-high flex items-center justify-center text-primary">
+<span class="material-symbols-outlined text-[20px]">movie_filter</span>
+</div>
+<div class="flex flex-col">
+<span class="font-headline-sm text-headline-sm text-text-primary">输入视频源</span>
+<span class="font-body-sm text-body-sm text-text-tertiary">全自动化智能分段、智能镜头对焦与字幕压制</span>
+</div>
+</div>
+<!-- Credit Tag -->
+<div class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-surface-container-high/90">
+<span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+<span class="font-label-sm text-label-sm text-text-secondary">算力充足:</span>
+<span class="font-label-md text-label-md text-gold-light font-semibold tabular-nums">999,940 积分</span>
+<span class="font-label-sm text-label-sm text-text-tertiary">(预计消耗 60 积分/次)</span>
+</div>
+</div>
+<!-- URL Input Component with Platform Badges -->
+<div class="flex flex-col gap-space-xs">
+<div class="flex flex-wrap items-center gap-1.5 mb-1 px-1">
+<span class="font-label-sm text-label-sm text-text-tertiary uppercase tracking-wider">支持平台:</span>
+<span class="px-2 py-0.5 rounded bg-surface-container text-text-secondary font-label-sm text-label-sm">YouTube</span>
+<span class="px-2 py-0.5 rounded bg-surface-container text-text-secondary font-label-sm text-label-sm">哔哩哔哩 (Bilibili)</span>
+<span class="px-2 py-0.5 rounded bg-surface-container text-text-secondary font-label-sm text-label-sm">TikTok / 抖音</span>
+<span class="px-2 py-0.5 rounded bg-surface-container text-text-secondary font-label-sm text-label-sm">小宇宙播客</span>
+<span class="px-2 py-0.5 rounded bg-surface-container text-text-secondary font-label-sm text-label-sm">MP4 / WebM 直链</span>
+</div>
+<div class="flex flex-col sm:flex-row gap-2 bg-surface-container-low p-1.5 rounded-xl shadow-inner">
+<div class="flex-1 flex items-center px-3 gap-2">
+<span class="material-symbols-outlined text-text-tertiary text-[20px]">link</span>
+<input class="w-full bg-transparent font-body-md text-body-md text-text-primary placeholder:text-text-tertiary focus:outline-none py-2" id="video-url-input" placeholder="粘贴长视频链接 (支持 YouTube、B站视频、小宇宙播客或流媒体网页)..." type="text"/>
+<button class="text-text-tertiary hover:text-text-primary text-[18px] hidden items-center" id="clear-url-btn">
+<span class="material-symbols-outlined text-[18px]">cancel</span>
+</button>
+</div>
+<button class="px-6 py-3 rounded-DEFAULT bg-gradient-to-r from-gold-light via-primary-container to-secondary text-on-primary-container font-label-md text-label-md font-semibold flex items-center justify-center gap-2 shadow-lg shadow-primary-container/20 hover:opacity-95 active:scale-[0.98] transition-all cursor-pointer whitespace-nowrap" id="analyze-btn">
+<span class="material-symbols-outlined text-[18px]">smart_toy</span>
+<span>智能解析与生成</span>
+</button>
+</div>
+</div>
+<!-- Divider with OR label -->
+<div class="flex items-center gap-space-md py-1">
+<div class="flex-1 h-px bg-surface-variant/40"></div>
+<span class="font-label-sm text-label-sm text-text-tertiary uppercase tracking-wider">或 上传本地媒体</span>
+<div class="flex-1 h-px bg-surface-variant/40"></div>
+</div>
+<!-- Local Upload Dropzone -->
+<div class="group relative flex flex-col items-center justify-center p-8 sm:p-10 rounded-xl bg-surface-container/40 hover:bg-surface-container-high/60 transition-all cursor-pointer text-center" id="dropzone">
+<div class="w-14 h-14 rounded-2xl bg-surface-container-high flex items-center justify-center mb-3 group-hover:scale-105 transition-transform shadow-md">
+<span class="material-symbols-outlined text-primary text-[28px] group-hover:animate-bounce">cloud_upload</span>
+</div>
+<div class="font-headline-sm text-headline-sm text-text-primary mb-1">
+            拖拽本地长视频文件至此处，或 <span class="text-primary hover:underline">点击浏览文件</span>
+</div>
+<p class="font-body-sm text-body-sm text-text-secondary max-w-md">
+            支持 MP4, MOV, MKV, WebM, FLV (单个文件最大 4GB · 原生超高清无损提取)
+          </p>
+<div class="mt-4 flex items-center gap-2 text-text-tertiary font-label-sm text-label-sm bg-surface-container-lowest/60 px-3 py-1 rounded-full">
+<span class="material-symbols-outlined text-[14px] text-primary">verified_user</span>
+<span>企业级隐私加密 · 剪辑完成后不留存原始源片</span>
+</div>
+</div>
+<!-- AI Engine Fast Toggles -->
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-space-sm pt-2">
+<label class="flex items-center gap-2 p-2.5 rounded-DEFAULT bg-surface-container-low hover:bg-surface-container transition-colors cursor-pointer select-none">
+<input checked="" class="w-4 h-4 rounded accent-primary-container bg-surface-variant" type="checkbox"/>
+<div class="flex flex-col min-w-0">
+<span class="font-label-md text-label-md text-text-primary truncate">9:16 智能主体居中</span>
+<span class="font-body-sm text-body-sm text-text-tertiary">人脸追焦与防抖构图</span>
+</div>
+</label>
+<label class="flex items-center gap-2 p-2.5 rounded-DEFAULT bg-surface-container-low hover:bg-surface-container transition-colors cursor-pointer select-none">
+<input checked="" class="w-4 h-4 rounded accent-primary-container bg-surface-variant" type="checkbox"/>
+<div class="flex flex-col min-w-0">
+<span class="font-label-md text-label-md text-text-primary truncate">双语动态高光花字</span>
+<span class="font-body-sm text-body-sm text-text-tertiary">99.4% 精准词级对齐</span>
+</div>
+</label>
+<label class="flex items-center gap-2 p-2.5 rounded-DEFAULT bg-surface-container-low hover:bg-surface-container transition-colors cursor-pointer select-none">
+<input checked="" class="w-4 h-4 rounded accent-primary-container bg-surface-variant" type="checkbox"/>
+<div class="flex flex-col min-w-0">
+<span class="font-label-md text-label-md text-text-primary truncate">情绪高能片段打分</span>
+<span class="font-body-sm text-body-sm text-text-tertiary">自动跳过冗长气口</span>
+</div>
+</label>
+<label class="flex items-center gap-2 p-2.5 rounded-DEFAULT bg-surface-container-low hover:bg-surface-container transition-colors cursor-pointer select-none">
+<input class="w-4 h-4 rounded accent-primary-container bg-surface-variant" type="checkbox"/>
+<div class="flex flex-col min-w-0">
+<span class="font-label-md text-label-md text-text-primary truncate">本地客户端强力加速</span>
+<span class="font-body-sm text-body-sm text-text-tertiary">适合国内解析海外流媒体</span>
+</div>
+</label>
+</div>
+<!-- Advanced Collapsible Settings Panel -->
+<div class="flex flex-col rounded-xl bg-surface-container-low/70 overflow-hidden">
+<button class="flex items-center justify-between px-space-md py-3 text-left hover:bg-surface-container-high/40 transition-colors" id="advanced-toggle-btn">
+<div class="flex items-center gap-2 text-text-secondary">
+<span class="material-symbols-outlined text-[18px] text-primary">tune</span>
+<span class="font-label-md text-label-md">高级成片调优 (时长偏好 / 画幅比例 / 爆款字幕样式)</span>
+</div>
+<span class="material-symbols-outlined text-text-tertiary text-[20px] transition-transform" id="advanced-toggle-icon">expand_more</span>
+</button>
+<div class="hidden px-space-md pb-space-md flex flex-col gap-space-md pt-2" id="advanced-panel">
+<!-- Row 1: Target Length & Aspect Ratio -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-space-md">
+<div class="flex flex-col gap-2">
+<span class="font-label-sm text-label-sm text-text-tertiary uppercase">单条短片时长偏好</span>
+<div class="grid grid-cols-3 gap-2">
+<button class="py-2 px-3 rounded-DEFAULT bg-surface-container-high text-primary font-label-md text-label-md text-center shadow-sm">15-30s 极速爆款</button>
+<button class="py-2 px-3 rounded-DEFAULT bg-surface-container text-text-secondary hover:text-text-primary font-label-md text-label-md text-center">30-60s 完整叙事</button>
+<button class="py-2 px-3 rounded-DEFAULT bg-surface-container text-text-secondary hover:text-text-primary font-label-md text-label-md text-center">60-90s 深度干货</button>
+</div>
+</div>
+<div class="flex flex-col gap-2">
+<span class="font-label-sm text-label-sm text-text-tertiary uppercase">导出画布比例</span>
+<div class="grid grid-cols-3 gap-2">
+<button class="py-2 px-3 rounded-DEFAULT bg-surface-container-high text-primary font-label-md text-label-md text-center shadow-sm">9:16 竖屏 (Shorts/TikTok)</button>
+<button class="py-2 px-3 rounded-DEFAULT bg-surface-container text-text-secondary hover:text-text-primary font-label-md text-label-md text-center">16:9 横屏 (原画裁切)</button>
+<button class="py-2 px-3 rounded-DEFAULT bg-surface-container text-text-secondary hover:text-text-primary font-label-md text-label-md text-center">1:1 方形 (社交动态)</button>
+</div>
+</div>
+</div>
+<!-- Row 2: Subtitle Presets -->
+<div class="flex flex-col gap-2">
+<span class="font-label-sm text-label-sm text-text-tertiary uppercase">字幕排版预设风格</span>
+<div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+<div class="p-2.5 rounded-DEFAULT bg-surface-container-high flex flex-col gap-1 cursor-pointer">
+<div class="flex items-center justify-between">
+<span class="font-label-md text-label-md text-gold-light">黑金旗舰</span>
+<span class="w-2 h-2 rounded-full bg-primary"></span>
+</div>
+<span class="font-body-sm text-body-sm text-text-secondary">香槟金加粗双重阴影</span>
+</div>
+<div class="p-2.5 rounded-DEFAULT bg-surface-container flex flex-col gap-1 hover:bg-surface-container-high transition-colors cursor-pointer">
+<div class="flex items-center justify-between">
+<span class="font-label-md text-label-md text-text-primary">醒目解说</span>
+</div>
+<span class="font-body-sm text-body-sm text-text-secondary">荧光黄底黑字卡底</span>
+</div>
+<div class="p-2.5 rounded-DEFAULT bg-surface-container flex flex-col gap-1 hover:bg-surface-container-high transition-colors cursor-pointer">
+<div class="flex items-center justify-between">
+<span class="font-label-md text-label-md text-text-primary">极简胶片</span>
+</div>
+<span class="font-body-sm text-body-sm text-text-secondary">半透明黑底无衬线字</span>
+</div>
+<div class="p-2.5 rounded-DEFAULT bg-surface-container flex flex-col gap-1 hover:bg-surface-container-high transition-colors cursor-pointer">
+<div class="flex items-center justify-between">
+<span class="font-label-md text-label-md text-text-primary">播客波形</span>
+</div>
+<span class="font-body-sm text-body-sm text-text-secondary">动态声纹跳动频谱</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Quick Download CTA Row -->
+<div class="flex flex-wrap items-center justify-between gap-space-sm pt-2 text-text-tertiary font-body-sm text-body-sm">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px] text-primary">download_for_offline</span>
+<span>网络受限？推荐下载客户端直连处理：</span>
+<a class="text-primary hover:text-gold-light font-label-md text-label-md transition-colors" href="#">Mac 版 (Apple Silicon)</a>
+<span>·</span>
+<a class="text-primary hover:text-gold-light font-label-md text-label-md transition-colors" href="#">Windows 64位</a>
+</div>
+<div class="flex items-center gap-1 text-text-secondary">
+<span class="material-symbols-outlined text-[16px] text-ai-cyan">bolt</span>
+<span>新用户首次登录赠送 60 积分</span>
+</div>
+</div>
+</div>
+</section>
+<!-- 3. ONE-CLICK WORKFLOW PRESETS -->
+<section class="flex flex-col gap-space-md max-w-6xl mx-auto w-full">
+<div class="flex flex-col sm:flex-row sm:items-end justify-between gap-space-xs">
+<div>
+<span class="font-label-sm text-label-sm text-primary uppercase tracking-wider">智能创作模版</span>
+<h2 class="font-headline-lg text-headline-lg text-text-primary">专为不同场景打造的一键爆款工作流</h2>
+</div>
+<p class="font-body-md text-body-md text-text-secondary max-w-sm">
+          无需复杂的剪辑时间轴学习，选择适配模版，让 AI 将长内容快速裂变为多平台成片。
+        </p>
+</div>
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-space-md">
+<!-- Preset 1 -->
+<div class="group relative rounded-2xl bg-surface-container-low/90 p-space-md flex flex-col justify-between hover:bg-surface-container transition-all shadow-md">
+<div class="flex flex-col gap-space-sm">
+<div class="w-10 h-10 rounded-xl bg-primary-container/20 text-primary flex items-center justify-center shadow-sm">
+<span class="material-symbols-outlined text-[22px]">slow_motion_video</span>
+</div>
+<div>
+<div class="flex items-center gap-2 mb-1">
+<h3 class="font-headline-sm text-headline-sm text-text-primary">长视频一键高光</h3>
+<span class="px-1.5 py-0.5 rounded bg-primary-container text-on-primary-container font-label-sm text-label-sm font-semibold">热门</span>
+</div>
+<p class="font-body-md text-body-md text-text-secondary">
+                提炼全片最有价值的 3-5 个爆款切片，自动补全引人注目的标题卡与封面文案。
+              </p>
+</div>
+</div>
+<div class="pt-space-md flex items-center justify-between text-primary font-label-md text-label-md group-hover:translate-x-0.5 transition-transform">
+<span>开始处理</span>
+<span class="material-symbols-outlined text-[16px]">arrow_forward</span>
+</div>
+</div>
+<!-- Preset 2 -->
+<div class="group relative rounded-2xl bg-surface-container-low/90 p-space-md flex flex-col justify-between hover:bg-surface-container transition-all shadow-md">
+<div class="flex flex-col gap-space-sm">
+<div class="w-10 h-10 rounded-xl bg-tertiary-container/20 text-tertiary flex items-center justify-center shadow-sm">
+<span class="material-symbols-outlined text-[22px]">podcasts</span>
+</div>
+<div>
+<div class="flex items-center gap-2 mb-1">
+<h3 class="font-headline-sm text-headline-sm text-text-primary">播客访谈金句</h3>
+<span class="px-1.5 py-0.5 rounded bg-surface-variant text-text-secondary font-label-sm text-label-sm">声纹对齐</span>
+</div>
+<p class="font-body-md text-body-md text-text-secondary">
+                识别人声对话精彩反转与干货论点，自动生成动态音频频谱波形与对话双机位特写。
+              </p>
+</div>
+</div>
+<div class="pt-space-md flex items-center justify-between text-primary font-label-md text-label-md group-hover:translate-x-0.5 transition-transform">
+<span>选择模版</span>
+<span class="material-symbols-outlined text-[16px]">arrow_forward</span>
+</div>
+</div>
+<!-- Preset 3 -->
+<div class="group relative rounded-2xl bg-surface-container-low/90 p-space-md flex flex-col justify-between hover:bg-surface-container transition-all shadow-md">
+<div class="flex flex-col gap-space-sm">
+<div class="w-10 h-10 rounded-xl bg-primary-container/20 text-gold-light flex items-center justify-center shadow-sm">
+<span class="material-symbols-outlined text-[22px]">shopping_bag</span>
+</div>
+<div>
+<div class="flex items-center gap-2 mb-1">
+<h3 class="font-headline-sm text-headline-sm text-text-primary">电商带货切片</h3>
+<span class="px-1.5 py-0.5 rounded bg-surface-variant text-text-secondary font-label-sm text-label-sm">高转化</span>
+</div>
+<p class="font-body-md text-body-md text-text-secondary">
+                精准定位产品实测痛点与核心卖点讲解，自动合成转化率极高的角标与行动号召 (CTA)。
+              </p>
+</div>
+</div>
+<div class="pt-space-md flex items-center justify-between text-primary font-label-md text-label-md group-hover:translate-x-0.5 transition-transform">
+<span>选择模版</span>
+<span class="material-symbols-outlined text-[16px]">arrow_forward</span>
+</div>
+</div>
+<!-- Preset 4 -->
+<div class="group relative rounded-2xl bg-surface-container-low/90 p-space-md flex flex-col justify-between hover:bg-surface-container transition-all shadow-md">
+<div class="flex flex-col gap-space-sm">
+<div class="w-10 h-10 rounded-xl bg-ai-cyan/10 text-ai-cyan flex items-center justify-center shadow-sm">
+<span class="material-symbols-outlined text-[22px]">translate</span>
+</div>
+<div>
+<div class="flex items-center gap-2 mb-1">
+<h3 class="font-headline-sm text-headline-sm text-text-primary">全球出海多语种</h3>
+<span class="px-1.5 py-0.5 rounded bg-ai-cyan/20 text-ai-cyan font-label-sm text-label-sm">声音克隆</span>
+</div>
+<p class="font-body-md text-body-md text-text-secondary">
+                保留原作者音色完成跨语言翻译配音，智能对齐唇形与双语对照字幕，助力出海分发。
+              </p>
+</div>
+</div>
+<div class="pt-space-md flex items-center justify-between text-primary font-label-md text-label-md group-hover:translate-x-0.5 transition-transform">
+<span>选择模版</span>
+<span class="material-symbols-outlined text-[16px]">arrow_forward</span>
+</div>
+</div>
+</div>
+</section>
+<!-- 4. LIVE INTERACTIVE SHOWCASE & BEFORE/AFTER SPLIT VIEW -->
+<section class="flex flex-col gap-space-lg max-w-6xl mx-auto w-full">
+<div class="flex flex-col items-center text-center space-y-space-xs">
+<span class="font-label-sm text-label-sm text-primary uppercase tracking-wider">实时渲染对比</span>
+<h2 class="font-headline-lg text-headline-lg text-text-primary">看 AI 如何在 60 秒内重塑长视频</h2>
+<p class="font-body-md text-body-md text-text-secondary max-w-xl">
+          从 45 分钟的单调横屏访谈，到直接分发至 TikTok、YouTube Shorts 和小红书的多条 9:16 高赞短片。
+        </p>
+</div>
+<!-- Split Stage Bento Card -->
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-space-md bg-surface-container-lowest/80 backdrop-blur-xl p-space-md sm:p-space-lg rounded-2xl shadow-2xl">
+<!-- Left: Long Source Video Timeline Inspector (5 Columns) -->
+<div class="lg:col-span-5 flex flex-col gap-space-md justify-between bg-surface-container-low/70 p-space-md rounded-xl">
+<div class="flex flex-col gap-space-sm">
+<div class="flex items-center justify-between">
+<span class="font-label-md text-label-md text-text-primary flex items-center gap-1.5">
+<span class="material-symbols-outlined text-text-tertiary text-[18px]">video_library</span>
+                原始长视频源 (YouTube 45:18)
+              </span>
+<span class="px-2 py-0.5 rounded-full bg-surface-variant text-text-secondary font-label-sm text-label-sm">1080P 60FPS</span>
+</div>
+<!-- Video Thumbnail Mock with Waveform -->
+<div class="relative w-full aspect-video rounded-lg overflow-hidden bg-surface-container-high group">
+<img class="w-full h-full object-cover opacity-85 group-hover:scale-102 transition-transform duration-500" data-alt="A cinematic widescreen 16:9 frame of a tech podcast interview with warm obsidian studio lighting, champagne gold edge highlights, high end microphone and camera bokeh background." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAkmzODUAZmadpbTDya9oPAowUZHjd8Bu42QJxahneJHTfLeB_YH-KThT6-WiGolI_uocNfb3qyAnj7EA2-Pi2oNo-zLr1U2khQd2D2dW3p5Yspq21TRO0EjFE8ZbeF1Qacqnit_3yo4wa4BmhvvvNFVV8Zyg0FLD_24WOs7HzP6Gg4jzjPZf4fTWFKm2lcg-kDSvm4CXHNKolhWX7n9Pv-OXdJuI00PFh7QURR_q3QCGoqfVxkgPmpVA"/>
+<div class="absolute inset-0 bg-gradient-to-t from-surface-base via-transparent to-transparent opacity-80"></div>
+<div class="absolute bottom-3 left-3 right-3 flex items-center justify-between text-text-primary font-label-sm text-label-sm">
+<span class="bg-surface-base/80 px-2 py-1 rounded backdrop-blur">00:18:24 / 00:45:18</span>
+<span class="bg-primary/20 text-gold-light px-2 py-1 rounded backdrop-blur">识别到 4 个高能峰值</span>
+</div>
+</div>
+<!-- Timeline Audio Waveform SVG Simulation -->
+<div class="flex flex-col gap-1 pt-1">
+<div class="flex justify-between text-text-tertiary font-label-sm text-label-sm">
+<span>00:00</span>
+<span class="text-gold-light font-semibold">★ 高光片段 1 [04:12 - 04:58]</span>
+<span>45:18</span>
+</div>
+<div class="relative w-full h-12 bg-surface-container rounded-md flex items-center px-2 overflow-hidden">
+<!-- SVG Audio Waveform Graph -->
+<svg class="w-full h-8 text-surface-variant" fill="none" preserveaspectratio="none" viewbox="0 0 300 32">
+<path d="M0,16 Q5,2 10,16 T20,16 T30,8 T40,24 T50,16 T60,4 T70,28 T80,16 T90,6 T100,26 T110,16 T120,10 T130,22 T140,16 T150,2 T160,30 T170,16 T180,8 T190,24 T200,16 T210,5 T220,27 T230,16 T240,12 T250,20 T260,16 T270,4 T280,28 T290,16 T300,16" stroke="currentColor" stroke-linecap="round" stroke-width="2"></path>
+</svg>
+<!-- Active AI Highlight Slice 1 -->
+<div class="absolute left-1/4 w-16 h-full bg-primary/20 rounded flex items-center justify-center">
+<span class="w-1.5 h-1.5 rounded-full bg-gold-light animate-ping"></span>
+</div>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-2 text-text-tertiary font-body-sm text-body-sm">
+<span class="material-symbols-outlined text-[16px] text-ai-cyan">psychology</span>
+<span>AI 模型根据声调反差、观众停留概率和弹幕爆发点精准锚定</span>
+</div>
+</div>
+<!-- Right: Generated Vertical Shorts Deck (7 Columns) -->
+<div class="lg:col-span-7 flex flex-col justify-between gap-space-md">
+<div class="flex items-center justify-between">
+<span class="font-label-md text-label-md text-gold-light flex items-center gap-1.5">
+<span class="material-symbols-outlined text-[18px]">auto_awesome</span>
+              AI 生成竖屏成片 (可直接下载发布)
+            </span>
+<span class="font-label-sm text-label-sm text-text-secondary">4K 60fps · 双语硬字幕</span>
+</div>
+<!-- 3 Vertical Cards Grid -->
+<div class="grid grid-cols-1 sm:grid-cols-3 gap-space-sm">
+<!-- Short 1 -->
+<div class="group relative rounded-xl overflow-hidden bg-surface-container-high/60 flex flex-col shadow-lg transition-transform hover:-translate-y-1">
+<div class="relative w-full aspect-[9/16] bg-surface-container overflow-hidden">
+<img class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" data-alt="Vertical 9:16 video frame showing a close-up expressive portrait of a creative director speaking with dynamic black-gold subtitles overlaid on screen, ultra-modern luxury dark aesthetic." src="https://lh3.googleusercontent.com/aida-public/AB6AXuD_iPE_6gfw0POBjPHKp1YE-PTwhp3nx-nAvXI6-NvbFw3ycuWoaF_Ism8KEWEF87l9BGhpy4laDauzQzwjgCqmewFh0KQ2BkVRVTsSXj1zQcejBrBhG7OB2btYMrsZxRTvzifAesrPG5HyHScO_xfIGRDpmoQTNNYDw8tV1dpn5tT8FcW7Ndj4gkCushkQ26Dg127zfUUS-Ds3cr1r2IDnDrAiW4UhmMCEXr8rQNFHlZgOak9E7kEM_Q"/>
+<div class="absolute inset-0 bg-gradient-to-t from-surface-base via-transparent to-black/30"></div>
+<!-- Engagement Score Badge -->
+<div class="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-surface-base/80 backdrop-blur font-label-sm text-label-sm text-gold-light flex items-center gap-1">
+<span class="material-symbols-outlined text-[12px] text-primary" style="font-variation-settings: 'FILL' 1;">local_fire_department</span>
+<span>完播率 98%</span>
+</div>
+<!-- Duration Badge -->
+<div class="absolute top-2 right-2 px-1.5 py-0.5 rounded bg-surface-base/80 backdrop-blur font-label-sm text-label-sm text-text-primary">
+                  00:38
+                </div>
+<!-- Live Subtitle Overlay Simulation -->
+<div class="absolute bottom-3 left-2 right-2 text-center">
+<span class="inline-block px-2 py-1 rounded bg-black/60 backdrop-blur font-label-sm text-label-sm text-gold-light font-bold">
+                    “这才是未来AI创作者的真正护城河”
+                  </span>
+</div>
+</div>
+<div class="p-2.5 flex items-center justify-between bg-surface-container">
+<div class="flex flex-col min-w-0">
+<span class="font-label-md text-label-md text-text-primary truncate">切片 #1 核心金句</span>
+<span class="font-body-sm text-body-sm text-text-tertiary truncate">预估播放量: 1.2M+</span>
+</div>
+<button class="w-7 h-7 rounded-lg bg-surface-variant flex items-center justify-center text-primary hover:bg-primary hover:text-on-primary transition-colors">
+<span class="material-symbols-outlined text-[16px]">download</span>
+</button>
+</div>
+</div>
+<!-- Short 2 -->
+<div class="group relative rounded-xl overflow-hidden bg-surface-container-high/60 flex flex-col shadow-lg transition-transform hover:-translate-y-1">
+<div class="relative w-full aspect-[9/16] bg-surface-container overflow-hidden">
+<img class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" data-alt="Vertical 9:16 mobile format mockup of a sleek product commercial showcase with dark gold lighting, macro view of technology hardware, and energetic typography." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDq5JZ56VD5qN1Ibg0CEG_YAzbs-nWGQ9TIDg0x4TayiByeBjLkHLVq4ojZDyb9yVMRRFtDF6hPbhg3qEOIcn5xQOXBxvWvrb7GTS_sRvo9eNfOAXarQRvVuuzW9eG2pCsIqMe9CfFuRil0HoNzaw96SgmgusRT81onNMXrrMFLbrdCRY-8QLNVHSkvvUX-QPjUhAoycetb9gGGfZOA-fluGANgw5WhrpkdQ9TXaX_K0leLvbNWmsvzPw"/>
+<div class="absolute inset-0 bg-gradient-to-t from-surface-base via-transparent to-black/30"></div>
+<div class="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-surface-base/80 backdrop-blur font-label-sm text-label-sm text-gold-light flex items-center gap-1">
+<span class="material-symbols-outlined text-[12px] text-primary" style="font-variation-settings: 'FILL' 1;">local_fire_department</span>
+<span>爆款指数 95</span>
+</div>
+<div class="absolute top-2 right-2 px-1.5 py-0.5 rounded bg-surface-base/80 backdrop-blur font-label-sm text-label-sm text-text-primary">
+                  00:46
+                </div>
+<div class="absolute bottom-3 left-2 right-2 text-center">
+<span class="inline-block px-2 py-1 rounded bg-black/60 backdrop-blur font-label-sm text-label-sm text-primary font-bold">
+                    三分钟教会你极致镜头语言
+                  </span>
+</div>
+</div>
+<div class="p-2.5 flex items-center justify-between bg-surface-container">
+<div class="flex flex-col min-w-0">
+<span class="font-label-md text-label-md text-text-primary truncate">切片 #2 技巧实操</span>
+<span class="font-body-sm text-body-sm text-text-tertiary truncate">预估播放量: 860K+</span>
+</div>
+<button class="w-7 h-7 rounded-lg bg-surface-variant flex items-center justify-center text-primary hover:bg-primary hover:text-on-primary transition-colors">
+<span class="material-symbols-outlined text-[16px]">download</span>
+</button>
+</div>
+</div>
+<!-- Short 3 -->
+<div class="group relative rounded-xl overflow-hidden bg-surface-container-high/60 flex flex-col shadow-lg transition-transform hover:-translate-y-1">
+<div class="relative w-full aspect-[9/16] bg-surface-container overflow-hidden">
+<img class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" data-alt="Vertical 9:16 frame of a high tech interview with audio visualizer bars overlaid in champagne gold color, clean dark background with modern cinematic rim lighting." src="https://lh3.googleusercontent.com/aida-public/AB6AXuATTblU77EJLYiOmA7lNF3IwLBRUlJt9iAoMcyEG-iK0CDBTvoSL84IXnjp899kJ_lUPChzJ_t5JjHn_lkmcRFF2L8nD1Ach5acOscqezECAZWXgWs0ONfeNv0Pq44u70gVarh32OCS8Gs6JDHX6YIv7obfWAJP85jA9yd4Jg3um5Mn6qm40WgbL2XG53kRAkGoaUZu3omALc_q50ICw8_Go288JK6Q6E4x_ajSOPLi2XDRnFiazf7feQ"/>
+<div class="absolute inset-0 bg-gradient-to-t from-surface-base via-transparent to-black/30"></div>
+<div class="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-surface-base/80 backdrop-blur font-label-sm text-label-sm text-gold-light flex items-center gap-1">
+<span class="material-symbols-outlined text-[12px] text-primary" style="font-variation-settings: 'FILL' 1;">local_fire_department</span>
+<span>完播率 92%</span>
+</div>
+<div class="absolute top-2 right-2 px-1.5 py-0.5 rounded bg-surface-base/80 backdrop-blur font-label-sm text-label-sm text-text-primary">
+                  00:52
+                </div>
+<div class="absolute bottom-3 left-2 right-2 text-center">
+<span class="inline-block px-2 py-1 rounded bg-black/60 backdrop-blur font-label-sm text-label-sm text-gold-light font-bold">
+                    “不要再把精力耗在基础打点上了”
+                  </span>
+</div>
+</div>
+<div class="p-2.5 flex items-center justify-between bg-surface-container">
+<div class="flex flex-col min-w-0">
+<span class="font-label-md text-label-md text-text-primary truncate">切片 #3 观点反转</span>
+<span class="font-body-sm text-body-sm text-text-tertiary truncate">预估播放量: 520K+</span>
+</div>
+<button class="w-7 h-7 rounded-lg bg-surface-variant flex items-center justify-center text-primary hover:bg-primary hover:text-on-primary transition-colors">
+<span class="material-symbols-outlined text-[16px]">download</span>
+</button>
+</div>
+</div>
+</div>
+<!-- Quick Action All -->
+<div class="flex items-center justify-between pt-1">
+<span class="text-text-tertiary font-body-sm text-body-sm">已生成并自动重对齐 3 条高潜短视频</span>
+<button class="px-4 py-2 rounded-DEFAULT bg-surface-container-high hover:bg-surface-variant text-primary font-label-md text-label-md flex items-center gap-1.5 transition-colors">
+<span class="material-symbols-outlined text-[18px]">file_download</span>
+<span>一键批量打包全部短视频 (4K)</span>
+</button>
+</div>
+</div>
+</div>
+</section>
+<!-- 5. CLIENT DOWNLOAD DOCK & BOTTOM PRO BANNER -->
+<section class="max-w-5xl mx-auto w-full flex flex-col gap-space-lg">
+<!-- Native Client Download Bento -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-space-md">
+<!-- Mac Client -->
+<div class="p-space-md sm:p-space-lg rounded-2xl bg-surface-container-lowest/80 backdrop-blur-xl flex items-center justify-between gap-space-md shadow-lg">
+<div class="flex items-center gap-space-md">
+<div class="w-12 h-12 rounded-2xl bg-surface-container-high flex items-center justify-center text-primary">
+<span class="material-symbols-outlined text-[28px]">laptop_mac</span>
+</div>
+<div class="flex flex-col">
+<span class="font-headline-sm text-headline-sm text-text-primary">Clipop AI for macOS</span>
+<span class="font-body-sm text-body-sm text-text-secondary">适配 Apple Silicon (M1/M2/M3/M4) 及 Intel</span>
+<span class="font-label-sm text-label-sm text-text-tertiary mt-1">版本 v2.5.4 · 支持本地离线模型加速</span>
+</div>
+</div>
+<button class="px-4 py-2 rounded-full bg-surface-container-high hover:bg-surface-variant text-gold-light font-label-md text-label-md flex items-center gap-1 transition-colors whitespace-nowrap">
+<span class="material-symbols-outlined text-[18px]">download</span>
+<span>下载 Mac 版</span>
+</button>
+</div>
+<!-- Windows Client -->
+<div class="p-space-md sm:p-space-lg rounded-2xl bg-surface-container-lowest/80 backdrop-blur-xl flex items-center justify-between gap-space-md shadow-lg">
+<div class="flex items-center gap-space-md">
+<div class="w-12 h-12 rounded-2xl bg-surface-container-high flex items-center justify-center text-primary">
+<span class="material-symbols-outlined text-[28px]">desktop_windows</span>
+</div>
+<div class="flex flex-col">
+<span class="font-headline-sm text-headline-sm text-text-primary">Clipop AI for Windows</span>
+<span class="font-body-sm text-body-sm text-text-secondary">深度优化 NVIDIA RTX GPU 硬件编解码</span>
+<span class="font-label-sm text-label-sm text-text-tertiary mt-1">版本 v2.5.4 · 支持 Win10/11 64位系统</span>
+</div>
+</div>
+<button class="px-4 py-2 rounded-full bg-surface-container-high hover:bg-surface-variant text-gold-light font-label-md text-label-md flex items-center gap-1 transition-colors whitespace-nowrap">
+<span class="material-symbols-outlined text-[18px]">download</span>
+<span>下载 Win 版</span>
+</button>
+</div>
+</div>
+<!-- Bottom High-Impact Pro Conversion Banner -->
+<div class="relative overflow-hidden rounded-2xl bg-gradient-to-r from-surface-container-low via-surface-container to-surface-container-low p-space-lg sm:p-space-xl flex flex-col md:flex-row items-center justify-between gap-space-md shadow-2xl">
+<div class="flex flex-col gap-1 max-w-xl text-center md:text-left z-10">
+<div class="inline-flex items-center gap-1 text-gold-light font-label-sm text-label-sm uppercase tracking-wider mb-1">
+<span class="material-symbols-outlined text-[16px]">workspace_premium</span>
+<span>Pro 创作者特权俱乐部</span>
+</div>
+<h3 class="font-headline-lg text-headline-lg text-text-primary">
+            解锁无限高光解析与专属算力通道
+          </h3>
+<p class="font-body-md text-body-md text-text-secondary">
+            告别排队等待。支持 4K 60FPS 超清无水印导出，每月立享 20,000 点算力储备，更有 MCN 团队多账号共享席位。
+          </p>
+</div>
+<div class="flex flex-col sm:flex-row items-center gap-space-sm z-10">
+<button class="px-6 py-3 rounded-full bg-gradient-to-r from-gold-light via-primary-container to-secondary text-on-primary-container font-label-md text-label-md font-semibold shadow-lg shadow-primary-container/20 hover:opacity-95 transition-all">
+            查看 Pro 尊享方案 (限时8折)
+          </button>
+<button class="px-5 py-3 rounded-full bg-surface-container-high text-on-surface hover:bg-surface-variant font-label-md text-label-md transition-colors">
+            联系企业大客解决方案
+          </button>
+</div>
+<!-- Decorative Glow Ring behind text -->
+<div class="absolute -right-20 -bottom-20 w-80 h-80 bg-primary/10 rounded-full blur-[80px] pointer-events-none"></div>
+</div>
+</section>
+</div>
+<!-- Interactive Logic via Vanilla Script -->
+<script>
+    (function() {
+      // Toggle for Advanced Options Accordion
+      const toggleBtn = document.getElementById('advanced-toggle-btn');
+      const panel = document.getElementById('advanced-panel');
+      const icon = document.getElementById('advanced-toggle-icon');
+
+      if (toggleBtn && panel && icon) {
+        toggleBtn.addEventListener('click', function() {
+          const isHidden = panel.classList.contains('hidden');
+          if (isHidden) {
+            panel.classList.remove('hidden');
+            icon.textContent = 'expand_less';
+          } else {
+            panel.classList.add('hidden');
+            icon.textContent = 'expand_more';
+          }
+        });
+      }
+
+      // Input URL clear and interactive parsing simulation
+      const urlInput = document.getElementById('video-url-input');
+      const clearBtn = document.getElementById('clear-url-btn');
+      const analyzeBtn = document.getElementById('analyze-btn');
+
+      if (urlInput && clearBtn) {
+        urlInput.addEventListener('input', function(e) {
+          if (e.target.value.trim().length > 0) {
+            clearBtn.classList.remove('hidden');
+            clearBtn.classList.add('flex');
+          } else {
+            clearBtn.classList.add('hidden');
+            clearBtn.classList.remove('flex');
+          }
+        });
+
+        clearBtn.addEventListener('click', function() {
+          urlInput.value = '';
+          clearBtn.classList.add('hidden');
+          clearBtn.classList.remove('flex');
+          urlInput.focus();
+        });
+      }
+
+      // Analyze Button visual state
+      if (analyzeBtn) {
+        analyzeBtn.addEventListener('click', function() {
+          const originalText = analyzeBtn.innerHTML;
+          analyzeBtn.innerHTML = '<span class="material-symbols-outlined text-[18px] animate-spin">refresh</span><span>解析媒体流中...</span>';
+          analyzeBtn.classList.add('opacity-80', 'pointer-events-none');
+
+          setTimeout(function() {
+            analyzeBtn.innerHTML = '<span class="material-symbols-outlined text-[18px]">check_circle</span><span>已就绪，开始剪辑</span>';
+            setTimeout(function() {
+              analyzeBtn.innerHTML = originalText;
+              analyzeBtn.classList.remove('opacity-80', 'pointer-events-none');
+            }, 1800);
+          }, 1200);
+        });
+      }
+
+      // Dropzone simulated drag and drop
+      const dropzone = document.getElementById('dropzone');
+      if (dropzone) {
+        ['dragenter', 'dragover'].forEach(eventName => {
+          dropzone.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            dropzone.classList.add('bg-surface-container-high');
+          });
+        });
+        ['dragleave', 'drop'].forEach(eventName => {
+          dropzone.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            dropzone.classList.remove('bg-surface-container-high');
+          });
+        });
+      }
+    })();
+  </script>
+</div></main></div></body></html>

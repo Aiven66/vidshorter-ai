@@ -16,6 +16,7 @@ import {
   type TalkingSceneData,
 } from '@/components/video-templates/talking-avatar';
 import { SocialShare } from '@/components/video-templates/social-share';
+import { CloudDigitalHumanStudio } from '@/components/digital-human/cloud-studio';
 import { useLocale } from '@/lib/locale-context';
 import {
   Megaphone,
@@ -35,6 +36,9 @@ import {
   Package,
   Globe2,
   Clapperboard,
+  PersonStanding,
+  Download,
+  MonitorDown,
 } from 'lucide-react';
 
 /* ------------------------------------------------------------------ */
@@ -80,6 +84,81 @@ function shortProductName(name: string): string {
   const firstSegment = name.split(/\s+[-–|]\s+/)[0].trim();
   const base = firstSegment.length >= 12 ? firstSegment : name.trim();
   return base.length > 60 ? base.slice(0, 60).replace(/\s+\S*$/, '') + '…' : base;
+}
+
+/* ------------------------------------------------------------------ */
+/* 真人数字人模式（桌面端专属）                                          */
+/* ------------------------------------------------------------------ */
+
+interface DesktopBridge {
+  realHumanStatus: () => Promise<RealHumanStatus>;
+  realHumanDownloadModels: () => Promise<{ ok: boolean; cached?: boolean }>;
+  realHumanListHosts: () => Promise<{ hosts: RealHumanHost[] }>;
+  realHumanGenerate: (input: RealHumanGenerateInput) => Promise<RealHumanGenerateResult>;
+  realHumanCancel: () => Promise<{ ok: boolean }>;
+  onRealHumanEvent: (cb: (p: RealHumanEvent) => void) => () => void;
+  getMediaBaseUrl: () => Promise<string>;
+}
+
+interface RealHumanHost {
+  id: string;
+  file: string;
+  gender: string;
+  region: string;
+  label: string;
+  available?: boolean;
+}
+
+interface RealHumanStatus {
+  ready: boolean;
+  downloaded: number;
+  total: number;
+  models?: { name: string; ready: boolean }[];
+  hosts?: RealHumanHost[];
+  generating?: boolean;
+  engine?: { provider: string; local: boolean; ready: boolean; sizeBytes?: number };
+}
+
+interface RealHumanGenerateInput {
+  script: string;
+  hostId: string;
+  locale: string;
+  voice?: string;
+  overlays?: { type: 'text'; from: number; to: number; text: string; size?: number; color?: string }[];
+  productImages?: string[];
+}
+
+interface RealHumanGenerateResult {
+  ok: boolean;
+  outPath?: string;
+  outUrl?: string;
+  durationMs?: number;
+}
+
+interface RealHumanEvent {
+  stage: 'download' | 'runtime' | 'models' | 'tts' | 'local-product' | 'local-lipsync' | 'quality-check' | 'done';
+  pct?: number;
+  file?: string;
+  fileIndex?: number;
+  fileTotal?: number;
+  frame?: number;
+  total?: number;
+  outUrl?: string;
+}
+
+/** 桌面端 bridge（仅 macOS 客户端注入） */
+function getDesktopBridge(): DesktopBridge | null {
+  if (typeof window === 'undefined') return null;
+  const w = window as unknown as { clipopDesktop?: DesktopBridge; vidshorterDesktop?: DesktopBridge };
+  const b = w.clipopDesktop || w.vidshorterDesktop;
+  return b && typeof b.realHumanStatus === 'function' ? b : null;
+}
+
+/** 按语种估算口播语速（字/秒），用于字幕 overlay 分配时间轴 */
+function estimateLineSeconds(text: string, localeKey: string): number {
+  const cjk = /^zh|ja|ko/i.test(localeKey);
+  const rate = cjk ? 4.2 : 13;
+  return Math.max(1.6, Math.min(12, text.length / rate + 0.5));
 }
 
 /* ------------------------------------------------------------------ */
@@ -414,6 +493,51 @@ export default function DigitalHumanLivePage() {
   const lastGenKeyRef = useRef('');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  /* 真人数字人模式（桌面端） */
+  const [mode, setMode] = useState<'photo' | 'real'>('photo');
+  const [desktopBridge, setDesktopBridge] = useState<DesktopBridge | null>(null);
+  const [rhStatus, setRhStatus] = useState<RealHumanStatus | null>(null);
+  const [rhHosts, setRhHosts] = useState<RealHumanHost[]>([]);
+  const [rhHostId, setRhHostId] = useState('m_asia');
+  const [rhDownloading, setRhDownloading] = useState(false);
+  const [rhDownloadPct, setRhDownloadPct] = useState(0);
+  const [rhDownloadFile, setRhDownloadFile] = useState('');
+  const [rhGenerating, setRhGenerating] = useState(false);
+  const [rhProgress, setRhProgress] = useState<{ stage: string; pct: number; frame?: number; total?: number }>({ stage: '', pct: 0 });
+  const [rhResultUrl, setRhResultUrl] = useState('');
+  const [rhError, setRhError] = useState('');
+  const [mediaBase, setMediaBase] = useState('');
+  const rhTokenRef = useRef(0);
+
+  /* 桌面端检测 + 模型/主播状态 */
+  useEffect(() => {
+    const bridge = getDesktopBridge();
+    if (!bridge) return;
+    setDesktopBridge(bridge);
+    bridge.realHumanStatus().then((st) => {
+      setRhStatus(st);
+      if (st.hosts?.length) {
+        setRhHosts(st.hosts);
+        setRhHostId((cur) => (st.hosts!.some((h) => h.id === cur) ? cur : (st.hosts![0]?.id ?? cur)));
+      }
+    }).catch(() => {});
+    bridge.getMediaBaseUrl().then(setMediaBase).catch(() => {});
+    const off = bridge.onRealHumanEvent((ev) => {
+      if (ev.stage === 'download') {
+        setRhDownloadPct(ev.pct ?? 0);
+        if (ev.file) setRhDownloadFile(ev.file);
+      } else {
+        setRhProgress({ stage: ev.stage, pct: ev.pct ?? 0, frame: ev.frame, total: ev.total });
+        if (ev.stage === 'done' && ev.outUrl) setRhResultUrl(ev.outUrl);
+      }
+    });
+    return off;
+  }, []);
+
+  useEffect(() => {
+    if (mode === 'real' && images.length > 0) setRhHostId('f_asia');
+  }, [mode, images.length]);
+
   const tr = useCallback(
     (key: string, fallback: string) => {
       const val = t(key);
@@ -458,7 +582,8 @@ export default function DigitalHumanLivePage() {
         const resp = await fetch('/api/extract-product', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url, locale }),
+          // 桌面端传媒体服务器地址：Amazon 等 TLS 指纹反爬站点由 Chromium 网络栈代抓
+          body: JSON.stringify({ url, locale, desktopProxy: mediaBase || undefined }),
         });
         const data: ProductApiResponse = await resp.json();
         if (!resp.ok || !data.ok || !data.product) {
@@ -493,7 +618,7 @@ export default function DigitalHumanLivePage() {
         return { ok: false };
       }
     },
-    [locale],
+    [locale, mediaBase],
   );
 
   /* ---------------- 图片上传 ---------------- */
@@ -686,6 +811,102 @@ export default function DigitalHumanLivePage() {
     deductCredits(30);
   }, [deductCredits]);
 
+  /* ---------------- 真人模式：模型下载 ---------------- */
+
+  const handleRhDownload = useCallback(async () => {
+    if (!desktopBridge || rhDownloading) return;
+    setRhDownloading(true);
+    setRhError('');
+    setRhDownloadPct(0);
+    try {
+      await desktopBridge.realHumanDownloadModels();
+      const st = await desktopBridge.realHumanStatus();
+      setRhStatus(st);
+    } catch (err) {
+      setRhError(String((err as Error)?.message || err));
+    } finally {
+      setRhDownloading(false);
+    }
+  }, [desktopBridge, rhDownloading]);
+
+  /* ---------------- 真人模式：生成视频 ---------------- */
+
+  const handleRhGenerate = useCallback(async () => {
+    if (!desktopBridge || rhGenerating) return;
+    if (scriptLines.length === 0) return;
+    const token = ++rhTokenRef.current;
+    setRhGenerating(true);
+    setRhError('');
+    setRhResultUrl('');
+    setRhProgress({ stage: 'models', pct: 0 });
+    try {
+      // 口播文案 → 旁白 + 时间轴字幕
+      let t0 = 0;
+      const overlays: { type: 'text'; from: number; to: number; text: string; size?: number; color?: string }[] = [];
+      const lines = scriptLines.map((l) => l.text.trim()).filter(Boolean);
+      for (const text of lines) {
+        const dur = estimateLineSeconds(text, voiceLocaleKey);
+        overlays.push({ type: 'text', from: t0, to: t0 + dur, text, size: 40 });
+        t0 += dur + 0.15;
+      }
+      const script = lines.join(/^zh|ja|ko/i.test(voiceLocaleKey) ? '' : ' ');
+
+      // The local physical-holding pipeline uses only the selected product.
+      // The backend preserves real fingers and refuses unsupported shapes.
+      let productImages: string[] = [];
+      try {
+        const ordered = [
+          images[mainImageIdx] ?? images[0],
+          ...images.filter((_, i) => i !== mainImageIdx),
+        ].filter(Boolean) as string[];
+        const picked = ordered.filter(im => im.startsWith('data:') || /^https?:/i.test(im)).slice(0, 1);
+        for (const im of picked) {
+          const productResponse = await fetch(im);
+          if (!productResponse.ok) throw new Error(`image download failed (${productResponse.status})`);
+          const blob = await productResponse.blob();
+          if (!blob.type.startsWith('image/') || blob.size < 1024 || blob.size > 20 * 1024 * 1024) {
+            throw new Error('invalid product image');
+          }
+          const up = await fetch(`${mediaBase}/api/upload`, {
+            method: 'POST',
+            headers: { 'x-filename': 'product.png', 'Content-Type': 'application/octet-stream' },
+            body: blob,
+          });
+          if (!up.ok) throw new Error(`product upload failed (${up.status})`);
+          const data = await up.json();
+          // media-server stores uploads in /tmp/video-cache/uploads (served back via /api/local-video/<name>)
+          const m = String(data.url || '').match(/\/api\/local-video\/(.+)$/);
+          if (m) productImages.push(`/tmp/video-cache/uploads/${m[1]}`);
+        }
+      } catch (error) {
+        throw new Error(`${tr('digitalHumanLive.productUploadFailed', 'The product image could not be prepared. Please reselect the main product image and try again.')} ${String((error as Error)?.message || '')}`.trim());
+      }
+      if (images.length > 0 && productImages.length === 0) {
+        throw new Error(tr('digitalHumanLive.productUploadFailed', 'The product image could not be prepared. Please reselect the main product image and try again.'));
+      }
+
+      const res = await desktopBridge.realHumanGenerate({
+        script,
+        hostId: rhHostId,
+        locale: voiceLocaleKey,
+        voice: voiceId,
+        overlays,
+        productImages,
+      });
+      if (rhTokenRef.current !== token) return;
+      if (res?.ok && res.outUrl) {
+        setRhResultUrl(res.outUrl);
+        deductCredits(30);
+      } else {
+        throw new Error('generation failed');
+      }
+    } catch (err) {
+      if (rhTokenRef.current === token) setRhError(String((err as Error)?.message || err));
+    } finally {
+      if (rhTokenRef.current === token) setRhGenerating(false);
+    }
+  }, [desktopBridge, rhGenerating, scriptLines, voiceLocaleKey, voiceId, rhHostId, images, mainImageIdx, mediaBase, deductCredits]);
+
   /* ---------------- 派生数据 ---------------- */
 
   const countries = useMemo(() => {
@@ -740,7 +961,39 @@ export default function DigitalHumanLivePage() {
               <p className="mt-3 max-w-2xl text-sm text-muted-foreground md:text-base">
                 {tr('digitalHumanLive.subtitle', 'Paste a product link, pick a digital human host & voice — get a real talking-host selling video with natural gestures.')}
               </p>
+
+              {/* 模式切换：照片数字人 / 真人数字人（桌面端专属） */}
+              {desktopBridge && (
+                <div className="mt-5 inline-flex items-center rounded-full border border-border bg-card p-1 shadow-sm">
+                  <button
+                    type="button"
+                    onClick={() => setMode('photo')}
+                    className={`inline-flex items-center gap-1.5 rounded-full px-4 py-1.5 text-xs font-medium transition-all ${
+                      mode === 'photo' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent'
+                    }`}
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    {tr('digitalHumanLive.modePhoto', 'Photo Avatar')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMode('real')}
+                    className={`inline-flex items-center gap-1.5 rounded-full px-4 py-1.5 text-xs font-medium transition-all ${
+                      mode === 'real' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent'
+                    }`}
+                  >
+                    <PersonStanding className="h-3.5 w-3.5" />
+                    {tr('digitalHumanLive.modeReal', 'Real Human')}
+                    <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-600 dark:text-emerald-400">
+                      {tr('digitalHumanLive.desktopOnly', 'Desktop')}
+                    </span>
+                  </button>
+                </div>
+              )}
             </div>
+
+            {/* 云端真人数字人（Web 环境；桌面端由本地 MuseTalk 实时口型承担） */}
+            {!desktopBridge && <CloudDigitalHumanStudio />}
 
             {/* ① 商品信息 */}
             <Card className="mb-6 p-4 md:p-6 shadow-sm">
@@ -892,8 +1145,107 @@ export default function DigitalHumanLivePage() {
               </div>
             </Card>
 
-            {/* ② 数字人形象 */}
+            {/* ② 数字人形象（照片模式） / 真人主播（真人模式） */}
             <Card className="mb-6 p-4 md:p-6 shadow-sm">
+              {mode === 'real' ? (
+                <div>
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                      <PersonStanding className="h-4 w-4 text-primary" />
+                      {tr('digitalHumanLive.realHostSection', 'Real Human Host')}
+                    </div>
+                    <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                      {tr('digitalHumanLive.realHostBadge', 'Local AI lip-sync · 100% real person')}
+                    </span>
+                  </div>
+
+                  {/* 真人主播选择 */}
+                  <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+                    {rhHosts.filter((h) => h.available !== false).map((h) => {
+                      const selected = rhHostId === h.id;
+                      return (
+                        <button
+                          key={h.id}
+                          type="button"
+                          onClick={() => setRhHostId(h.id)}
+                          className={`flex flex-col items-center gap-1.5 rounded-lg border p-2.5 text-xs font-medium transition-all ${
+                            selected ? 'border-primary bg-primary/5 text-primary ring-1 ring-primary' : 'border-border bg-card text-muted-foreground hover:bg-accent'
+                          }`}
+                        >
+                          {h.gender === 'male' ? <User className="h-5 w-5" /> : <UserRound className="h-5 w-5" />}
+                          <span className="truncate">{h.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {rhHosts.filter((h) => h.available !== false).length === 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      {tr('digitalHumanLive.noHosts', 'No real-human host videos found. Please update the desktop client.')}
+                    </p>
+                  )}
+
+                  {/* 本地真实持物与口型引擎 */}
+                  <div className="mt-4 rounded-lg border border-border bg-muted/30 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 text-xs font-medium text-foreground">
+                        <PersonStanding className="h-3.5 w-3.5 text-primary" />
+                        {tr('digitalHumanLive.productAvatarTitle', 'Real Product Holding')}
+                        <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
+                          {tr('digitalHumanLive.productAvatarLocal', '100% Local')}
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-muted-foreground">MuseTalk 1.5 · Apple MPS</span>
+                    </div>
+                    <p className="mt-2 text-[10px] text-muted-foreground">
+                      {tr('digitalHumanLive.productAvatarHint', 'The presenter physically holds a compatible bottle. Clipop replaces only the held object surface while preserving real fingers, occlusion, motion and contact lighting. No cloud key or product-card overlay is used.')}
+                    </p>
+                  </div>
+
+                  {/* 本地模型管理 */}
+                  <div className="mt-4 rounded-lg border border-border bg-muted/30 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 text-xs font-medium text-foreground">
+                        <MonitorDown className="h-3.5 w-3.5 text-primary" />
+                        {tr('digitalHumanLive.modelsTitle', 'Local AI Models')}
+                        <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                          rhStatus?.ready ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                        }`}>
+                          {rhStatus?.ready
+                            ? tr('digitalHumanLive.modelsReady', 'Ready')
+                            : `${rhStatus?.downloaded ?? 0}/${rhStatus?.total ?? 4}`}
+                        </span>
+                      </div>
+                      {!rhStatus?.ready && (
+                        <button
+                          type="button"
+                          onClick={() => void handleRhDownload()}
+                          disabled={rhDownloading}
+                          className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                        >
+                          {rhDownloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                          {rhDownloading
+                            ? tr('digitalHumanLive.downloading', 'Downloading…')
+                            : tr('digitalHumanLive.downloadModels', 'Download Local Models (~5.5GB, one-time)')}
+                        </button>
+                      )}
+                    </div>
+                    {rhDownloading && (
+                      <div className="mt-2">
+                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                          <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${Math.round(rhDownloadPct * 100)}%` }} />
+                        </div>
+                        <p className="mt-1 text-[10px] text-muted-foreground">
+                          {rhDownloadFile} · {Math.round(rhDownloadPct * 100)}%
+                        </p>
+                      </div>
+                    )}
+                    <p className="mt-2 text-[10px] text-muted-foreground">
+                      {tr('digitalHumanLive.modelsHint', 'MuseTalk 1.5 rebuilds the speaking face locally on Apple Silicon. A shape and occlusion quality gate stops unsupported product videos instead of producing fake hands or double mouths.')}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <>
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
                   <Users className="h-4 w-4 text-primary" />
@@ -970,9 +1322,11 @@ export default function DigitalHumanLivePage() {
                   );
                 })}
               </div>
+                </>
+              )}
             </Card>
 
-            {/* ③ 主播声音 */}
+            {/* ③ 主播声音（真人模式仅保留语言选择，音色由系统神经语音自动匹配） */}
             <Card className="mb-6 p-4 md:p-6 shadow-sm">
               <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
                 <Mic className="h-4 w-4 text-primary" />
@@ -1001,7 +1355,12 @@ export default function DigitalHumanLivePage() {
                 </div>
               </div>
 
-              {/* 音色（性别跟随所选形象） */}
+              {/* 音色（性别跟随所选形象；真人模式使用 macOS 神经语音自动匹配） */}
+              {mode === 'real' ? (
+                <p className="rounded-lg border border-border bg-muted/30 p-3 text-[11px] text-muted-foreground">
+                  {tr('digitalHumanLive.realVoiceHint', 'Narration uses macOS neural voices — timbre auto-matches the selected host (male host → male voice). Runs fully offline.')}
+                </p>
+              ) : (
               <div>
                 <div className="mb-1.5 flex items-center gap-2 text-xs font-medium text-muted-foreground">
                   {tr('digitalHumanLive.voiceTimbre', 'Timbre')}
@@ -1047,6 +1406,7 @@ export default function DigitalHumanLivePage() {
                   })}
                 </div>
               </div>
+              )}
             </Card>
 
             {/* ④ 带货口播文案 */}
@@ -1089,6 +1449,45 @@ export default function DigitalHumanLivePage() {
             {hasAnyContent ? (
               <Card className="mb-6 p-4 md:p-6 shadow-sm">
                 <div className="flex flex-col items-center gap-3">
+                  {mode === 'real' ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => void handleRhGenerate()}
+                        disabled={rhGenerating || scriptLines.length === 0 || !rhStatus?.ready}
+                        className="inline-flex items-center gap-2 rounded-md bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow hover:bg-primary/90 disabled:opacity-50"
+                      >
+                        {rhGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <PersonStanding className="h-4 w-4" />}
+                        {rhGenerating
+                          ? tr('digitalHumanLive.rhGenerating', 'Rendering real human video…')
+                          : tr('digitalHumanLive.rhGenerate', 'Generate Real Human Video')}
+                      </button>
+                      {!rhStatus?.ready && !rhGenerating && (
+                        <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                          {tr('digitalHumanLive.needModels', 'Download the local AI models above first.')}
+                        </p>
+                      )}
+                      {rhGenerating && (
+                        <div className="w-full max-w-sm space-y-1">
+                          <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                            <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${Math.round(rhProgress.pct * 100)}%` }} />
+                          </div>
+                          <p className="text-center text-[11px] text-muted-foreground">
+                            {rhProgress.stage === 'models' && tr('digitalHumanLive.rhStageModels', 'Loading AI models…')}
+                            {rhProgress.stage === 'runtime' && tr('digitalHumanLive.rhStageRuntime', 'Preparing the local AI runtime…')}
+                            {rhProgress.stage === 'tts' && tr('digitalHumanLive.rhStageTts', 'Synthesizing narration…')}
+                            {rhProgress.stage === 'local-product' && tr('digitalHumanLive.rhStageLocalProduct', 'Preserving real fingers and replacing the physically held product…')}
+                            {rhProgress.stage === 'local-lipsync' &&
+                              `${tr('digitalHumanLive.rhStageLocalLipsync', 'Rebuilding natural lip-sync locally')} ${rhProgress.frame ?? 0}/${rhProgress.total ?? 0}`}
+                            {rhProgress.stage === 'quality-check' && tr('digitalHumanLive.rhStageQuality', 'Checking mouth sharpness and product stability…')}
+                            {' · '}{Math.round(rhProgress.pct * 100)}%
+                          </p>
+                        </div>
+                      )}
+                      {rhError && <p className="text-xs text-red-500">{rhError}</p>}
+                    </>
+                  ) : (
+                    <>
                   <button
                     type="button"
                     onClick={() => void generateScenes()}
@@ -1127,6 +1526,8 @@ export default function DigitalHumanLivePage() {
                       {tr('digitalHumanLive.scenesReady', 'Scenes ready')}: {scenes.length} · {totalVideoSeconds.toFixed(1)}s
                     </p>
                   )}
+                    </>
+                  )}
                 </div>
               </Card>
             ) : (
@@ -1140,8 +1541,43 @@ export default function DigitalHumanLivePage() {
               </Card>
             )}
 
-            {/* ⑥ 预览 + 导出 */}
-            {scenes.length > 0 && !generating && hasAnyContent && (
+            {/* ⑥ 预览 + 导出：真人模式（本地渲染结果） */}
+            {mode === 'real' && rhResultUrl && !rhGenerating && (
+              <Card className="p-4 md:p-6 shadow-sm">
+                <div className="mb-4 flex items-center justify-between">
+                  <h2 className="flex items-center gap-2 text-lg font-semibold">
+                    <PersonStanding className="h-5 w-5 text-primary" />
+                    {tr('digitalHumanLive.rhResult', 'Real Human Video Ready')}
+                  </h2>
+                  <a
+                    href={rhResultUrl.startsWith('http') ? rhResultUrl : `${mediaBase}${rhResultUrl}`}
+                    download
+                    className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    {tr('digitalHumanLive.downloadMp4', 'Download MP4')}
+                  </a>
+                </div>
+                <div className="mx-auto max-w-sm overflow-hidden rounded-xl border border-border bg-black">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <video
+                    src={rhResultUrl.startsWith('http') ? rhResultUrl : `${mediaBase}${rhResultUrl}`}
+                    controls
+                    autoPlay
+                    className="aspect-[9/16] w-full"
+                  />
+                </div>
+                <div className="mt-4 border-t border-border pt-4">
+                  <SocialShare
+                    videoUrl={rhResultUrl.startsWith('http') ? rhResultUrl : `${mediaBase}${rhResultUrl}`}
+                    videoTitle={productName || tr('digitalHumanLive.title', 'Digital Human Selling Video')}
+                  />
+                </div>
+              </Card>
+            )}
+
+            {/* ⑥ 预览 + 导出：照片模式 */}
+            {mode === 'photo' && scenes.length > 0 && !generating && hasAnyContent && (
               <Card className="p-4 md:p-6 shadow-sm">
                 <div className="mb-4 flex items-center justify-between">
                   <h2 className="flex items-center gap-2 text-lg font-semibold">

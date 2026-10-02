@@ -6,24 +6,36 @@ import { Sparkles, Film, Zap, Video, Scissors, Download, Play, UploadCloud, Wand
 import { HomeStartButton } from '@/components/home/home-start-button';
 import { useLocale } from '@/lib/locale-context';
 
+/* 黑金主题强调色（取自 globals.css 语义令牌，深浅色自动适配） */
+const GOLD = 'var(--gold)';
+const GOLD_DIM = 'var(--gold-dim)';
+const GOLD_LIGHT = 'var(--gold-light)';
+const CYAN = 'var(--ai-cyan)';
+
+/** 图标底色/投影统一收口，避免各处硬编码十六进制色 */
+const tileBg = (c: string) =>
+  `linear-gradient(135deg, ${c} 0%, color-mix(in oklab, ${c} 68%, black) 100%)`;
+const tileShadow = (c: string) =>
+  `0 4px 16px -4px color-mix(in oklab, ${c} 45%, transparent)`;
+
 const features = [
-  { Icon: Sparkles, titleKey: 'home.features.auto.title', descKey: 'home.features.auto.desc', color: '#667eea' },
-  { Icon: Film, titleKey: 'home.features.multi.title', descKey: 'home.features.multi.desc', color: '#764ba2' },
-  { Icon: Zap, titleKey: 'home.features.quick.title', descKey: 'home.features.quick.desc', color: '#f093fb' },
+  { Icon: Sparkles, titleKey: 'home.features.auto.title', descKey: 'home.features.auto.desc', color: GOLD },
+  { Icon: Film, titleKey: 'home.features.multi.title', descKey: 'home.features.multi.desc', color: GOLD_DIM },
+  { Icon: Zap, titleKey: 'home.features.quick.title', descKey: 'home.features.quick.desc', color: CYAN },
 ];
 
 const valueHighlights = [
-  { Icon: Link2, titleKey: 'home.highlights.bilibili.title', descKey: 'home.highlights.bilibili.desc', color: '#667eea' },
-  { Icon: UploadCloud, titleKey: 'home.highlights.local.title', descKey: 'home.highlights.local.desc', color: '#764ba2' },
-  { Icon: WandSparkles, titleKey: 'home.highlights.ai.title', descKey: 'home.highlights.ai.desc', color: '#f093fb' },
-  { Icon: Clapperboard, titleKey: 'home.highlights.shorts.title', descKey: 'home.highlights.shorts.desc', color: '#4facfe' },
+  { Icon: Link2, titleKey: 'home.highlights.bilibili.title', descKey: 'home.highlights.bilibili.desc', color: GOLD },
+  { Icon: UploadCloud, titleKey: 'home.highlights.local.title', descKey: 'home.highlights.local.desc', color: GOLD_DIM },
+  { Icon: WandSparkles, titleKey: 'home.highlights.ai.title', descKey: 'home.highlights.ai.desc', color: CYAN },
+  { Icon: Clapperboard, titleKey: 'home.highlights.shorts.title', descKey: 'home.highlights.shorts.desc', color: GOLD_LIGHT },
 ];
 
 const steps = [
-  { step: '1', titleKey: 'home.howItWorks.step1.title', descKey: 'home.howItWorks.step1.desc', Icon: Video, color: '#667eea' },
-  { step: '2', titleKey: 'home.howItWorks.step2.title', descKey: 'home.howItWorks.step2.desc', Icon: Sparkles, color: '#764ba2' },
-  { step: '3', titleKey: 'home.howItWorks.step3.title', descKey: 'home.howItWorks.step3.desc', Icon: Scissors, color: '#f093fb' },
-  { step: '4', titleKey: 'home.howItWorks.step4.title', descKey: 'home.howItWorks.step4.desc', Icon: Download, color: '#4facfe' },
+  { step: '1', titleKey: 'home.howItWorks.step1.title', descKey: 'home.howItWorks.step1.desc', Icon: Video, color: GOLD },
+  { step: '2', titleKey: 'home.howItWorks.step2.title', descKey: 'home.howItWorks.step2.desc', Icon: Sparkles, color: GOLD_DIM },
+  { step: '3', titleKey: 'home.howItWorks.step3.title', descKey: 'home.howItWorks.step3.desc', Icon: Scissors, color: CYAN },
+  { step: '4', titleKey: 'home.howItWorks.step4.title', descKey: 'home.howItWorks.step4.desc', Icon: Download, color: GOLD_LIGHT },
 ];
 
 export function HomeHero() {
@@ -35,15 +47,16 @@ export function HomeHero() {
         <div
           className="absolute left-1/2 top-0 h-[500px] w-[800px] -translate-x-1/2 rounded-full opacity-30 blur-[120px]"
           style={{
-            background: 'radial-gradient(ellipse, rgba(102,126,234,0.35) 0%, rgba(118,75,162,0.2) 40%, transparent 70%)',
+            background:
+              'radial-gradient(ellipse, color-mix(in oklab, var(--gold) 32%, transparent) 0%, color-mix(in oklab, var(--ai-cyan) 16%, transparent) 45%, transparent 72%)',
           }}
         />
       </div>
 
       <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-border/50 bg-card/80 px-4 py-1.5 text-sm shadow-sm backdrop-blur-sm">
         <span
-          className="flex h-5 w-5 items-center justify-center rounded-full text-white"
-          style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}
+          className="flex h-5 w-5 items-center justify-center rounded-full text-primary-foreground"
+          style={{ background: tileBg(GOLD) }}
         >
           <Sparkles className="h-3 w-3" />
         </span>
@@ -73,7 +86,7 @@ export function HomeHero() {
       <div className="mt-6 flex items-center justify-center gap-6 text-xs text-muted-foreground">
         <div className="flex items-center gap-1.5">
           <div className="flex -space-x-1.5">
-            {['#667eea', '#764ba2', '#f093fb', '#4facfe'].map((c, i) => (
+            {[GOLD, GOLD_DIM, CYAN, GOLD_LIGHT].map((c, i) => (
               <div
                 key={i}
                 className="h-6 w-6 rounded-full border-2 border-background"
@@ -107,10 +120,10 @@ export function HomeValueHighlights() {
               style={{ background: color }}
             />
             <div
-              className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl text-white shadow-md"
+              className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl text-primary-foreground shadow-md"
               style={{
-                background: `linear-gradient(135deg, ${color} 0%, ${color}cc 100%)`,
-                boxShadow: `0 4px 16px -4px ${color}60`,
+                background: tileBg(color),
+                boxShadow: tileShadow(color),
               }}
             >
               <Icon className="h-5 w-5" />
@@ -204,10 +217,10 @@ export function HomeEditingShowcase() {
 
               <div className="flex items-center gap-3">
                 <span
-                  className="flex h-11 w-11 items-center justify-center rounded-xl text-white shadow-md"
+                  className="flex h-11 w-11 items-center justify-center rounded-xl text-primary-foreground shadow-md"
                   style={{
-                    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                    boxShadow: '0 4px 16px -4px rgba(102,126,234,0.5)',
+                    background: tileBg(GOLD),
+                    boxShadow: tileShadow(GOLD),
                   }}
                 >
                   <WandSparkles className="h-5 w-5" />
@@ -227,7 +240,7 @@ export function HomeEditingShowcase() {
                         className="h-1.5 rounded-full"
                         style={{
                           width: `${60 + item * 10}%`,
-                          background: 'linear-gradient(90deg, #667eea, #764ba2)',
+                          background: `linear-gradient(90deg, ${GOLD}, ${GOLD_DIM})`,
                         }}
                       />
                     </div>
@@ -268,14 +281,14 @@ export function HomeFeatures() {
               {/* Top gradient accent line */}
               <div
                 className="absolute left-0 right-0 top-0 h-1 opacity-0 transition-opacity duration-300 group-hover:opacity-100"
-                style={{ background: `linear-gradient(90deg, ${color}, ${color}80)` }}
+                style={{ background: `linear-gradient(90deg, ${color}, color-mix(in oklab, ${color} 50%, transparent))` }}
               />
               <CardHeader>
                 <div
-                  className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl text-white shadow-md"
+                  className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl text-primary-foreground shadow-md"
                   style={{
-                    background: `linear-gradient(135deg, ${color} 0%, ${color}cc 100%)`,
-                    boxShadow: `0 4px 16px -4px ${color}60`,
+                    background: tileBg(color),
+                    boxShadow: tileShadow(color),
                   }}
                 >
                   <Icon className="h-6 w-6" />
@@ -317,16 +330,16 @@ export function HomeHowItWorks() {
                 />
               )}
               <div
-                className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl text-white text-xl font-bold shadow-lg transition-transform hover:scale-105"
+                className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl text-primary-foreground text-xl font-bold shadow-lg transition-transform hover:scale-105"
                 style={{
-                  background: `linear-gradient(135deg, ${color} 0%, ${color}cc 100%)`,
-                  boxShadow: `0 8px 24px -6px ${color}60`,
+                  background: tileBg(color),
+                  boxShadow: `0 8px 24px -6px color-mix(in oklab, ${color} 45%, transparent)`,
                 }}
               >
                 <Icon className="h-7 w-7" />
               </div>
               <div
-                className="mx-auto mb-2 inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold text-white"
+                className="mx-auto mb-2 inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold text-primary-foreground"
                 style={{ background: color }}
               >
                 {step}

@@ -479,8 +479,14 @@ export async function POST(req: NextRequest) {
     if (!title) {
       title = extractTitleFromHtml(htmlContent) || 'Untitled Article';
     }
+    // 未填写分类 → 根据 HTML 内容用 LLM 自动提炼
     if (!category) {
-      category = 'AI Video Clipping';
+      try {
+        const { classifyBlogCategory } = await import('@/lib/server/blog/categorize');
+        category = (await classifyBlogCategory(title, htmlContent)) || 'AI Video Clipping';
+      } catch {
+        category = 'AI Video Clipping';
+      }
     }
 
     // 所有 HTML 上传的文章都作为英文 root 文章，locale 固定为 en，parent_id 为空

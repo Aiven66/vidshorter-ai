@@ -268,7 +268,7 @@ function IndexBadge({ index }: { index: number }) {
   const circled = ['①','②','③','④','⑤','⑥','⑦','⑧','⑨','⑩'];
   const label = index >= 1 && index <= 10 ? circled[index - 1] : String(index);
   return (
-    <div className="shrink-0 w-9 h-9 rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 text-white flex items-center justify-center text-base font-bold shadow-sm select-none">
+    <div className="shrink-0 w-9 h-9 rounded-full bg-gradient-to-br from-gold-light to-gold-dim text-primary-foreground flex items-center justify-center text-base font-bold shadow-sm select-none">
       {label}
     </div>
   );

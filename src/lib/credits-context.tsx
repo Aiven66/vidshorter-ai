@@ -3,6 +3,16 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { useAuth } from './auth-context';
 import { isAdminUser } from './admin-gate';
+import {
+  FREE_DAILY_CREDITS,
+  hasQuotaCrossed,
+  isLegacyPaidRow,
+  planQuota,
+  quotaResetDescription,
+  quotaTransactionType,
+  resetBoundary,
+  type Quota,
+} from './plan-credits';
 
 function isSupabaseConfigured(): boolean {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.COZE_SUPABASE_URL;
@@ -32,6 +42,8 @@ async function getSupabaseClient(token?: string) {
 interface CreditsContextType {
   balance: number;
   loading: boolean;
+  /** Current plan_type: 'free' | 'starter' | 'pro'. 'free' when not paid. */
+  plan: string;
   refreshCredits: () => Promise<number>;
   deductCredits: (amount: number) => Promise<boolean>;
 }
@@ -42,10 +54,20 @@ const CreditsContext = createContext<CreditsContextType | undefined>(undefined);
 const DEMO_CREDITS_KEY = 'clipop_demo_credits';
 const DEMO_CREDITS_RESET_KEY = 'clipop_demo_credits_reset';
 
-const DAILY_FREE_CREDITS = 100;
-const DAILY_STARTER_CREDITS = 500;
-const DAILY_PRO_CREDITS = 1_000_000;
+// 额度真源统一在 @/lib/plan-credits（与服务端同一份）：
+// 免费档 60/日（= 1 次生成，CREDIT_COST 60）；Starter 6,000/月；Pro 20,000/月。
+const DAILY_FREE_CREDITS = FREE_DAILY_CREDITS;
 const ADMIN_CREDITS = 10_000;
+
+/** 某 plan 当前的额度与周期（存量旧付费订阅仍走旧日额度）。 */
+function quotaFor(planType: string | null | undefined, legacyPaid: boolean): Quota {
+  return planQuota(planType, { legacyPaid });
+}
+
+/** subscriptions 行中判断存量旧付费订阅所需的周期边界字段。 */
+function periodEndOf(sub: unknown): string | null {
+  return (sub as { current_period_end?: string | null } | null)?.current_period_end ?? null;
+}
 
 function getDemoCreditsKey(userId?: string): string {
   return userId ? `clipop_demo_credits_${userId}` : DEMO_CREDITS_KEY;
@@ -89,34 +111,10 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
   const { user, accessToken } = useAuth();
   const [balance, setBalance] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [plan, setPlan] = useState('free');
 
-  function planDailyCredits(planType: string | null | undefined) {
-    if (planType === 'starter') return DAILY_STARTER_CREDITS;
-    if (planType === 'pro') return DAILY_PRO_CREDITS;
-    return DAILY_FREE_CREDITS;
-  }
-
-  function utcMidnightIso(now: Date) {
-    return new Date(Date.UTC(
-      now.getUTCFullYear(),
-      now.getUTCMonth(),
-      now.getUTCDate(),
-      0,
-      0,
-      0,
-      0,
-    )).toISOString();
-  }
-
-  function shouldResetUtc(lastResetAt: string) {
-    const last = new Date(lastResetAt);
-    const now = new Date();
-    return (
-      now.getUTCFullYear() !== last.getUTCFullYear()
-      || now.getUTCMonth() !== last.getUTCMonth()
-      || now.getUTCDate() !== last.getUTCDate()
-    );
-  }
+  // 额度/刷新边界不再本地复刻：直接用 @/lib/plan-credits 的 planQuota / resetBoundary / hasQuotaCrossed，
+  // 保证 UI 与库、Web 与桌面端完全一致。
 
   useEffect(() => {
     if (user) {
@@ -168,6 +166,7 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
         saveDemoCredits(defaultCredits, user?.id);
         setDemoResetTime();
       }
+      setPlan('free');
       setLoading(false);
       return;
     }
@@ -180,6 +179,7 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
     try {
       if (!accessToken) {
         setBalance(getDemoCredits(user.id));
+        setPlan('free');
         setLoading(false);
         return;
       }
@@ -187,10 +187,12 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
       const client = await getSupabaseClient(accessToken);
       const { data: sub } = await client
         .from('subscriptions')
-        .select('plan_type')
+        .select('plan_type, current_period_end')
         .eq('user_id', user.id)
         .maybeSingle();
-      const dailyCredits = isAdminUser(user) ? ADMIN_CREDITS : planDailyCredits(sub?.plan_type);
+      setPlan(sub?.plan_type || 'free');
+      const quota = quotaFor(sub?.plan_type, isLegacyPaidRow(sub?.plan_type, periodEndOf(sub)));
+      const dailyCredits = isAdminUser(user) ? ADMIN_CREDITS : quota.amount;
 
       const { data, error } = await client
         .from('credits')
@@ -207,7 +209,7 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
       }
       
       if (data) {
-        if (!isAdminUser(user) && shouldResetUtc(data.last_reset_at)) {
+        if (!isAdminUser(user) && hasQuotaCrossed(quota.period, data.last_reset_at)) {
           await refreshCredits();
         } else {
           setBalance(isAdminUser(user) ? Math.max(data.balance, ADMIN_CREDITS) : data.balance);
@@ -249,6 +251,7 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
       setBalance(resetAmount);
       saveDemoCredits(resetAmount, user.id);
       setDemoResetTime();
+      setPlan('free');
       return resetAmount;
     }
 
@@ -259,15 +262,19 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
       if (isAdminUser(user)) {
         const adminBalance = Math.max(balance, ADMIN_CREDITS);
         setBalance(adminBalance);
+        setPlan('pro');
         return adminBalance;
       }
 
       const { data: sub } = await client
         .from('subscriptions')
-        .select('plan_type')
+        .select('plan_type, current_period_end')
         .eq('user_id', user.id)
         .maybeSingle();
-      const dailyCredits = planDailyCredits(sub?.plan_type);
+      setPlan(sub?.plan_type || 'free');
+      const plan = sub?.plan_type ?? null;
+      const quota = quotaFor(plan, isLegacyPaidRow(plan, periodEndOf(sub)));
+      const dailyCredits = quota.amount;
 
       // 先查询当前 credits 行（避免每次都重置）
       const { data: existingRow, error: queryError } = await client
@@ -278,14 +285,14 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
 
       if (queryError) {
         console.warn('Credits query error:', queryError.message);
-        // 查询失败（可能是 RLS 限制或多行）：回退到 dailyCredits 显示，让服务端处理
+        // 查询失败（可能是 RLS 限制或多行）：回退到计划额度显示，让服务端处理
         setBalance(dailyCredits);
         return dailyCredits;
       }
 
-      // 仅在跨 UTC 日时重置（避免每次点击 Generate 都重置为 100）
-      const shouldReset = !existingRow || shouldResetUtc(existingRow.last_reset_at);
-      const resetAt = utcMidnightIso(new Date());
+      // 仅在跨过当前计费周期边界时重置（免费档按日 / 付费档按月），避免每次点击 Generate 都重置
+      const shouldReset = !existingRow || hasQuotaCrossed(quota.period, existingRow.last_reset_at);
+      const resetAt = resetBoundary(quota.period, new Date());
 
       if (!existingRow) {
         // 新用户：尝试插入（若 RLS 阻止也无妨，服务端会用 service role 处理）
@@ -309,14 +316,14 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
             await client.from('credit_transactions').insert({
               user_id: user.id,
               amount: dailyCredits,
-              type: 'daily_reset',
-              description: 'Daily credits reset (new user)',
+              type: quotaTransactionType(quota.period),
+              description: quotaResetDescription(plan, quota, true),
             });
           } catch {}
           return newRow.balance;
         }
       } else if (shouldReset) {
-        // 跨日重置
+        // 跨周期重置
         const { data, error } = await client
           .from('credits')
           .update({
@@ -339,14 +346,14 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
             await client.from('credit_transactions').insert({
               user_id: user.id,
               amount: dailyCredits,
-              type: 'daily_reset',
-              description: 'Daily credits reset',
+              type: quotaTransactionType(quota.period),
+              description: quotaResetDescription(plan, quota),
             });
           } catch {}
           return data.balance;
         }
       } else {
-        // 同一天内：直接使用现有余额
+        // 同一周期内：直接使用现有余额
         setBalance(existingRow.balance);
         return existingRow.balance;
       }
@@ -413,7 +420,7 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <CreditsContext.Provider value={{ balance, loading, refreshCredits, deductCredits }}>
+    <CreditsContext.Provider value={{ balance, loading, plan, refreshCredits, deductCredits }}>
       {children}
     </CreditsContext.Provider>
   );

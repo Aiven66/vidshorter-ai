@@ -18,7 +18,9 @@ import {
   type AiImageResult,
 } from '@/lib/ai-tools/client-api';
 import { canvasToBlob, createCanvas, downloadBlob, loadImageElement } from '@/lib/ai-tools/image-utils';
-import { Eraser, Download, Loader2, Paintbrush, Undo2, Trash2, ImagePlus, Sparkles, LogIn } from 'lucide-react';
+import { useAiToolCredit, AI_TOOL_COST } from '@/lib/ai-tools/use-ai-tool-credit';
+import { InsufficientCreditsDialog } from '@/components/insufficient-credits-dialog';
+import { Eraser, Download, Loader2, Paintbrush, Undo2, Trash2, ImagePlus, Sparkles, LogIn, Wand2 } from 'lucide-react';
 import Link from 'next/link';
 
 interface Stroke {
@@ -29,6 +31,7 @@ interface Stroke {
 export function ImageDewatermark() {
   const { t } = useLocale();
   const { user, accessToken, loading: authLoading } = useAuth();
+  const { requestSpend, insufficientOpen, setInsufficientOpen, balance } = useAiToolCredit();
   const [file, setFile] = useState<File | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [imageSize, setImageSize] = useState<{ w: number; h: number } | null>(null);
@@ -159,6 +162,52 @@ export function ImageDewatermark() {
     }
   };
 
+  const handleAutoProcess = async () => {
+    if (!file || !imageRef.current) return;
+    if (!user || !accessToken) {
+      setError(t('aiTools.needsLogin'));
+      return;
+    }
+    // P0: AI 工具积分化 — 每次推理前扣积分
+    if (!(await requestSpend())) return;
+    setProcessing(true);
+    setError(null);
+    try {
+      // 一键模式: 只上传原图，服务端自动检测水印
+      setStage(t('aiTools.uploading'));
+      const imageUpload = await uploadAiInput(
+        accessToken,
+        user.id,
+        file,
+        file.name || 'image.png',
+        file.type || 'image/png'
+      );
+
+      setStage(t('aiTools.serverProcessing'));
+      const result = await callAiTool<AiImageResult>(accessToken, 'image-dewatermark', {
+        imageUrl: imageUpload.signedUrl,
+      });
+
+      setResultUrl(result.resultUrl);
+      setComparePos(50);
+    } catch (e) {
+      if (e instanceof AiToolError) {
+        if (e.code === 'UNAUTHORIZED') {
+          setError(t('aiTools.needsLogin'));
+        } else if (e.code === 'WATERMARK_NOT_FOUND') {
+          setError(t('aiTools.watermarkNotFound'));
+        } else {
+          setError(`${t('aiTools.processFailed')}: ${e.message}`);
+        }
+      } else {
+        setError(`${t('aiTools.processFailed')}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    } finally {
+      setProcessing(false);
+      setStage('');
+    }
+  };
+
   const handleProcess = async () => {
     if (!file || !imageRef.current || !maskRef.current) return;
     if (strokesRef.current.length === 0) {
@@ -169,6 +218,8 @@ export function ImageDewatermark() {
       setError(t('aiTools.needsLogin'));
       return;
     }
+    // P0: AI 工具积分化 — 每次推理前扣积分
+    if (!(await requestSpend())) return;
     setProcessing(true);
     setError(null);
     try {
@@ -192,7 +243,7 @@ export function ImageDewatermark() {
         'image/png'
       );
 
-      // 服务端 LaMa 推理
+      // 服务端 LaMa 推理（掩码 = 涂抹 + 自动检测并集）
       setStage(t('aiTools.serverProcessing'));
       const result = await callAiTool<AiImageResult>(accessToken, 'image-dewatermark', {
         imageUrl: imageUpload.signedUrl,
@@ -270,6 +321,20 @@ export function ImageDewatermark() {
       {/* 编辑区 */}
       {imageUrl && imageSize && !resultUrl && (
         <div className="space-y-4">
+          {/* 一键去水印（主操作） */}
+          <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/40 p-3">
+            <Wand2 className="h-5 w-5 text-primary" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">{t('aiTools.autoModeHint')}</p>
+            </div>
+            <Button onClick={handleAutoProcess} disabled={processing || needsLogin}>
+              {processing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Sparkles className="h-4 w-4 mr-2" />}
+              {processing ? stage || t('aiTools.processing') : t('aiTools.autoRemoveWatermark')}
+            </Button>
+          </div>
+
+          {/* 手动涂抹（备用） */}
+          <p className="text-xs text-muted-foreground">{t('aiTools.manualModeHint')}</p>
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Paintbrush className="h-4 w-4" />
@@ -294,13 +359,11 @@ export function ImageDewatermark() {
               {t('aiTools.changeImage')}
             </Button>
             <div className="flex-1" />
-            <Button onClick={handleProcess} disabled={processing || needsLogin}>
-              {processing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Sparkles className="h-4 w-4 mr-2" />}
+            <Button variant="outline" onClick={handleProcess} disabled={processing || needsLogin || strokes.length === 0}>
+              {processing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Eraser className="h-4 w-4 mr-2" />}
               {processing ? stage || t('aiTools.processing') : t('aiTools.removeWatermark')}
             </Button>
           </div>
-
-          <p className="text-xs text-muted-foreground">{t('aiTools.dewatermarkHint')}</p>
 
           <div className="relative inline-block max-w-full rounded-lg overflow-hidden border select-none touch-none">
             <img src={imageUrl} alt="input" className="block max-w-full max-h-[60vh] w-auto" draggable={false} />
@@ -369,6 +432,12 @@ export function ImageDewatermark() {
           </div>
         </div>
       )}
+      <InsufficientCreditsDialog
+        open={insufficientOpen}
+        onOpenChange={setInsufficientOpen}
+        currentBalance={balance}
+        requiredCredits={AI_TOOL_COST}
+      />
     </div>
   );
 }

@@ -45,6 +45,23 @@ export interface PlanConfig {
   features: string[];
 }
 
+/**
+ * One-time (non-recurring) credit pack — buy credits once, credited instantly.
+ * Unlike PlanConfig, this does not create/modify a subscription.
+ */
+export interface CreditPackConfig {
+  id: string;
+  name: string;
+  /** Credits added to balance (additive, one-time). */
+  credits: number;
+  /** Price in USD. */
+  priceIntl: number;
+  /** Price in CNY for China region. */
+  priceCny: number;
+  /** Highlight label, e.g. "Best Value". */
+  badge?: string;
+}
+
 /** Subscription record stored in DB. */
 export interface Subscription {
   id: string;
