@@ -4,6 +4,7 @@ import { createInputSignedUrl } from '@/lib/server/ai-tools/storage';
 import { detectDigitalHumanCapability } from '@/lib/server/digital-human/provider';
 import {
   createClonedVoice,
+  describeFetchError,
   requireDashscopeConfig,
   synthesizeNarrationUrl,
   DashscopeError,
@@ -80,7 +81,7 @@ export async function POST(request: NextRequest) {
     if (e instanceof DashscopeError) {
       return NextResponse.json({ error: e.code, message: e.message }, { status: e.status });
     }
-    const message = e instanceof Error ? e.message : String(e);
+    const message = describeFetchError(e);
     console.error('[digital-human/voice]', message);
     return NextResponse.json({ error: 'INTERNAL', message }, { status: 500 });
   }

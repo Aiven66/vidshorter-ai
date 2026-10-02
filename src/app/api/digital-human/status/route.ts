@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveBearerUserId } from '@/lib/server/plan-gate';
 import { uploadResult } from '@/lib/server/ai-tools/storage';
-import { pollTalkingVideo, requireDashscopeConfig, DashscopeError } from '@/lib/server/digital-human/dashscope';
+import { pollTalkingVideo, requireDashscopeConfig, DashscopeError, describeFetchError } from '@/lib/server/digital-human/dashscope';
 import { getTask, saveTask, type DigitalHumanTask } from '@/lib/server/digital-human/task-store';
 
 export const runtime = 'nodejs';
@@ -71,7 +71,7 @@ export async function GET(request: NextRequest) {
     if (e instanceof DashscopeError) {
       return NextResponse.json({ error: e.code, message: e.message }, { status: e.status });
     }
-    const message = e instanceof Error ? e.message : String(e);
+    const message = describeFetchError(e);
     console.error('[digital-human/status]', message);
     return NextResponse.json({ error: 'INTERNAL', message }, { status: 500 });
   }

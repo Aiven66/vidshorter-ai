@@ -5,6 +5,7 @@ import { detectDigitalHumanCapability } from '@/lib/server/digital-human/provide
 import {
   DashscopeError,
   MAX_NARRATION_CHARS,
+  describeFetchError,
   hostOnDashscope,
   requireDashscopeConfig,
   submitTalkingVideo,
@@ -138,7 +139,7 @@ export async function POST(request: NextRequest) {
     if (e instanceof DashscopeError) {
       return NextResponse.json({ error: e.code, message: e.message }, { status: e.status });
     }
-    const message = e instanceof Error ? e.message : String(e);
+    const message = describeFetchError(e);
     console.error('[digital-human/generate]', message);
     return NextResponse.json({ error: 'INTERNAL', message }, { status: 500 });
   }

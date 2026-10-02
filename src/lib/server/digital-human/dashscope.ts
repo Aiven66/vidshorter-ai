@@ -34,6 +34,16 @@ import { requireDashscopeConfig, DashscopeError, type DashscopeCreds } from './c
 export { requireDashscopeConfig, DashscopeError };
 export type { DashscopeCreds };
 
+/** 展开 fetch 的底层 cause（DNS / 连接超时 / TLS 等），便于线上排障。 */
+export function describeFetchError(e: unknown): string {
+  if (e instanceof Error) {
+    const cause = (e as { cause?: unknown }).cause;
+    const causeMsg = cause instanceof Error ? cause.message : cause ? String(cause) : '';
+    return causeMsg ? `${e.message} (cause: ${causeMsg})` : e.message;
+  }
+  return String(e);
+}
+
 /** 数字人视频合成模型 */
 export const TALKING_VIDEO_MODEL = 'wan2.2-s2v';
 /** 声音复刻的目标合成模型 */
