@@ -1265,12 +1265,13 @@ export function TalkingVideoRenderer({
       skinToneRef.current = rig ? sampleSkinTone(photoImg, rig) : null;
     }
     if (product.image) {
+      const src = product.image;
       const pimg = await new Promise<HTMLImageElement | null>((resolve) => {
         const im = new Image();
         im.crossOrigin = 'anonymous';
         im.onload = () => resolve(im);
         im.onerror = () => resolve(null);
-        im.src = product.image;
+        im.src = src;
       });
       productImgRef.current = pimg;
     }

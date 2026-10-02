@@ -91,6 +91,14 @@ export async function POST(request: NextRequest) {
     // 模版：白名单校验，非法值回落默认模版（服务端绝不采信前端任意字符串）
     const template = resolveAiVideoTemplate(isAiVideoTemplateId(body.template) ? body.template : null);
 
+    // 数字人带货走 /api/digital-human/* 真人级口播管线，不进本渲染管线
+    if (template.id === 'digital-human') {
+      return NextResponse.json(
+        { error: 'use_digital_human', detail: 'digital-human template is generated via /api/digital-human' },
+        { status: 400 },
+      );
+    }
+
     // BGM 心绪：白名单校验（public/bgm/{mood}.mp3）；'none' = 明确不加 BGM；缺省回落模版自带
     const bgmRaw = typeof body.bgmMood === 'string' ? body.bgmMood.trim() : '';
     const bgmMood: string | null | undefined =

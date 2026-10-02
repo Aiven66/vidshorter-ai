@@ -17,7 +17,8 @@ export type AiVideoTemplateId =
   | 'novel'
   | 'science'
   | 'side-hustle'
-  | 'history';
+  | 'history'
+  | 'digital-human';
 
 /** 版式变体（frame.ts 按此绘制不同的背景构图）。 */
 export type AiVideoLayout =
@@ -373,6 +374,50 @@ export const AI_VIDEO_TEMPLATES: AiVideoTemplate[] = [
         { headline: 'It landed on one person', narration: 'The course of events finally came down to a person nobody had expected.' },
         { headline: 'The decisive moment was short', narration: 'The moment that truly decided the outcome was brief, yet it rewrote the next few centuries.' },
         { headline: 'Looking back', narration: 'History never repeats, but it rhymes. The answer to our problem about "{topic}" may already be written in the past.' },
+      ],
+    },
+  },
+  {
+    /**
+     * 数字人带货短视频（第 8 类，参考 Pixelle-Video 的 digital-human 通道）。
+     * 不走 renderAiVideo 渲染管线，由前端编排 /api/digital-human/* 真人级口播：
+     * LLM 压缩口播稿（≤72 字）→ TTS 音色 → wan2.2-s2v 参考图生视频。
+     * visual/imageStyle 等字段仅为类型完备（模板卡片预览用），不参与渲染。
+     */
+    id: 'digital-human',
+    accent: '#f5c542',
+    visual: { from: '#1a1206', to: '#4a3208', accent: '#f5c542', layout: 'cinema', titleSize: 88, bold: true, paper: '#f8f3e8', ink: '#2a1e08' },
+    imageStyle: 'Cinematic photorealistic studio portrait, professional presenter, warm key lighting, e-commerce livestream aesthetic',
+    bgmMood: 'energetic',
+    rate: '+8%',
+    pitch: '+2Hz',
+    prefersClonedVoice: true,
+    persona:
+      'An energetic live-commerce host. Tone: enthusiastic but trustworthy, like a friend recommending something they genuinely use. Concrete benefits, honest urgency, zero hard-sell clichés.',
+    structure: [
+      'Hook: open with the strongest benefit of the topic in one sentence',
+      'Pain: name the everyday problem the viewer faces without it',
+      'Value: give the concrete reason it works, in plain words',
+      'Action: tell the viewer exactly what to do next, right now',
+    ],
+    local: {
+      zh: [
+        { headline: '开场钩子', narration: '关于「{topic}」，今天必须告诉你它到底好在哪。' },
+        { headline: '说痛点', narration: '没有它的日子，你是不是总在为同一个问题反复烦恼？' },
+        { headline: '讲卖点', narration: '它真正厉害的地方，是又快又稳，用了都说回不去。' },
+        { headline: '促行动', narration: '别犹豫了，现在就试一试「{topic}」，你会回来谢我。' },
+      ],
+      'zh-Hant': [
+        { headline: '開場鉤子', narration: '關於「{topic}」，今天必須告訴你它到底好在哪。' },
+        { headline: '說痛點', narration: '沒有它的日子，你是不是總在為同一個問題反覆煩惱？' },
+        { headline: '講賣點', narration: '它真正厲害的地方，是又快又穩，用了都說回不去。' },
+        { headline: '促行動', narration: '別猶豫了，現在就試一試「{topic}」，你會回來謝我。' },
+      ],
+      en: [
+        { headline: 'Hook', narration: 'Here is why "{topic}" is the upgrade nobody told you about.' },
+        { headline: 'Pain', narration: 'Without it, you keep fighting the same problem over and over.' },
+        { headline: 'Value', narration: 'What makes it great: fast, reliable, and once you try it there is no going back.' },
+        { headline: 'Action', narration: 'Stop waiting. Try "{topic}" now, and thank me later.' },
       ],
     },
   },
