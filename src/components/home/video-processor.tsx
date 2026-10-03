@@ -570,6 +570,8 @@ export default function VideoProcessor({
   const [exportSubtitles, setExportSubtitles] = useState(variant === 'shorts');
   // AI 粗剪清理（Starter+ 权益）：按逐字稿剪掉长停顿与纯语气词
   const [exportJumpCut, setExportJumpCut] = useState(false);
+  // 免费用户「一次性导出额度」是否仍可用（服务端裁定；仅当为 true 时才放宽一次导出）
+  const [freeExportAvailable, setFreeExportAvailable] = useState(false);
   // AI 配音/旁白（Starter+ 权益）：开关 + 自定义台词 + 声线
   const [exportVoiceover, setExportVoiceover] = useState(false);
   const [voiceoverScript, setVoiceoverScript] = useState('');
@@ -657,6 +659,31 @@ export default function VideoProcessor({
       }
     }
   }, [completedClips.length, user, plan]);
+
+  // 免费用户「一次性导出额度」：登录且为免费非管理员时向服务端查询是否仍有额度。
+  // 任一失败路径静默按「无额度」处理（fail-closed，绝不误放行）。
+  useEffect(() => {
+    let cancelled = false;
+    if (!user || plan !== 'free' || isAdminUser(user)) {
+      setFreeExportAvailable(false);
+      return () => { cancelled = true; };
+    }
+    (async () => {
+      try {
+        const res = await fetch('/api/export-allowance', {
+          method: 'GET',
+          headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+          cache: 'no-store',
+        });
+        if (!res.ok) throw new Error(`status ${res.status}`);
+        const data = await res.json();
+        if (!cancelled) setFreeExportAvailable(!!data.available);
+      } catch {
+        if (!cancelled) setFreeExportAvailable(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [user, plan, accessToken]);
 
   // 行为埋点：首页访问 (video_generation funnel step 1)
   useEffect(() => {
@@ -1406,8 +1433,10 @@ export default function VideoProcessor({
   // 「导出即付费墙」：免费用户不能导出任何视频文件，只能在线预览。
   // 统一门控：命中即弹付费引导弹窗（订阅优先 + 积分包兜底）并拦截后续下载。
   // 管理员不受 plan 限制（与 shortsLocked 一致）。
-  const ensureExportAccess = () => {
+  // allowFreeAllowance=true 时：免费非管理员若仍有「一次性导出额度」则放行一次。
+  const ensureExportAccess = (allowFreeAllowance = false) => {
     if (plan === 'free' && !isAdminUser(user)) {
+      if (allowFreeAllowance && freeExportAvailable) return true;
       setExportPaywallOpen(true);
       return false;
     }
@@ -1603,7 +1632,8 @@ export default function VideoProcessor({
   };
 
   const handleDownload = async (clip: VideoClip) => {
-    if (!ensureExportAccess()) return;
+    // 允许免费用户用「一次性额度」导出一次（其余导出入口仍保持付费墙）
+    if (!ensureExportAccess(true)) return;
     // 行为埋点：下载高光短视频 (video_generation funnel step 4)
     trackEvent(VIDEO_FUNNEL.CLIP_DOWNLOAD, {
       data: {
@@ -1644,10 +1674,16 @@ export default function VideoProcessor({
       // YouTube clip — always use server-side ffmpeg cut for guaranteed playability
       setDownloadingId(clip.id);
       setDownloadProgress('Preparing download (server-side ffmpeg cut)...');
+      // 免费用户用「一次性额度」导出时，强制降级为「横屏、无字幕、无粗剪」：
+      // 竖屏/字幕/粗剪属 Starter+ 门控能力，避免请求被 403 而白烧唯一额度。
+      const usingFreeAllowance = plan === 'free' && !isAdminUser(user);
+      const effVertical = usingFreeAllowance ? false : exportVertical;
+      const effSubtitles = usingFreeAllowance ? false : exportSubtitles;
+      const effJumpCut = usingFreeAllowance ? false : exportJumpCut;
       // 竖屏 / AI 字幕 / AI 粗剪是「精确导出规格」：只有服务端 cut-clip 能产出。
       // 下面的兜底路径（downloadYouTubeClip / 直接 remux / 打开 YouTube）
       // 都只会给出横屏、无字幕、未粗剪的结果，对 Shorts 成片属于静默错误输出，必须禁止。
-      const requiresExactExport = exportVertical || exportSubtitles || exportJumpCut;
+      const requiresExactExport = effVertical || effSubtitles || effJumpCut;
       let browserSuccess = false;
       try {
         await downloadClipViaBrowser({
@@ -1658,15 +1694,15 @@ export default function VideoProcessor({
           // P0: 按用户 plan 给服务端导出差异（free=720p+水印，付费=高清无水印）
           exportPlan: plan,
           // 9:16 竖屏导出（Starter+）
-          orientation: exportVertical ? 'vertical' : 'landscape',
+          orientation: effVertical ? 'vertical' : 'landscape',
           // AI 自动字幕烧录（Starter+）
-          subtitles: exportSubtitles,
+          subtitles: effSubtitles,
           // 字幕样式（Starter+）：静态字幕烧录样式
           subtitleStyle: subStyle,
           // 字幕翻译（Starter+）：翻译目标语言
           subtitleLang: subLang || undefined,
           // AI 粗剪清理（Starter+）
-          jumpCut: exportJumpCut,
+          jumpCut: effJumpCut,
           onProgress: (msg) => setDownloadProgress(msg),
         });
         browserSuccess = true;
@@ -1762,6 +1798,8 @@ export default function VideoProcessor({
           window.open(embedUrl, '_blank');
         }
       }
+      // 免费用户一次性额度：仅当本次下载真正成功才本地标记为已用；失败路径保持可用以便重试。
+      if (usingFreeAllowance && browserSuccess) setFreeExportAvailable(false);
       setDownloadingId(null);
       setDownloadProgress(null);
       return;
@@ -1769,24 +1807,14 @@ export default function VideoProcessor({
 
     // Non-YouTube clip (uploaded local video) — direct download
     if (!clip.videoUrl) return;
+    const usingFreeAllowance = plan === 'free' && !isAdminUser(user);
     setDownloadingId(clip.id);
+    let localOk = false;
     try {
-      if (clip.videoUrl.startsWith('data:')) {
-        const res = await fetch(clip.videoUrl);
-        if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
-        const blob = await res.blob();
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = `${clip.title.replace(/[^a-zA-Z0-9]/g, '_')}.mp4`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(a.href);
-        return;
-      }
-
-      const url = proxyUrl(clip, true);
-      const res = await fetch(url);
+      const src = clip.videoUrl.startsWith('data:')
+        ? clip.videoUrl
+        : proxyUrl(clip, true);
+      const res = await fetch(src);
       if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
       const blob = await res.blob();
       const a = document.createElement('a');
@@ -1796,11 +1824,25 @@ export default function VideoProcessor({
       a.click();
       a.remove();
       URL.revokeObjectURL(a.href);
+      localOk = true;
     } catch (e) {
       console.error('Download error:', e);
       window.open(clip.videoUrl, '_blank');
     } finally {
       setDownloadingId(null);
+    }
+    // 本地片段下载不经任何服务端导出端点，需在此补记消费「一次性额度」，
+    // 否则免费用户可重复下载本地片段绕过「仅一次」限制。
+    if (usingFreeAllowance && localOk) {
+      try {
+        await fetch('/api/export-allowance', {
+          method: 'POST',
+          headers: { ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
+        });
+      } catch {
+        /* 记录失败不影响本次下载；服务端仍以 consumeFreeExport 的幂等落库为准 */
+      }
+      setFreeExportAvailable(false);
     }
   };
 

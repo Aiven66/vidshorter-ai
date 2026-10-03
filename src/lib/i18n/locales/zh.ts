@@ -1048,7 +1048,7 @@ dashboard: { title: '控制台', credits: '可用积分', creditsReset: '00:00 U
     tabUpscale: '图片变高清',
     tabColorize: '黑白照片上色',
     tabRemoveBg: '背景消除',
-    footerNote: 'AI 模型（LaMa、Swin2SR、上色模型）部署在云端服务器。登录后上传文件，即可秒级获取处理结果。',
+    footerNote: 'AI 模型（LaMa、Swin2SR、上色模型）部署在云端服务器。登录后上传文件，即可秒级获取处理结果。全部工具免费使用，不消耗积分。',
     selectImage: '选择图片',
     selectVideo: '选择视频',
     uploadImageHint: '上传一张图片开始（PNG / JPG / WebP）',

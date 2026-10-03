@@ -8,6 +8,7 @@ import { PaymentsPage } from '@/components/admin-payments';
 import { BlogPage } from '@/components/admin-blog';
 import { EventsPage } from '@/components/admin-events';
 import { ModelsPage } from '@/components/admin-models';
+import { NavPage } from '@/components/admin-nav';
 import { AdminGate } from '@/lib/admin-gate';
 
 export default function AxAdminPage() {
@@ -35,6 +36,8 @@ export default function AxAdminPage() {
         return <EventsPage locale={locale} />;
       case 'models':
         return <ModelsPage locale={locale} />;
+      case 'nav':
+        return <NavPage locale={locale} />;
       default:
         return <StatsPage locale={locale} />;
     }

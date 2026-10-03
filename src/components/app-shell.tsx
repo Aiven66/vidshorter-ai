@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { useTheme } from 'next-themes';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -36,6 +36,7 @@ import { useAuth } from '@/lib/auth-context';
 import { useLocale } from '@/lib/locale-context';
 import { AnnouncementBanner } from '@/components/announcement-banner';
 import { RegistrationBanner } from '@/components/registration-banner';
+import { DEFAULT_NAV_CONFIG, normalizeNavConfig, type NavConfig, type NavKey } from '@/lib/nav-config';
 
 // 用户反馈入口（Tally 表单）— 顶栏右上角常驻入口
 const USER_FEEDBACK_URL = 'https://tally.so/r/5BMYVb';
@@ -67,7 +68,7 @@ const LanguageSwitcher = dynamic(
 type NavItem = {
   href: string;
   // 通过 useLocale().t('nav.xxx') 读取翻译
-  labelKey: 'home' | 'clips' | 'shorts' | 'notes' | 'blog' | 'pricing' | 'about' | 'download' | 'marketing' | 'news' | 'article' | 'digitalHuman' | 'digitalHumanLive' | 'aiTools' | 'podcast' | 'aiVideo';
+  labelKey: NavKey;
   icon: typeof Scissors;
   badge?: 'NEW';
   // 外部链接（如 Podcast AI）: web 端新标签页打开，桌面端经 setWindowOpenHandler 用系统浏览器打开
@@ -109,13 +110,41 @@ function AppSidebarContent({
   onNavigate,
   collapsed = false,
   onToggleCollapse,
+  navConfig,
 }: {
   pathname: string | null;
   onNavigate?: () => void;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
+  navConfig: NavConfig;
 }) {
   const isActive = (path: string) => path === '/' ? pathname === '/' : pathname?.startsWith(path);
+
+  // 按后台配置计算可见入口：先按 order 排序，过滤 hidden，再补上未出现在 order 里的入口
+  const items = useMemo(() => {
+    const byKey = new Map<NavKey, NavItem>();
+    for (const item of NAV_ITEMS) byKey.set(item.labelKey, item);
+
+    const hidden = new Set<NavKey>(navConfig.hidden);
+    const out: NavItem[] = [];
+    const used = new Set<NavKey>();
+    for (const key of navConfig.order) {
+      if (hidden.has(key)) continue;
+      const item = byKey.get(key);
+      if (item && !used.has(key)) {
+        used.add(key);
+        out.push(item);
+      }
+    }
+    // 兜底：未列入 order 的入口仍展示（例如上线了新菜单但配置未更新）
+    for (const item of NAV_ITEMS) {
+      if (!used.has(item.labelKey) && !hidden.has(item.labelKey)) {
+        used.add(item.labelKey);
+        out.push(item);
+      }
+    }
+    return out;
+  }, [navConfig]);
 
   return (
     <nav className="flex flex-col h-full">
@@ -161,7 +190,7 @@ function AppSidebarContent({
 
       {/* 主导航入口 */}
       <div className={`flex flex-col gap-1 flex-1 ${collapsed ? 'px-1' : 'px-2'}`}>
-        {NAV_ITEMS.map((item) => {
+        {items.map((item) => {
           const Icon = item.icon;
           // Desktop runs the same Next.js app from the embedded local server — internal
           // <Link> navigation keeps the page inside the Electron webview where the
@@ -301,6 +330,35 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted] = useState(false);
   const [isDesktop, setIsDesktop] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  // 初始必须为默认配置，保证 SSR 与首帧客户端一致（避免 hydration 不一致）
+  const [navConfig, setNavConfig] = useState<NavConfig>(DEFAULT_NAV_CONFIG);
+
+  // 加载后台导航配置：先读 localStorage（即时），再拉公开接口刷新并回写
+  useEffect(() => {
+    try {
+      const cached = localStorage.getItem('clipop_nav_config');
+      if (cached) setNavConfig(normalizeNavConfig(JSON.parse(cached)));
+    } catch {}
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/site-config', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = (await res.json().catch(() => null)) as { nav?: unknown } | null;
+        if (!data || !data.nav || cancelled) return;
+        const next = normalizeNavConfig(data.nav);
+        setNavConfig(next);
+        try {
+          localStorage.setItem('clipop_nav_config', JSON.stringify(next));
+        } catch {}
+      } catch {}
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // 恢复侧边栏折叠状态
   useEffect(() => {
@@ -346,6 +404,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           pathname={pathname}
           collapsed={collapsed}
           onToggleCollapse={toggleSidebar}
+          navConfig={navConfig}
         />
         <SidebarCreditsCard mounted={mounted} collapsed={collapsed} />
       </aside>
@@ -367,6 +426,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <AppSidebarContent
                   pathname={pathname}
                   onNavigate={() => setMobileOpen(false)}
+                  navConfig={navConfig}
                 />
                 <SidebarCreditsCard mounted={mounted} />
               </SheetContent>

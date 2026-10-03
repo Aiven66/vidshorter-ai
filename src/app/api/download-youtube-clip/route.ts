@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readFile, unlink } from 'fs/promises';
-import { verifyPaidEligibility } from '@/lib/server/plan-gate';
+import { verifyPaidEligibility, commitFreeExport } from '@/lib/server/plan-gate';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -129,6 +129,8 @@ export async function GET(request: NextRequest) {
 
     // Prefer dataUrl (base64 inline) — already size-capped by maxInlineBytes
     if (result.dataUrl && result.dataUrl.startsWith('data:')) {
+      // 成功出口：命中一次性免费导出额度则在此消费落库（失败仅告警，不阻断返回）。
+      await commitFreeExport(request);
       return NextResponse.json(
         {
           success: true,
@@ -147,6 +149,8 @@ export async function GET(request: NextRequest) {
         const clipBuffer = await readFile(result.outputPath);
         if (clipBuffer.length <= API_MAX_CLIP_BYTES) {
           const dataUrl = `data:video/mp4;base64,${clipBuffer.toString('base64')}`;
+          // 成功出口：命中一次性免费导出额度则在此消费落库（失败仅告警，不阻断返回）。
+          await commitFreeExport(request);
           return NextResponse.json(
             {
               success: true,

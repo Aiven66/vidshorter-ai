@@ -3,39 +3,35 @@
 import { useState } from 'react';
 import { useCredits } from '@/lib/credits-context';
 import { useAuth } from '@/lib/auth-context';
-import { isAdminUser } from '@/lib/admin-gate';
 
 /**
- * P0 — AI 工具积分化：每次云推理前先扣除积分（admin 免费，积分不足弹充值引导）。
- * 与 video 处理扣 60、news/article 扣 30 保持一致，AI 工具单次扣 30。
- * Starter/Pro 每月 6,000/20,000 积分 → 对订阅用户几乎无感，但强制将免费用户导向付费。
+ * AI 工具箱积分门控（现已改为免费）。
+ *
+ * 现状：AI 工具箱全部工具免费开放——已登录用户不再扣除任何积分
+ * （此前每次云推理扣 30 积分的逻辑已移除，管理员与普通用户一视同仁）。
+ * `AI_TOOL_COST` 常量与 `insufficientOpen` 状态仅为兼容既有调用点/展示而保留，
+ * 扣费逻辑下线后 `InsufficientCreditsDialog` 不会再被触发。
+ *
+ * 仍保留登录引导：未登录时返回 false，组件层会提示登录。
  *
  * 用法（在工具组件内）:
  *   const { requestSpend, insufficientOpen, setInsufficientOpen } = useAiToolCredit();
  *   async function onSubmit() {
- *     if (!(await requestSpend())) return;   // 不足/未登录则中断
+ *     if (!(await requestSpend())) return;   // 未登录则中断（已登录一律放行）
  *     ... callAiTool(...)
  *   }
- *   <InsufficientCreditsDialog open={insufficientOpen} onOpenChange={setInsufficientOpen}
- *        currentBalance={balance} requiredCredits={AI_TOOL_COST} />
  */
 export const AI_TOOL_COST = 30;
 
 export function useAiToolCredit() {
-  const { balance, deductCredits } = useCredits();
+  const { balance } = useCredits();
   const { user } = useAuth();
   const [insufficientOpen, setInsufficientOpen] = useState(false);
 
   async function requestSpend(): Promise<boolean> {
-    // 未登录：引导登录（组件层另有登录提示），这里不放行操作
+    // 未登录：保留登录引导（组件层另有登录提示），这里不放行操作
     if (!user) return false;
-    // 管理员不消耗积分
-    if (isAdminUser(user)) return true;
-    const ok = await deductCredits(AI_TOOL_COST);
-    if (!ok) {
-      setInsufficientOpen(true);
-      return false;
-    }
+    // 已登录（含管理员）一律放行，不再消耗积分
     return true;
   }
 

@@ -1204,7 +1204,7 @@ export const commonTranslations = {
     tabUpscale: 'Image Upscaler',
     tabColorize: 'Photo Colorization',
     tabRemoveBg: 'Background Removal',
-    footerNote: 'AI models (LaMa, Swin2SR, colorization) run on our server. Sign in, upload a file, and get results in seconds.',
+    footerNote: 'AI models (LaMa, Swin2SR, colorization) run on our server. Sign in, upload a file, and get results in seconds. All tools are free — no credits required.',
     // 通用
     selectImage: 'Choose Image',
     selectVideo: 'Choose Video',

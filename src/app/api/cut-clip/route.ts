@@ -42,7 +42,7 @@ import {
   type ReframePath,
 } from '@/lib/server/reframe';
 import { normalizeSubtitleLang } from '@/lib/subtitle-langs';
-import { verifyPaidEligibility, verifyStarterEligibility } from '@/lib/server/plan-gate';
+import { verifyPaidEligibility, verifyStarterEligibility, commitFreeExport } from '@/lib/server/plan-gate';
 
 /** 竖屏门控（兼容旧调用）：统一走泛化函数。 */
 async function verifyVerticalEligibility(
@@ -232,6 +232,7 @@ export async function POST(request: NextRequest) {
         return await cutLocalFile(
           inputPath, outputPath, startTime, duration, null,
           vertical ? null : buildExportVf(expTarget), expWm, null, undefined, vertical,
+          /*jumpCutSegments*/ undefined, request,
         );
       }
       streamUrl = String(formData.get('streamUrl') || '');
@@ -342,6 +343,7 @@ export async function POST(request: NextRequest) {
           vertical,
           subtitlePath,
           subtitleStyle,
+          request,
         });
         if (result) return result;
       } catch (directErr) {
@@ -381,7 +383,7 @@ export async function POST(request: NextRequest) {
     return await cutLocalFile(
       inputPath, outputPath, startTime, duration, /*audioPath*/ null,
       vertical ? null : exportVf, watermarkPng, subtitlePath, subtitleStyle, vertical,
-      jumpSegments,
+      jumpSegments, request,
     );
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
@@ -441,11 +443,14 @@ async function cutFromStreamUrl(params: {
   subtitlePath?: string | null;
   /** 字幕样式（Starter+）：白名单归一化后透传给 ASS 生成 + force_style */
   subtitleStyle?: SubtitleStyle;
+  /** 原始请求：成功出口据此消费「一次性免费导出额度」 */
+  request: NextRequest;
 }): Promise<NextResponse | null> {
   const {
     cfWorkerUrl, streamUrl, audioUrl, userAgent, visitorData,
     xClientName, clientVersion, clientName, videoId,
     startTime, duration, outputPath, exportVf, watermarkPng, vertical, subtitlePath, subtitleStyle,
+    request,
   } = params;
 
   const ffmpegPath = await findFfmpegBinary();
@@ -646,7 +651,7 @@ async function cutFromStreamUrl(params: {
 
   console.log(`[cut-clip] v58 success: ${outStat.size} bytes (streamed)`);
 
-  return streamMp4Response(outputPath, outStat.size);
+  return streamMp4Response(outputPath, outStat.size, request);
 }
 
 /**
@@ -840,6 +845,8 @@ async function cutLocalFile(
   vertical?: boolean,
   /** AI 粗剪清理（Starter+）：保留区间；null/undefined = 不做粗剪 */
   jumpCutSegments?: KeepSegment[] | null,
+  /** 原始请求：成功出口据此消费「一次性免费导出额度」 */
+  request?: NextRequest,
 ): Promise<NextResponse> {
   const ffmpegPath = await findFfmpegBinary();
   if (!ffmpegPath) {
@@ -1002,7 +1009,7 @@ if (watermarkPng || exportVf || vertical || jumpCutSegments) {
 
   console.log(`[cut-clip] Success: ${outStat.size} bytes (streamed)`);
 
-  return streamMp4Response(outputPath, outStat.size);
+  return streamMp4Response(outputPath, outStat.size, request);
 }
 
 /**
@@ -1051,12 +1058,14 @@ async function findFfmpegBinary(): Promise<string> {
  * consumed / aborted). The outer POST `finally` also keeps a silent unlink as a
  * safe backstop — on POSIX an already-open fd keeps reading even after unlink.
  */
-function streamMp4Response(filePath: string, size: number): NextResponse {
+async function streamMp4Response(filePath: string, size: number, request?: NextRequest): Promise<NextResponse> {
   const rs = createReadStream(filePath);
   rs.on('close', () => {
     unlink(filePath).catch(() => {});
   });
   const webStream = Readable.toWeb(rs) as unknown as BodyInit;
+  // 成功出口：若本次请求命中「一次性免费导出额度」，在此消费落库（失败仅告警，不阻断返回）。
+  if (request) await commitFreeExport(request);
   return new NextResponse(webStream as unknown as BodyInit, {
     status: 200,
     headers: {
