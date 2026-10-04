@@ -15,6 +15,7 @@ import {
   Loader2,
   Lock,
   Shield,
+  Wallet,
   XCircle,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
@@ -376,12 +377,54 @@ export function PaymentModal({ open, onOpenChange, plan, onSuccess }: PaymentMod
                   </div>
                 </div>
               </button>
+
+              {!plan.credits && (
+                <button
+                  onClick={() => setMethod('waffo')}
+                  className={`w-full rounded-xl border-2 p-4 text-left transition-all duration-200 ${
+                    method === 'waffo'
+                      ? 'border-primary bg-primary/5 shadow-sm'
+                      : 'border-muted hover:border-muted-foreground/30 hover:bg-muted/50'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 shadow-md">
+                        <Wallet className="h-6 w-6 text-white" />
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold">Waffo</span>
+                          <Badge variant="secondary" className="bg-blue-100 text-xs text-blue-700">
+                            Global
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground">Cards, Apple Pay, Google Pay</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="font-semibold text-primary">
+                        ${plan.price.intl}/{plan.period}
+                      </span>
+                      <ChevronRight className={`h-5 w-5 ${method === 'waffo' ? 'text-primary' : 'text-muted-foreground'}`} />
+                    </div>
+                  </div>
+                </button>
+              )}
             </div>
 
             {method === 'creem' && (
               <Button className="h-12 w-full gap-2 text-base font-medium" onClick={handleRedirectPay}>
                 <CreditCard className="h-5 w-5" />
                 Pay with Creem
+                <ChevronRight className="ml-auto h-4 w-4" />
+              </Button>
+            )}
+
+            {method === 'waffo' && (
+              <Button className="h-12 w-full gap-2 text-base font-medium" onClick={handleRedirectPay}>
+                <Wallet className="h-5 w-5" />
+                Pay with Waffo
                 <ChevronRight className="ml-auto h-4 w-4" />
               </Button>
             )}
@@ -393,6 +436,14 @@ export function PaymentModal({ open, onOpenChange, plan, onSuccess }: PaymentMod
                 </div>
                 <span className="text-xs text-muted-foreground">Creem</span>
               </div>
+              {!plan.credits && (
+                <div className="flex items-center gap-2">
+                  <div className="flex h-5 w-8 items-center justify-center rounded bg-gradient-to-r from-amber-500 to-orange-600">
+                    <span className="text-[8px] font-bold text-white">WF</span>
+                  </div>
+                  <span className="text-xs text-muted-foreground">Waffo</span>
+                </div>
+              )}
               <div className="flex items-center gap-1.5">
                 <Lock className="h-3 w-3 text-muted-foreground" />
                 <span className="text-xs text-muted-foreground">256-bit TLS</span>

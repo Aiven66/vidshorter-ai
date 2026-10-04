@@ -29,6 +29,7 @@
     "test:video-notes": "node --import tsx scripts/check-video-notes.ts",
     "test:web-auth": "node --import tsx scripts/check-web-auth-regressions.ts",
     "test:windows-agent": "node --import tsx scripts/check-windows-agent.ts",
+    "waffo:setup": "node --import tsx scripts/waffo-setup.ts",
     "start": "bash ./scripts/start.sh",
     "ts-check": "tsc -p tsconfig.json"
   },

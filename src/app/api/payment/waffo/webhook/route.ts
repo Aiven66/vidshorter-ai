@@ -2,7 +2,6 @@ import { NextRequest } from 'next/server';
 import { verifyWebhook, WebhookEventType } from '@waffo/pancake-ts';
 import { applyPlanPurchase, applySubscriptionLapse, applySubscriptionRestore } from '@/lib/server/subscriptions';
 import { trackSubscribeSuccess, trackSubscriptionLapsed } from '@/lib/server/track-event';
-import { getWaffoConfig } from '@/lib/waffo';
 
 // Force dynamic — prevents Next.js from trying to statically generate this API route at build time.
 export const dynamic = 'force-dynamic';
@@ -17,12 +16,11 @@ export async function POST(request: NextRequest) {
   // IMPORTANT: use raw body — parsed JSON breaks RSA signature verification.
   const rawBody = await request.text();
   const signature = request.headers.get('x-waffo-signature');
-  const { environment } = getWaffoConfig();
 
   let event;
   try {
-    // The SDK embeds test/prod public keys; pass environment to select the right one.
-    event = verifyWebhook(rawBody, signature, { environment });
+    // 不锁定单一环境：SDK 会依次尝试 prod / test 内置公钥，避免环境错配导致合法 webhook 被拒。
+    event = verifyWebhook(rawBody, signature);
   } catch (err) {
     console.warn('[Waffo Webhook] Signature verification failed:', err instanceof Error ? err.message : err);
     return Response.json({ error: 'Invalid signature' }, { status: 401 });
