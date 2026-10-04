@@ -33,7 +33,7 @@ import {
   Video, Upload, Link2, Sparkles, Download, Play,
   Film, Scissors, Zap, ArrowRight, CheckCircle,
   AlertCircle, Loader2, Clock, Eye, ExternalLink, RefreshCw, Share2, Copy, Smartphone, Captions, Image as ImageIcon,
-  Layers, CheckSquare, Square, AudioLines, Music, Archive, Subtitles, SlidersHorizontal, Target, ChevronDown
+  Layers, CheckSquare, Square, AudioLines, Music, Archive, Subtitles, SlidersHorizontal, Target, ChevronDown, Lock
 } from 'lucide-react';
 import type { SubtitleStyle } from '@/lib/server/subtitles';
 import { TRANSLATE_LANGS } from '@/lib/subtitle-langs';
@@ -42,6 +42,8 @@ import { SCENARIOS } from '@/lib/scenarios';
 import type { ScenarioPreset } from '@/lib/scenarios';
 import Link from 'next/link';
 import { trackEvent, setAnalyticsUser, VIDEO_FUNNEL } from '@/lib/analytics';
+import { getPublishMap, setPublishInfo, type PublishInfo } from '@/lib/publish-tracker';
+import { MarkPublishedDialog } from '@/components/mark-published-dialog';
 
 const PreviewDialog = dynamic(
   () => import('@/components/home/preview-dialog'),
@@ -70,7 +72,8 @@ interface VideoClip {
   endTime: number;
   duration: number;
   summary: string;
-  engagementScore: number;
+  /** P0-3 精彩度评分（1–10）。异步链路下可能缺失（无评分），故为可选。 */
+  engagementScore?: number;
   thumbnailUrl: string;
   videoUrl: string | null;
   status: 'processing' | 'completed' | 'failed' | 'link_only';
@@ -566,8 +569,9 @@ export default function VideoProcessor({
   const [quality, setQuality] = useState<'sd' | 'hd'>('sd');
   // 9:16 竖屏导出（Starter+ 权益，AI 人物跟踪居中）；Shorts 成片模式默认开启
   const [exportVertical, setExportVertical] = useState(variant === 'shorts');
-  // AI 自动字幕烧录（Starter+ 权益）；Shorts 成片模式默认开启
-  const [exportSubtitles, setExportSubtitles] = useState(variant === 'shorts');
+  // AI 自动字幕烧录：P0-6 起为发布基线（免费用户同样可用，风格/翻译仍为 Starter+）。
+  // 默认开启 —— 带字幕的成片才「发得出去」，这是留存的关键一环。
+  const [exportSubtitles, setExportSubtitles] = useState(true);
   // AI 粗剪清理（Starter+ 权益）：按逐字稿剪掉长停顿与纯语气词
   const [exportJumpCut, setExportJumpCut] = useState(false);
   // 免费用户「一次性导出额度」是否仍可用（服务端裁定；仅当为 true 时才放宽一次导出）
@@ -616,7 +620,19 @@ export default function VideoProcessor({
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState<SSEData | null>(null);
   const [clips, setClips] = useState<VideoClip[]>([]);
+  // P0-2 免登录试跑：访客试跑结果（1 条预览 + 剩余锁定条数）；注册后携带 trialId 继承分析。
+  const [guestTrial, setGuestTrial] = useState<{ trialId: string; lockedCount: number; totalHighlights: number } | null>(null);
+  /** 注册后继承试跑：提交正式任务时携带的 trialId（一次性）。 */
+  const pendingTrialIdRef = useRef<string | null>(null);
+  // P1-2 发布标记：当前用户的发布记录（localStorage，按 userId 隔离）
+  const [publishMap, setPublishMap] = useState<Record<string, PublishInfo>>({});
+  const [publishDialogClip, setPublishDialogClip] = useState<VideoClip | null>(null);
+  useEffect(() => {
+    setPublishMap(user?.id ? getPublishMap(user.id) : {});
+  }, [user?.id]);
   const [error, setError] = useState<string | null>(null);
+  // P0-1 失败零损失：服务端确认已退还本次生成的积分 → 失败提示条展示「重试免费」保证。
+  const [creditsRefunded, setCreditsRefunded] = useState(false);
   const [previewClip, setPreviewClip] = useState<VideoClip | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<string | null>(null);
@@ -640,6 +656,13 @@ export default function VideoProcessor({
     (clip.status === 'link_only' && clip.linkOnlyUrl) ||
     (clip.isFallback === true && clip.linkOnlyUrl)
   );
+  // P0-3 展示排序：按 AI 精彩度降序。**仅用于展示** —— 管线顺序（下载全部、拼接、批量）
+  // 仍走原始 `clips`，避免排序影响既有行为。
+  const rankedClips = [...completedClips].sort(
+    (a, b) => (b.engagementScore ?? 0) - (a.engagementScore ?? 0),
+  );
+  const clipRankById = new Map(rankedClips.map((c, i) => [c.id, i + 1] as const));
+  const topPicks = rankedClips.filter(c => (c.engagementScore ?? 0) > 0).slice(0, 3);
 
   // 同步当前用户信息到 analytics SDK
   useEffect(() => {
@@ -792,11 +815,79 @@ export default function VideoProcessor({
     setScenario(preset.id);
   };
 
+  // P0-2 免登录试跑：无登录态时跑一条 Top1 低清预览（不扣费、不写 videos 表），
+  // 其余高光以锁定占位呈现，引导注册后继承分析结果继续出全集。
+  const runGuestTrial = useCallback(async (inputUrl: string) => {
+    setIsProcessing(true);
+    setProgress({ stage: 'init', progress: 5, message: locale === 'zh' ? '正在生成免费预览…' : 'Generating your free preview...' });
+    setClips([]);
+    setError(null);
+    setCreditsRefunded(false);
+    setGuestTrial(null);
+    try {
+      const res = await fetch('/api/videos/try', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ videoUrl: inputUrl, locale }),
+      });
+      const data = await res.json().catch(() => ({})) as {
+        trialId?: string; previewUrl?: string; title?: string;
+        highlights?: Array<{ title: string; score: number; startTime: number; endTime: number }>;
+        reasonLabel?: string; totalHighlights?: number; lockedCount?: number;
+        code?: string; error?: string;
+      };
+      if (!res.ok || !data.previewUrl || !data.trialId) {
+        if (data.code === 'trial_used' || res.status === 429) {
+          setError(locale === 'zh'
+            ? '今日免费试跑已用完，注册即可继续创作。'
+            : 'Your free trial for today has been used. Sign up to keep creating.');
+        } else {
+          setError(data.error || (locale === 'zh' ? '试跑失败，请重试或注册后继续。' : 'Trial failed. Please retry, or sign up to continue.'));
+        }
+        return;
+      }
+      const top = data.highlights?.[0];
+      setClips([{
+        id: `trial-${data.trialId}-0`,
+        title: top?.title || data.title || 'Highlight',
+        startTime: top?.startTime ?? 0,
+        endTime: top?.endTime ?? 0,
+        duration: Math.max(1, (top?.endTime ?? 0) - (top?.startTime ?? 0)),
+        summary: data.reasonLabel || '',
+        engagementScore: top?.score,
+        thumbnailUrl: '',
+        videoUrl: data.previewUrl,
+        status: 'completed',
+      }]);
+      setGuestTrial({
+        trialId: data.trialId,
+        lockedCount: data.lockedCount ?? 0,
+        totalHighlights: data.totalHighlights ?? 1,
+      });
+      setProgress({ stage: 'complete', progress: 100, message: '' });
+      try {
+        sessionStorage.setItem('clipop_trial', JSON.stringify({ trialId: data.trialId, videoUrl: inputUrl }));
+      } catch {}
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Trial failed.');
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [locale]);
+
   const handleProcess = useCallback(async () => {
-    if (!user) { window.location.href = '/login'; return; }
     if (!trimmedVideoUrl && !selectedFile) { setError('Please enter a video URL or upload a local video file.'); return; }
     if (trimmedVideoUrl && !isHttpVideoUrl(trimmedVideoUrl)) {
       setError('Please enter a valid public http(s) video URL.');
+      return;
+    }
+    // P0-2：未登录 → 免登录试跑一条低清预览（本地上传仍需登录）。
+    if (!user) {
+      if (selectedFile || !trimmedVideoUrl) {
+        setError(locale === 'zh' ? '本地上传需要登录后使用，请先注册/登录。' : 'Sign in to upload local files.');
+        return;
+      }
+      await runGuestTrial(trimmedVideoUrl);
       return;
     }
     const latestBalance = await refreshCredits();
@@ -810,6 +901,7 @@ export default function VideoProcessor({
     setProgress({ stage: 'init', progress: 0, message: 'Starting...' });
     setClips([]);
     setError(null);
+    setCreditsRefunded(false);
 
     // 行为埋点：点击 Analyze (video_generation funnel step 2)
     trackEvent(VIDEO_FUNNEL.CLICK_ANALYZE, {
@@ -1021,6 +1113,8 @@ export default function VideoProcessor({
             ...(isShorts && maxClips > 0 ? { desiredClipCount: maxClips } : {}),
             ...(preResolvedStreamUrl ? { streamUrl: preResolvedStreamUrl } : {}),
             ...(preResolvedMetadata ? { streamMetadata: preResolvedMetadata } : {}),
+            // P0-2：注册后继承试跑分析结果（服务端校验失败会静默回落正常分析）。
+            ...(pendingTrialIdRef.current ? { trialId: pendingTrialIdRef.current } : {}),
           }),
         });
 
@@ -1048,6 +1142,8 @@ export default function VideoProcessor({
         const created = await submitRes.json() as { videoId?: string };
         if (!created.videoId) throw new Error('Failed to start processing job.');
         videoId = created.videoId;
+        // P0-2：trialId 已随提交传给服务端，消费一次后清空（避免后续批次重复携带）。
+        pendingTrialIdRef.current = null;
 
         setProgress({ stage: 'init', progress: 5, message: 'Submitting processing job...', data: { videoId } });
 
@@ -1061,6 +1157,7 @@ export default function VideoProcessor({
             stage?: string; progress?: number; message?: string;
             title?: string; duration?: number; highlights?: NonNullable<SSEData['data']>['highlights'];
             clips?: VideoClip[]; status?: string; error?: string | null; done?: boolean;
+            creditsRefunded?: boolean;
           };
 
           setProgress({
@@ -1079,6 +1176,8 @@ export default function VideoProcessor({
 
           if (s.status === 'failed' || s.error) {
             hasError = true;
+            // P0-1 失败零损失：服务端已退还本次生成的积分 → 提示重试免费。
+            if (s.creditsRefunded) setCreditsRefunded(true);
             if (s.error && /insufficient credits/i.test(s.error)) {
               setInsufficientOpen(true);
             } else {
@@ -1349,7 +1448,7 @@ export default function VideoProcessor({
     } finally {
       setIsProcessing(false);
     }
-  }, [accessToken, error, getLocalMediaBaseUrl, refreshCredits, refreshSession, selectedFile, signOut, trimmedVideoUrl, uploadToSupabase, useAgent, user, locale]);
+  }, [accessToken, error, getLocalMediaBaseUrl, refreshCredits, refreshSession, runGuestTrial, selectedFile, signOut, trimmedVideoUrl, uploadToSupabase, useAgent, user, locale]);
 
   // 首页「智能解析与生成」跳转带入链接：预填后自动开始一次解析（仅一次，等鉴权与积分就绪）
   const autoStartedRef = useRef(false);
@@ -1361,6 +1460,37 @@ export default function VideoProcessor({
     void handleProcess();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialUrl, authLoading, creditsLoading]);
+
+  // P0-2 免登录试跑 → 注册后继承：
+  // 登录态就绪且存在待继承的试跑（sessionStorage）→ 用同一 URL + trialId 自动继续出全集。
+  const [resumeTrial, setResumeTrial] = useState<{ trialId: string; videoUrl: string } | null>(null);
+  const resumeLoadedRef = useRef(false);
+  useEffect(() => {
+    if (resumeLoadedRef.current || authLoading || creditsLoading || !user) return;
+    resumeLoadedRef.current = true;
+    let raw: string | null = null;
+    try { raw = sessionStorage.getItem('clipop_trial'); } catch {}
+    if (!raw) return;
+    try { sessionStorage.removeItem('clipop_trial'); } catch {}
+    try {
+      const parsed = JSON.parse(raw) as { trialId?: string; videoUrl?: string };
+      if (parsed.trialId && parsed.videoUrl && isHttpVideoUrl(parsed.videoUrl)) {
+        setVideoUrl(parsed.videoUrl);
+        setResumeTrial({ trialId: parsed.trialId, videoUrl: parsed.videoUrl });
+      }
+    } catch {}
+  }, [user, authLoading, creditsLoading]);
+
+  // 待 videoUrl 落到输入框后再提交（handleProcess 闭包需持有该 URL），仅一次。
+  useEffect(() => {
+    if (!resumeTrial) return;
+    if (videoUrl.trim() !== resumeTrial.videoUrl) return;
+    pendingTrialIdRef.current = resumeTrial.trialId;
+    setResumeTrial(null);
+    const id = setTimeout(() => { void handleProcess(); }, 0);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resumeTrial, videoUrl]);
 
   // 首页拖拽/选择本地文件：通过全局通道带入，进入本页后自动上传并解析（仅一次）
   const pendingFileRef = useRef(false);
@@ -1684,11 +1814,12 @@ export default function VideoProcessor({
       // YouTube clip — always use server-side ffmpeg cut for guaranteed playability
       setDownloadingId(clip.id);
       setDownloadProgress('Preparing download (server-side ffmpeg cut)...');
-      // 免费用户导出时，强制降级为「横屏、无字幕、无粗剪」：
-      // 竖屏/字幕/粗剪属 Starter+ 门控能力，避免请求被 403。
+      // 免费用户导出时，强制降级为「横屏、无粗剪」：
+      // 竖屏/粗剪属 Starter+ 门控能力，避免请求被 403。
+      // P0-6：字幕已下放为发布基线，免费用户同样保留（服务端回落默认样式/原文语言）。
       const isFreeNonAdmin = plan === 'free' && !isAdminUser(user);
       const effVertical = isFreeNonAdmin ? false : exportVertical;
-      const effSubtitles = isFreeNonAdmin ? false : exportSubtitles;
+      const effSubtitles = exportSubtitles;
       const effJumpCut = isFreeNonAdmin ? false : exportJumpCut;
       // 竖屏 / AI 字幕 / AI 粗剪是「精确导出规格」：只有服务端 cut-clip 能产出。
       // 下面的兜底路径（downloadYouTubeClip / 直接 remux / 打开 YouTube）
@@ -2009,7 +2140,7 @@ export default function VideoProcessor({
             </div>
             <Button
               onClick={handleProcess}
-              disabled={!canStart || isProcessing || isUploading || !user}
+              disabled={!canStart || isProcessing || isUploading}
               className="gap-2 min-w-[140px]"
             >
               {isProcessing || isUploading ? (
@@ -2163,27 +2294,31 @@ export default function VideoProcessor({
             </div>
           )}
 
-          {plan !== 'free' && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                  <Captions className="h-3.5 w-3.5" />
-                  <span>{t('video.subtitle.label')}</span>
-                </div>
-                <label className="relative inline-flex cursor-pointer items-center">
-                  <input
-                    type="checkbox"
-                    className="peer sr-only"
-                    checked={exportSubtitles}
-                    onChange={(e) => setExportSubtitles(e.target.checked)}
-                    disabled={isProcessing || isUploading}
-                  />
-                  <span className="peer h-5 w-9 rounded-full bg-muted after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-background after:shadow after:transition-all peer-checked:bg-primary peer-checked:after:translate-x-4 peer-disabled:opacity-50" />
-                </label>
+          {/* AI 自动字幕：P0-6 起为发布基线，对所有用户开放（样式/翻译仍为 Starter+） */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                <Captions className="h-3.5 w-3.5" />
+                <span>{t('video.subtitle.label')}</span>
               </div>
-              <p className="text-xs text-muted-foreground">{t('video.subtitle.hint')}</p>
+              <label className="relative inline-flex cursor-pointer items-center">
+                <input
+                  type="checkbox"
+                  className="peer sr-only"
+                  checked={exportSubtitles}
+                  onChange={(e) => setExportSubtitles(e.target.checked)}
+                  disabled={isProcessing || isUploading}
+                />
+                <span className="peer h-5 w-9 rounded-full bg-muted after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-background after:shadow after:transition-all peer-checked:bg-primary peer-checked:after:translate-x-4 peer-disabled:opacity-50" />
+              </label>
             </div>
-          )}
+            <p className="text-xs text-muted-foreground">{t('video.subtitle.hint')}</p>
+            {plan === 'free' && !isAdminUser(user) && (
+              <p className="text-xs text-primary/80">
+                {t('export.captionsIncluded')} {t('export.captionsPaidStyles')}
+              </p>
+            )}
+          </div>
 
           {/* AI 粗剪清理（Starter+ 权益）：按逐字稿剪掉长停顿与纯语气词 */}
           {(plan !== 'free' || isAdminUser(user)) && (
@@ -2517,6 +2652,12 @@ export default function VideoProcessor({
               <div className="flex-1">
                 <p className="font-medium text-destructive text-sm">{t('common.error')}</p>
                 <p className="text-sm text-muted-foreground">{error}</p>
+                {creditsRefunded && (
+                  <p className="text-xs text-green-600 dark:text-green-400 mt-1.5 flex items-start gap-1.5">
+                    <CheckCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                    <span>{t('video.failureRefundGuarantee')}</span>
+                  </p>
+                )}
                 <Button
                   type="button"
                   variant="outline"
@@ -2735,6 +2876,77 @@ export default function VideoProcessor({
                   </Card>
                 )}
 
+                {/* P0-2 免登录试跑：单条预览 + 锁定占位 + 注册 CTA */}
+                {guestTrial && (
+                  <Card className="mb-6 border-primary/30 bg-primary/[0.03]">
+                    <CardContent className="py-4">
+                      <div className="mb-3 flex items-center gap-2">
+                        <Sparkles className="h-4 w-4 text-primary" />
+                        <p className="text-sm font-semibold">
+                          {locale === 'zh' ? '免费预览已生成' : 'Your free preview is ready'}
+                        </p>
+                        <Badge variant="secondary" className="text-[10px]">
+                          {locale === 'zh' ? '免费预览' : 'Free preview'}
+                        </Badge>
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        {Array.from({ length: Math.min(3, Math.max(0, guestTrial.lockedCount)) }).map((_, i) => (
+                          <div key={i} className="flex aspect-video flex-col items-center justify-center gap-2 rounded-lg border border-dashed bg-muted/40">
+                            <Lock className="h-5 w-5 text-muted-foreground" />
+                            <span className="text-xs text-muted-foreground">{locale === 'zh' ? '注册后解锁' : 'Sign up to unlock'}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <p className="text-xs text-muted-foreground">
+                          {locale === 'zh'
+                            ? `该视频共找到 ${guestTrial.totalHighlights} 个精彩片段，注册即可全部解锁，且无需从头分析。`
+                            : `Found ${guestTrial.totalHighlights} highlights. Sign up to unlock them all — no re-analysis needed.`}
+                        </p>
+                        <Link href={`/register?trial=${guestTrial.trialId}`} className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90">
+                          <Zap className="h-4 w-4" />
+                          {locale === 'zh' ? `注册免费解锁全部 ${guestTrial.totalHighlights} 条` : `Sign up free to unlock all ${guestTrial.totalHighlights}`}
+                          <ArrowRight className="h-4 w-4" />
+                        </Link>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* P0-3 Top 3 推荐：直接回答「该发哪条」，点击即预览 */}
+                {!guestTrial && topPicks.length > 0 && (
+                  <Card className="mb-6 border-primary/30 bg-primary/[0.03]">
+                    <CardContent className="py-4">
+                      <div className="mb-3 flex items-center gap-2">
+                        <Sparkles className="h-4 w-4 text-primary" />
+                        <p className="text-sm font-semibold">{t('video.topPicks')}</p>
+                        <span className="text-xs text-muted-foreground">{t('video.rankedByScore')}</span>
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        {topPicks.map((clip, i) => (
+                          <button
+                            key={clip.id}
+                            type="button"
+                            onClick={() => setPreviewClip(clip)}
+                            className="rounded-lg border bg-background p-3 text-left transition-colors hover:border-primary/50"
+                          >
+                            <div className="mb-1.5 flex items-center gap-2">
+                              <Badge variant={i === 0 ? 'default' : 'secondary'} className="text-[10px]">
+                                {i === 0 ? t('video.bestPick') : `#${i + 1}`}
+                              </Badge>
+                              {clip.engagementScore !== undefined && (
+                                <span className="ml-auto text-xs text-muted-foreground">{clip.engagementScore}/10</span>
+                              )}
+                            </div>
+                            <p className="line-clamp-2 text-sm font-medium leading-tight">{clip.title}</p>
+                            <p className="mt-1 text-xs text-muted-foreground">{fmt(clip.duration)}</p>
+                          </button>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
                   {clips.map(clip => {
                     // isFallback clips have a fake zoompan videoUrl; treat them like link_only for UI
@@ -2808,16 +3020,62 @@ export default function VideoProcessor({
                       </div>
 
                       <CardContent className="pt-4 space-y-3">
-                        <h4 className="font-semibold leading-tight">{clip.title}</h4>
+                        <div className="flex items-start gap-2">
+                          <h4 className="flex-1 font-semibold leading-tight">{clip.title}</h4>
+                          {/* P0-3 位次徽标：按 AI 精彩度降序，第 1 名 Best，其余 #n（仅展示） */}
+                          {clipRankById.get(clip.id) !== undefined && (
+                            <Badge
+                              variant={clipRankById.get(clip.id) === 1 ? 'default' : 'secondary'}
+                              className="shrink-0 text-[10px]"
+                            >
+                              {clipRankById.get(clip.id) === 1 ? t('video.bestPick') : `#${clipRankById.get(clip.id)}`}
+                            </Badge>
+                          )}
+                        </div>
                         <p className="text-sm text-muted-foreground line-clamp-2">{clip.summary}</p>
                         <div className="flex items-center gap-2 text-xs text-muted-foreground">
                           <span>{fmt(clip.startTime)}</span>
                           <ArrowRight className="h-3 w-3" />
                           <span>{fmt(clip.endTime)}</span>
-                          <Badge variant="outline" className="ml-auto text-xs">
-                            {t('common.score')} {clip.engagementScore}/10
-                          </Badge>
+                          {/* P0-3 修复：异步链路下分数可能缺失，缺失时不渲染（旧实现会显示 undefined/10） */}
+                          {clip.engagementScore !== undefined && (
+                            <Badge variant="outline" className="ml-auto text-xs">
+                              {t('common.score')} {clip.engagementScore}/10
+                            </Badge>
+                          )}
                         </div>
+                        {/* P1-2 发布标记：发到哪、表现如何，回访即可见 */}
+                        {user && clip.status !== 'failed' && (
+                          publishMap[clip.id] ? (
+                            <div className="flex items-center gap-2 text-xs">
+                              <Badge variant="secondary" className="gap-1 text-[10px]">
+                                <CheckCircle className="h-3 w-3" />{t('dashboard.published')}
+                              </Badge>
+                              {(publishMap[clip.id].views !== undefined || publishMap[clip.id].likes !== undefined) && (
+                                <span className="truncate text-muted-foreground">
+                                  {publishMap[clip.id].views !== undefined && `${publishMap[clip.id].views} ${t('dashboard.metricViews').toLowerCase()}`}
+                                  {publishMap[clip.id].views !== undefined && publishMap[clip.id].likes !== undefined && ' · '}
+                                  {publishMap[clip.id].likes !== undefined && `${publishMap[clip.id].likes} ${t('dashboard.metricLikes').toLowerCase()}`}
+                                </span>
+                              )}
+                              <button
+                                type="button"
+                                className="ml-auto shrink-0 text-primary hover:underline"
+                                onClick={() => setPublishDialogClip(clip)}
+                              >
+                                {t('dashboard.updateMetrics')}
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              className="text-xs text-primary hover:underline"
+                              onClick={() => setPublishDialogClip(clip)}
+                            >
+                              {t('dashboard.markPublished')}
+                            </button>
+                          )
+                        )}
                         <div className="flex gap-2 pt-1">
                           {isRealMp4 ? (
                             <>
@@ -2972,6 +3230,17 @@ export default function VideoProcessor({
           vertical={isShorts || exportVertical}
         />
       )}
+
+      {/* P1-2 发布标记 / 更新数据弹窗 */}
+      <MarkPublishedDialog
+        open={!!publishDialogClip}
+        onOpenChange={(o) => { if (!o) setPublishDialogClip(null); }}
+        initial={publishDialogClip ? (publishMap[publishDialogClip.id] ?? null) : null}
+        onSave={(info) => {
+          if (!publishDialogClip || !user?.id) return;
+          setPublishMap(setPublishInfo(user.id, publishDialogClip.id, info));
+        }}
+      />
 
       <InsufficientCreditsDialog
         open={insufficientOpen}

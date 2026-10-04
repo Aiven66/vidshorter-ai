@@ -25,6 +25,11 @@ export interface VideoJobMessage {
   /** For clip steps: which highlight to process. */
   index?: number;
   desiredClipCount?: number;
+  /**
+   * P0-2 免登录试跑：注册后带上试跑 id，analyze 步骤可继承试跑时已算好的分析结果
+   * （<24h 且 URL 匹配）而跳过 LLM。校验失败静默回落正常分析。
+   */
+  trialId?: string;
 }
 
 function stripTrailingSlash(s: string): string {

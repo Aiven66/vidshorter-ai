@@ -66,6 +66,12 @@ export type BatchClip = {
   status: BatchClipStatus;
   /** link_only 时暴露时间戳页 URL：前端 download 必须走服务端 ffmpeg 裁剪，否则会把 HTML 页面存成 .mp4 */
   linkOnlyUrl?: string;
+  /** P0-3 精彩度评分（1–10），由高光分析的 engagement_score 回填；缺失表示未评分。 */
+  engagementScore?: number;
+  /** P0-3 展示排序位次（按分数降序 1..N）；仅用于展示，不影响管线顺序。 */
+  rank?: number;
+  /** P0-3 钩子标题（高光分析产出的标题），用于「哪条最值得发」的判断。 */
+  hookTitle?: string;
 };
 
 /** 队列条目（服务端返回、前端渲染的载荷形状） */

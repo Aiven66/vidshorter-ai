@@ -272,11 +272,16 @@ export async function POST(request: NextRequest) {
       if (!elig.ok) return NextResponse.json({ error: elig.reason, detail: 'AI jump-cut requires Starter or Pro.' }, { status: 403 });
     }
 
-    // AI 自动字幕 = Starter+ 付费权益：先服务端校验，再尝试拉 YouTube 官方字幕生成 ASS。
+    // P0-6 发布基线：AI 烧录字幕对所有用户开放 —— 免费用户也能拿到「发得出去」的成片。
+    // 付费差异上移到「字幕样式 / 翻译语言」：非 Starter+ 一律回落默认样式与原文语言，
+    // 不再直接 403 拒绝（旧行为会把免费用户挡在可发布门槛之外）。
     // 无字幕/拉取失败 → subtitlePath 为 null，优雅跳过（不致命）。
     if (wantSubtitles) {
       const elig = await verifyStarterEligibility(request, plan, 'subtitle');
-      if (!elig.ok) return NextResponse.json({ error: elig.reason, detail: 'AI subtitles require Starter or Pro.' }, { status: 403 });
+      if (!elig.ok) {
+        subtitleStyle = DEFAULT_SUBTITLE_STYLE;
+        subtitleLang = null;
+      }
     }
 
     // 逐字稿：字幕与粗剪共用同一份 cues（避免重复拉取 YouTube）。

@@ -167,11 +167,24 @@ Frame timestamps available at: ${frames.map(f => `${Math.floor(f.timestamp_ms/10
 ` : ''}
 
 For each highlight, provide:
-1. A catchy title (max 8 words)
+1. A hook title (max 60 characters, see HOOK TITLE rules below)
 2. Start time in seconds (must be >= 0)
 3. End time in seconds (must be <= ${videoDuration} and at least 30 seconds after start)
 4. A brief summary of why this moment is engaging (max 20 words)
-5. An engagement score from 1-10
+5. An engagement score from 1-10 (see SCORING RUBRIC below)
+
+HOOK TITLE rules (this title is what makes viewers stop scrolling):
+- Lead with the payoff or the tension, not the topic. "Why your morning coffee is making you tired" beats "Morning coffee discussion".
+- Curiosity-driven but HONEST: never promise something the clip does not deliver.
+- No hashtags, no emoji, no em dash chains, no ALL CAPS.
+- Max 60 characters. Do not include the guest/channel name unless it is essential.
+
+SCORING RUBRIC (engagement_score, 1-10) — score each clip on these four axes and use the average, rounded:
+- Hook strength: does the first 3 seconds create tension or curiosity?
+- Emotional payoff: surprise, insight, humour, or a strong opinion.
+- Self-contained: understandable with zero context from the rest of the video.
+- Quotability: contains a line viewers would repeat, screenshot, or comment on.
+9-10 = a clip you would bet money on going viral; 7-8 = strong, publishable; 5-6 = average filler; 1-4 = weak, do not select unless nothing better exists.
 
 Guidelines:
 - Each clip should be 30-60 seconds long

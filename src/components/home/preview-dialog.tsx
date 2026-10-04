@@ -21,7 +21,8 @@ interface VideoClip {
   endTime: number;
   duration: number;
   summary: string;
-  engagementScore: number;
+  /** P0-3 精彩度评分（1–10）：可能缺失（无评分），故可选。 */
+  engagementScore?: number;
   thumbnailUrl: string;
   videoUrl: string | null;
   status: 'processing' | 'completed' | 'failed' | 'link_only';
@@ -334,7 +335,9 @@ export default function PreviewDialog({
         <div className="flex items-center justify-between mt-4">
           <div className="flex items-center gap-4 text-sm text-muted-foreground">
             <span>{fmt(clip.startTime)} - {fmt(clip.endTime)}</span>
-            <Badge variant="outline">{t('common.score')}: {clip.engagementScore}/10</Badge>
+            {clip.engagementScore !== undefined && (
+              <Badge variant="outline">{t('common.score')}: {clip.engagementScore}/10</Badge>
+            )}
           </div>
           <div className="flex items-center gap-2">
             {/* Watch on YouTube link */}

@@ -52,6 +52,8 @@ export async function POST(request: NextRequest) {
   const streamUrl = typeof body.streamUrl === 'string' ? body.streamUrl.trim() : undefined;
   const streamMetadata = body.streamMetadata && typeof body.streamMetadata === 'object' ? body.streamMetadata as Record<string, unknown> : undefined;
   const desiredClipCount = typeof body.desiredClipCount === 'number' ? Math.max(1, Math.min(10, Math.floor(body.desiredClipCount))) : undefined;
+  // P0-2：注册后继承试跑分析结果。仅透传；服务端校验失败会静默回落正常分析。
+  const trialId = typeof body.trialId === 'string' ? body.trialId.trim().slice(0, 64) : undefined;
 
   if (!videoUrl) return NextResponse.json({ error: 'Missing video URL' }, { status: 400 });
   if (!isHttpUrl(videoUrl)) return NextResponse.json({ error: 'Please provide a valid http(s) video URL' }, { status: 400 });
@@ -172,6 +174,7 @@ export async function POST(request: NextRequest) {
     ...(streamUrl ? { streamUrl } : {}),
     ...(streamMetadata ? { streamMetadata } : {}),
     ...(desiredClipCount ? { desiredClipCount } : {}),
+    ...(trialId ? { trialId } : {}),
   };
 
   const queued = await enqueueJob(jobMsg);

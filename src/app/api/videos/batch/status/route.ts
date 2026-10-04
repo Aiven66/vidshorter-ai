@@ -60,7 +60,7 @@ export async function GET(request: NextRequest) {
 
   let query = client
     .from('videos')
-    .select('id,original_url,title,status,progress,error_message,created_at,updated_at')
+    .select('id,original_url,title,status,progress,error_message,highlights,created_at,updated_at')
     .eq('user_id', userId);
   if (scopedIds.length > 0) {
     query = query.in('id', scopedIds);
@@ -99,7 +99,11 @@ export async function GET(request: NextRequest) {
     const status = typeof v.status === 'string' && v.status ? v.status : 'processing';
     const progress = Number(v.progress ?? 0);
     const updatedAt = typeof v.updated_at === 'string' ? v.updated_at : null;
-    const clips = normalizeClipRows(videoId, clipsByVideo.get(videoId));
+    // P0-3：回填评分/位次/钩子标题（口径与单视频状态路由完全一致）。
+    const itemsHighlights = (() => {
+      try { const h = JSON.parse(String(v.highlights || '[]')); return Array.isArray(h) ? h : []; } catch { return []; }
+    })() as Array<{ title?: unknown; engagement_score?: unknown; start_time?: unknown }>;
+    const clips = normalizeClipRows(videoId, clipsByVideo.get(videoId), itemsHighlights);
     const terminal = isTerminalVideoStatus(status);
     const updatedMs = updatedAt ? Date.parse(updatedAt) : NaN;
     return {

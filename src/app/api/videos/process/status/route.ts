@@ -104,11 +104,23 @@ export async function GET(request: NextRequest) {
       effectiveStatus = 'failed';
       effectiveMessage = effectiveMessage ||
         'Processing timed out and was stopped. This may be a temporary issue with the video source. Please retry.';
-      if (claimed && claimed.length > 0) {
-        // We won the transition: refund any video_process charge for this video.
-        try { await refundIfCharged(client, video.user_id, videoId); }
-        catch (e) { console.warn('[status] refund failed:', e); }
+      if (!claimed || claimed.length === 0) {
+        // Lost the transition race: the winner is responsible for the refund below.
+        console.log('[status] stale transition already claimed by another poller');
       }
+    }
+  }
+
+  // P0-1 失败零损失：任何 failed 终态都保证走一次退款（幂等，按 related_id 去重）。
+  // worker 写下的 failed（例如全部片段生成失败）过去从不退款 —— 此处统一兜底，
+  // 重复轮询不会二次退款；未扣费的失败任务为空操作。
+  let creditsRefunded = false;
+  if (effectiveStatus === 'failed') {
+    try {
+      await refundIfCharged(client, video.user_id, videoId);
+      creditsRefunded = true;
+    } catch (e) {
+      console.warn('[status] refund failed:', e);
     }
   }
 
@@ -118,13 +130,18 @@ export async function GET(request: NextRequest) {
     .eq('video_id', videoId)
     .order('created_at', { ascending: true });
 
-  // 片段 URL → 播放状态（storage 签名 / youtu.be 时间戳页 / 失败）的判定口径集中在
-  // src/lib/server/video-status.ts，与 /api/videos/batch/status 共用，避免两处漂移。
-  const normalizedClips = normalizeClipRows(videoId, clips as Array<Record<string, unknown>> | null);
-
   const highlights = (() => {
     try { const h = JSON.parse(video.highlights || '[]'); return Array.isArray(h) ? h : []; } catch { return []; }
   })();
+
+  // 片段 URL → 播放状态（storage 签名 / youtu.be 时间戳页 / 失败）的判定口径集中在
+  // src/lib/server/video-status.ts，与 /api/videos/batch/status 共用，避免两处漂移。
+  // P0-3：传入 highlights 以回填 engagement_score / rank / hookTitle（short_videos 无对应列）。
+  const normalizedClips = normalizeClipRows(
+    videoId,
+    clips as Array<Record<string, unknown>> | null,
+    highlights as Array<{ title?: unknown; engagement_score?: unknown; start_time?: unknown }>,
+  );
 
   const stage = stageFor(effectiveStatus, progress);
   const done = TERMINAL.has(effectiveStatus);
@@ -145,6 +162,7 @@ export async function GET(request: NextRequest) {
     highlights,
     clips: normalizedClips,
     error: effectiveStatus === 'failed' ? effectiveMessage : null,
+    creditsRefunded,
     done,
   });
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -17,7 +17,7 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   CreditCard, Video, History, Settings, ArrowRight, Play, FileVideo,
   Download, ChevronDown, ChevronRight, Image as ImageIcon, Film, ExternalLink,
-  Loader2, Gift,
+  Loader2, Gift, CheckCircle2, BarChart3,
 } from 'lucide-react';
 import Link from 'next/link';
 import { isSupabaseConfigured } from '@/storage/database/supabase-client';
@@ -28,6 +28,10 @@ import {
 } from '@/lib/youtube-clip-download';
 import { isAdminUser } from '@/lib/admin-gate';
 import { InsufficientCreditsDialog } from '@/components/insufficient-credits-dialog';
+import {
+  getPublishMap, setPublishInfo, summarizePublish, type PublishInfo,
+} from '@/lib/publish-tracker';
+import { MarkPublishedDialog } from '@/components/mark-published-dialog';
 
 const ReferralDialog = dynamic(
   () => import('@/components/referral-dialog').then(m => ({ default: m.ReferralDialog })),
@@ -144,6 +148,14 @@ function fmt(sec: number): string {
   const m = Math.floor(sec / 60);
   const s = Math.floor(sec % 60);
   return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+// 播放/点赞等大数压缩显示：1200 → 1.2K，1500000 → 1.5M
+function fmtCompact(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return '0';
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, '')}K`;
+  return String(Math.floor(n));
 }
 
 /* ── Clip Video Player Dialog ── */
@@ -444,7 +456,13 @@ function ClipPlayerDialog({
 }
 
 /* ── Clip Thumbnail Card ── */
-function ClipCard({ clip, onPlay }: { clip: VideoClip; onPlay: () => void }) {
+function ClipCard({ clip, onPlay, publish, onMarkPublished }: {
+  clip: VideoClip;
+  onPlay: () => void;
+  publish?: PublishInfo;
+  onMarkPublished?: () => void;
+}) {
+  const { t } = useLocale();
   const [imgErr, setImgErr] = useState(false);
   // link_only 或 isFallback 的 clip 使用 YouTube embed 播放（无本地 MP4）
   const isLinkOnly = clip.status === 'link_only' || clip.isFallback === true;
@@ -488,17 +506,51 @@ function ClipCard({ clip, onPlay }: { clip: VideoClip; onPlay: () => void }) {
       <div className="p-2">
         <p className="text-xs font-medium truncate">{clip.title}</p>
         <p className="text-[10px] text-muted-foreground mt-0.5 line-clamp-1">{clip.summary}</p>
+        {/* P1-2 发布标记：未发布可标记，已发布显示徽标 + 指标并可更新 */}
+        {onMarkPublished && (
+          publish ? (
+            <div className="mt-1.5 flex items-center gap-1.5">
+              <Badge variant="secondary" className="gap-0.5 px-1.5 py-0 text-[10px]">
+                <CheckCircle2 className="h-2.5 w-2.5" />{t('dashboard.published')}
+              </Badge>
+              {(publish.views !== undefined || publish.likes !== undefined) && (
+                <span className="truncate text-[10px] text-muted-foreground">
+                  {publish.views !== undefined && `${fmtCompact(publish.views)} ${t('dashboard.metricViews').toLowerCase()}`}
+                  {publish.views !== undefined && publish.likes !== undefined && ' · '}
+                  {publish.likes !== undefined && `${fmtCompact(publish.likes)} ${t('dashboard.metricLikes').toLowerCase()}`}
+                </span>
+              )}
+              <button
+                type="button"
+                className="ml-auto shrink-0 text-[10px] text-primary hover:underline"
+                onClick={(e) => { e.stopPropagation(); onMarkPublished(); }}
+              >
+                {t('dashboard.updateMetrics')}
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="mt-1.5 text-[10px] text-primary hover:underline"
+              onClick={(e) => { e.stopPropagation(); onMarkPublished(); }}
+            >
+              {t('dashboard.markPublished')}
+            </button>
+          )
+        )}
       </div>
     </div>
   );
 }
 
 /* ── Video Record Row ── */
-function VideoRecordRow({ video, formatDate, getStatusBadge, t }: {
+function VideoRecordRow({ video, formatDate, getStatusBadge, t, publishMap, onMarkPublished }: {
   video: VideoRecord;
   formatDate: (s: string) => string;
   getStatusBadge: (s: string) => React.ReactNode;
   t: (key: string) => string;
+  publishMap: Record<string, PublishInfo>;
+  onMarkPublished: (clip: VideoClip) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [playingClip, setPlayingClip] = useState<VideoClip | null>(null);
@@ -560,7 +612,13 @@ function VideoRecordRow({ video, formatDate, getStatusBadge, t }: {
           </p>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
             {video.clips!.map((clip) => (
-              <ClipCard key={clip.id} clip={clip} onPlay={() => setPlayingClip(clip)} />
+              <ClipCard
+                key={clip.id}
+                clip={clip}
+                onPlay={() => setPlayingClip(clip)}
+                publish={publishMap[clip.id]}
+                onMarkPublished={() => onMarkPublished(clip)}
+              />
             ))}
           </div>
         </div>
@@ -591,12 +649,19 @@ export default function DashboardPage() {
   const [isFromDesktop, setIsFromDesktop] = useState(false);
   // 邀请好友弹窗
   const [referralOpen, setReferralOpen] = useState(false);
+  // P1-2 发布标记（localStorage，按 userId 隔离）
+  const [publishMap, setPublishMap] = useState<Record<string, PublishInfo>>({});
+  const [publishDialogClip, setPublishDialogClip] = useState<VideoClip | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) {
       router.push('/login');
     }
   }, [user, authLoading, router]);
+
+  useEffect(() => {
+    if (user?.id) setPublishMap(getPublishMap(user.id));
+  }, [user?.id]);
 
   useEffect(() => {
     const check = () => {
@@ -759,6 +824,21 @@ export default function DashboardPage() {
 
   const totalClips = videos.reduce((sum, v) => sum + (v.clips_count ?? v.clips?.length ?? 0), 0);
 
+  // P1-2 发布汇总：仅统计当前作品库中实际存在的 clip
+  const allClipIds = useMemo(
+    () => videos.flatMap((v) => (v.clips ?? []).map((c) => c.id)),
+    [videos],
+  );
+  const publishSummary = useMemo(
+    () => summarizePublish(user?.id || '', allClipIds),
+    [user?.id, allClipIds, publishMap],
+  );
+
+  const handlePublishSave = (clipId: string, info: PublishInfo) => {
+    if (!user?.id) return;
+    setPublishMap(setPublishInfo(user.id, clipId, info));
+  };
+
   if (authLoading) {
     return (
       <div className="container mx-auto px-4 py-16 text-center">
@@ -883,6 +963,17 @@ export default function DashboardPage() {
                 <CardDescription>
                   {t('dashboard.historyHint')}
                 </CardDescription>
+                {/* P1-2 发布汇总条 */}
+                {publishSummary.published > 0 && (
+                  <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                    <span className="flex items-center gap-1.5 font-medium text-foreground">
+                      <BarChart3 className="h-3.5 w-3.5" />
+                      {t('dashboard.published')} {publishSummary.published}
+                    </span>
+                    <span>{t('dashboard.totalViews')} {fmtCompact(publishSummary.views)}</span>
+                    <span>{t('dashboard.totalLikes')} {fmtCompact(publishSummary.likes)}</span>
+                  </div>
+                )}
               </CardHeader>
               <CardContent>
                 {videosLoading ? (
@@ -907,6 +998,8 @@ export default function DashboardPage() {
                         formatDate={formatDate}
                         getStatusBadge={getStatusBadge}
                         t={t}
+                        publishMap={publishMap}
+                        onMarkPublished={setPublishDialogClip}
                       />
                     ))}
                   </div>
@@ -965,6 +1058,16 @@ export default function DashboardPage() {
 
       {/* 邀请好友弹窗 */}
       <ReferralDialog open={referralOpen} onOpenChange={setReferralOpen} />
+
+      {/* P1-2 发布标记 / 更新数据弹窗 */}
+      <MarkPublishedDialog
+        open={!!publishDialogClip}
+        onOpenChange={(o) => { if (!o) setPublishDialogClip(null); }}
+        initial={publishDialogClip ? (publishMap[publishDialogClip.id] ?? null) : null}
+        onSave={(info) => {
+          if (publishDialogClip) handlePublishSave(publishDialogClip.id, info);
+        }}
+      />
     </div>
   );
 }

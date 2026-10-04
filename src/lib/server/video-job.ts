@@ -2,6 +2,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import videoClipper from '@/lib/server/video-clipper';
 import { enqueueJob, type VideoJobMessage } from '@/lib/server/video-queue';
 import { CREDIT_COST, refundIfCharged } from '@/lib/server/video-refund';
+import { readTrialAnalysis } from '@/lib/server/guest-trial';
 import { pumpUserQueue } from '@/lib/server/video-batch-queue';
 import { TERMINAL_VIDEO_STATUSES, BATCH_KICK_MIN_AGE_MS } from '@/lib/video-batch';
 import {
@@ -74,7 +75,7 @@ function clampInt(value: unknown, min: number, max: number, fallback: number) {
   return Math.max(min, Math.min(max, Math.floor(n)));
 }
 
-function extractYouTubeId(url: string): string | null {
+export function extractYouTubeId(url: string): string | null {
   try {
     const u = new URL(url);
     if (u.hostname.includes('youtu.be')) {
@@ -99,7 +100,7 @@ function youTubeThumbnailUrl(videoId: string): string {
   return `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
 }
 
-interface Highlight {
+export interface Highlight {
   title: string;
   start_time: number;
   end_time: number;
@@ -272,7 +273,7 @@ async function persistClip(
   }
 }
 
-async function produceClip(
+export async function produceClip(
   videoUrl: string,
   highlight: Highlight,
   params: { preResolvedStreamUrl?: string; preResolvedMetadata?: Record<string, unknown> },
@@ -375,12 +376,31 @@ async function runAnalyze(client: SupabaseClient, msg: VideoJobMessage): Promise
     return;
   }
 
-  let analysis;
-  try {
-    analysis = await videoClipper.analyzeVideo(videoUrl);
-  } catch (e) {
-    await setVideo(client, videoId, { status: 'failed', progress: 0, error_message: (e instanceof Error ? e.message : 'AI analysis failed.') });
-    return;
+  // P0-2 免登录试跑：注册后继承试跑时已算好的分析结果（<24h 且 URL 匹配），
+  // 跳过 LLM 分析，避免用户「白等一次」。任何校验失败一律静默回落正常分析。
+  let analysis: Awaited<ReturnType<typeof videoClipper.analyzeVideo>> | undefined;
+  if (msg.trialId) {
+    try {
+      const reused = await readTrialAnalysis(msg.trialId, videoUrl);
+      if (reused) {
+        analysis = { duration: reused.duration, title: reused.title, highlights: reused.highlights };
+        console.log('[video-job] analyze: reused trial analysis, skipping LLM', msg.trialId);
+      }
+    } catch (e) {
+      console.warn('[video-job] trial reuse failed (falling back):', e instanceof Error ? e.message : e);
+    }
+  }
+  if (!analysis) {
+    try {
+      analysis = await videoClipper.analyzeVideo(videoUrl);
+    } catch (e) {
+      await setVideo(client, videoId, { status: 'failed', progress: 0, error_message: (e instanceof Error ? e.message : 'AI analysis failed.') });
+      // P0-1 失败零损失：失败的终态一律走一次幂等退款（此处通常尚未扣费，属空操作，仅统一不变式）。
+      await refundIfCharged(client, userId, videoId).catch((err) =>
+        console.warn('[video-job] analyze-failure refund failed:', err instanceof Error ? err.message : err),
+      );
+      return;
+    }
   }
 
   // Honor the caller's requested clip count (e.g. Shorts 成片 asks for 3).
@@ -396,6 +416,10 @@ async function runAnalyze(client: SupabaseClient, msg: VideoJobMessage): Promise
       : allHighlights.slice(0, 10);
   if (highlights.length === 0) {
     await setVideo(client, videoId, { status: 'failed', progress: 0, error_message: 'No highlight moments found. Try another video.' });
+    // P0-1 失败零损失：见上。失败终态保证用户积分分文未损。
+    await refundIfCharged(client, userId, videoId).catch((err) =>
+      console.warn('[video-job] no-highlight refund failed:', err instanceof Error ? err.message : err),
+    );
     return;
   }
 
@@ -515,11 +539,19 @@ async function runClip(client: SupabaseClient, msg: VideoJobMessage): Promise<vo
     const errMsg = finalStatus === 'failed' ? 'All highlight clips failed to generate. Please retry or try a different video.' : null;
     await setVideo(client, videoId, { status: finalStatus, progress: 100, error_message: errMsg });
 
-    // One-time credit deduction on first terminal transition (idempotent by related_id).
-    // Admins are exempt (role lookup — see isAdminUser).
-    const isAdmin = await isAdminUser(client, userId);
-    if (!isAdmin && !video.user_id?.startsWith('demo-')) {
-      try { await deductCreditsOnce(client, userId, videoId); } catch (e) { console.warn('[video-job] deduct failed:', e); }
+    // P0-1 失败零损失：
+    //   - 失败终态**不扣费**，并退还此前可能已产生的扣费（幂等，按 related_id 去重）。
+    //     旧实现无条件扣费且失败路径从不退款 —— failed 属于终态，status 路由的
+    //     STALE 分支不会再触发，用户会被永久扣掉 60 积分。
+    //   - 非失败终态才扣费（首次终态转移，幂等）。Admins 豁免（role 查询，见 isAdminUser）。
+    if (finalStatus === 'failed') {
+      try { await refundIfCharged(client, userId, videoId); }
+      catch (e) { console.warn('[video-job] refund failed:', e instanceof Error ? e.message : e); }
+    } else {
+      const isAdmin = await isAdminUser(client, userId);
+      if (!isAdmin && !video.user_id?.startsWith('demo-')) {
+        try { await deductCreditsOnce(client, userId, videoId); } catch (e) { console.warn('[video-job] deduct failed:', e); }
+      }
     }
 
     // 批量队列自续航：本条进终态后把同一用户的队列继续排空（用户关掉页面也能继续）。

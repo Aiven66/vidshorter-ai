@@ -430,6 +430,49 @@ function buildFallbackHighlights(duration: number) {
   );
 }
 
+/**
+ * P0-3：无 LLM 时的钩子标题兜底。
+ *
+ * 旧实现直接取窗口文本的前 8 个词，结果多是「嗯 所以 我们 今天 来看」这类无信息量的碎词。
+ * 改为从窗口内挑一个最像钩子的从句：优先含关键词/疑问感叹标点、长度落在 30–60 字符的句子，
+ * 去掉开头的连接词后按词边界截到 60 字符。纯本地、零依赖、失败一律回落可读标题。
+ */
+function buildHookTitle(text: string, start: number) {
+  const cleaned = (text || '').replace(/\s+/g, ' ').trim();
+  if (!cleaned) return `Highlight at ${formatSeconds(start)}`;
+  const keywords = [
+    'important', 'secret', 'best', 'amazing', 'crazy', 'must', 'mistake', 'learn', 'why', 'how',
+    '关键', '重点', '一定', '震惊', '厉害', '方法', '秘诀', '技巧', '为什么',
+  ];
+  const clauses = cleaned
+    .split(/[.!?！？。；;]+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 12);
+  const scored = (clauses.length > 0 ? clauses : [cleaned]).map((clause) => {
+    const lower = clause.toLowerCase();
+    const keywordHits = keywords.filter((k) => lower.includes(k.toLowerCase())).length;
+    const hasPunct = /[?!？！]/.test(clause) ? 1 : 0;
+    // 长度甜区 30–60 字符：太短没信息，太长抓不住重点。
+    const lenScore = clause.length >= 30 && clause.length <= 60 ? 2 : clause.length < 30 ? 1 : 0;
+    return { clause, score: keywordHits * 2 + hasPunct + lenScore };
+  });
+  scored.sort((a, b) => b.score - a.score || a.clause.length - b.clause.length);
+  let title = scored[0].clause
+    // 去掉开头的口语连接词，避免标题以「所以 / 然后 / 而且」起头。
+    .replace(/^(so|and|but|well|okay|yeah|然后|所以|而且|就是|这个|那个)\b[\s,，]*/i, '')
+    .trim();
+  if (title.length < 12) {
+    // 从句太短 —— 回落到「前 8 个词」的旧策略，保证始终有可读标题。
+    title = cleaned.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(Boolean).slice(0, 8).join(' ');
+  }
+  if (title.length > 60) {
+    const cut = title.slice(0, 60);
+    const lastSpace = cut.lastIndexOf(' ');
+    title = (lastSpace > 30 ? cut.slice(0, lastSpace) : cut).trim();
+  }
+  return title || `Highlight at ${formatSeconds(start)}`;
+}
+
 function buildHeuristicHighlights(cues: CaptionCue[], duration: number) {
   if (cues.length === 0) return buildFallbackHighlights(duration);
   const windows: Highlight[] = [];
@@ -452,9 +495,8 @@ function buildHeuristicHighlights(cues: CaptionCue[], duration: number) {
     const punctuationScore = (text.match(/[!?！？]/g) || []).length;
     const densityScore = Math.min(8, Math.floor(text.length / 80));
     const score = 4 + keywordScore + punctuationScore + densityScore;
-    const title =
-      text.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(Boolean).slice(0, 8).join(' ') ||
-      `Highlight at ${formatSeconds(start)}`;
+    // P0-3：用钩子标题取代「前 8 个词」，让无 LLM 的生产路径也能产出可发布的标题。
+    const title = buildHookTitle(text, start);
     windows.push({ title: title.slice(0, 80), start_time: start, end_time: end, summary: text.slice(0, 140), engagement_score: Math.min(10, score) });
   }
   windows.sort((a, b) => b.engagement_score - a.engagement_score);
