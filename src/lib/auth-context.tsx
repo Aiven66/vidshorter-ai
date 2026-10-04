@@ -199,6 +199,96 @@ async function clearDesktopNativeAuth() {
   }
 }
 
+type AuthUserLike = {
+  id: string;
+  email?: string | null;
+  user_metadata?: Record<string, unknown> | null;
+  app_metadata?: Record<string, unknown> | null;
+};
+
+/**
+ * 服务端兜底建档：调 /api/auth/ensure-profile，用 service role 幂等补齐
+ * public.users / credits / subscriptions。
+ *
+ * 背景：档案行原先完全依赖前端用 anon key 写入且被空 catch 静默吞错，一旦
+ * RLS/网络/时序失败，用户就永远不出现在后台「用户管理」。该接口以 Supabase
+ * Auth 为身份来源，不受前端 RLS 影响。失败只告警，绝不阻断登录/注册主流程。
+ *
+ * 返回 true 表示服务端已确认建档；返回 false 时调用方可回落到客户端写入路径。
+ */
+async function ensureServerProfile(token?: string | null): Promise<boolean> {
+  if (!token) return false;
+  try {
+    const res = await fetch('/api/auth/ensure-profile', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      console.warn('[auth] ensure-profile 未成功:', res.status);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.warn('[auth] ensure-profile 请求异常:', e);
+    return false;
+  }
+}
+
+/**
+ * 传统客户端建档路径（anon key）：仅作为服务端兜底不可用时的回落。
+ * 历史上因空 catch 静默失败导致用户漏记，这里把错误显式打出来便于排查。
+ */
+async function createProfileWithClient(
+  client: any,
+  authUser: AuthUserLike,
+  fallbackName?: string,
+): Promise<void> {
+  try {
+    const email = (authUser.email || '').trim().toLowerCase();
+    if (!email) return;
+
+    const meta = authUser.user_metadata || {};
+    const provider =
+      typeof authUser.app_metadata?.provider === 'string' ? authUser.app_metadata.provider : 'email';
+    const name =
+      (typeof meta.name === 'string' && meta.name) ||
+      fallbackName ||
+      email.split('@')[0];
+
+    const { error: userError } = await client.from('users').upsert(
+      {
+        id: authUser.id,
+        email,
+        name,
+        role: 'user',
+        google_id: provider === 'google' ? authUser.id : null,
+      },
+      { onConflict: 'id' },
+    );
+    if (userError) {
+      // users 行失败则不再写 credits/subscriptions，避免产生悬挂引用。
+      console.error('[auth] 客户端补建 users 失败:', userError.message);
+      return;
+    }
+
+    const { error: creditsError } = await client
+      .from('credits')
+      .insert({ user_id: authUser.id, balance: 60 });
+    if (creditsError && creditsError.code !== '23505') {
+      console.error('[auth] 客户端补建 credits 失败:', creditsError.message);
+    }
+
+    const { error: subError } = await client
+      .from('subscriptions')
+      .insert({ user_id: authUser.id, plan_type: 'free', status: 'active' });
+    if (subError && subError.code !== '23505') {
+      console.error('[auth] 客户端补建 subscriptions 失败:', subError.message);
+    }
+  } catch (e) {
+    console.error('[auth] 客户端补建档案异常:', e);
+  }
+}
+
 async function verifyTokenAndFetchUser(token: string): Promise<User | null> {
   try {
     const client = await getSupabaseClient(token);
@@ -220,6 +310,10 @@ async function verifyTokenAndFetchUser(token: string): Promise<User | null> {
         avatarUrl: userData.avatar_url,
       };
     }
+
+    // 档案行缺失 → 服务端兜底补建（service role，幂等）。这保证任何完成注册/登录
+    // 的用户都会出现在后台「用户管理」；失败只告警，不阻断前端展示。
+    await ensureServerProfile(token);
 
     return {
       id: authUser.id,
@@ -536,6 +630,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           });
         } else {
           const email = session.user.email || '';
+          // 档案行缺失 → 服务端兜底补建（后台可见性保障），失败不阻断登录。
+          await ensureServerProfile(session.access_token);
           setUser({
             id: session.user.id,
             email,
@@ -745,17 +841,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                     avatarUrl: user.user_metadata?.avatar_url || null,
                   });
 
-                  try {
-                    await client.from('users').insert({
-                      id: user.id,
-                      email: user.email!,
-                      name: user.user_metadata?.name || user.email?.split('@')[0],
-                      role: 'user',
-                      google_id: user.app_metadata?.provider === 'google' ? user.id : null,
-                    });
-                    await client.from('credits').insert({ user_id: user.id, balance: 60 });
-                    await client.from('subscriptions').insert({ user_id: user.id, plan_type: 'free', status: 'active' });
-                  } catch {}
+                  // 服务端兜底建档（service role，不受前端 RLS 影响）优先；
+                  // 服务端不可用时回落到客户端写入路径。
+                  const ensured = await ensureServerProfile(data.session.access_token);
+                  if (!ensured) {
+                    await createProfileWithClient(client, user);
+                  }
                 }
               }
 
@@ -1051,21 +1142,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return { error: null, token: demoToken, email: demoUser.email };
       }
 
+      const { data: { session } } = await client.auth.getSession();
+
       if (authData?.user) {
-        try {
-          await client.from('users').upsert({
-            id: authData.user.id,
-            email,
-            name,
-            role: 'user',
-            google_id: null,
-          }, { onConflict: 'id' });
-          await client.from('credits').insert({ user_id: authData.user.id, balance: 60 });
-          await client.from('subscriptions').insert({ user_id: authData.user.id, plan_type: 'free', status: 'active' });
-        } catch {}
+        // 服务端兜底建档（service role，不受前端 RLS 影响）优先；拿不到 session
+        // （如需邮箱确认）或服务端不可用时，回落到原来的客户端写入路径。
+        const ensured = await ensureServerProfile(session?.access_token);
+        if (!ensured) {
+          await createProfileWithClient(client, authData.user, name);
+        }
       }
 
-      const { data: { session } } = await client.auth.getSession();
       if (session) {
         const token = session.access_token || null;
         const refreshToken = session.refresh_token || null;
