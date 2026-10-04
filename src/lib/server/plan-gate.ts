@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { isSupabaseConfigured, getSupabaseClient } from '@/storage/database/supabase-client';
 import { BATCH_ERROR_CODES } from '@/lib/video-batch';
 import { decideEntitlement, type SubscriptionSnapshot } from '@/lib/server/effective-plan';
-import { getFreeExportStatus, consumeFreeExport } from '@/lib/server/export-allowance';
+import { getFreeExportStatus, consumeFreeExport, hasVideoGenerationSpend } from '@/lib/server/export-allowance';
 
 /**
  * 付费门控（Starter+）——全站唯一实现，server-authoritative。
@@ -98,12 +98,17 @@ async function serverDecision(token: string): Promise<Decision> {
 }
 
 /**
- * 请求级 memo：同一请求内只解析/授予一次，避免多次 decide 重复查库，
- * 也保证「一次性免费导出额度」在整条请求链路上只被授予（并在成功时消费）一次。
- * 以 request 对象为 key，随请求生命周期回收。
+ * 请求级 memo（基础身份裁定）：同一请求内只解析一次 token + 订阅/角色，避免多次 decide 重复查库。
+ * 以 request 对象为 key，随请求生命周期回收。不含任何额度授予语义。
  */
-type RequestGrant = { userId?: string; freeAllowance: boolean; committed?: boolean };
-const requestGrant = new WeakMap<object, RequestGrant>();
+const baseMemo = new WeakMap<object, Decision>();
+
+/**
+ * 请求级 memo（一次性免费导出额度的授予）：仅当额度命中时写入，
+ * 供 commitFreeExport 消费。与基础身份裁定分离，避免「已消耗积分放行」路径污染额度语义。
+ */
+type RequestGrant = { userId: string; committed?: boolean };
+const grantMemo = new WeakMap<object, RequestGrant>();
 
 /**
  * 统一裁定入口。
@@ -111,42 +116,58 @@ const requestGrant = new WeakMap<object, RequestGrant>();
  *  - Supabase 已配置（云端/生产）→ **必须**持可核验 token，否则直接拒绝：
  *    绝不采信 clientPlan —— 否则未登录或已登录的免费用户改请求体即可绕过付费墙。
  *    （token 由 Authorization 或 clipop_access_token cookie 提供，登录后同源请求自动携带。）
- *    非付费但可解析身份时，再核查「一次性免费导出额度」：尚有额度则以 freeAllowance=true 放行。
+ *    非付费但可解析身份时，依次核查：
+ *      (1) opts.allowSpentCredits 且该账号消耗过积分生成过视频 → 放行（不写额度 memo）；
+ *      (2) 仍持有「一次性免费导出额度」→ 放行并授予额度（写 grantMemo）。
  *  - 未配置 Supabase（纯本地/离线）→ 才回落信任 clientPlan（不涉及额度概念，行为完全不变）。
  */
-async function decide(request: NextRequest, clientPlan: string): Promise<Decision> {
+async function decide(
+  request: NextRequest,
+  clientPlan: string,
+  opts?: { allowSpentCredits?: boolean },
+): Promise<Decision> {
   if (!isSupabaseConfigured()) {
     return clientPlan === 'starter' || clientPlan === 'pro' ? { ok: true } : { ok: false };
   }
-  // 命中请求级 memo：直接复用首次裁定结果
-  const cached = requestGrant.get(request);
-  if (cached) return { ok: true, userId: cached.userId, freeAllowance: cached.freeAllowance };
 
   const token = bearerToken(request);
   if (!token) return { ok: false };
-  const d = await serverDecision(token);
-  if (d.ok) {
-    requestGrant.set(request, { userId: d.userId, freeAllowance: false });
-    return d;
+
+  // 基础身份裁定：请求级 memo，避免同一请求多次查库
+  let base = baseMemo.get(request);
+  if (!base) {
+    base = await serverDecision(token);
+    baseMemo.set(request, base);
   }
-  // 非付费：若可解析出真实用户，检查是否还持有一次性免费导出额度
-  if (d.userId) {
-    const status = await getFreeExportStatus(d.userId);
-    if (status.available) {
-      requestGrant.set(request, { userId: d.userId, freeAllowance: true });
-      return { ok: true, userId: d.userId, freeAllowance: true };
-    }
+  if (base.ok) return base; // 付费 / admin
+  if (!base.userId) return { ok: false }; // token 有效但无法核验 → fail-closed
+
+  // (1) 账号级「已消耗积分生成」放行 —— 仅下载/导出端点传入 allowSpentCredits。
+  // 注意：此路径不写 grantMemo —— 不消耗一次性额度，也不连带放开 Starter+ 功能。
+  if (opts?.allowSpentCredits) {
+    const spent = await hasVideoGenerationSpend(base.userId);
+    if (spent) return { ok: true, userId: base.userId };
   }
-  return { ok: false, userId: d.userId };
+
+  // (2) 一次性免费导出额度（请求级 memo，保证只授予/消费一次）
+  const granted = grantMemo.get(request);
+  if (granted) return { ok: true, userId: granted.userId, freeAllowance: true };
+  const status = await getFreeExportStatus(base.userId);
+  if (status.available) {
+    grantMemo.set(request, { userId: base.userId });
+    return { ok: true, userId: base.userId, freeAllowance: true };
+  }
+
+  return { ok: false, userId: base.userId };
 }
 
 /**
  * 成功出口调用：把「一次性免费导出额度」真正落库消费（仅一次）。
- * 从 memo 取条目，freeAllowance 命中且未消费时写入流水；失败只告警，绝不抛错。
+ * 从 grantMemo 取条目，命中且未消费时写入流水；失败只告警，绝不抛错。
  */
 export async function commitFreeExport(request: NextRequest): Promise<void> {
-  const entry = requestGrant.get(request);
-  if (!entry || !entry.freeAllowance || !entry.userId || entry.committed) return;
+  const entry = grantMemo.get(request);
+  if (!entry || entry.committed) return;
   entry.committed = true;
   let endpoint: string | undefined;
   try {
@@ -164,10 +185,15 @@ export async function commitFreeExport(request: NextRequest): Promise<void> {
 
 /**
  * 付费（starter|pro）或 admin 才放行。失败码 batch_requires_paid。
+ * 下载/导出端点传 opts.allowSpentCredits=true 以放行「已消耗积分生成」的免费用户。
  */
-export async function verifyPaidEligibility(request: NextRequest, clientPlan: string): Promise<PaidEligibility> {
+export async function verifyPaidEligibility(
+  request: NextRequest,
+  clientPlan: string,
+  opts?: { allowSpentCredits?: boolean },
+): Promise<PaidEligibility> {
   const deny = (): PaidEligibility => ({ ok: false, reason: BATCH_ERROR_CODES.requiresPaid });
-  const d = await decide(request, clientPlan);
+  const d = await decide(request, clientPlan, opts);
   return d.ok ? { ok: true, userId: d.userId, freeAllowance: d.freeAllowance } : deny();
 }
 
@@ -177,6 +203,8 @@ export async function verifyPaidEligibility(request: NextRequest, clientPlan: st
  *
  * 与旧版本的关键差异：**先看 token**。只要请求里带了真实身份，就不再采信 clientPlan
  * ——旧实现是「clientPlan 命中即放行」，改请求体即可绕过，属于付费墙漏洞。
+ *
+ * 本函数**不传** allowSpentCredits：Starter+ 特性保持严格门控，不因消耗过积分而放开。
  */
 export async function verifyStarterEligibility(
   request: NextRequest,

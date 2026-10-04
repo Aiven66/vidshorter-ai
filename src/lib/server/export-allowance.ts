@@ -13,6 +13,9 @@ import { createClient } from '@supabase/supabase-js';
 
 export const FREE_EXPORT_TX_TYPE = 'free_export_allowance';
 
+/** 生成扣费流水类型（与 video-job.ts 的 deductCreditsOnce 写入保持一致）。 */
+export const VIDEO_PROCESS_TX_TYPE = 'video_process';
+
 /** service-role 客户端（写/读流水表用）；未配置 Supabase 时返回 null。 */
 function serviceRoleClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.COZE_SUPABASE_URL;
@@ -40,6 +43,28 @@ export async function getFreeExportStatus(userId: string): Promise<{ used: boole
   } catch (e) {
     console.warn('[export-allowance] status query failed:', e instanceof Error ? e.message.slice(0, 200) : e);
     return { used: true, available: false };
+  }
+}
+
+/**
+ * 账号级判定：该用户是否真正消耗过积分生成过视频。
+ * 命中即视为「已消耗积分生成」→ 下载/导出门控放行（见 plan-gate）。
+ * 任何失败路径 fail-closed：无法确认一律返回 false（= 未消耗，维持拦截）。
+ */
+export async function hasVideoGenerationSpend(userId: string): Promise<boolean> {
+  const client = serviceRoleClient();
+  if (!client) return false;
+  try {
+    const { count, error } = await client
+      .from('credit_transactions')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .eq('type', VIDEO_PROCESS_TX_TYPE);
+    if (error) return false;
+    return (count ?? 0) > 0;
+  } catch (e) {
+    console.warn('[export-allowance] spend query failed:', e instanceof Error ? e.message.slice(0, 200) : e);
+    return false;
   }
 }
 

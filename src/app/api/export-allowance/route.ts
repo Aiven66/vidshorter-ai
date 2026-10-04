@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveBearerUserId } from '@/lib/server/plan-gate';
 import { resolveEffectivePlan } from '@/lib/server/effective-plan';
-import { getFreeExportStatus, consumeFreeExport } from '@/lib/server/export-allowance';
+import { getFreeExportStatus, consumeFreeExport, hasVideoGenerationSpend } from '@/lib/server/export-allowance';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -9,10 +9,13 @@ export const dynamic = 'force-dynamic';
 /**
  * GET /api/export-allowance
  *
- * 返回当前登录用户的「一次性免费导出额度」状态，供前端决定是否放宽免费用户导出。
+ * 返回当前登录用户的导出可用性，供前端决定是否放宽免费用户导出。
  *  - 未登录 → 401（前端静默按无额度处理）
- *  - 已付费 → { paid:true, available:false, used:true }（付费用户不受一次性额度约束）
- *  - 免费   → { paid:false, available, used }（查询失败时 assert fail-closed，available=false）
+ *  - 已付费 → { paid:true, available:false, used:true, spentCredits:false, canExport:true }
+ *  - 免费   → { paid:false, available, used, spentCredits, canExport }
+ *      spentCredits = 账号级「已消耗积分生成过视频」（可自由下载）
+ *      canExport    = available || spentCredits
+ *    查询失败时 assert fail-closed（available=false、spentCredits=false）。
  */
 export async function GET(request: NextRequest) {
   const userId = await resolveBearerUserId(request);
@@ -22,11 +25,19 @@ export async function GET(request: NextRequest) {
 
   const entitlement = await resolveEffectivePlan(userId);
   if (entitlement.paid) {
-    return NextResponse.json({ ok: true, paid: true, available: false, used: true });
+    return NextResponse.json({
+      ok: true, paid: true, available: false, used: true,
+      spentCredits: false, canExport: true,
+    });
   }
 
   const s = await getFreeExportStatus(userId);
-  return NextResponse.json({ ok: true, paid: false, available: s.available, used: s.used });
+  const spentCredits = await hasVideoGenerationSpend(userId);
+  return NextResponse.json({
+    ok: true, paid: false, available: s.available, used: s.used,
+    spentCredits,
+    canExport: s.available || spentCredits,
+  });
 }
 
 /**

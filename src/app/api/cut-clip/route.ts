@@ -210,7 +210,8 @@ export async function POST(request: NextRequest) {
         subtitleLang = normalizeSubtitleLang(String(formData.get('subtitleLang') || ''));
 
         // 「导出即付费墙」：任何导出一律先过付费门控（在 ffmpeg/下载之前）。
-        const uploadPaid = await verifyPaidEligibility(request, plan);
+        // allowSpentCredits：已消耗积分生成过视频的免费用户可直接下载（不消耗一次性额度）。
+        const uploadPaid = await verifyPaidEligibility(request, plan, { allowSpentCredits: true });
         if (!uploadPaid.ok) return exportPaywallResponse();
 
         // 9:16 竖屏 = Starter+ 付费权益
@@ -248,7 +249,8 @@ export async function POST(request: NextRequest) {
 
     // 「导出即付费墙」：所有导出分支（横屏/竖屏/字幕）统一门控，在 ffmpeg/下载之前拦截。
     // 覆盖 JSON 与 multipart(streamUrl) 两种入参；multipart 文件直传分支已单独门控。
-    const paidElig = await verifyPaidEligibility(request, plan);
+    // allowSpentCredits：已消耗积分生成过视频的免费用户可直接下载（不消耗一次性额度）。
+    const paidElig = await verifyPaidEligibility(request, plan, { allowSpentCredits: true });
     if (!paidElig.ok) return exportPaywallResponse();
 
     if (!streamUrl) {

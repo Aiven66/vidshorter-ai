@@ -84,9 +84,10 @@ export async function GET(request: NextRequest) {
 
   // 导出即付费墙：本端点直接产出可下载成片，必须与 cut-clip 同口径门控。
   // 免费用户只能在线预览，任何导出都要先升级（订阅优先 + 积分包兜底）。
+  // 例外：allowSpentCredits —— 已消耗积分生成过视频的免费用户可直接下载（不消耗一次性额度）。
   // 注意：预览渲染管线 /api/regenerate-clip 故意不门控——它只服务「在线预览」。
   const plan = url.searchParams.get('plan') || 'free';
-  const paidElig = await verifyPaidEligibility(request, plan);
+  const paidElig = await verifyPaidEligibility(request, plan, { allowSpentCredits: true });
   if (!paidElig.ok) {
     return NextResponse.json(
       {

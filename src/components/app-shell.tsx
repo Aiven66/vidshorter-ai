@@ -64,6 +64,11 @@ const LanguageSwitcher = dynamic(
   { ssr: false }
 );
 
+const ReferralDialog = dynamic(
+  () => import('@/components/referral-dialog').then(m => ({ default: m.ReferralDialog })),
+  { ssr: false }
+);
+
 // 左侧栏入口：高光剪辑 / 高光笔记 / 博客 / 定价 / 关于我们
 type NavItem = {
   href: string;
@@ -73,6 +78,8 @@ type NavItem = {
   badge?: 'NEW';
   // 外部链接（如 Podcast AI）: web 端新标签页打开，桌面端经 setWindowOpenHandler 用系统浏览器打开
   external?: boolean;
+  // 行为型入口（当前仅邀请好友）：不跳转路由，改为触发回调
+  action?: 'referral';
 };
 
 const NAV_ITEMS: NavItem[] = [
@@ -80,6 +87,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/ai-video', labelKey: 'aiVideo', icon: Wand2, badge: 'NEW' },
   { href: '/shorts', labelKey: 'shorts', icon: Smartphone, badge: 'NEW' },
   { href: '/video-clips', labelKey: 'clips', icon: Scissors },
+  { href: '#invite', labelKey: 'inviteFriends', icon: Gift, action: 'referral' },
   { href: '/video-notes', labelKey: 'notes', icon: FileText, badge: 'NEW' },
   { href: '/marketing-video', labelKey: 'marketing', icon: ShoppingBag, badge: 'NEW' },
   { href: '/digital-human', labelKey: 'digitalHuman', icon: Bot },
@@ -111,12 +119,14 @@ function AppSidebarContent({
   collapsed = false,
   onToggleCollapse,
   navConfig,
+  onOpenReferral,
 }: {
   pathname: string | null;
   onNavigate?: () => void;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
   navConfig: NavConfig;
+  onOpenReferral?: () => void;
 }) {
   const isActive = (path: string) => path === '/' ? pathname === '/' : pathname?.startsWith(path);
 
@@ -219,6 +229,21 @@ function AppSidebarContent({
             collapsed ? 'justify-center px-1 py-2.5' : 'px-3 py-2.5'
           } ${active ? 'bg-primary/10 text-primary' : ''}`;
 
+          // 行为型入口（邀请好友）：不跳转路由，点击直接打开邀请弹窗
+          if (item.action === 'referral') {
+            return (
+              <button
+                key={item.href}
+                type="button"
+                onClick={() => { onNavigate?.(); onOpenReferral?.(); }}
+                className={`${className} w-full text-left`}
+                title={collapsed ? item.labelKey : undefined}
+              >
+                {content}
+              </button>
+            );
+          }
+
           // 外部链接（Podcast AI）: web 端新标签页打开，桌面端经 setWindowOpenHandler 转系统浏览器
           if (item.external) {
             return (
@@ -263,6 +288,7 @@ function SidebarLabel({ labelKey }: { labelKey: NavItem['labelKey'] }) {
     home: '首页',
     aiVideo: 'AI 成片',
     clips: '高光剪辑',
+    inviteFriends: '邀请好友',
     shorts: 'Shorts 成片',
     notes: '高光笔记',
     marketing: '营销视频',
@@ -330,6 +356,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted] = useState(false);
   const [isDesktop, setIsDesktop] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  // 邀请好友弹窗（侧栏「邀请好友」入口触发）
+  const [referralOpen, setReferralOpen] = useState(false);
   // 初始必须为默认配置，保证 SSR 与首帧客户端一致（避免 hydration 不一致）
   const [navConfig, setNavConfig] = useState<NavConfig>(DEFAULT_NAV_CONFIG);
 
@@ -405,6 +433,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           collapsed={collapsed}
           onToggleCollapse={toggleSidebar}
           navConfig={navConfig}
+          onOpenReferral={() => setReferralOpen(true)}
         />
         <SidebarCreditsCard mounted={mounted} collapsed={collapsed} />
       </aside>
@@ -427,6 +456,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   pathname={pathname}
                   onNavigate={() => setMobileOpen(false)}
                   navConfig={navConfig}
+                  onOpenReferral={() => setReferralOpen(true)}
                 />
                 <SidebarCreditsCard mounted={mounted} />
               </SheetContent>
@@ -480,6 +510,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* 右下角注册引导 Banner */}
       <RegistrationBanner />
+
+      {/* 邀请好友弹窗（侧栏入口） */}
+      <ReferralDialog open={referralOpen} onOpenChange={setReferralOpen} />
     </div>
   );
 }

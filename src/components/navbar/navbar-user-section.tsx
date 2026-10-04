@@ -109,8 +109,9 @@ export function NavbarUserSection({ mounted, isDesktop }: { mounted: boolean; is
             </Link>
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={(e) => { e.preventDefault(); setReferralOpen(true); }}>
-            <Gift className="h-4 w-4 mr-2" />
+            <Gift className="h-4 w-4 mr-2 text-primary" />
             {t('nav.inviteFriends')}
+            <span className="ml-auto text-[10px] font-semibold text-primary">+100</span>
           </DropdownMenuItem>
           {isAdmin && (
             <DropdownMenuItem asChild>

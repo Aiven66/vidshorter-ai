@@ -163,9 +163,35 @@ export async function POST(request: NextRequest) {
       related_id: referrerId,
     });
 
+    // 邀请人也得 100 积分（与产品文案「双方各得 100 积分」一致）。
+    // 幂等：仅在 referrals 插入成功的分支执行，同一 referee 不可能重复发奖。
+    const { data: referrerCredits } = await serviceClient
+      .from('credits')
+      .select('id, balance')
+      .eq('user_id', referrerId)
+      .maybeSingle();
+
+    if (referrerCredits) {
+      await serviceClient
+        .from('credits')
+        .update({ balance: (referrerCredits.balance ?? 0) + REFERRAL_REWARD, updated_at: new Date().toISOString() })
+        .eq('id', referrerCredits.id);
+    } else {
+      await serviceClient.from('credits').insert({ user_id: referrerId, balance: REFERRAL_REWARD });
+    }
+
+    await serviceClient.from('credit_transactions').insert({
+      user_id: referrerId,
+      amount: REFERRAL_REWARD,
+      type: 'referral_bonus',
+      description: `Referral bonus: referred ${user.id}`,
+      related_id: user.id,
+    });
+
     return Response.json({
       alreadyRewarded: false,
       reward: REFERRAL_REWARD,
+      referrerReward: REFERRAL_REWARD,
       message: 'Referral bonus credited successfully',
     });
   } catch (err) {

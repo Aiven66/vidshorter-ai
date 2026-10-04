@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import dynamic from 'next/dynamic';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -16,7 +17,7 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   CreditCard, Video, History, Settings, ArrowRight, Play, FileVideo,
   Download, ChevronDown, ChevronRight, Image as ImageIcon, Film, ExternalLink,
-  Loader2,
+  Loader2, Gift,
 } from 'lucide-react';
 import Link from 'next/link';
 import { isSupabaseConfigured } from '@/storage/database/supabase-client';
@@ -27,6 +28,11 @@ import {
 } from '@/lib/youtube-clip-download';
 import { isAdminUser } from '@/lib/admin-gate';
 import { InsufficientCreditsDialog } from '@/components/insufficient-credits-dialog';
+
+const ReferralDialog = dynamic(
+  () => import('@/components/referral-dialog').then(m => ({ default: m.ReferralDialog })),
+  { ssr: false }
+);
 
 // 从 linkOnlyUrl (https://youtu.be/<id>?t=<seconds>s) 提取 videoId 和 startTime
 function parseYouTubeLink(url: string): { videoId: string; startTime: number } | null {
@@ -583,6 +589,8 @@ export default function DashboardPage() {
   const [feedbackDone, setFeedbackDone] = useState(false);
   const [feedbackError, setFeedbackError] = useState('');
   const [isFromDesktop, setIsFromDesktop] = useState(false);
+  // 邀请好友弹窗
+  const [referralOpen, setReferralOpen] = useState(false);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -831,6 +839,23 @@ export default function DashboardPage() {
           </Card>
         </div>
 
+        {/* 邀请好友卡片：双方各得 100 积分 */}
+        <Card className="mb-8 border-primary/20 bg-primary/5">
+          <CardContent className="flex flex-col sm:flex-row sm:items-center gap-4 p-5">
+            <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full bg-primary/15">
+              <Gift className="h-5 w-5 text-primary" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="font-semibold text-sm">{t('referral.cardTitle')}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{t('referral.cardDesc')}</p>
+            </div>
+            <Button onClick={() => setReferralOpen(true)} className="flex-shrink-0">
+              <Gift className="h-4 w-4 mr-1.5" />
+              {t('referral.cardCta')}
+            </Button>
+          </CardContent>
+        </Card>
+
         {/* Main Content */}
         <Tabs defaultValue="history" className="space-y-6">
           <TabsList>
@@ -937,6 +962,9 @@ export default function DashboardPage() {
           </TabsContent>
         </Tabs>
       </div>
+
+      {/* 邀请好友弹窗 */}
+      <ReferralDialog open={referralOpen} onOpenChange={setReferralOpen} />
     </div>
   );
 }

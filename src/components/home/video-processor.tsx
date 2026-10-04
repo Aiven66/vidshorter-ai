@@ -572,6 +572,8 @@ export default function VideoProcessor({
   const [exportJumpCut, setExportJumpCut] = useState(false);
   // 免费用户「一次性导出额度」是否仍可用（服务端裁定；仅当为 true 时才放宽一次导出）
   const [freeExportAvailable, setFreeExportAvailable] = useState(false);
+  // 账号级：该用户是否已消耗积分生成过视频（命中即可自由下载，不受付费墙拦截）
+  const [hasSpentCredits, setHasSpentCredits] = useState(false);
   // AI 配音/旁白（Starter+ 权益）：开关 + 自定义台词 + 声线
   const [exportVoiceover, setExportVoiceover] = useState(false);
   const [voiceoverScript, setVoiceoverScript] = useState('');
@@ -666,6 +668,7 @@ export default function VideoProcessor({
     let cancelled = false;
     if (!user || plan !== 'free' || isAdminUser(user)) {
       setFreeExportAvailable(false);
+      setHasSpentCredits(false);
       return () => { cancelled = true; };
     }
     (async () => {
@@ -677,9 +680,15 @@ export default function VideoProcessor({
         });
         if (!res.ok) throw new Error(`status ${res.status}`);
         const data = await res.json();
-        if (!cancelled) setFreeExportAvailable(!!data.available);
+        if (!cancelled) {
+          setFreeExportAvailable(!!data.available);
+          setHasSpentCredits(!!data.spentCredits);
+        }
       } catch {
-        if (!cancelled) setFreeExportAvailable(false);
+        if (!cancelled) {
+          setFreeExportAvailable(false);
+          setHasSpentCredits(false);
+        }
       }
     })();
     return () => { cancelled = true; };
@@ -1436,7 +1445,8 @@ export default function VideoProcessor({
   // allowFreeAllowance=true 时：免费非管理员若仍有「一次性导出额度」则放行一次。
   const ensureExportAccess = (allowFreeAllowance = false) => {
     if (plan === 'free' && !isAdminUser(user)) {
-      if (allowFreeAllowance && freeExportAvailable) return true;
+      // 账号级放宽：已消耗积分生成过视频的用户可自由下载；或仍持有一次性导出额度。
+      if (allowFreeAllowance && (hasSpentCredits || freeExportAvailable)) return true;
       setExportPaywallOpen(true);
       return false;
     }
@@ -1674,12 +1684,12 @@ export default function VideoProcessor({
       // YouTube clip — always use server-side ffmpeg cut for guaranteed playability
       setDownloadingId(clip.id);
       setDownloadProgress('Preparing download (server-side ffmpeg cut)...');
-      // 免费用户用「一次性额度」导出时，强制降级为「横屏、无字幕、无粗剪」：
-      // 竖屏/字幕/粗剪属 Starter+ 门控能力，避免请求被 403 而白烧唯一额度。
-      const usingFreeAllowance = plan === 'free' && !isAdminUser(user);
-      const effVertical = usingFreeAllowance ? false : exportVertical;
-      const effSubtitles = usingFreeAllowance ? false : exportSubtitles;
-      const effJumpCut = usingFreeAllowance ? false : exportJumpCut;
+      // 免费用户导出时，强制降级为「横屏、无字幕、无粗剪」：
+      // 竖屏/字幕/粗剪属 Starter+ 门控能力，避免请求被 403。
+      const isFreeNonAdmin = plan === 'free' && !isAdminUser(user);
+      const effVertical = isFreeNonAdmin ? false : exportVertical;
+      const effSubtitles = isFreeNonAdmin ? false : exportSubtitles;
+      const effJumpCut = isFreeNonAdmin ? false : exportJumpCut;
       // 竖屏 / AI 字幕 / AI 粗剪是「精确导出规格」：只有服务端 cut-clip 能产出。
       // 下面的兜底路径（downloadYouTubeClip / 直接 remux / 打开 YouTube）
       // 都只会给出横屏、无字幕、未粗剪的结果，对 Shorts 成片属于静默错误输出，必须禁止。
@@ -1798,8 +1808,8 @@ export default function VideoProcessor({
           window.open(embedUrl, '_blank');
         }
       }
-      // 免费用户一次性额度：仅当本次下载真正成功才本地标记为已用；失败路径保持可用以便重试。
-      if (usingFreeAllowance && browserSuccess) setFreeExportAvailable(false);
+      // 免费用户一次性额度：仅当本次下载成功、且本次依赖的是「一次性额度」（非已消耗积分）时才本地标记为已用；失败路径保持可用以便重试。
+      if (isFreeNonAdmin && !hasSpentCredits && browserSuccess) setFreeExportAvailable(false);
       setDownloadingId(null);
       setDownloadProgress(null);
       return;
@@ -1807,7 +1817,7 @@ export default function VideoProcessor({
 
     // Non-YouTube clip (uploaded local video) — direct download
     if (!clip.videoUrl) return;
-    const usingFreeAllowance = plan === 'free' && !isAdminUser(user);
+    const isFreeNonAdmin = plan === 'free' && !isAdminUser(user);
     setDownloadingId(clip.id);
     let localOk = false;
     try {
@@ -1833,7 +1843,9 @@ export default function VideoProcessor({
     }
     // 本地片段下载不经任何服务端导出端点，需在此补记消费「一次性额度」，
     // 否则免费用户可重复下载本地片段绕过「仅一次」限制。
-    if (usingFreeAllowance && localOk) {
+    // 已消耗积分生成过视频的用户不占用一次性额度，无需补记。
+    const usingOneTimeAllowance = isFreeNonAdmin && !hasSpentCredits;
+    if (usingOneTimeAllowance && localOk) {
       try {
         await fetch('/api/export-allowance', {
           method: 'POST',

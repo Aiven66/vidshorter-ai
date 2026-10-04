@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import dynamic from 'next/dynamic';
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
@@ -16,10 +17,16 @@ import {
   ArrowRight,
   Clock,
   Plus,
+  Gift,
 } from 'lucide-react';
 import { PaymentModal } from '@/components/payment-modal';
 import { useCredits } from '@/lib/credits-context';
 import { useLocale } from '@/lib/locale-context';
+
+const ReferralDialog = dynamic(
+  () => import('@/components/referral-dialog').then(m => ({ default: m.ReferralDialog })),
+  { ssr: false }
+);
 
 interface InsufficientCreditsDialogProps {
   open: boolean;
@@ -60,6 +67,8 @@ export function InsufficientCreditsDialog({
   const { refreshCredits } = useCredits();
   const [selectedPack, setSelectedPack] = useState<(typeof MINI_PACKS)[number] | null>(null);
   const [paymentOpen, setPaymentOpen] = useState(false);
+  // 邀请好友弹窗（为本弹窗提供一个「不花钱也能拿积分」的替代路径）
+  const [inviteOpen, setInviteOpen] = useState(false);
 
   // 重置 redirecting 状态
   useEffect(() => {
@@ -212,6 +221,18 @@ export function InsufficientCreditsDialog({
           </div>
         </div>
 
+        {/* 邀请好友引导：邀请好友各得 100 积分，为积分不足用户提供「不花钱」的替代路径 */}
+        <div className="px-6 pb-2">
+          <Button
+            variant="outline"
+            className="w-full h-9 text-xs gap-1.5"
+            onClick={() => { onOpenChange(false); setInviteOpen(true); }}
+          >
+            <Gift className="h-3.5 w-3.5 text-primary" />
+            {t('referral.paywallCta')}
+          </Button>
+        </div>
+
         {/* CTA 区域 */}
         <div className="px-6 pb-5 pt-1 space-y-2.5">
           <Button
@@ -283,6 +304,9 @@ export function InsufficientCreditsDialog({
         }
         onSuccess={handlePackPaid}
       />
+
+      {/* 邀请好友弹窗 */}
+      <ReferralDialog open={inviteOpen} onOpenChange={setInviteOpen} />
     </Dialog>
   );
 }

@@ -8,6 +8,7 @@
 export type NavKey =
   | 'home'
   | 'clips'
+  | 'inviteFriends'
   | 'shorts'
   | 'notes'
   | 'blog'
@@ -35,6 +36,7 @@ export const NAV_LABELS: Record<NavKey, { zh: string; en: string }> = {
   home: { zh: '首页', en: 'Home' },
   aiVideo: { zh: 'AI 成片', en: 'AI Video' },
   clips: { zh: '高光剪辑', en: 'Video Clips' },
+  inviteFriends: { zh: '邀请好友', en: 'Invite Friends' },
   shorts: { zh: 'Shorts 成片', en: 'Shorts' },
   notes: { zh: '高光笔记', en: 'Video Notes' },
   marketing: { zh: '营销视频', en: 'Marketing Video' },
@@ -63,6 +65,7 @@ export const DEFAULT_NAV_CONFIG: NavConfig = {
   order: [
     'home',
     'clips',
+    'inviteFriends',
     'shorts',
     'notes',
     'marketing',
