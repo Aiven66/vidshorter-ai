@@ -58,6 +58,11 @@ export default function AboutPage() {
 
   const benefits = [0, 1, 2, 3].map((index) => t(`about.productVision.benefits.${index}`));
 
+  const aiModels = [0, 1, 2, 3, 4, 5].map((index) => ({
+    name: t(`about.models.item${index}Name`),
+    use: t(`about.models.item${index}Use`),
+  }));
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-primary/5 via-background to-chart-4/5">
       {/* Hero Section */}
@@ -252,6 +257,32 @@ export default function AboutPage() {
               </div>
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* AI Models Section */}
+      <section className="py-20 bg-muted/30">
+        <div className="container mx-auto px-4">
+          <div className="max-w-3xl mx-auto text-center mb-12">
+            <h2 className="text-3xl md:text-4xl font-bold mb-4">{t('about.models.title')}</h2>
+            <p className="text-lg text-muted-foreground">{t('about.models.subtitle')}</p>
+          </div>
+          <div className="max-w-3xl mx-auto grid gap-4">
+            {aiModels.map((model) => (
+              <div
+                key={model.name}
+                className="flex flex-col gap-1 rounded-xl border border-border bg-background p-5 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <span className="font-semibold text-foreground">{model.name}</span>
+                <span className="text-sm text-muted-foreground sm:text-right sm:max-w-[55%]">{model.use}</span>
+              </div>
+            ))}
+          </div>
+          <p className="mt-8 text-center text-sm text-muted-foreground">
+            <Link href="/terms" className="underline hover:text-primary">
+              {t('footer.terms')}
+            </Link>
+          </p>
         </div>
       </section>
 

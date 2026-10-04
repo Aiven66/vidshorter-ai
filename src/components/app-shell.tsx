@@ -415,6 +415,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const toggleSidebar = () => setCollapsed((v) => !v);
   // i18n 缺失该 key 时 t() 会原样返回 key，这里兜底英文
   const feedbackLabel = t('nav.feedback') === 'nav.feedback' ? 'Feedback' : t('nav.feedback');
+  // 全站页脚法律链接文案（缺失时回退英文）
+  const termsLabel = t('footer.terms') === 'footer.terms' ? 'Terms of Service' : t('footer.terms');
+  const privacyLabel = t('footer.privacy') === 'footer.privacy' ? 'Privacy Policy' : t('footer.privacy');
+  const currentYear = new Date().getFullYear();
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -505,6 +509,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
         {/* 主内容 */}
         <main className="flex-1 min-w-0">{children}</main>
+
+        {/* 全站页脚 — 保证任意页面都能直达服务条款与隐私政策 */}
+        <footer className="border-t border-border px-4 py-4 md:px-6">
+          <div className="flex flex-col items-center justify-between gap-2 text-xs text-muted-foreground sm:flex-row">
+            <p>&copy; {currentYear} Clipop AI</p>
+            <nav className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
+              <Link href="/terms" className="transition-colors hover:text-primary">
+                {termsLabel}
+              </Link>
+              <Link href="/privacy" className="transition-colors hover:text-primary">
+                {privacyLabel}
+              </Link>
+            </nav>
+          </div>
+        </footer>
       </div>
       </div>
 

@@ -83,6 +83,40 @@ export default function TermsPage() {
             <h2 className="text-xl font-semibold mb-3">{t('terms.section9Title')}</h2>
             <p className="text-muted-foreground leading-relaxed">{t('terms.section9Content')}</p>
           </section>
+
+          <section className="border-l-4 border-destructive pl-4 py-2 bg-destructive/5 rounded-r-lg">
+            <h2 className="text-xl font-semibold mb-3">{t('terms.section10Title')}</h2>
+            <p className="text-muted-foreground leading-relaxed">{t('terms.section10Content')}</p>
+            <ul className="list-disc pl-6 mt-3 space-y-2 text-muted-foreground">
+              <li className="leading-relaxed">{t('terms.section10Item1')}</li>
+              <li className="leading-relaxed">{t('terms.section10Item2')}</li>
+              <li className="leading-relaxed">{t('terms.section10Item3')}</li>
+              <li className="leading-relaxed font-semibold text-foreground">{t('terms.section10Item4')}</li>
+              <li className="leading-relaxed">{t('terms.section10Item5')}</li>
+              <li className="leading-relaxed">{t('terms.section10Item6')}</li>
+            </ul>
+          </section>
+
+          <section>
+            <h2 className="text-xl font-semibold mb-3">{t('terms.section11Title')}</h2>
+            <p className="text-muted-foreground leading-relaxed">{t('terms.section11Content')}</p>
+            <ul className="list-disc pl-6 mt-3 space-y-2 text-muted-foreground">
+              <li className="leading-relaxed">{t('terms.section11Item1')}</li>
+              <li className="leading-relaxed">{t('terms.section11Item2')}</li>
+              <li className="leading-relaxed">{t('terms.section11Item3')}</li>
+            </ul>
+          </section>
+
+          <section>
+            <h2 className="text-xl font-semibold mb-3">{t('terms.section12Title')}</h2>
+            <p className="text-muted-foreground leading-relaxed">{t('terms.section12Content')}</p>
+            <ul className="list-disc pl-6 mt-3 space-y-2 text-muted-foreground">
+              <li className="leading-relaxed">{t('terms.section12Item1')}</li>
+              <li className="leading-relaxed">{t('terms.section12Item2')}</li>
+              <li className="leading-relaxed">{t('terms.section12Item3')}</li>
+              <li className="leading-relaxed">{t('terms.section12Item4')}</li>
+            </ul>
+          </section>
         </div>
       </div>
     </div>
