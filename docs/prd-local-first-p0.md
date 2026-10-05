@@ -268,7 +268,7 @@ IPC local-download ({ url, cookieMode, cookieFile?, maxHeight? })
 
 ### S5 · 计费与埋点
 - [x] T5.1 免费版「一次性完整成片导出」额度在本地渲染路径生效（复用 `export-allowance.ts`）
-- [ ] T5.2 埋点：本地转写/成片/规则命中率/二次回访（PostHog）——已埋「可发布成片导出」事件，其余待补
+- [x] T5.2 埋点：本地转写/成片/规则命中率/二次回访（`local_transcribe` / `local_render_publishable` / `local_highlight_planned`（含 `rule_hit_rate`、`signals_extracted`）/ `local_return_visit`（含 `gap_days`）；桌面端 `analysis` 经本地管线 SSE `complete` 事件回传；已埋「可发布成片导出」事件）
 
 ### S6 · 配方一键复跑（P1-6）
 - [x] T6.1 `src/lib/recipes.ts`：类型 + 白名单归一化 + 列表 CRUD + 账号级存储 + 档位上限

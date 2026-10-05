@@ -971,6 +971,7 @@ function startMediaServer() {
           // 规划失败（如 ASR 模型未就绪）不阻断渲染，回落均匀取点。
           let plan;
           let planRules;
+          let planAnalysis = null;
           try {
             const planned = await planLocalHighlights({
               inputPath,
@@ -983,6 +984,7 @@ function startMediaServer() {
             });
             plan = planned.planned?.clips;
             planRules = planned.rules;
+            planAnalysis = planned.analysis || null;
             write({
               stage: 'ai_analysis',
               progress: 45,
@@ -1000,7 +1002,12 @@ function startMediaServer() {
             plan,
             rules: planRules,
           });
-          write({ stage: 'complete', progress: 100, message: 'Done', data: { clips: result.clips, done: true } });
+          write({
+            stage: 'complete',
+            progress: 100,
+            message: 'Done',
+            data: { clips: result.clips, done: true, ...(planAnalysis ? { analysis: planAnalysis } : {}) },
+          });
           res.end();
           if (tmpPath) await fs.unlink(tmpPath).catch(() => {});
         } catch (e) {
@@ -1465,14 +1472,21 @@ async function planLocalHighlights(input) {
   // T1.3 音频信号（响度/静音/高频带）：无字幕也有客观高光依据。
   // 优先用调用方显式传入的 signals；否则本地 ffmpeg 提取，失败不阻断（信号是加分项）。
   let signals = normalizeSignals(input?.signals);
+  const signalStats = { loudness: 0, emotion: 0, extracted: false };
   if (!signals.loudness.length && !signals.emotion.length && duration > 0) {
     try {
       const extracted = await extractSignals({ inputPath, ffmpegPath: ffmpegPath(), duration });
       signals = { loudness: extracted.loudness, emotion: extracted.emotion };
+      signalStats.loudness = signals.loudness.length;
+      signalStats.emotion = signals.emotion.length;
+      signalStats.extracted = true;
       appendLog(`[plan] 音频信号提取完成：响度 ${signals.loudness.length} 段 / 情绪 ${signals.emotion.length} 段。`);
     } catch (err) {
       appendLog(`[plan] 音频信号提取失败（${err && err.code ? err.code : (err && err.message) || err}），仅用 ASR 语义打分。`);
     }
+  } else {
+    signalStats.loudness = signals.loudness.length;
+    signalStats.emotion = signals.emotion.length;
   }
 
   const planned = planHighlights({
@@ -1485,12 +1499,25 @@ async function planLocalHighlights(input) {
     signals,
   });
 
-  return { planned, rules, duration, asr };
+  // T5.2 埋点：把本地转写/规则命中/信号可用性汇总回传前端。
+  const clips = Array.isArray(planned?.clips) ? planned.clips : [];
+  const analysis = {
+    asrUsed: asr.used,
+    asrEngine: asr.engine || '',
+    asrError: asr.error || '',
+    usedFallback: planned?.usedFallback === true,
+    droppedCount: Number(planned?.droppedCount) || 0,
+    plannedCount: clips.length,
+    keptCount: clips.filter((c) => Array.isArray(c.reason) && c.reason.length > 0).length,
+    signals: signalStats,
+  };
+
+  return { planned, rules, duration, asr, analysis };
 }
 
 ipcMain.handle('local-highlights:plan', async (_event, input) => {
-  const { planned, duration, asr } = await planLocalHighlights(input);
-  return { ...planned, duration, engine: 'whisper.cpp', asr };
+  const { planned, duration, asr, analysis } = await planLocalHighlights(input);
+  return { ...planned, duration, engine: 'whisper.cpp', asr, analysis };
 });
 
 // ==================== LOCAL DOWNLOADER (P0-4 本地 YouTube 下载器) ====================

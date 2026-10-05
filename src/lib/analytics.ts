@@ -42,6 +42,43 @@ export type FunnelStep = {
   funnelId: string;
 };
 
+// ── 本地引擎（Local-first）事件 ──────────────────────────────────────────────
+// 这些不是漏斗步骤，而是用于度量「本地 AI 引擎」的真实使用与留存：
+//   - local_transcribe / local_highlight_planned: 本地转写 + 规则命中率
+//   - local_render_publishable: 本地渲染可发布成片
+//   - local_return_visit: 二次回访（间隔天数）
+export const LOCAL_EVENTS = {
+  TRANSCRIBE: 'local_transcribe',
+  HIGHLIGHT_PLANNED: 'local_highlight_planned',
+  RENDER_PUBLISHABLE: 'local_render_publishable',
+  RETURN_VISIT: 'local_return_visit',
+} as const;
+
+const VISIT_LAST_KEY = 'clipop_visit_last_ts';
+const VISIT_FIRST_KEY = 'clipop_visit_first_ts';
+
+/**
+ * 记录本次访问并返回与上次访问的间隔天数。
+ * - 首次访问（无上次记录）返回 null，不算回访，只落首次时间。
+ * - 同一会话内多次调用返回 0（当天重复访问）。
+ * 仅用于留存分析，失败静默。
+ */
+export function takeVisitGapDays(): number | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const now = Date.now();
+    const last = parseInt(localStorage.getItem(VISIT_LAST_KEY) || '0', 10);
+    if (!localStorage.getItem(VISIT_FIRST_KEY)) {
+      localStorage.setItem(VISIT_FIRST_KEY, String(now));
+    }
+    localStorage.setItem(VISIT_LAST_KEY, String(now));
+    if (!last) return null;
+    return Math.max(0, Math.floor((now - last) / 86_400_000));
+  } catch {
+    return null;
+  }
+}
+
 // ── Session ID 管理 ──────────────────────────────────────────────────────────
 
 const SESSION_KEY = 'clipop_session_id';

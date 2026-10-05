@@ -41,7 +41,7 @@ import { EXPORT_TEMPLATES } from '@/lib/export-templates';
 import { SCENARIOS } from '@/lib/scenarios';
 import type { ScenarioPreset } from '@/lib/scenarios';
 import Link from 'next/link';
-import { trackEvent, setAnalyticsUser, VIDEO_FUNNEL } from '@/lib/analytics';
+import { trackEvent, trackCustomEvent, setAnalyticsUser, takeVisitGapDays, VIDEO_FUNNEL, LOCAL_EVENTS } from '@/lib/analytics';
 import { getPublishMap, setPublishInfo, type PublishInfo } from '@/lib/publish-tracker';
 import { MarkPublishedDialog } from '@/components/mark-published-dialog';
 import HighlightRulesPanel, {
@@ -121,7 +121,21 @@ interface SSEData {
     creditsRefunded?: boolean;
     code?: string;
     retryable?: boolean;
+    // T5.2 本地引擎分析汇总（本地管线 complete 事件回传）
+    analysis?: LocalPlanAnalysis;
   };
+}
+
+/** T5.2 本地引擎分析汇总：转写引擎 / 规则命中 / 音频信号可用性。 */
+interface LocalPlanAnalysis {
+  asrUsed?: boolean;
+  asrEngine?: string;
+  asrError?: string;
+  usedFallback?: boolean;
+  droppedCount?: number;
+  plannedCount?: number;
+  keptCount?: number;
+  signals?: { loudness?: number; emotion?: number; extracted?: boolean };
 }
 
 interface VidShorterDesktopBridge extends HighlightRulesBridge {
@@ -746,6 +760,11 @@ export default function VideoProcessor({
   // 行为埋点：首页访问 (video_generation funnel step 1)
   useEffect(() => {
     trackEvent(VIDEO_FUNNEL.PAGE_VIEW_HOME);
+    // T5.2 留存埋点：记录访问间隔，衡量「二次回访」（Local-first 的核心留存指标）。
+    const gapDays = takeVisitGapDays();
+    if (gapDays !== null) {
+      trackCustomEvent(LOCAL_EVENTS.RETURN_VISIT, { gap_days: gapDays, returning: gapDays >= 1 });
+    }
   }, []);
 
   useEffect(() => {
@@ -1040,6 +1059,8 @@ export default function VideoProcessor({
       let nextOffset = 0;
       let done = false;
       let batchLimit = 3;
+      // T5.2：本地引擎分析汇总（转写引擎/规则命中/信号可用性），由桌面端点回传。
+      let localAnalysis: LocalPlanAnalysis | null = null;
       const clipMap = new Map<string, VideoClip>();
 
       const isLocalMediaUrl = (url: string) => {
@@ -1353,6 +1374,7 @@ export default function VideoProcessor({
               if (typeof d.data?.clipLimit === 'number' && d.data.clipLimit > 0) batchLimit = d.data.clipLimit;
               if (typeof d.data?.nextOffset === 'number') nextOffset = d.data.nextOffset;
               if (typeof d.data?.done === 'boolean') done = d.data.done;
+              if (d.data?.analysis) localAnalysis = d.data.analysis;
 
               if (d.data?.clips) {
                 for (const clip of d.data.clips) clipMap.set(clip.id, clip);
@@ -1392,6 +1414,7 @@ export default function VideoProcessor({
             if (typeof d.data?.clipLimit === 'number' && d.data.clipLimit > 0) batchLimit = d.data.clipLimit;
             if (typeof d.data?.nextOffset === 'number') nextOffset = d.data.nextOffset;
             if (typeof d.data?.done === 'boolean') done = d.data.done;
+            if (d.data?.analysis) localAnalysis = d.data.analysis;
             if (d.data?.clips) {
               for (const clip of d.data.clips) clipMap.set(clip.id, clip);
               setClips(prev => mergeClips(prev, d.data!.clips!));
@@ -1506,6 +1529,48 @@ export default function VideoProcessor({
               video_source: ytVideoIdFromUrl ? 'youtube' : (selectedFile ? 'upload' : 'url'),
             },
           });
+        }
+
+        // T5.2 本地引擎埋点：转写引擎 / 规则命中率 / 音频信号可用性。
+        if (shouldUseLocalProcessing) {
+          // 跨闭包赋值不会被 TS 控制流追踪（会收窄成 null/never），断言回声明类型。
+          const la = localAnalysis as LocalPlanAnalysis | null;
+          if (la) {
+            const plannedCount = Number(la.plannedCount) || 0;
+            const keptCount = Number(la.keptCount) || 0;
+            trackCustomEvent(LOCAL_EVENTS.HIGHLIGHT_PLANNED, {
+              asr_used: la.asrUsed === true,
+              asr_engine: la.asrEngine || '',
+              asr_error: la.asrError || '',
+              used_fallback: la.usedFallback === true,
+              planned_count: plannedCount,
+              kept_count: keptCount,
+              dropped_count: Number(la.droppedCount) || 0,
+              // 规则命中率：命中规则（有 reason）的片段占比，衡量「意图可控」是否真被用上。
+              rule_hit_rate: plannedCount > 0 ? keptCount / plannedCount : 0,
+              signals_extracted: la.signals?.extracted === true,
+              loudness_segments: Number(la.signals?.loudness) || 0,
+              emotion_segments: Number(la.signals?.emotion) || 0,
+            });
+            if (la.asrUsed) {
+              trackCustomEvent(LOCAL_EVENTS.TRANSCRIBE, {
+                asr_engine: la.asrEngine || '',
+                planned_count: plannedCount,
+                clip_count: playableClips.length,
+                has_rules: highlightRules !== null,
+              });
+            }
+          } else {
+            // 无 analysis 回传（旧版桌面端）→ 仍记录一次本地管线完成，避免口径断裂。
+            trackCustomEvent(LOCAL_EVENTS.HIGHLIGHT_PLANNED, {
+              asr_used: false,
+              used_fallback: true,
+              planned_count: 0,
+              kept_count: 0,
+              rule_hit_rate: 0,
+              legacy_client: true,
+            });
+          }
         }
 
         const videoTitle = analysisTitle || null;
@@ -1904,6 +1969,15 @@ export default function VideoProcessor({
           publishable: true,
           local: true,
         },
+      });
+      // T5.2 本地成片埋点：本地渲染管线（粗剪→9:16→卡拉OK→钩子→CTA）真实产出。
+      trackCustomEvent(LOCAL_EVENTS.RENDER_PUBLISHABLE, {
+        clip_id: clip.id,
+        plan,
+        watermark: res?.watermark === true,
+        aspect: '9:16',
+        warning_count: Array.isArray(res?.warnings) ? res.warnings.length : 0,
+        has_rules: highlightRules !== null,
       });
       setDownloadProgress(t('video.publishable.done'));
       rendered = true;
