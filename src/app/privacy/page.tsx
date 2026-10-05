@@ -66,6 +66,49 @@ export default function PrivacyPage() {
             <h2 className="text-xl font-semibold mb-3">{t('privacy.section9Title')}</h2>
             <p className="text-muted-foreground leading-relaxed">{t('privacy.section9Content')}</p>
           </section>
+
+          <section>
+            <h2 className="text-xl font-semibold mb-3">{t('privacy.section10Title')}</h2>
+            <p className="text-muted-foreground leading-relaxed">{t('privacy.section10Content')}</p>
+          </section>
+
+          <section>
+            <h2 className="text-xl font-semibold mb-3">{t('privacy.section11Title')}</h2>
+            <p className="text-muted-foreground leading-relaxed">{t('privacy.section11Content')}</p>
+          </section>
+
+          <section>
+            <h2 className="text-xl font-semibold mb-3">{t('privacy.section12Title')}</h2>
+            <p className="text-muted-foreground leading-relaxed">{t('privacy.section12Content')}</p>
+          </section>
+
+          <section className="border-l-4 border-primary pl-4 py-2 bg-primary/5 rounded-r-lg">
+            <h2 className="text-xl font-semibold mb-3">{t('privacy.section13Title')}</h2>
+            <p className="text-muted-foreground leading-relaxed">{t('privacy.section13Content')}</p>
+          </section>
+
+          <section>
+            <h2 className="text-xl font-semibold mb-3">{t('privacy.section14Title')}</h2>
+            <p className="text-muted-foreground leading-relaxed">{t('privacy.section14Content')}</p>
+            <ul className="list-disc pl-6 mt-3 space-y-2 text-muted-foreground">
+              <li className="leading-relaxed">{t('privacy.section14Item1')}</li>
+              <li className="leading-relaxed">{t('privacy.section14Item2')}</li>
+              <li className="leading-relaxed">{t('privacy.section14Item3')}</li>
+              <li className="leading-relaxed">{t('privacy.section14Item4')}</li>
+              <li className="leading-relaxed">{t('privacy.section14Item5')}</li>
+              <li className="leading-relaxed font-semibold text-foreground">{t('privacy.section14Item6')}</li>
+            </ul>
+          </section>
+
+          <section>
+            <h2 className="text-xl font-semibold mb-3">{t('privacy.section15Title')}</h2>
+            <p className="text-muted-foreground leading-relaxed">{t('privacy.section15Content')}</p>
+          </section>
+
+          <section>
+            <h2 className="text-xl font-semibold mb-3">{t('privacy.section16Title')}</h2>
+            <p className="text-muted-foreground leading-relaxed">{t('privacy.section16Content')}</p>
+          </section>
         </div>
       </div>
     </div>
