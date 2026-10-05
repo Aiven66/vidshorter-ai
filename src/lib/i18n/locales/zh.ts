@@ -13,6 +13,7 @@ const translations = {
   'batch': '批量队列',
   'aiVideo': 'AI 成片',
   'localEngine': '本地引擎',
+  'tiktokRemix': 'TikTok 二创',
   },
   localEngine: {
   title: '本地 AI 引擎',

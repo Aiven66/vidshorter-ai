@@ -8,6 +8,7 @@
 export type NavKey =
   | 'home'
   | 'clips'
+  | 'tiktokRemix'
   | 'inviteFriends'
   | 'shorts'
   | 'notes'
@@ -37,6 +38,7 @@ export const NAV_LABELS: Record<NavKey, { zh: string; en: string }> = {
   home: { zh: '首页', en: 'Home' },
   aiVideo: { zh: 'AI 成片', en: 'AI Video' },
   clips: { zh: '高光剪辑', en: 'Video Clips' },
+  tiktokRemix: { zh: 'TikTok 二创', en: 'TikTok Remix' },
   inviteFriends: { zh: '邀请好友', en: 'Invite Friends' },
   shorts: { zh: 'Shorts 成片', en: 'Shorts' },
   notes: { zh: '高光笔记', en: 'Video Notes' },
@@ -67,6 +69,7 @@ export const DEFAULT_NAV_CONFIG: NavConfig = {
   order: [
     'home',
     'clips',
+    'tiktokRemix',
     'localEngine',
     'inviteFriends',
     'shorts',

@@ -32,6 +32,7 @@ export const commonTranslations = {
     batch: 'Batch Queue',
     aiVideo: 'AI Video Maker',
     localEngine: 'Local Engine',
+    tiktokRemix: 'TikTok Remix',
   },
   localEngine: {
     title: 'Local AI Engine',

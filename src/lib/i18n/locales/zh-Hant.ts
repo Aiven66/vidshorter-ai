@@ -8,6 +8,7 @@ const translations = {
   'marketing': '行銷影片', 'news': '資訊影片', 'article': '文章轉影片',
   'aiVideo': 'AI 成片',
   'localEngine': '本地引擎',
+  'tiktokRemix': 'TikTok 二創',
   },
   localEngine: {
   title: '本地 AI 引擎',
