@@ -130,6 +130,16 @@ export default function TermsPage() {
               <li className="leading-relaxed">{t('terms.section13Item6')}</li>
             </ul>
           </section>
+
+          <section>
+            <h2 className="text-xl font-semibold mb-3">{t('terms.section14Title')}</h2>
+            <p className="text-muted-foreground leading-relaxed">{t('terms.section14Content')}</p>
+            <ul className="list-disc pl-6 mt-3 space-y-2 text-muted-foreground">
+              <li className="leading-relaxed">{t('terms.section14Item1')}</li>
+              <li className="leading-relaxed">{t('terms.section14Item2')}</li>
+              <li className="leading-relaxed">{t('terms.section14Item3')}</li>
+            </ul>
+          </section>
         </div>
       </div>
     </div>

@@ -1126,6 +1126,11 @@ export const commonTranslations = {
     section13Item4: 'Already-consumed credits and completed processing runs are non-refundable, because the underlying compute and third-party model costs have already been incurred.',
     section13Item5: 'Service failure: if a processing job fails due to a platform error, the affected credits are automatically refunded to your account and you may retry at no charge.',
     section13Item6: 'How to request a refund: email aiven666666@gmail.com with your account email, the order or transaction ID, and the reason for the request. We will review your request within 5 business days. Approved refunds are returned to your original payment method through the merchant of record.',
+    section14Title: '14. Third-Party Platform Links and Original Remixing',
+    section14Content: 'The Platform lets you paste a link to a video on a third-party platform (for example, TikTok) so we can analyze its publicly available structure. When you do, the following applies:',
+    section14Item1: 'We only read public metadata through the third-party platform\'s official oEmbed interface (such as the video title, author name, author URL, and thumbnail). We do not download, copy, store, re-host, watermark-strip, or proxy the underlying video or audio.',
+    section14Item2: 'Any video you generate from a link is an original work created from scratch around the topic and structure. You must not use it to reproduce, mirror, or republish the source video, its footage, or its audio.',
+    section14Item3: 'You are responsible for ensuring you have the right to analyze any link you submit, and for reviewing your output before publishing. We may remove content or suspend accounts that misuse third-party links or infringe the rights of others.',
   },
   privacy: {
     title: 'Privacy Policy',

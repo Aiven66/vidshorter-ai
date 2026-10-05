@@ -1,5 +1,6 @@
 import type { MetadataRoute } from 'next';
 import { buildBlogUrl } from '@/lib/blog-content';
+import { REMIX_TEMPLATE_PAGES } from '@/lib/tiktok-remix-content';
 
 const siteUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://www.clipopai.com').replace(/\/$/, '');
 
@@ -14,6 +15,7 @@ const PUBLIC_ROUTES: RouteDef[] = [
   { path: '/video-clips', priority: 0.95, changeFrequency: 'daily' },
   { path: '/shorts', priority: 0.95, changeFrequency: 'daily' },
   { path: '/ai-video', priority: 0.9, changeFrequency: 'daily' },
+  { path: '/tiktok-remix', priority: 0.9, changeFrequency: 'weekly' },
   { path: '/digital-human-live', priority: 0.9, changeFrequency: 'weekly' },
   { path: '/digital-human', priority: 0.85, changeFrequency: 'weekly' },
   { path: '/video-notes', priority: 0.85, changeFrequency: 'weekly' },
@@ -86,6 +88,14 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     priority: route.priority,
   }));
 
+  /** TikTok 二创模版长尾子页（与 [template]/page.tsx 的 generateStaticParams 同源） */
+  const remixEntries: MetadataRoute.Sitemap = REMIX_TEMPLATE_PAGES.map((page) => ({
+    url: `${siteUrl}/tiktok-remix/${page.slug}`,
+    lastModified: now,
+    changeFrequency: 'weekly',
+    priority: 0.7,
+  }));
+
   const postEntries = await fetchPublishedPosts();
-  return [...staticEntries, ...postEntries];
+  return [...staticEntries, ...remixEntries, ...postEntries];
 }
