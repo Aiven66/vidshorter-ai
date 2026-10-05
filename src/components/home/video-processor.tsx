@@ -3381,7 +3381,7 @@ export default function VideoProcessor({
                         {publishErr?.id === clip.id && (
                           <p className="text-xs text-destructive leading-snug">{publishErr.msg}</p>
                         )}
-                        <div className="flex gap-2 pt-1">
+                        <div className="flex flex-wrap gap-2 pt-1">
                           {isRealMp4 ? (
                             <>
                               <Button
@@ -3464,12 +3464,12 @@ export default function VideoProcessor({
                               )}
                               <Button
                                 size="sm"
-                                className="flex-1 gap-1.5"
+                                className={`flex-1 gap-1.5 ${downloadingId === clip.id ? 'min-w-0' : ''}`}
                                 onClick={() => handleDownload(clip)}
                                 disabled={downloadingId === clip.id}
                               >
                                 {downloadingId === clip.id ? (
-                                  <><Loader2 className="h-4 w-4 animate-pulse" />{downloadingId === clip.id && downloadProgress ? downloadProgress : t('common.saving')}</>
+                                  <><Loader2 className="h-4 w-4 animate-pulse" /><span className="truncate">{downloadingId === clip.id && downloadProgress ? downloadProgress : t('common.saving')}</span></>
                                 ) : (
                                   <><Download className="h-4 w-4" />{t('video.download')}</>
                                 )}
@@ -3499,13 +3499,13 @@ export default function VideoProcessor({
                               )}
                               <Button
                                 size="sm"
-                                className="flex-1 gap-1.5"
+                                className={`flex-1 gap-1.5 ${downloadingId === clip.id ? 'min-w-0' : ''}`}
                                 onClick={() => handleDownload(clip)}
                                 disabled={downloadingId === clip.id}
                                 title="Download clip (records ~15s in real-time)"
                               >
                                 {downloadingId === clip.id ? (
-                                  <><Loader2 className="h-4 w-4 animate-pulse" />{downloadingId === clip.id && downloadProgress ? downloadProgress : t('common.saving')}</>
+                                  <><Loader2 className="h-4 w-4 animate-pulse" /><span className="truncate">{downloadingId === clip.id && downloadProgress ? downloadProgress : t('common.saving')}</span></>
                                 ) : (
                                   <><Download className="h-4 w-4" />{t('video.download')}</>
                                 )}
