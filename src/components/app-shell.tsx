@@ -418,6 +418,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // 全站页脚法律链接文案（缺失时回退英文）
   const termsLabel = t('footer.terms') === 'footer.terms' ? 'Terms of Service' : t('footer.terms');
   const privacyLabel = t('footer.privacy') === 'footer.privacy' ? 'Privacy Policy' : t('footer.privacy');
+  const contactLabel = t('footer.contact') === 'footer.contact' ? 'Contact' : t('footer.contact');
   const currentYear = new Date().getFullYear();
 
   return (
@@ -515,6 +516,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div className="flex flex-col items-center justify-between gap-2 text-xs text-muted-foreground sm:flex-row">
             <p>&copy; {currentYear} Clipop AI</p>
             <nav className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
+              {/* 客服联系入口 — 全站页脚常驻公示 */}
+              <a
+                href="mailto:aiven666666@gmail.com"
+                className="transition-colors hover:text-primary"
+                title={contactLabel}
+              >
+                {contactLabel}: aiven666666@gmail.com
+              </a>
               <Link href="/terms" className="transition-colors hover:text-primary">
                 {termsLabel}
               </Link>
