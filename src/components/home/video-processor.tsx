@@ -44,6 +44,10 @@ import Link from 'next/link';
 import { trackEvent, setAnalyticsUser, VIDEO_FUNNEL } from '@/lib/analytics';
 import { getPublishMap, setPublishInfo, type PublishInfo } from '@/lib/publish-tracker';
 import { MarkPublishedDialog } from '@/components/mark-published-dialog';
+import HighlightRulesPanel, {
+  type HighlightRules,
+  type HighlightRulesBridge,
+} from '@/components/home/highlight-rules-panel';
 
 const PreviewDialog = dynamic(
   () => import('@/components/home/preview-dialog'),
@@ -80,6 +84,8 @@ interface VideoClip {
   linkOnlyUrl?: string;
   // 后端 fallback clip 标记（zoompan 伪视频，非真实视频）
   isFallback?: boolean;
+  // P0-2 意图可控高光：本地规划给出的入选原因（如「含关键词：xxx」）
+  reason?: string[];
 }
 
 interface SSEData {
@@ -112,13 +118,14 @@ interface SSEData {
   };
 }
 
-interface VidShorterDesktopBridge {
+interface VidShorterDesktopBridge extends HighlightRulesBridge {
   getMediaBaseUrl?: () => Promise<string>;
   openAuth?: () => Promise<{ ok?: boolean }>;
   openWebLogin?: () => Promise<{ ok?: boolean }>;
   openWebRegister?: () => Promise<{ ok?: boolean }>;
   getAuthToken?: () => Promise<string>;
   clearAuthToken?: () => Promise<{ ok?: boolean }>;
+  localHighlightsPlan?: (input: unknown) => Promise<unknown>;
 }
 
 declare global {
@@ -620,6 +627,13 @@ export default function VideoProcessor({
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState<SSEData | null>(null);
   const [clips, setClips] = useState<VideoClip[]>([]);
+  // P0-2 意图可控高光：桌面本地引擎下的高光规则面板 + 当前规则（生成时透传给本地管线）
+  const [desktopBridge, setDesktopBridge] = useState<VidShorterDesktopBridge | null>(null);
+  const [highlightRules, setHighlightRules] = useState<HighlightRules | null>(null);
+  useEffect(() => {
+    const d = window.clipopDesktop || window.vidshorterDesktop;
+    if (d && typeof d.getMediaBaseUrl === 'function') setDesktopBridge(d);
+  }, []);
   // P0-2 免登录试跑：访客试跑结果（1 条预览 + 剩余锁定条数）；注册后携带 trialId 继承分析。
   const [guestTrial, setGuestTrial] = useState<{ trialId: string; lockedCount: number; totalHighlights: number } | null>(null);
   /** 注册后继承试跑：提交正式任务时携带的 trialId（一次性）。 */
@@ -1352,6 +1366,8 @@ export default function VideoProcessor({
           locale,
           maxClips,
           targetDuration,
+          // P0-2 意图可控高光：本地管线按规则规划候选片段（服务端忽略该字段）
+          ...(shouldUseLocalProcessing && highlightRules ? { rules: highlightRules } : {}),
           ...(preResolvedStreamUrl ? { streamUrl: preResolvedStreamUrl } : {}),
           ...(preResolvedMetadata ? { streamMetadata: preResolvedMetadata } : {}),
         });
@@ -2165,6 +2181,11 @@ export default function VideoProcessor({
             />
             {t('video.useLocalAgent')}
           </label>
+          )}
+
+          {/* P0-2 意图可控高光：仅在桌面本地引擎下展示规则面板 */}
+          {!isShorts && desktopBridge && (
+            <HighlightRulesPanel bridge={desktopBridge} onRulesChange={setHighlightRules} />
           )}
 
           {/* 高级设置：快捷预设 + 画质/竖屏/字幕/配音/BGM/卡拉OK/字幕样式/生成选项。
@@ -3033,6 +3054,20 @@ export default function VideoProcessor({
                           )}
                         </div>
                         <p className="text-sm text-muted-foreground line-clamp-2">{clip.summary}</p>
+                        {/* P0-2 意图可控高光：展示本地规划给出的入选原因 */}
+                        {clip.reason && clip.reason.length > 0 && (
+                          <div className="flex flex-wrap gap-1" title={t('highlightRules.reasonTitle')}>
+                            {clip.reason.slice(0, 4).map((r, i) => (
+                              <Badge
+                                key={`${clip.id}-reason-${i}`}
+                                variant="secondary"
+                                className="text-[10px] font-normal"
+                              >
+                                {r}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
                         <div className="flex items-center gap-2 text-xs text-muted-foreground">
                           <span>{fmt(clip.startTime)}</span>
                           <ArrowRight className="h-3 w-3" />

@@ -11,7 +11,11 @@ const { execFile, spawn } = require('node:child_process');
 const { promisify } = require('node:util');
 const { fileURLToPath } = require('node:url');
 const execFileAsync = promisify(execFile);
-const { generateHighlightsFromPath, ffmpegPath } = require('./local-highlights');
+const { generateHighlightsFromPath, ffmpegPath, probeDurationSeconds } = require('./local-highlights');
+const { createModelStore } = require('./local-models');
+const { createTranscriber, detectEngine } = require('./local-asr');
+const { planHighlights } = require('./local-highlight-scorer');
+const { createRuleStore } = require('./local-highlight-rules');
 const { runYtDlp } = require('./ytdlp');
 const { createMediaServer } = require('./media-server');
 const { t, currentLocale, setLocale, detectLocale } = require('./i18n');
@@ -904,7 +908,40 @@ function startMediaServer() {
           if (!inputPath || !fsSync.existsSync(inputPath)) throw new Error('Video file not found');
 
           write({ stage: 'ai_analysis', progress: 30, message: 'AI analyzing...' });
-          const result = await generateHighlightsFromPath({ inputPath, outDir: ctx.dirs.baseDir, clipBaseUrl: ctx.baseUrl, onProgress: (p) => write(p) });
+
+          // 意图可控高光（P0-2）：在规则约束下本地转写并规划候选片段。
+          // 规划失败（如 ASR 模型未就绪）不阻断渲染，回落均匀取点。
+          let plan;
+          let planRules;
+          try {
+            const planned = await planLocalHighlights({
+              inputPath,
+              rules: body?.rules && typeof body.rules === 'object' ? body.rules : undefined,
+              profileId: body?.profileId,
+              locale: body?.locale,
+              quality: body?.quality,
+              desiredCount: body?.desiredCount,
+              signals: body?.signals,
+            });
+            plan = planned.planned?.clips;
+            planRules = planned.rules;
+            write({
+              stage: 'ai_analysis',
+              progress: 45,
+              message: planned.asr.used ? 'Matching your highlight rules...' : 'AI analyzing...',
+            });
+          } catch (err) {
+            appendLog(`[process-video] 规划失败，回落均匀取点：${err && err.message ? err.message : String(err)}`);
+          }
+
+          const result = await generateHighlightsFromPath({
+            inputPath,
+            outDir: ctx.dirs.baseDir,
+            clipBaseUrl: ctx.baseUrl,
+            onProgress: (p) => write(p),
+            plan,
+            rules: planRules,
+          });
           write({ stage: 'complete', progress: 100, message: 'Done', data: { clips: result.clips, done: true } });
           res.end();
           if (tmpPath) await fs.unlink(tmpPath).catch(() => {});
@@ -1185,7 +1222,7 @@ ipcMain.handle('get-media-base-url', async () => {
 });
 
 ipcMain.handle('local-generate-highlights', async (_event, input) => {
-  let inputPath = String(input?.url || '').trim();
+  let inputPath = String(input?.url || input?.inputPath || '').trim();
   if (inputPath.startsWith('file://')) {
     inputPath = fileURLToPath(inputPath);
   }
@@ -1197,11 +1234,157 @@ ipcMain.handle('local-generate-highlights', async (_event, input) => {
   if (mediaReady) await mediaReady;
   const outDir = path.join(app.getPath('userData'), 'generated-clips');
   await fs.mkdir(outDir, { recursive: true });
+
+  // 意图可控高光（P0-2）：先规划（含本地转写）再渲染。
+  // 规划失败（如 ASR 模型未下载）不阻断渲染，回落均匀取点。
+  let plan;
+  let rules;
+  try {
+    const planned = await planLocalHighlights({
+      inputPath,
+      rules: input?.rules,
+      profileId: input?.profileId,
+      locale: input?.locale,
+      quality: input?.quality,
+      desiredCount: input?.desiredCount,
+      signals: input?.signals,
+    });
+    plan = planned.planned?.clips;
+    rules = planned.rules;
+  } catch (err) {
+    appendLog(`[local-generate-highlights] 规划失败，回落均匀取点：${err && err.message ? err.message : String(err)}`);
+  }
+
   return await generateHighlightsFromPath({
     inputPath,
     outDir,
     clipBaseUrl: mediaBaseUrl,
+    plan,
+    rules,
   });
+});
+
+// ==================== LOCAL AI ENGINE (P0-1 本地 ASR) ====================
+function localWhisperDir() {
+  return path.join(app.getPath('userData'), 'models', 'whisper');
+}
+
+function localBinDirs() {
+  const res = process.resourcesPath || '';
+  const dirs = [
+    path.join(app.getPath('userData'), 'bin'),
+    path.join(app.getPath('userData'), 'bin', 'whisper'),
+    path.join(__dirname, 'bin', 'whisper'),
+    path.join(res, 'bin', 'whisper'),
+    path.join(res, 'app.asar.unpacked', 'bin', 'whisper'),
+  ];
+  const seen = new Set();
+  // asarUnpack 的实际落点：app.asar -> app.asar.unpacked。
+  return dirs
+    .map((d) => d.replace(/\.asar([/\\])/, '.asar.unpacked$1'))
+    .filter((d) => d && !seen.has(d) && seen.add(d));
+}
+
+ipcMain.handle('local-models:status', async () => {
+  const store = createModelStore({ modelsDir: localWhisperDir(), binDir: localBinDirs()[0] });
+  const engine = detectEngine({ modelsDir: store.modelsDir, binDirs: localBinDirs() });
+  return { ...store.status(), engine };
+});
+
+ipcMain.handle('local-models:prepare', async (event, input) => {
+  const store = createModelStore({ modelsDir: localWhisperDir(), binDir: localBinDirs()[0] });
+  const ids = Array.isArray(input?.ids) ? input.ids : undefined;
+  return await store.prepare(ids, (progress) => {
+    try { event.sender.send('local-models:progress', progress); } catch {}
+  });
+});
+
+function createLocalTranscriber() {
+  return createTranscriber({
+    modelsDir: localWhisperDir(),
+    cacheDir: path.join(app.getPath('userData'), 'transcripts'),
+    ffmpegPath: ffmpegPath(),
+    binDirs: localBinDirs(),
+  });
+}
+
+ipcMain.handle('local-transcribe', async (_event, input) => {
+  return await createLocalTranscriber().transcribe({
+    inputPath: String(input?.inputPath || '').trim(),
+    locale: input?.locale ? String(input.locale) : undefined,
+    quality: input?.quality ? String(input.quality) : undefined,
+    wantWords: input?.wantWords !== false,
+  });
+});
+
+// ==================== INTENT-AWARE HIGHLIGHTS (P0-2 意图可控高光) ====================
+function localRuleStore() {
+  return createRuleStore({ filePath: path.join(app.getPath('userData'), 'highlight-rules.json') });
+}
+
+ipcMain.handle('local-highlight-rules:load', async (_event, input) => {
+  return localRuleStore().load(input?.profileId);
+});
+
+ipcMain.handle('local-highlight-rules:save', async (_event, input) => {
+  return await localRuleStore().save(input?.rules);
+});
+
+/**
+ * 只规划不渲染：时长探测 → 本地转写（可选）→ 规则约束打分。
+ * ASR 不可用时**不报错**，返回 usedFallback=true 交由渲染阶段走均匀取点兜底。
+ *
+ * 由 IPC `local-highlights:plan` 与本地处理管线（media server /api/process-video）共用。
+ */
+async function planLocalHighlights(input) {
+  const inputPath = String(input?.inputPath || '').trim();
+  if (!inputPath || !fsSync.existsSync(inputPath)) {
+    const err = new Error('待规划的媒体文件不存在。');
+    err.code = 'PLAN_INPUT_MISSING';
+    throw err;
+  }
+  const locale = input?.locale ? String(input.locale) : '';
+  const store = localRuleStore();
+  const rules = input?.rules && typeof input.rules === 'object' ? input.rules : store.load(input?.profileId);
+  const duration = await probeDurationSeconds(inputPath, 0);
+
+  let cues = [];
+  let words = [];
+  const asr = { used: false, engine: '', error: '' };
+  if (duration > 0) {
+    try {
+      const res = await createLocalTranscriber().transcribe({
+        inputPath,
+        locale: locale || undefined,
+        quality: input?.quality ? String(input.quality) : undefined,
+        wantWords: true,
+      });
+      cues = Array.isArray(res?.cues) ? res.cues : [];
+      words = Array.isArray(res?.words) ? res.words : [];
+      asr.used = cues.length > 0;
+      asr.engine = String(res?.engine || '');
+    } catch (err) {
+      asr.error = String(err && err.code ? err.code : (err && err.message) || err);
+      appendLog(`[plan] 本地 ASR 不可用（${asr.error}），回落均匀取点。`);
+    }
+  }
+
+  const planned = planHighlights({
+    cues,
+    words,
+    duration,
+    rules,
+    locale,
+    desiredCount: input?.desiredCount,
+    signals: input?.signals,
+  });
+
+  return { planned, rules, duration, asr };
+}
+
+ipcMain.handle('local-highlights:plan', async (_event, input) => {
+  const { planned, duration, asr } = await planLocalHighlights(input);
+  return { ...planned, duration, engine: 'whisper.cpp', asr };
 });
 
 // ==================== REAL HUMAN ENGINE (数字人带货-真人模式) ====================

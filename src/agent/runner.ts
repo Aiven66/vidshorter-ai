@@ -3,6 +3,7 @@ import videoClipper from '../lib/server/video-clipper';
 
 type AgentJob = {
   id: string;
+  type?: 'highlight' | 'transcribe' | 'render';
   videoUrl: string;
   userId: string;
   desiredClipCount: number;
@@ -181,6 +182,8 @@ async function main() {
   const agentId = mustGetEnv('VIDSHORTER_AGENT_ID', `agent-${randomUUID()}`);
   const secret = mustGetEnv('AGENT_SECRET');
   const headers = secret ? { 'x-agent-secret': secret } : {};
+  // 本 runner 目前只处理 highlight；transcribe/render 由具备对应能力的 agent 处理。
+  const capabilities = ['highlight'];
 
   process.env.APP_BASE_URL = serverUrl;
   if (!process.env.PREFER_EDGE_YOUTUBE) process.env.PREFER_EDGE_YOUTUBE = '0';
@@ -192,7 +195,7 @@ async function main() {
     try {
       const { job } = await postJson<{ job: AgentJob | null }>(
         `${serverUrl}/api/agent/jobs/pull`,
-        { agentId },
+        { agentId, capabilities },
         headers,
       );
       if (!job) {

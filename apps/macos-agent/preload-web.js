@@ -45,6 +45,17 @@ const desktopBridge = {
     const r = await ipcRenderer.invoke('get-media-base-url');
     return r?.baseUrl || '';
   },
+  localModelsStatus: () => ipcRenderer.invoke('local-models:status'),
+  localModelsPrepare: (ids) => ipcRenderer.invoke('local-models:prepare', { ids }),
+  localTranscribe: (input) => ipcRenderer.invoke('local-transcribe', input),
+  localHighlightRulesLoad: (profileId) => ipcRenderer.invoke('local-highlight-rules:load', { profileId }),
+  localHighlightRulesSave: (rules) => ipcRenderer.invoke('local-highlight-rules:save', { rules }),
+  localHighlightsPlan: (input) => ipcRenderer.invoke('local-highlights:plan', input),
+  onLocalModelsProgress: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('local-models:progress', handler);
+    return () => ipcRenderer.removeListener('local-models:progress', handler);
+  },
   realHumanStatus: () => ipcRenderer.invoke('realhuman:status'),
   realHumanDownloadModels: () => ipcRenderer.invoke('realhuman:download-models'),
   realHumanListHosts: () => ipcRenderer.invoke('realhuman:list-hosts'),

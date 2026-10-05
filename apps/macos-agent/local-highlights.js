@@ -70,6 +70,46 @@ function pickClipLen(durationSec) {
   return 60;
 }
 
+/**
+ * 把「打分器输出的 plan」或「均匀取点」统一成待渲染窗口列表。
+ * plan 为一等公民（P0-2 意图可控高光）；缺失时退化为按片长均匀取点，保证无 ASR 也能出片。
+ */
+function buildRenderWindows({ duration, plan, maxClips, clipLenSeconds, prefs }) {
+  const rawMin = Number(prefs.minLen);
+  const rawMax = Number(prefs.maxLen);
+  const minLen = Math.max(5, Number.isFinite(rawMin) && rawMin > 0 ? rawMin : 5);
+  const maxLen = Math.max(minLen, Number.isFinite(rawMax) && rawMax > 0 ? rawMax : 120);
+
+  if (Array.isArray(plan) && plan.length > 0) {
+    return plan
+      .map((p, i) => {
+        const start = Math.max(0, Math.min(Math.max(0, duration - 2), Number(p.start) || 0));
+        const end = Math.min(duration, Math.max(start + minLen, Number(p.end) || start + minLen));
+        return {
+          start,
+          end,
+          title: String(p.title || `Highlight ${i + 1}`),
+          reason: Array.isArray(p.reason) ? p.reason : [],
+        };
+      })
+      .filter((w) => w.end - w.start >= Math.min(minLen, 2));
+  }
+
+  const prefsCount = Number(prefs.clipCount);
+  const fallbackCount = Number.isFinite(prefsCount) && prefsCount > 0 ? prefsCount : pickClipCount(duration);
+  const count = Math.max(1, Math.min(typeof maxClips === 'number' ? maxClips : fallbackCount, 12));
+  const clipLen = Math.max(minLen, Math.min(typeof clipLenSeconds === 'number' ? clipLenSeconds : pickClipLen(duration), maxLen));
+  const spacing = Math.max(1, Math.floor(duration / (count + 1)));
+
+  const out = [];
+  for (let i = 0; i < count; i += 1) {
+    const start = Math.max(0, Math.min(duration - 2, spacing * (i + 1) - Math.floor(clipLen / 2)));
+    const end = Math.min(duration, start + clipLen);
+    out.push({ start, end, title: `Highlight ${i + 1}`, reason: [] });
+  }
+  return out;
+}
+
 async function generateHighlightsFromPath({
   inputPath,
   outDir,
@@ -77,6 +117,8 @@ async function generateHighlightsFromPath({
   maxClips,
   clipLenSeconds,
   onProgress,
+  plan,
+  rules,
 }) {
   const bin = ffmpegPath();
   if (!bin) throw new Error('ffmpeg not available');
@@ -84,9 +126,10 @@ async function generateHighlightsFromPath({
   await fs.mkdir(outDir, { recursive: true });
 
   const duration = await probeDurationSeconds(inputPath, 180);
-  const count = Math.max(1, Math.min(typeof maxClips === 'number' ? maxClips : pickClipCount(duration), 12));
-  const clipLen = Math.max(5, Math.min(typeof clipLenSeconds === 'number' ? clipLenSeconds : pickClipLen(duration), 120));
-  const spacing = Math.max(1, Math.floor(duration / (count + 1)));
+  const prefs = rules && typeof rules === 'object' && rules.prefs && typeof rules.prefs === 'object' ? rules.prefs : {};
+  const windows = buildRenderWindows({ duration, plan, maxClips, clipLenSeconds, prefs });
+  const count = windows.length;
+  const usedPlan = Array.isArray(plan) && plan.length > 0;
 
   const clips = [];
   for (let i = 0; i < count; i += 1) {
@@ -94,8 +137,9 @@ async function generateHighlightsFromPath({
       const p = 40 + Math.floor((i / Math.max(1, count)) * 50);
       onProgress({ stage: 'generating_clip', progress: p, message: `Creating highlight clip... (${i + 1}/${count})`, data: { clipIndex: i } });
     }
-    const start = Math.max(0, Math.min(duration - 2, spacing * (i + 1) - Math.floor(clipLen / 2)));
-    const end = Math.min(duration, start + clipLen);
+    const window = windows[i];
+    const start = window.start;
+    const end = window.end;
     const t = String(Math.max(1, Math.floor(end - start)));
     const outName = `local-${Date.now()}-${Math.random().toString(16).slice(2)}-${i + 1}.mp4`;
     const outPath = path.join(outDir, outName);
@@ -160,7 +204,8 @@ async function generateHighlightsFromPath({
 
     clips.push({
       id: `local-${i + 1}-${Math.random().toString(16).slice(2)}`,
-      title: `Highlight ${i + 1}`,
+      title: window.title || `Highlight ${i + 1}`,
+      reason: window.reason || [],
       startTime: start,
       endTime: end,
       duration: end - start,
@@ -176,11 +221,12 @@ async function generateHighlightsFromPath({
     }
   }
 
-  return { clips };
+  return { clips, usedPlan };
 }
 
 module.exports = {
   ffmpegPath,
   probeDurationSeconds,
+  buildRenderWindows,
   generateHighlightsFromPath,
 };

@@ -73,6 +73,40 @@ export default function DownloadPage() {
     },
   ];
 
+  // 功能分层：明确哪些功能网页端即可、哪些仅桌面端、哪些桌面端体验更好
+  const layers = [
+    {
+      icon: Globe,
+      title: tr('download.layerWebTitle') || '网页端即可',
+      desc: tr('download.layerWebDesc') || '无需安装，打开即用。',
+      items: [
+        tr('download.layerWebItem1') || '云端高光剪辑',
+        tr('download.layerWebItem2') || '云端数字人 / AI 成片',
+        tr('download.layerWebItem3') || '账号、博客、定价、管理后台',
+      ],
+    },
+    {
+      icon: Monitor,
+      title: tr('download.layerDesktopTitle') || '仅桌面端',
+      desc: tr('download.layerDesktopDesc') || '依赖原生桥的本地算力功能。',
+      items: [
+        tr('download.layerDesktopItem1') || '本地 AI 引擎（离线转写）',
+        tr('download.layerDesktopItem2') || '高光规则与本地切片',
+        tr('download.layerDesktopItem3') || '真人级数字人引擎',
+      ],
+    },
+    {
+      icon: Zap,
+      title: tr('download.layerBothTitle') || '两端都有，桌面更强',
+      desc: tr('download.layerBothDesc') || '同一功能本机处理，更快也更私密。',
+      items: [
+        tr('download.layerBothItem1') || '高光剪辑走本地管线',
+        tr('download.layerBothItem2') || '无需上传，无需云端排队',
+        tr('download.layerBothItem3') || '本地下载绕过防盗链限制',
+      ],
+    },
+  ];
+
   return (
     <div className="min-h-screen bg-background">
       {/* Hero */}
@@ -163,6 +197,48 @@ export default function DownloadPage() {
                   </div>
                   <h3 className="font-semibold text-lg mb-2">{a.title}</h3>
                   <p className="text-sm text-muted-foreground">{a.desc}</p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      {/* 功能分层 */}
+      <section className="container mx-auto px-4 py-12 md:py-16 border-t border-border">
+        <div className="max-w-5xl mx-auto">
+          <div className="text-center mb-10">
+            <h2 className="text-2xl md:text-3xl font-bold mb-3">
+              {tr('download.layersTitle') || '哪些功能需要下载桌面端？'}
+            </h2>
+            <p className="text-sm md:text-base text-muted-foreground max-w-2xl mx-auto">
+              {tr('download.layersSubtitle') ||
+                '桌面客户端在本地运行同一套 Web 应用，并叠加一层原生桥，解锁本地 AI 引擎。'}
+            </p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {layers.map((l) => {
+              const Icon = l.icon;
+              return (
+                <div
+                  key={l.title}
+                  className="rounded-2xl border border-border p-6 flex flex-col"
+                >
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-primary/10 flex-shrink-0">
+                      <Icon className="h-5 w-5 text-primary" />
+                    </div>
+                    <h3 className="font-semibold text-lg">{l.title}</h3>
+                  </div>
+                  <p className="text-sm text-muted-foreground mb-4">{l.desc}</p>
+                  <ul className="space-y-1.5">
+                    {l.items.map((item, i) => (
+                      <li key={i} className="flex items-start gap-2 text-sm">
+                        <Check className="h-4 w-4 text-primary flex-shrink-0 mt-0.5" />
+                        <span className="text-muted-foreground">{item}</span>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               );
             })}

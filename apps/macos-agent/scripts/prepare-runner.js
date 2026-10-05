@@ -123,6 +123,7 @@ async function main() {
 
   try {
     run('node', [path.join(__dirname, 'prepare-ytdlp.js')], path.join(root, 'apps', 'macos-agent'));
+    run('node', [path.join(__dirname, 'prepare-whisper.js')], path.join(root, 'apps', 'macos-agent'));
 
     run('pnpm', ['agent:build'], root);
     run('pnpm', ['next', 'build', '--webpack'], root, {
