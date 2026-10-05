@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -48,6 +48,8 @@ import HighlightRulesPanel, {
   type HighlightRules,
   type HighlightRulesBridge,
 } from '@/components/home/highlight-rules-panel';
+import RecipePanel from '@/components/home/recipe-panel';
+import type { RecipeConfig } from '@/lib/recipes';
 
 const PreviewDialog = dynamic(
   () => import('@/components/home/preview-dialog'),
@@ -115,6 +117,10 @@ interface SSEData {
     done?: boolean;
     jobId?: string;
     videoId?: string;
+    // P0-4 本地下载失败：结构化错误码 + 是否可重试 + 是否已退还积分
+    creditsRefunded?: boolean;
+    code?: string;
+    retryable?: boolean;
   };
 }
 
@@ -835,6 +841,53 @@ export default function VideoProcessor({
     setScenario(preset.id);
   };
 
+  // P1-6 配方：把当前设置快照成可保存的配方配置（仅用于「保存当前设置」时固化）
+  const recipeConfig: RecipeConfig = useMemo(
+    () => ({
+      quality,
+      exportVertical,
+      exportSubtitles,
+      exportJumpCut,
+      exportVoiceover,
+      voiceoverVoice,
+      exportBgm,
+      bgmMood,
+      bgmOrigVol,
+      exportKaraoke,
+      subStyle,
+      subLang,
+      exportTemplate,
+      scenario,
+      maxClips,
+      targetDuration,
+    }),
+    [
+      quality, exportVertical, exportSubtitles, exportJumpCut, exportVoiceover, voiceoverVoice,
+      exportBgm, bgmMood, bgmOrigVol, exportKaraoke, subStyle, subLang, exportTemplate, scenario,
+      maxClips, targetDuration,
+    ],
+  );
+
+  // P1-6 应用配方：把配方配置回填到各设置项（真值仍是各 useState，配方只是快照）
+  const applyRecipeConfig = useCallback((cfg: RecipeConfig) => {
+    setQuality(cfg.quality);
+    setExportVertical(cfg.exportVertical);
+    setExportSubtitles(cfg.exportSubtitles);
+    setExportJumpCut(cfg.exportJumpCut);
+    setExportVoiceover(cfg.exportVoiceover);
+    setVoiceoverVoice(cfg.voiceoverVoice);
+    setExportBgm(cfg.exportBgm);
+    setBgmMood(cfg.bgmMood);
+    setBgmOrigVol(cfg.bgmOrigVol);
+    setExportKaraoke(cfg.exportKaraoke);
+    setSubStyle(cfg.subStyle);
+    setSubLang(cfg.subLang);
+    setExportTemplate(cfg.exportTemplate);
+    setScenario(cfg.scenario);
+    setMaxClips(cfg.maxClips);
+    setTargetDuration(cfg.targetDuration);
+  }, []);
+
   // P0-2 免登录试跑：无登录态时跑一条 Top1 低清预览（不扣费、不写 videos 表），
   // 其余高光以锁定占位呈现，引导注册后继承分析结果继续出全集。
   const runGuestTrial = useCallback(async (inputUrl: string) => {
@@ -1316,6 +1369,8 @@ export default function VideoProcessor({
                 } else {
                   setError(d.message);
                 }
+                // P0-4：本地下载失败且服务端已退还本次积分 → 提示"可免费重试"。
+                if (d.data?.creditsRefunded) setCreditsRefunded(true);
                 hasError = true;
                 done = true;
               }
@@ -2295,6 +2350,15 @@ export default function VideoProcessor({
               </button>
             </CollapsibleTrigger>
             <CollapsibleContent className="space-y-4 border-t px-3 py-3">
+          {/* P1-6 配方：保存/复跑整套导出风格；免费档仅 1 条，Starter+ 不限量（付费台阶） */}
+          <RecipePanel
+            userId={user?.id ?? null}
+            plan={plan}
+            isAdmin={isAdminUser(user)}
+            config={recipeConfig}
+            onApply={applyRecipeConfig}
+            disabled={isProcessing || isUploading}
+          />
           {/* 场景化预置（P0）：按创作场景一键预填生成参数，仍可手动微调 */}
           <div className="space-y-2">
             <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">

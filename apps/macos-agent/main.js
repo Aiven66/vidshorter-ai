@@ -15,9 +15,10 @@ const { generateHighlightsFromPath, ffmpegPath, probeDurationSeconds } = require
 const { createModelStore } = require('./local-models');
 const { createTranscriber, detectEngine } = require('./local-asr');
 const { planHighlights } = require('./local-highlight-scorer');
+const { extractSignals, normalizeSignals } = require('./local-signals');
 const { createRuleStore } = require('./local-highlight-rules');
 const { renderPublishable, resolveExportTarget } = require('./local-render');
-const { runYtDlp } = require('./ytdlp');
+const { runYtDlp, downloadWithYtDlp } = require('./ytdlp');
 const { createMediaServer } = require('./media-server');
 const { t, currentLocale, setLocale, detectLocale } = require('./i18n');
 const { registerRealHumanIpc } = require('./real-human-ipc');
@@ -66,7 +67,7 @@ process.on('unhandledRejection', (err) => {
 });
 
 // ==================== VIDEO DOWNLOAD ====================
-async function downloadVideo(videoUrl, downloadDir, onProgress) {
+async function downloadVideo(videoUrl, downloadDir, onProgress, options = {}) {
   appendLog(`[Download] Starting download for: ${videoUrl}`);
 
   const id = `${Date.now()}-${randomUUID()}`;
@@ -95,6 +96,10 @@ async function downloadVideo(videoUrl, downloadDir, onProgress) {
         overallTimeoutMs: 8 * 60_000,
         strategyTimeoutMs: 75_000,
         cookieStrategyTimeoutMs: 45_000,
+        // P0-4：可配 cookie 来源 + 分片缓存（断点续跑）。
+        cookieMode: options.cookieMode,
+        cookieFile: options.cookieFile,
+        cacheDir: options.cacheDir,
         onStrategy: (strategy) => appendLog(`[Download] yt-dlp strategy: ${strategy}`),
         onStrategyError: (strategy, err) => {
           const msg = err && err.message ? err.message : String(err);
@@ -125,6 +130,36 @@ async function downloadVideo(videoUrl, downloadDir, onProgress) {
   }
 
   throw lastError || new Error('All download formats failed');
+}
+
+/**
+ * P0-4 失败上报联动退积分：向服务端上报失败的视频，触发一次幂等退款。
+ * 返回服务端是否真的产生了退款（未扣费 / 已退过 → false）。失败静默，不影响本地流程。
+ */
+async function reportVideoFailure(videoId) {
+  const id = String(videoId || '').trim();
+  if (!id) return false;
+  try {
+    const cfg = await loadConfig();
+    const token = String(cfg.authToken || '').trim();
+    if (!token) return false;
+    const resp = await fetch(`${SERVER_URL}/api/videos/refund`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ videoId: id }),
+    });
+    if (!resp.ok) {
+      appendLog(`[Refund] report failed: HTTP ${resp.status}`);
+      return false;
+    }
+    const data = await resp.json().catch(() => null);
+    const refunded = !!(data && data.refunded);
+    appendLog(`[Refund] video ${id} refunded=${refunded}`);
+    return refunded;
+  } catch (e) {
+    appendLog(`[Refund] report error: ${e && e.message ? e.message : String(e)}`);
+    return false;
+  }
 }
 
 // ==================== CONFIG ====================
@@ -883,6 +918,7 @@ function startMediaServer() {
           const raw = Buffer.concat(chunks).toString('utf-8');
           const body = JSON.parse(raw || '{}');
           const videoUrl = typeof body?.videoUrl === 'string' ? body.videoUrl.trim() : '';
+          const videoId = typeof body?.videoId === 'string' ? body.videoId.trim() : '';
           if (!videoUrl) throw new Error('Missing videoUrl');
 
           write({ stage: 'init', progress: 0, message: 'Initializing...' });
@@ -891,14 +927,35 @@ function startMediaServer() {
           let tmpPath = '';
           if (videoUrl.includes('youtube.com') || videoUrl.includes('youtu.be') || videoUrl.includes('bilibili.com') || videoUrl.includes('b23.tv')) {
             write({ stage: 'extract_frames', progress: 5, message: 'Downloading video...' });
-            tmpPath = await downloadVideo(videoUrl, ctx.dirs.downloadDir, (pct, formatName, strategyName) => {
-              write({
-                stage: 'extract_frames',
-                progress: Math.max(6, Math.min(29, 6 + Math.floor(pct * 0.23))),
-                message: `Downloading video... ${Math.floor(pct)}%`,
-                data: { formatName, strategyName },
+            try {
+              tmpPath = await downloadVideo(videoUrl, ctx.dirs.downloadDir, (pct, formatName, strategyName) => {
+                write({
+                  stage: 'extract_frames',
+                  progress: Math.max(6, Math.min(29, 6 + Math.floor(pct * 0.23))),
+                  message: `Downloading video... ${Math.floor(pct)}%`,
+                  data: { formatName, strategyName },
+                });
+              }, {
+                // P0-4：可配 cookie 来源 + 分片缓存（续跑）。
+                cookieMode: body?.cookieMode,
+                cookieFile: body?.cookieFile,
+                cacheDir: path.join(app.getPath('userData'), 'download-cache'),
               });
-            });
+            } catch (downloadErr) {
+              // P0-4：本地下载失败 → 回传结构化错误码；有 videoId 时上报服务端做幂等退积分。
+              const structured = downloadErr && downloadErr.structured
+                ? downloadErr.structured
+                : { code: 'UNKNOWN', message: downloadErr && downloadErr.message ? downloadErr.message : 'Download failed', retryable: true };
+              const creditsRefunded = videoId ? await reportVideoFailure(videoId) : false;
+              write({
+                stage: 'error',
+                progress: 100,
+                message: structured.message,
+                data: { error: true, code: structured.code, retryable: structured.retryable, creditsRefunded },
+              });
+              res.end();
+              return;
+            }
             inputPath = tmpPath;
           } else if (videoUrl.startsWith('http://127.0.0.1') || videoUrl.startsWith('http://localhost')) {
             const u = new URL(videoUrl);
@@ -1405,6 +1462,19 @@ async function planLocalHighlights(input) {
     }
   }
 
+  // T1.3 音频信号（响度/静音/高频带）：无字幕也有客观高光依据。
+  // 优先用调用方显式传入的 signals；否则本地 ffmpeg 提取，失败不阻断（信号是加分项）。
+  let signals = normalizeSignals(input?.signals);
+  if (!signals.loudness.length && !signals.emotion.length && duration > 0) {
+    try {
+      const extracted = await extractSignals({ inputPath, ffmpegPath: ffmpegPath(), duration });
+      signals = { loudness: extracted.loudness, emotion: extracted.emotion };
+      appendLog(`[plan] 音频信号提取完成：响度 ${signals.loudness.length} 段 / 情绪 ${signals.emotion.length} 段。`);
+    } catch (err) {
+      appendLog(`[plan] 音频信号提取失败（${err && err.code ? err.code : (err && err.message) || err}），仅用 ASR 语义打分。`);
+    }
+  }
+
   const planned = planHighlights({
     cues,
     words,
@@ -1412,7 +1482,7 @@ async function planLocalHighlights(input) {
     rules,
     locale,
     desiredCount: input?.desiredCount,
-    signals: input?.signals,
+    signals,
   });
 
   return { planned, rules, duration, asr };
@@ -1421,6 +1491,43 @@ async function planLocalHighlights(input) {
 ipcMain.handle('local-highlights:plan', async (_event, input) => {
   const { planned, duration, asr } = await planLocalHighlights(input);
   return { ...planned, duration, engine: 'whisper.cpp', asr };
+});
+
+// ==================== LOCAL DOWNLOADER (P0-4 本地 YouTube 下载器) ====================
+/**
+ * 用本地 IP + 可配 Cookie 下载，避免机房出口 LOGIN_REQUIRED；失败返回结构化错误码。
+ * 输出:{ ok:true, path,title,duration,videoId,youtubeId,maxHeight,cached,bytes,ext }
+ * 失败:{ ok:false, code, message, retryable }
+ */
+ipcMain.handle('local-download', async (_event, input) => {
+  const url = String(input?.url || '').trim();
+  const planHeights = { free: 720, starter: 1080, pro: 2160 };
+  const requested = Number(input?.maxHeight);
+  const maxHeight = Number.isFinite(requested) && requested > 0
+    ? Math.round(requested)
+    : (planHeights[String(input?.plan || '').trim()] || 0);
+
+  try {
+    const result = await downloadWithYtDlp(
+      { url, cookieMode: input?.cookieMode, cookieFile: input?.cookieFile, maxHeight },
+      {
+        cacheDir: path.join(app.getPath('userData'), 'download-cache'),
+        ffmpegPath: ffmpegPath(),
+        onProgress: (pct, strategy) => appendLog(`[local-download] ${strategy || ''} ${Math.round(pct)}%`),
+      },
+    );
+    if (!result.duration) {
+      try { result.duration = await probeDurationSeconds(result.path, 0); } catch {}
+    }
+    appendLog(`[local-download] ok ${result.path} (${result.bytes} bytes, cached=${result.cached})`);
+    return { ok: true, ...result };
+  } catch (err) {
+    const structured = err && err.structured
+      ? err.structured
+      : { code: 'UNKNOWN', message: err && err.message ? err.message : String(err), retryable: true };
+    appendLog(`[local-download] failed ${structured.code}: ${structured.message}`);
+    return { ok: false, code: structured.code, message: structured.message, retryable: structured.retryable };
+  }
 });
 
 // ==================== REAL HUMAN ENGINE (数字人带货-真人模式) ====================

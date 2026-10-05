@@ -25,6 +25,7 @@
     "test:home-i18n": "node --import tsx scripts/check-home-i18n.ts",
     "test:paypal-payment": "node --import tsx scripts/check-paypal-payment-flow.ts",
     "test:recap": "node --import tsx scripts/check-recap.ts",
+    "test:recipes": "node --import tsx scripts/check-recipes.ts",
     "test:scenarios": "node --import tsx scripts/check-scenarios.ts",
     "test:video-notes": "node --import tsx scripts/check-video-notes.ts",
     "test:web-auth": "node --import tsx scripts/check-web-auth-regressions.ts",

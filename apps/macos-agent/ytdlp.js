@@ -437,22 +437,51 @@ async function execYtDlpStreaming(cmd, cmdArgs, options, strategyName) {
   });
 }
 
-function buildStrategies(isYT, preferCookies = false) {
+const YT_PUBLIC_STRATEGIES = [
+  { name: 'mweb', cookieBrowser: null, extraArgs: ['--extractor-args', 'youtube:player_client=mweb'], isCookie: false },
+  { name: 'tv-embedded', cookieBrowser: null, extraArgs: ['--extractor-args', 'youtube:player_client=tv_embedded'], isCookie: false },
+  { name: 'android', cookieBrowser: null, extraArgs: ['--extractor-args', 'youtube:player_client=android'], isCookie: false },
+  { name: 'ios', cookieBrowser: null, extraArgs: ['--extractor-args', 'youtube:player_client=ios'], isCookie: false },
+];
+
+const KNOWN_BROWSERS = ['chrome', 'chromium', 'brave', 'edge', 'safari', 'firefox'];
+
+function normalizeCookieMode(mode) {
+  return mode === 'none' || mode === 'file' || mode === 'browser' ? mode : 'browser';
+}
+
+/**
+ * 策略矩阵。
+ *  cookieMode:
+ *    - 'none'    ：只用公开 client 策略（不读本机浏览器 cookie）
+ *    - 'browser' ：公开 client 优先，再用本机已登录浏览器的 cookie 兜底（默认，兼容旧行为）
+ *    - 'file'    ：只用调用方显式提供的 cookie 文件（登录视频的确定性路径）
+ *  preferCookies：仅对 'browser' 生效，把浏览器 cookie 策略提到公开策略之前。
+ */
+function buildStrategies(isYT, cookieMode = 'browser', preferCookies = false) {
+  const mode = normalizeCookieMode(cookieMode);
+
+  if (mode === 'file') {
+    // 单一策略：显式 cookie 文件（路径由调用方校验后经 runYtDlp 传入）。
+    return [{ name: 'cookie-file', cookieBrowser: null, cookieFile: true, extraArgs: [], isCookie: true }];
+  }
+
+  if (mode === 'none') {
+    if (!isYT) return [{ name: 'no-cookies', cookieBrowser: null, extraArgs: [], isCookie: false }];
+    return YT_PUBLIC_STRATEGIES.map((s) => ({ ...s }));
+  }
+
+  // mode === 'browser'
   if (!isYT) {
-    const browsers = ['chrome', 'chromium', 'brave', 'edge', 'safari', 'firefox'].filter(browserCookieStoreExists);
+    const browsers = KNOWN_BROWSERS.filter(browserCookieStoreExists);
     return [
       ...browsers.map((browser) => ({ name: `cookies-${browser}`, cookieBrowser: browser, extraArgs: [], isCookie: true })),
       { name: 'no-cookies', cookieBrowser: null, extraArgs: [], isCookie: false },
     ];
   }
 
-  const publicStrategies = [
-    { name: 'mweb', cookieBrowser: null, extraArgs: ['--extractor-args', 'youtube:player_client=mweb'], isCookie: false },
-    { name: 'tv-embedded', cookieBrowser: null, extraArgs: ['--extractor-args', 'youtube:player_client=tv_embedded'], isCookie: false },
-    { name: 'android', cookieBrowser: null, extraArgs: ['--extractor-args', 'youtube:player_client=android'], isCookie: false },
-    { name: 'ios', cookieBrowser: null, extraArgs: ['--extractor-args', 'youtube:player_client=ios'], isCookie: false },
-  ];
-  const cookieStrategies = ['chrome', 'chromium', 'brave', 'edge', 'safari', 'firefox']
+  const publicStrategies = YT_PUBLIC_STRATEGIES.map((s) => ({ ...s }));
+  const cookieStrategies = KNOWN_BROWSERS
     .filter(browserCookieStoreExists)
     .flatMap((browser) => [
       { name: `${browser}+mweb`, cookieBrowser: browser, extraArgs: ['--extractor-args', 'youtube:player_client=mweb'], isCookie: true },
@@ -461,6 +490,53 @@ function buildStrategies(isYT, preferCookies = false) {
     ]);
 
   return preferCookies ? [...cookieStrategies, ...publicStrategies] : [...publicStrategies, ...cookieStrategies];
+}
+
+/**
+ * 结构化错误分类（P0-4）。
+ * 命中失败日志的关键特征 → 稳定错误码 + 是否可重试，供上层做重试/退积分决策。
+ * 该函数永不抛异常。
+ */
+function classifyYtDlpError(err) {
+  const stderr = err && typeof err.stderr === 'string' ? err.stderr : '';
+  const stdout = err && typeof err.stdout === 'string' ? err.stdout : '';
+  const text = `${stderr}\n${stdout}\n${err && err.message ? err.message : ''}`.toLowerCase();
+
+  if (/sign in to confirm|login required|requires authentication|not a bot|private video|members-only|age.?restricted|this video is available to this channel|use --cookies/.test(text)) {
+    return {
+      code: 'LOGIN_REQUIRED',
+      message: '该视频需要登录或通过人机校验。请在浏览器登录 YouTube 后改用「浏览器 Cookie」，或导出 cookies.txt 后选择「Cookie 文件」重试。',
+      retryable: true,
+    };
+  }
+  if (/not available in your country|available in your region|geo.?restrict|blocked in your country|region.?lock/.test(text)) {
+    return { code: 'REGION_LOCKED', message: '该视频在当前地区不可用，请更换网络/代理节点后重试。', retryable: true };
+  }
+  if (/requested format is not available|only images are available|no video formats found|unsupported url|format .* not available/.test(text)) {
+    return { code: 'FORMAT_UNAVAILABLE', message: '该视频没有可用的下载格式，请稍后重试或改用其它来源。', retryable: true };
+  }
+  if (err && err.timedOut) {
+    return { code: 'NETWORK', message: '下载超时。请检查网络/代理后重试；已下载的分片会被复用。', retryable: true };
+  }
+  if (/timed out|timeout|econnreset|econnrefused|etimedout|enotfound|socket|http error 5\d\d|http error 429|temporary failure|unable to download|network|connection reset|ssl|proxy/.test(text)) {
+    return { code: 'NETWORK', message: '网络错误。请检查网络/代理后重试；已下载的分片会被复用。', retryable: true };
+  }
+  return {
+    code: 'UNKNOWN',
+    message: (err && err.message ? String(err.message) : '下载失败').slice(0, 300),
+    retryable: true,
+  };
+}
+
+/** 把任意 yt-dlp 失败包装成带 .structured/.code/.retryable 的错误（可安全跨 IPC 序列化）。 */
+function toStructuredError(err) {
+  const structured = (err && err.structured) || classifyYtDlpError(err);
+  const e = new Error(structured.message);
+  e.code = structured.code;
+  e.retryable = structured.retryable;
+  e.structured = structured;
+  if (err) e.cause = err;
+  return e;
 }
 
 async function runYtDlp(args, options = {}) {
@@ -473,7 +549,9 @@ async function runYtDlp(args, options = {}) {
 
   const videoUrl = args.find(a => a.startsWith('http'));
   const isYT = isYouTubeUrl(videoUrl);
-  const allStrategies = buildStrategies(isYT, options.preferCookies);
+  const cookieMode = normalizeCookieMode(options.cookieMode);
+  const cookieFile = String(options.cookieFile || '').trim();
+  const allStrategies = buildStrategies(isYT, cookieMode, options.preferCookies);
 
   let lastError = null;
   const startedAt = Date.now();
@@ -490,11 +568,21 @@ async function runYtDlp(args, options = {}) {
       '--geo-bypass',
       '--no-warnings',
       '--newline',
+      // 断点续跑：命中已下载的分片/文件时不重复全量下载（P0-4）。
+      '--continue',
+      '--no-overwrites',
       ...jsRuntimeArgs,
     ];
 
     if (strategy.cookieBrowser) {
       commonArgs.push('--cookies-from-browser', strategy.cookieBrowser);
+    }
+    if (strategy.cookieFile && cookieFile) {
+      commonArgs.push('--cookies', cookieFile);
+    }
+    if (options.cacheDir) {
+      // 分片缓存到指定目录，中断后重跑可续（P0-4）。
+      commonArgs.push('--paths', `temp:${options.cacheDir}`);
     }
 
     commonArgs.push(...proxyArgs, ...strategy.extraArgs);
@@ -533,21 +621,187 @@ async function runYtDlp(args, options = {}) {
   }
 
   if (lastError) {
-    const stderr = lastError && typeof lastError.stderr === 'string' ? lastError.stderr.trim() : '';
-    if (stderr.includes('Sign in to confirm') || stderr.includes('sign in to confirm')) {
-      throw new Error('YouTube 下载失败：所有策略均被拦截。请尝试：1) 在 Chrome 中登录 YouTube 后重试；2) 使用 VPN/代理；3) 上传本地视频文件');
-    }
-    throw lastError;
+    throw toStructuredError(lastError);
   }
 
-  throw new Error('yt-dlp download failed: all strategies exhausted');
+  throw toStructuredError(new Error('yt-dlp download failed: all strategies exhausted'));
+}
+
+// ==================== 本地下载器（P0-4） ====================
+const MEDIA_EXTS = ['mp4', 'mkv', 'webm', 'mov', 'm4a', 'mp3', 'opus', 'aac'];
+
+const YT_ID_RE = /(?:youtube\.com\/(?:watch\?(?:[^#]*&)?v=|embed\/|shorts\/|live\/|v\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/;
+
+function extractYouTubeVideoId(url) {
+  const m = String(url || '').match(YT_ID_RE);
+  return m ? m[1] : '';
+}
+
+async function fileExists(filePath) {
+  try {
+    const s = await fs.stat(filePath);
+    return s.isFile() && s.size > 0;
+  } catch {
+    return false;
+  }
+}
+
+async function findMediaFile(dir, base) {
+  for (const ext of MEDIA_EXTS) {
+    const p = path.join(dir, `${base}.${ext}`);
+    if (await fileExists(p)) return p;
+  }
+  return '';
+}
+
+async function readJsonIfExists(filePath) {
+  try {
+    return JSON.parse(await fs.readFile(filePath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+/** 校验 Netscape 格式 cookie 文件（浏览器插件导出的 cookies.txt）。 */
+async function fileLooksLikeCookieFile(filePath) {
+  try {
+    const fd = await fs.open(filePath, 'r');
+    try {
+      const buf = Buffer.alloc(8192);
+      const { bytesRead } = await fd.read(buf, 0, buf.length, 0);
+      const text = buf.subarray(0, bytesRead).toString('utf8');
+      if (/#\s*(netscape|http)\s+cookie file/i.test(text)) return true;
+      return text.split(/\r?\n/).some((line) => {
+        const t = line.trim();
+        if (!t || t.startsWith('#')) return false;
+        return t.split('\t').length >= 6;
+      });
+    } finally {
+      await fd.close().catch(() => {});
+    }
+  } catch {
+    return false;
+  }
+}
+
+function buildFormatSpec(maxHeight) {
+  const h = Number(maxHeight);
+  const f = Number.isFinite(h) && h > 0 ? `[height<=${Math.round(h)}]` : '';
+  return `bestvideo${f}[ext=mp4]+bestaudio[ext=m4a]/bestvideo${f}+bestaudio/best${f}[ext=mp4]/best${f}/best`;
+}
+
+function invalidCookieFileError(message) {
+  const e = new Error(message);
+  e.code = 'INVALID_COOKIE_FILE';
+  e.retryable = false;
+  e.structured = { code: 'INVALID_COOKIE_FILE', message, retryable: false };
+  return e;
+}
+
+/**
+ * 本地下载：可配 cookie（none/browser/file）+ 断点续跑（--continue）+ 分片缓存。
+ * 失败时抛出带 `.structured = { code, message, retryable }` 的错误。
+ *
+ * @param {{ url:string, cookieMode?:'none'|'browser'|'file', cookieFile?:string, maxHeight?:number }} input
+ * @param {{ cacheDir?:string, ffmpegPath?:string, onProgress?:Function, overallTimeoutMs?:number,
+ *           strategyTimeoutMs?:number, cookieStrategyTimeoutMs?:number, onStrategy?:Function, onStrategyError?:Function }} [options]
+ * @returns {Promise<{ path:string, title:string, duration:number, videoId:string, youtubeId:string, maxHeight:number, cached:boolean, bytes:number, ext:string }>}
+ */
+async function downloadWithYtDlp(input = {}, options = {}) {
+  const url = String(input.url || '').trim();
+  if (!url) {
+    const e = new Error('缺少视频 URL。');
+    e.code = 'INVALID_URL';
+    e.retryable = false;
+    e.structured = { code: 'INVALID_URL', message: e.message, retryable: false };
+    throw e;
+  }
+
+  const cookieMode = normalizeCookieMode(input.cookieMode);
+  const cookieFile = String(input.cookieFile || '').trim();
+  if (cookieMode === 'file') {
+    if (!cookieFile) throw invalidCookieFileError('未选择 cookie 文件。');
+    if (!(await fileExists(cookieFile))) throw invalidCookieFileError('cookie 文件不存在或为空。');
+    if (!(await fileLooksLikeCookieFile(cookieFile))) {
+      throw invalidCookieFileError('cookie 文件不是有效的 Netscape cookie 格式（请用浏览器插件导出 youtube.com 的 cookies.txt）。');
+    }
+  }
+
+  const maxHeight = Number(input.maxHeight || options.maxHeight || 0);
+  const youtubeId = extractYouTubeVideoId(url);
+  const key = youtubeId || `u${require('node:crypto').createHash('sha1').update(url).digest('hex').slice(0, 16)}`;
+  const cacheRoot = String(options.cacheDir || '').trim() || path.join(os.tmpdir(), 'clipop-download-cache');
+  const dir = path.join(cacheRoot, key);
+  await fs.mkdir(dir, { recursive: true });
+
+  const label = Number.isFinite(maxHeight) && maxHeight > 0 ? `h${Math.round(maxHeight)}` : 'auto';
+  const base = `source_${label}`;
+  const tmpl = path.join(dir, `${base}.%(ext)s`);
+  const infoPath = path.join(dir, `${base}.info.json`);
+
+  const ffmpegBin = String(options.ffmpegPath || '').trim()
+    || (() => { try { return require('@ffmpeg-installer/ffmpeg').path; } catch { return ''; } })();
+
+  const args = ['--no-playlist', '-o', tmpl];
+  if (ffmpegBin) args.push('--ffmpeg-location', ffmpegBin);
+  args.push('--remux-video', 'mp4', '-f', buildFormatSpec(maxHeight));
+  if (!(await fileExists(infoPath))) args.push('--write-info-json');
+  args.push(url);
+
+  const onProgress = typeof options.onProgress === 'function' ? options.onProgress : undefined;
+  const preExisting = await findMediaFile(dir, base);
+  const startedAt = Date.now();
+
+  try {
+    await runYtDlp(args, {
+      cookieMode,
+      cookieFile,
+      cacheDir: dir,
+      overallTimeoutMs: options.overallTimeoutMs || 10 * 60_000,
+      strategyTimeoutMs: options.strategyTimeoutMs || 90_000,
+      cookieStrategyTimeoutMs: options.cookieStrategyTimeoutMs || 60_000,
+      onStrategy: options.onStrategy,
+      onStrategyError: options.onStrategyError,
+      onProgress: onProgress ? (pct, strategy) => onProgress(pct, strategy) : undefined,
+    });
+  } catch (err) {
+    throw toStructuredError(err);
+  }
+
+  const outPath = await findMediaFile(dir, base);
+  if (!outPath) {
+    const e = new Error('下载完成但未找到媒体文件（可能该视频格式不可用）。');
+    e.code = 'FORMAT_UNAVAILABLE';
+    e.retryable = true;
+    e.structured = { code: 'FORMAT_UNAVAILABLE', message: e.message, retryable: true };
+    throw e;
+  }
+
+  const info = await readJsonIfExists(infoPath);
+  const stat = await fs.stat(outPath).catch(() => null);
+  return {
+    path: outPath,
+    title: String((info && info.title) || ''),
+    duration: Number((info && info.duration) || 0) || 0,
+    videoId: key,
+    youtubeId,
+    maxHeight: Number.isFinite(maxHeight) && maxHeight > 0 ? Math.round(maxHeight) : 0,
+    cached: !!preExisting && preExisting === outPath && (Date.now() - startedAt) < 15_000,
+    bytes: stat ? stat.size : 0,
+    ext: path.extname(outPath).slice(1),
+  };
 }
 
 module.exports = {
   ensureYtDlp,
   runYtDlp,
+  downloadWithYtDlp,
+  classifyYtDlpError,
+  toStructuredError,
+  extractYouTubeVideoId,
   resolveHttpProxy,
   buildStrategies,
+  normalizeCookieMode,
   parsePercent,
   YT_DLP_BIN_PATH,
 };

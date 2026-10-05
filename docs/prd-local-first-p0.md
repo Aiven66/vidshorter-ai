@@ -205,12 +205,45 @@ IPC local-download ({ url, cookieMode, cookieFile?, maxHeight? })
 
 ---
 
-## 5. 任务清单（可执行，按依赖排序）
+## 5. P1-6 配方（Recipe）一键复跑 + 批量复用
+
+### 5.1 目标
+把「调好的导出风格」沉淀为**账号级命名配方**：换个素材一键复跑同一套设置。用户不必每次重调参数 —— 这是回访的核心理由，也是把「一次性剪辑器」升级为「内容生产线」的关键私有资产。
+
+### 5.2 商业定位（留存 + 转化双引擎）
+- **留存**：配方 = 用户私有资产，换素材即可复用，形成「保存 → 回访 → 复跑」的正循环。
+- **转化**：免费档仅可保存 **1 条**配方；Starter+ 不限量 —— 配方库本身成为清晰的付费台阶，且随用户积累而迁移成本递增。
+
+### 5.3 配方模型
+固化字段与首页「高级设置」一一对应：
+`quality / exportVertical / exportSubtitles / exportJumpCut / exportVoiceover / voiceoverVoice / exportBgm / bgmMood / bgmOrigVol / exportKaraoke / subStyle / subLang / exportTemplate / scenario / maxClips / targetDuration`。
+- **归一化**：逐字段白名单校验，非法值回落默认，未知字段丢弃（损坏数据 / 旧版本配方安全降级，绝不抛错）。
+- **存储**：`localStorage`，key = `clipop_recipes:<userId>`，按账号隔离；SSR / 无 window 下安全回落空列表。
+- 配方只描述「怎么导出」，**不含媒体来源**，因此可在任意视频上复跑。
+
+### 5.4 改动文件
+- 新增 `src/lib/recipes.ts`（纯函数：类型 + 归一化 + 列表 CRUD + 存储适配 + 档位上限）
+- 新增 `src/components/home/recipe-panel.tsx`（保存 / 列表 / 应用 / 删除 + 免费档升级 CTA）
+- 改 `src/components/home/video-processor.tsx`（挂载面板 + 设置快照 `recipeConfig` / 回填 `applyRecipeConfig`）
+- i18n：`common.ts`（en）+ `zh.ts` + `zh-Hant.ts` 的 `video.recipe.*`
+- 新增 `scripts/check-recipes.ts` + `package.json#test:recipes`
+
+### 5.5 验收标准
+1. `pnpm test:recipes` 全绿（归一化 / CRUD / 去重排序 / 档位上限 / i18n 齐备，19 项）。
+2. 免费档保存 1 条后出现升级引导；Starter+ 可保存多条，应用后设置即刻回填。
+3. 配方按账号隔离，退出登录后列表清空、不泄露他人配方。
+4. 损坏的 localStorage 数据不导致崩溃（回落空列表 / 默认值）。
+5. `pnpm ts-check` 零新增错误；`pnpm build` 成功。
+
+---
+
+## 6. 任务清单（可执行，按依赖排序）
 
 ### S1 · 本地 AI 引擎（P0-1）
 - [x] T1.1 `local-models.js`：模型注册表 + 下载/校验 + 进度事件
 - [x] T1.2 `local-asr.js`：引擎探测（whisper.cpp/sherpa-onnx/faster-whisper）+ cues/words 归一化 + sha256 缓存
-- [ ] T1.3 `local-signals.js`：ffmpeg 响度/静音/频谱信号（未实现，高光暂以 ASR 语义 + 均匀兜底）
+- [x] T1.3 `local-signals.js`：ffmpeg 响度/静音/高频带信号（`ebur128` 逐点 LUFS 动态归一 + `silencedetect` 抑制死air + `highpass` 派生笑声/情绪），产出 `signals.loudness` / `signals.emotion` 供打分器消费；无 ffmpeg 时抛 `NO_FFMPEG` 并由调用方降级为纯 ASR 语义打分，不阻断出片
+- [x] T1.7 `scripts/check-local-signals.js` + `pnpm --dir apps/macos-agent test:local-signals`（32 项断言，含真实 ffmpeg 合成音频链路）
 - [x] T1.4 `main.js` 注册 `local-models:*` / `local-transcribe` IPC + 「本地模型」页对接
 - [x] T1.5 `agent-job-store.ts` + `jobs/route.ts`：`type` 字段与能力过滤
 - [x] T1.6 `scripts/test-local-asr.js` + npm script
@@ -229,19 +262,28 @@ IPC local-download ({ url, cookieMode, cookieFile?, maxHeight? })
 - [x] T3.4 web 端本地导出入口 + 失败重试 UI
 
 ### S4 · 本地下载器（P0-4）
-- [ ] T4.1 `ytdlp.js`：cookieMode/cookieFile + `--continue` + 缓存
-- [ ] T4.2 结构化错误码 + 上报联动退积分
-- [ ] T4.3 `scripts/test-ytdlp-download-youtube.js` 扩展三类用例
+- [x] T4.1 `ytdlp.js`：cookieMode/cookieFile + `--continue` + 缓存（+ `downloadWithYtDlp` / IPC `local-download`）
+- [x] T4.2 结构化错误码（`classifyYtDlpError`）+ 上报联动退积分（`POST /api/videos/refund` 复用 `refundIfCharged`）
+- [x] T4.3 `scripts/check-ytdlp-strategies.js` 扩展用例（公开成功 / LOGIN_REQUIRED+retryable / REGION_LOCKED / NETWORK / 续跑命中 `--continue`，共 6 项）
 
 ### S5 · 计费与埋点
 - [x] T5.1 免费版「一次性完整成片导出」额度在本地渲染路径生效（复用 `export-allowance.ts`）
 - [ ] T5.2 埋点：本地转写/成片/规则命中率/二次回访（PostHog）——已埋「可发布成片导出」事件，其余待补
 
+### S6 · 配方一键复跑（P1-6）
+- [x] T6.1 `src/lib/recipes.ts`：类型 + 白名单归一化 + 列表 CRUD + 账号级存储 + 档位上限
+- [x] T6.2 `recipe-panel.tsx`：保存 / 列表 / 应用 / 删除 + 免费档升级 CTA
+- [x] T6.3 `video-processor.tsx`：挂载面板 + 设置快照（`recipeConfig`）/ 回填（`applyRecipeConfig`）
+- [x] T6.4 i18n `video.recipe.*`（en / zh / zh-Hant）
+- [x] T6.5 `scripts/check-recipes.ts` + `pnpm test:recipes`（19 项）
+- [ ] T6.6 配方一键投递到批量队列（复用 `/api/videos/batch/process`，一次提交多条同一风格）
+
 ---
 
-## 6. 里程碑与验收口径
+## 7. 里程碑与验收口径
 - **M1（S1）**：断网可转写 → 最小闭环成立。验收：T1.6 通过 + 手工 10 分钟视频转写。
 - **M2（S2+S3）**：意图可控 → 一键出成片。验收：规则命中单测 + 1080×1920 全解码。
 - **M3（S4+S5）**：本地下载闭环 + 免费额度与埋点。验收：退积分幂等 + 埋点落库。
+- **M4（S6）**：配方一键复跑，形成「保存 → 回访 → 复跑」正循环。验收：单测 19 项 + 免费档升级引导 + 应用后设置回填。
 
 > 工程规则：仅用 pnpm；禁止硬编码颜色（用 `globals.css` 主题变量）；每阶段 `pnpm ts-check` + `pnpm build`；交付后经用户确认再 commit + push（push main 触发自动部署）。
