@@ -58,7 +58,7 @@ async function main() {
 
   const zh = await loadLocaleTranslations('zh');
   assert.equal(zh['home.hero.title'], '将长视频转换为爆款短视频');
-  assert.equal(zh['home.hero.freeCredits'], '注册即可获得100积分');
+  assert.equal(zh['home.hero.freeCredits'], '注册即可获得60积分（每天1次生成）');
   assert.match(zh['home.hero.subtitle'], /B站视频链接/);
   assert.equal(zh['home.highlights.bilibili.title'], '支持 B站和 YouTube 链接');
   assert.equal(zh['home.visual.scanning'], 'AI 正在扫描高光时刻');
@@ -66,14 +66,19 @@ async function main() {
   assert.equal(zh['video.analyze'], '分析');
 
   const pageSource = readFileSync('src/app/page.tsx', 'utf8');
+  const videoClipsPageSource = readFileSync('src/app/video-clips/page.tsx', 'utf8');
   const homeSectionsSource = readFileSync('src/components/home/home-sections.tsx', 'utf8');
   const homeStartButtonSource = readFileSync('src/components/home/home-start-button.tsx', 'utf8');
-  assert.match(pageSource, /id="core-video-processor"/);
+  // 首页只做营销落地（渲染 HomeLanding）；视频处理器已迁至 /video-clips，
+  // 由首页输入/上传后跳转过去（见 HomeLanding 的 goProcess/handleFile）。
+  assert.match(pageSource, /HomeLanding/);
+  assert.match(videoClipsPageSource, /id="core-video-processor"/);
+  assert.match(videoClipsPageSource, /ClientVideoProcessor/);
   assert.match(homeSectionsSource, /HomeStartButton/);
-  assert.doesNotMatch(homeSectionsSource, /'use client'/);
   assert.match(homeStartButtonSource, /useAuth/);
   assert.match(homeStartButtonSource, /scrollIntoView/);
-  assert.match(homeStartButtonSource, /router\.push\('\/register'\)/);
+  // P0-2 免登录试跑：首页 CTA 不再强制跳转注册，改为滚动到处理器试跑一条低清预览。
+  assert.doesNotMatch(homeStartButtonSource, /router\.push\('\/register'\)/);
 
   console.log(`Home page i18n checks passed for ${locales.length} locales.`);
 }
