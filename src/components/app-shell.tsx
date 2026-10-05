@@ -29,6 +29,7 @@ import {
   Home,
   Wand2,
   PersonStanding,
+  Cpu,
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { useCredits } from '@/lib/credits-context';
@@ -87,6 +88,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/ai-video', labelKey: 'aiVideo', icon: Wand2, badge: 'NEW' },
   { href: '/shorts', labelKey: 'shorts', icon: Smartphone, badge: 'NEW' },
   { href: '/video-clips', labelKey: 'clips', icon: Scissors },
+  { href: '/local-engine', labelKey: 'localEngine', icon: Cpu },
   { href: '#invite', labelKey: 'inviteFriends', icon: Gift, action: 'referral' },
   { href: '/video-notes', labelKey: 'notes', icon: FileText, badge: 'NEW' },
   { href: '/marketing-video', labelKey: 'marketing', icon: ShoppingBag, badge: 'NEW' },
@@ -298,6 +300,7 @@ function SidebarLabel({ labelKey }: { labelKey: NavItem['labelKey'] }) {
     article: '文章转视频',
     podcast: 'AI 播客',
     aiTools: 'AI 工具箱',
+    localEngine: '本地引擎',
     blog: '博客',
     pricing: '定价',
     download: '下载客户端',

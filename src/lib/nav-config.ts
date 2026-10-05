@@ -22,6 +22,7 @@ export type NavKey =
   | 'digitalHumanLive'
   | 'aiTools'
   | 'podcast'
+  | 'localEngine'
   | 'aiVideo';
 
 export interface NavConfig {
@@ -46,6 +47,7 @@ export const NAV_LABELS: Record<NavKey, { zh: string; en: string }> = {
   article: { zh: '文章转视频', en: 'Article to Video' },
   podcast: { zh: 'AI 播客', en: 'AI Podcast' },
   aiTools: { zh: 'AI 工具箱', en: 'AI Tools' },
+  localEngine: { zh: '本地引擎', en: 'Local Engine' },
   blog: { zh: '博客', en: 'Blog' },
   pricing: { zh: '定价', en: 'Pricing' },
   download: { zh: '下载客户端', en: 'Download App' },
@@ -65,6 +67,7 @@ export const DEFAULT_NAV_CONFIG: NavConfig = {
   order: [
     'home',
     'clips',
+    'localEngine',
     'inviteFriends',
     'shorts',
     'notes',
