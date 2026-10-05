@@ -649,6 +649,8 @@ export default function VideoProcessor({
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState<SSEData | null>(null);
   const [clips, setClips] = useState<VideoClip[]>([]);
+  // T6.6 配方批量复跑：用同一套配方顺序复跑多条链接（一次提交多条同一风格）。
+  const [batchRun, setBatchRun] = useState<{ total: number; done: number; current: string } | null>(null);
   // P0-2 意图可控高光：桌面本地引擎下的高光规则面板 + 当前规则（生成时透传给本地管线）
   const [desktopBridge, setDesktopBridge] = useState<VidShorterDesktopBridge | null>(null);
   const [highlightRules, setHighlightRules] = useState<HighlightRules | null>(null);
@@ -967,19 +969,29 @@ export default function VideoProcessor({
     }
   }, [locale]);
 
-  const handleProcess = useCallback(async () => {
-    if (!trimmedVideoUrl && !selectedFile) { setError('Please enter a video URL or upload a local video file.'); return; }
-    if (trimmedVideoUrl && !isHttpVideoUrl(trimmedVideoUrl)) {
+  // T6.6：overrideUrl 供配方批量复跑复用同一套管线（不依赖 videoUrl 输入框）；
+  // overrideConfig 让批量复跑用配方里的生成参数（画质/条数/时长），不读可能尚未 flush 的 state。
+  const handleProcess = useCallback(async (
+    overrideUrl?: string,
+    overrideConfig?: RecipeConfig,
+    opts?: { append?: boolean },
+  ) => {
+    const targetUrl = overrideUrl ?? trimmedVideoUrl;
+    const effQuality = overrideConfig?.quality ?? quality;
+    const effMaxClips = overrideConfig?.maxClips ?? maxClips;
+    const effTargetDuration = overrideConfig?.targetDuration ?? targetDuration;
+    if (!targetUrl && !selectedFile) { setError('Please enter a video URL or upload a local video file.'); return; }
+    if (targetUrl && !isHttpVideoUrl(targetUrl)) {
       setError('Please enter a valid public http(s) video URL.');
       return;
     }
     // P0-2：未登录 → 免登录试跑一条低清预览（本地上传仍需登录）。
     if (!user) {
-      if (selectedFile || !trimmedVideoUrl) {
+      if (selectedFile || !targetUrl) {
         setError(locale === 'zh' ? '本地上传需要登录后使用，请先注册/登录。' : 'Sign in to upload local files.');
         return;
       }
-      await runGuestTrial(trimmedVideoUrl);
+      await runGuestTrial(targetUrl);
       return;
     }
     const latestBalance = await refreshCredits();
@@ -991,7 +1003,8 @@ export default function VideoProcessor({
 
     setIsProcessing(true);
     setProgress({ stage: 'init', progress: 0, message: 'Starting...' });
-    setClips([]);
+    // 批量复跑时保留前一条视频的成片（append），单条流程照常清空。
+    if (!opts?.append) setClips([]);
     setError(null);
     setCreditsRefunded(false);
 
@@ -1000,14 +1013,14 @@ export default function VideoProcessor({
       data: {
         source_type: selectedFile ? 'upload' : 'url',
         url_domain: selectedFile ? null : (() => {
-          try { return new URL(trimmedVideoUrl).hostname; } catch { return null; }
+          try { return new URL(targetUrl).hostname; } catch { return null; }
         })(),
       },
     });
 
     try {
-      let inputUrl = trimmedVideoUrl;
-      let displayUrl = trimmedVideoUrl;
+      let inputUrl = targetUrl;
+      let displayUrl = targetUrl;
 
       if (!inputUrl && selectedFile) {
         setIsUploading(true);
@@ -1203,10 +1216,10 @@ export default function VideoProcessor({
             videoUrl: inputUrl,
             userId: user.id,
             sourceType: selectedFile ? 'upload' : 'url',
-            quality,
+            quality: effQuality,
             locale,
             // Shorts 成片：固定产出 3 条竖屏成片
-            ...(isShorts && maxClips > 0 ? { desiredClipCount: maxClips } : {}),
+            ...(isShorts && effMaxClips > 0 ? { desiredClipCount: effMaxClips } : {}),
             ...(preResolvedStreamUrl ? { streamUrl: preResolvedStreamUrl } : {}),
             ...(preResolvedMetadata ? { streamMetadata: preResolvedMetadata } : {}),
             // P0-2：注册后继承试跑分析结果（服务端校验失败会静默回落正常分析）。
@@ -1448,10 +1461,10 @@ export default function VideoProcessor({
           userId: user.id,
           sourceType: selectedFile ? 'upload' : 'url',
           aiConfig: getAdminAiConfig(),
-          quality,
+          quality: effQuality,
           locale,
-          maxClips,
-          targetDuration,
+          maxClips: effMaxClips,
+          targetDuration: effTargetDuration,
           // P0-2 意图可控高光：本地管线按规则规划候选片段（服务端忽略该字段）
           ...(shouldUseLocalProcessing && highlightRules ? { rules: highlightRules } : {}),
           ...(preResolvedStreamUrl ? { streamUrl: preResolvedStreamUrl } : {}),
@@ -1473,10 +1486,10 @@ export default function VideoProcessor({
             clipLimit: batchLimit,
             jobId,
             videoId,
-            quality,
+            quality: effQuality,
             locale,
-            maxClips,
-            targetDuration,
+            maxClips: effMaxClips,
+            targetDuration: effTargetDuration,
             // Continue passing the pre-resolved stream URL for subsequent batches
             // (same video, same streamUrl is still valid for several minutes).
             ...(preResolvedStreamUrl ? { streamUrl: preResolvedStreamUrl } : {}),
@@ -1592,7 +1605,31 @@ export default function VideoProcessor({
     } finally {
       setIsProcessing(false);
     }
-  }, [accessToken, error, getLocalMediaBaseUrl, refreshCredits, refreshSession, runGuestTrial, selectedFile, signOut, trimmedVideoUrl, uploadToSupabase, useAgent, user, locale]);
+  }, [accessToken, error, getLocalMediaBaseUrl, isShorts, maxClips, quality, refreshCredits, refreshSession, runGuestTrial, selectedFile, signOut, targetDuration, trimmedVideoUrl, uploadToSupabase, useAgent, user, locale]);
+
+  // T6.6 配方批量复跑：一次提交多条链接，用同一套配方顺序复跑（保持输入顺序，不并发）。
+  // 复用 handleProcess（即与单条生成完全相同的管线），每条视频产出后保留在 clips 里累积展示。
+  const handleBatchRun = useCallback(async (urls: string[], cfg: RecipeConfig) => {
+    if (!user || urls.length === 0) return;
+    // 回填设置：批量复跑结束后，导出/下载沿用同一套配方风格。
+    applyRecipeConfig(cfg);
+    setError(null);
+    setBatchRun({ total: urls.length, done: 0, current: urls[0] });
+    try {
+      for (let i = 0; i < urls.length; i += 1) {
+        // 余额预检：不足则中断（避免后续每条都重复触发付费引导）。
+        const balance = await refreshCredits();
+        if (!isAdminUser(user) && balance < 60) {
+          setInsufficientOpen(true);
+          break;
+        }
+        setBatchRun({ total: urls.length, done: i, current: urls[i] });
+        await handleProcess(urls[i], cfg, { append: i > 0 });
+      }
+    } finally {
+      setBatchRun(null);
+    }
+  }, [applyRecipeConfig, handleProcess, refreshCredits, user]);
 
   // 首页「智能解析与生成」跳转带入链接：预填后自动开始一次解析（仅一次，等鉴权与积分就绪）
   const autoStartedRef = useRef(false);
@@ -2373,7 +2410,7 @@ export default function VideoProcessor({
               />
             </div>
             <Button
-              onClick={handleProcess}
+              onClick={() => void handleProcess()}
               disabled={!canStart || isProcessing || isUploading}
               className="gap-2 min-w-[140px]"
             >
@@ -2431,7 +2468,9 @@ export default function VideoProcessor({
             isAdmin={isAdminUser(user)}
             config={recipeConfig}
             onApply={applyRecipeConfig}
-            disabled={isProcessing || isUploading}
+            onBatchRun={handleBatchRun}
+            batchProgress={batchRun}
+            disabled={isProcessing || isUploading || batchRun !== null}
           />
           {/* 场景化预置（P0）：按创作场景一键预填生成参数，仍可手动微调 */}
           <div className="space-y-2">

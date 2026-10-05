@@ -276,7 +276,7 @@ IPC local-download ({ url, cookieMode, cookieFile?, maxHeight? })
 - [x] T6.3 `video-processor.tsx`：挂载面板 + 设置快照（`recipeConfig`）/ 回填（`applyRecipeConfig`）
 - [x] T6.4 i18n `video.recipe.*`（en / zh / zh-Hant）
 - [x] T6.5 `scripts/check-recipes.ts` + `pnpm test:recipes`（19 项）
-- [ ] T6.6 配方一键投递到批量队列（复用 `/api/videos/batch/process`，一次提交多条同一风格）
+- [x] T6.6 配方一键投递到批量队列（一次提交多条同一风格）。**实现形态说明**：服务端 `/api/videos/batch/process` 队列只写 `url/source_type`（`videos` 表无 settings 列且本项目无 DDL 权限），且 `/batch` 页只有原样下载链接、无渲染管线 —— 因此「队列侧持久化配方样式」不可行。改为在配方面板内做**客户端串行复跑**：每条配方行新增「批量复跑」入口（textarea 粘贴多链接，复用 `normalizeBatchUrls` 校验去重、`BATCH_MAX_ITEMS` 上限），提交后由 `video-processor` 的 `handleBatchRun` 顺序调用既有的 `handleProcess(url, cfg, {append})`（即单条生成同一条管线，配方参数覆盖画质/条数/时长，其余样式回填 state 供后续导出复用），逐条预检余额、不足即中断，成片累积展示；仅 Starter+/admin 可用
 
 ---
 

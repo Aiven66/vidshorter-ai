@@ -256,6 +256,16 @@ const RECIPE_I18N_KEYS = [
   'video.recipe.limitTitle',
   'video.recipe.limitDesc',
   'video.recipe.upgradeCta',
+  // T6.6 批量复跑
+  'video.recipe.batchTitle',
+  'video.recipe.batchHint',
+  'video.recipe.batchPlaceholder',
+  'video.recipe.batchRun',
+  'video.recipe.batchRunning',
+  'video.recipe.batchCurrent',
+  'video.recipe.batchReady',
+  'video.recipe.batchInvalid',
+  'video.recipe.batchPaidOnly',
 ];
 
 ok('en/zh 关键 key 齐备，且 zh 已本地化', () => {

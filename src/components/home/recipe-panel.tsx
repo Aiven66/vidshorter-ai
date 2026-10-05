@@ -11,13 +11,15 @@
  * 应用配方通过 onApply 回调回填，避免出现第二份设置状态。
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { AlertCircle, Bookmark, Check, Plus, Sparkles, Trash2, X } from 'lucide-react';
+import { AlertCircle, Bookmark, Check, Layers, Loader2, Lock, Plus, Sparkles, Trash2, X } from 'lucide-react';
 import { useLocale } from '@/lib/locale-context';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { BATCH_MAX_ITEMS, normalizeBatchUrls } from '@/lib/video-batch';
 import {
   MAX_RECIPE_NAME,
   canAddRecipe,
@@ -42,6 +44,10 @@ interface RecipePanelProps {
   config: RecipeConfig;
   /** 应用配方：由父组件把配置回填到各设置项 */
   onApply: (config: RecipeConfig) => void;
+  /** T6.6 批量复跑：一次提交多条链接，用该配方的同一套风格顺序复跑（仅 Starter+/admin） */
+  onBatchRun?: (urls: string[], config: RecipeConfig) => void;
+  /** 批量复跑进度（null = 未在跑），用于禁用交互与展示进度 */
+  batchProgress?: { total: number; done: number; current: string } | null;
   /** 生成/上传进行中时禁止改动设置 */
   disabled?: boolean;
 }
@@ -52,6 +58,8 @@ export default function RecipePanel({
   isAdmin = false,
   config,
   onApply,
+  onBatchRun,
+  batchProgress = null,
   disabled = false,
 }: RecipePanelProps) {
   const { t } = useLocale();
@@ -71,6 +79,10 @@ export default function RecipePanel({
   const [formOpen, setFormOpen] = useState(false);
   const [err, setErr] = useState('');
   const [appliedId, setAppliedId] = useState<string | null>(null);
+  // T6.6 批量复跑：当前展开批量输入框的配方 id + 粘贴的多链接文本
+  const [batchForId, setBatchForId] = useState<string | null>(null);
+  const [batchText, setBatchText] = useState('');
+  const [batchErr, setBatchErr] = useState('');
 
   // 账号切换时重新加载（未登录 → 空列表）
   useEffect(() => {
@@ -78,10 +90,21 @@ export default function RecipePanel({
     setFormOpen(false);
     setName('');
     setErr('');
+    setBatchForId(null);
+    setBatchText('');
+    setBatchErr('');
   }, [userId]);
 
   const limit = recipeLimitForPlan(plan, isAdmin);
   const canAdd = !!userId && canAddRecipe(plan, recipes.length, isAdmin);
+  // 批量生产属于付费能力（PRD：付费卡「批量」）
+  const canBatch = plan === 'starter' || plan === 'pro' || isAdmin;
+  const batching = batchProgress !== null;
+  const batchRecipe = useMemo(
+    () => recipes.find((r) => r.id === batchForId) ?? null,
+    [recipes, batchForId],
+  );
+  const batchParsed = useMemo(() => normalizeBatchUrls(batchText), [batchText]);
 
   const persist = useCallback(
     (next: Recipe[]) => {
@@ -117,6 +140,35 @@ export default function RecipePanel({
   const handleDelete = (id: string) => {
     setErr('');
     persist(removeRecipe(recipes, id));
+    if (batchForId === id) {
+      setBatchForId(null);
+      setBatchText('');
+      setBatchErr('');
+    }
+  };
+
+  /** 打开/收起某条配方的批量复跑输入区 */
+  const toggleBatch = (id: string) => {
+    setBatchErr('');
+    setBatchForId((prev) => (prev === id ? null : id));
+    setBatchText('');
+  };
+
+  /** T6.6：把粘贴的多条链接按该配方一次投递（串行复跑，保持输入顺序） */
+  const handleBatchSubmit = () => {
+    setBatchErr('');
+    if (!canBatch) {
+      setBatchErr(t('video.recipe.batchPaidOnly'));
+      return;
+    }
+    if (!batchRecipe || !onBatchRun) return;
+    if (!batchParsed.ok) {
+      setBatchErr(tv('video.recipe.batchInvalid', { max: BATCH_MAX_ITEMS }));
+      return;
+    }
+    onBatchRun(batchParsed.urls, batchRecipe.config);
+    setBatchForId(null);
+    setBatchText('');
   };
 
   /** 配方摘要：画质 · 竖屏 · 字幕 · 场景（场景 key 缺失时不渲染原始 key） */
@@ -176,47 +228,142 @@ export default function RecipePanel({
       {userId && recipes.length > 0 && (
         <ul className="space-y-1.5">
           {recipes.map((recipe) => (
-            <li
-              key={recipe.id}
-              className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background px-3 py-2"
-            >
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{recipe.name}</p>
-                <p className="truncate text-[11px] text-muted-foreground">{summarize(recipe)}</p>
+            <li key={recipe.id} className="rounded-lg border border-border bg-background px-3 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">{recipe.name}</p>
+                  <p className="truncate text-[11px] text-muted-foreground">{summarize(recipe)}</p>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={appliedId === recipe.id ? 'secondary' : 'outline'}
+                    disabled={disabled}
+                    onClick={() => handleApply(recipe)}
+                    className="h-7 px-2 text-xs"
+                  >
+                    {appliedId === recipe.id ? (
+                      <>
+                        <Check className="h-3.5 w-3.5" />
+                        {t('video.recipe.appliedShort')}
+                      </>
+                    ) : (
+                      t('video.recipe.apply')
+                    )}
+                  </Button>
+                  {onBatchRun && (
+                    <Button
+                      type="button"
+                      size="icon-sm"
+                      variant={batchForId === recipe.id ? 'secondary' : 'ghost'}
+                      disabled={disabled || !canBatch}
+                      onClick={() => toggleBatch(recipe.id)}
+                      aria-label={t('video.recipe.batchTitle')}
+                      title={canBatch ? t('video.recipe.batchTitle') : t('video.recipe.batchPaidOnly')}
+                    >
+                      {canBatch ? (
+                        <Layers className="h-3.5 w-3.5 text-muted-foreground" />
+                      ) : (
+                        <Lock className="h-3.5 w-3.5 text-muted-foreground" />
+                      )}
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    size="icon-sm"
+                    variant="ghost"
+                    disabled={disabled}
+                    onClick={() => handleDelete(recipe.id)}
+                    aria-label={t('video.recipe.delete')}
+                    title={t('video.recipe.delete')}
+                  >
+                    <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
+                  </Button>
+                </div>
               </div>
-              <div className="flex shrink-0 items-center gap-1">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={appliedId === recipe.id ? 'secondary' : 'outline'}
-                  disabled={disabled}
-                  onClick={() => handleApply(recipe)}
-                  className="h-7 px-2 text-xs"
-                >
-                  {appliedId === recipe.id ? (
+
+              {/* T6.6 批量复跑：把这条配方一次性投递到多条链接（串行复跑，同一套风格） */}
+              {onBatchRun && batchForId === recipe.id && (
+                <div className="mt-2 space-y-1.5 border-t border-border/60 pt-2">
+                  {canBatch ? (
                     <>
-                      <Check className="h-3.5 w-3.5" />
-                      {t('video.recipe.appliedShort')}
+                      <p className="text-[11px] text-muted-foreground">
+                        {tv('video.recipe.batchHint', { max: BATCH_MAX_ITEMS })}
+                      </p>
+                      <Textarea
+                        value={batchText}
+                        disabled={disabled || batching}
+                        placeholder={t('video.recipe.batchPlaceholder')}
+                        onChange={(e) => setBatchText(e.target.value)}
+                        rows={3}
+                        className="min-h-[64px] text-xs"
+                      />
+                      {batchText.trim() !== '' && (
+                        <p className="text-[11px] text-muted-foreground">
+                          {batchParsed.ok
+                            ? tv('video.recipe.batchReady', { count: batchParsed.urls.length })
+                            : tv('video.recipe.batchInvalid', { max: BATCH_MAX_ITEMS })}
+                        </p>
+                      )}
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          disabled={disabled || batching || !batchParsed.ok}
+                          onClick={handleBatchSubmit}
+                          className="h-7 px-2 text-xs"
+                        >
+                          <Layers className="h-3.5 w-3.5" />
+                          {t('video.recipe.batchRun')}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          disabled={batching}
+                          onClick={() => {
+                            setBatchForId(null);
+                            setBatchText('');
+                            setBatchErr('');
+                          }}
+                          className="h-7 px-2 text-xs"
+                        >
+                          {t('video.recipe.cancel')}
+                        </Button>
+                      </div>
                     </>
                   ) : (
-                    t('video.recipe.apply')
+                    <p className="text-[11px] text-muted-foreground">{t('video.recipe.batchPaidOnly')}</p>
                   )}
-                </Button>
-                <Button
-                  type="button"
-                  size="icon-sm"
-                  variant="ghost"
-                  disabled={disabled}
-                  onClick={() => handleDelete(recipe.id)}
-                  aria-label={t('video.recipe.delete')}
-                  title={t('video.recipe.delete')}
-                >
-                  <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
-                </Button>
-              </div>
+                  {batchErr && (
+                    <p className="flex items-start gap-1 text-[11px] text-destructive">
+                      <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
+                      {batchErr}
+                    </p>
+                  )}
+                </div>
+              )}
             </li>
           ))}
         </ul>
+      )}
+
+      {/* 批量复跑进度（跨条目共享） */}
+      {batching && batchProgress && (
+        <div className="flex items-center gap-2 rounded-lg bg-primary/5 px-3 py-2">
+          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-medium">
+              {tv('video.recipe.batchRunning', { done: batchProgress.done, total: batchProgress.total })}
+            </p>
+            {batchProgress.current && (
+              <p className="truncate text-[11px] text-muted-foreground">
+                {tv('video.recipe.batchCurrent', { url: batchProgress.current })}
+              </p>
+            )}
+          </div>
+        </div>
       )}
 
       {userId && recipes.length === 0 && (
