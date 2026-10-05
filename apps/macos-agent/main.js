@@ -16,6 +16,7 @@ const { createModelStore } = require('./local-models');
 const { createTranscriber, detectEngine } = require('./local-asr');
 const { planHighlights } = require('./local-highlight-scorer');
 const { createRuleStore } = require('./local-highlight-rules');
+const { renderPublishable, resolveExportTarget } = require('./local-render');
 const { runYtDlp } = require('./ytdlp');
 const { createMediaServer } = require('./media-server');
 const { t, currentLocale, setLocale, detectLocale } = require('./i18n');
@@ -1328,6 +1329,41 @@ ipcMain.handle('local-highlight-rules:load', async (_event, input) => {
 
 ipcMain.handle('local-highlight-rules:save', async (_event, input) => {
   return await localRuleStore().save(input?.rules);
+});
+
+// ==================== PUBLISHABLE RENDER (P0-3 一键可发布成片) ====================
+/**
+ * 本地渲染「可直接发布」成片：粗剪 → 9:16 blur-fit → 卡拉OK字幕 → 钩子/CTA → 分级水印。
+ * plan 缺失/非法时本地按免费档（720p+水印）渲染（fail-closed）。
+ */
+ipcMain.handle('local-render:publishable', async (_event, input) => {
+  let inputPath = String(input?.inputPath || input?.url || '').trim();
+  if (inputPath.startsWith('file://')) inputPath = fileURLToPath(inputPath);
+
+  startMediaServer();
+  if (mediaReady) await mediaReady;
+  const outDir = path.join(app.getPath('userData'), 'generated-clips');
+  await fs.mkdir(outDir, { recursive: true });
+
+  const target = resolveExportTarget(input?.plan, input?.aspect);
+  const result = await renderPublishable({
+    inputPath,
+    clip: input?.clip,
+    cues: Array.isArray(input?.cues) ? input.cues : undefined,
+    words: Array.isArray(input?.words) ? input.words : undefined,
+    title: input?.title ? String(input.title) : '',
+    ctaText: input?.ctaText ? String(input.ctaText) : '',
+    style: input?.style,
+    plan: target.label === '720p' ? 'free' : target.label === '1080p' ? 'starter' : 'pro',
+    aspect: input?.aspect,
+    outDir,
+    fontName: input?.fontName ? String(input.fontName) : undefined,
+  });
+  return {
+    ...result,
+    plan: result.label === '720p' ? 'free' : result.label === '1080p' ? 'starter' : 'pro',
+    videoUrl: mediaBaseUrl ? `${mediaBaseUrl}/api/serve-clip/${result.outputName}` : '',
+  };
 });
 
 /**

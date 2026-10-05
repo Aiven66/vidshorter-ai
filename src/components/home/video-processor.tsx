@@ -126,6 +126,8 @@ interface VidShorterDesktopBridge extends HighlightRulesBridge {
   getAuthToken?: () => Promise<string>;
   clearAuthToken?: () => Promise<{ ok?: boolean }>;
   localHighlightsPlan?: (input: unknown) => Promise<unknown>;
+  /** P0-3：桌面端本地渲染「可直接发布」成片（粗剪 + 9:16 + 卡拉OK + 钩子/CTA + 分级水印）。 */
+  localRenderPublishable?: (input: unknown) => Promise<unknown>;
 }
 
 declare global {
@@ -634,6 +636,10 @@ export default function VideoProcessor({
     const d = window.clipopDesktop || window.vidshorterDesktop;
     if (d && typeof d.getMediaBaseUrl === 'function') setDesktopBridge(d);
   }, []);
+  // P0-3 一键可发布成片：记住本次本地源（本地文件/本机媒体 URL），供导出阶段本地渲染复用。
+  const [localSourceUrl, setLocalSourceUrl] = useState<string>('');
+  /** 可发布成片渲染错误，按 clip 归属，仅在该 clip 卡片内提示并可重试。 */
+  const [publishErr, setPublishErr] = useState<{ id: string; msg: string } | null>(null);
   // P0-2 免登录试跑：访客试跑结果（1 条预览 + 剩余锁定条数）；注册后携带 trialId 继承分析。
   const [guestTrial, setGuestTrial] = useState<{ trialId: string; lockedCount: number; totalHighlights: number } | null>(null);
   /** 注册后继承试跑：提交正式任务时携带的 trialId（一次性）。 */
@@ -993,6 +999,8 @@ export default function VideoProcessor({
       const desktop = window.clipopDesktop || window.vidshorterDesktop;
       const isDesktop = !!desktop?.getMediaBaseUrl;
       const shouldUseLocalProcessing = isDesktop || isLocalMediaUrl(inputUrl);
+      // P0-3：记录本地源，供「导出成片」在本地渲染（无上传、无云端排队）。
+      if (shouldUseLocalProcessing && inputUrl) setLocalSourceUrl(inputUrl);
 
       // Pre-resolve YouTube stream URL via CF Worker from the user's browser.
       // The user's browser IP is not rate-limited by YouTube (unlike Vercel's
@@ -1784,6 +1792,87 @@ export default function VideoProcessor({
       setDownloadProgress(`Export all failed: ${msg}`);
     } finally {
       setExportingAll(false);
+    }
+  };
+
+  /**
+   * P0-3 一键可发布成片：桌面端本地渲染（粗剪 → 9:16 blur-fit → 卡拉OK字幕 → 片头钩子 → 结尾 CTA → 分级）。
+   * 免费档产出 720p + 水印（可发布但带品牌），Starter+ 无水印 1080p / Pro 4K —— 升级的直观理由。
+   * 失败**显式报错并可重试**，绝不静默回落到横屏小分辨率。
+   */
+  const handleRenderPublishable = async (clip: VideoClip) => {
+    // 免费档可完整导出一次可发布成片（720p+水印）；付费卡「去水印/1080p/4K」。
+    if (!ensureExportAccess(true)) return;
+    const bridge = desktopBridge;
+    if (!bridge?.localRenderPublishable) {
+      setPublishErr({ id: clip.id, msg: t('video.publishable.desktopOnly') });
+      return;
+    }
+    if (!localSourceUrl) {
+      setPublishErr({ id: clip.id, msg: t('video.publishable.noSource') });
+      return;
+    }
+    setPublishErr(null);
+    setDownloadingId(clip.id);
+    setDownloadProgress(t('video.publishable.rendering'));
+    let rendered = false;
+    try {
+      const res = (await bridge.localRenderPublishable({
+        url: localSourceUrl,
+        clip: { start: clip.startTime, end: clip.endTime },
+        title: clip.title || '',
+        ctaText: t('video.publishable.cta'),
+        plan,
+        aspect: '9:16',
+        style: { ...subStyle, hookFirstSeconds: 3, jumpCut: true },
+      })) as { videoUrl?: string; outputPath?: string; watermark?: boolean; warnings?: string[] } | null;
+
+      const href = res?.videoUrl || res?.outputPath;
+      if (!href) throw new Error('render_failed');
+      const resp = await fetch(href);
+      if (!resp.ok) throw new Error(`fetch_${resp.status}`);
+      const blob = await resp.blob();
+
+      const safe = (clip.title || 'clip').replace(/[^\w\u4e00-\u9fa5-]/g, '_').slice(0, 50) || 'clip';
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${safe}.mp4`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 30_000);
+      // 行为埋点：可发布成片导出（本地渲染，计入 video_generation funnel step 4）
+      trackEvent(VIDEO_FUNNEL.CLIP_DOWNLOAD, {
+        data: {
+          clip_id: clip.id,
+          clip_title: clip.title,
+          publishable: true,
+          local: true,
+        },
+      });
+      setDownloadProgress(t('video.publishable.done'));
+      rendered = true;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn('[Publishable] local render failed:', msg);
+      setPublishErr({ id: clip.id, msg: `${t('video.publishable.failed')}（${msg.slice(0, 140)}）` });
+      setDownloadProgress('');
+    } finally {
+      setDownloadingId(null);
+    }
+    // 本地渲染不经服务端导出端点，需在此补记消费「一次性额度」，
+    // 否则免费用户可反复导出可发布成片绕过「仅一次」限制。
+    const usingOneTimeAllowance = plan === 'free' && !isAdminUser(user) && !hasSpentCredits;
+    if (usingOneTimeAllowance && rendered) {
+      try {
+        await fetch('/api/export-allowance', {
+          method: 'POST',
+          headers: { ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
+        });
+      } catch {
+        /* 记录失败不影响本次导出；服务端仍以 consumeFreeExport 的幂等落库为准 */
+      }
+      setFreeExportAvailable(false);
     }
   };
 
@@ -3111,6 +3200,10 @@ export default function VideoProcessor({
                             </button>
                           )
                         )}
+                        {/* P0-3 可发布成片渲染失败：显式提示 + 可重试（不静默回落） */}
+                        {publishErr?.id === clip.id && (
+                          <p className="text-xs text-destructive leading-snug">{publishErr.msg}</p>
+                        )}
                         <div className="flex gap-2 pt-1">
                           {isRealMp4 ? (
                             <>
@@ -3177,6 +3270,19 @@ export default function VideoProcessor({
                                   disabled={downloadingId === clip.id}
                                 >
                                   {downloadingId === clip.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Subtitles className="h-4 w-4" />}
+                                </Button>
+                              )}
+                              {/* P0-3 一键可发布成片（本地渲染，免费档也开放一次可发布导出） */}
+                              {desktopBridge?.localRenderPublishable && localSourceUrl && (
+                                <Button
+                                  variant="outline"
+                                  size="icon"
+                                  className="shrink-0"
+                                  onClick={() => handleRenderPublishable(clip)}
+                                  title={t('video.publishable.label')}
+                                  disabled={downloadingId === clip.id}
+                                >
+                                  {downloadingId === clip.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Film className="h-4 w-4" />}
                                 </Button>
                               )}
                               <Button

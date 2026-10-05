@@ -490,6 +490,15 @@ export const commonTranslations = {
       downloading: 'Burning karaoke subtitles...',
       noSubs: 'No subtitles available for this clip.',
     },
+    publishable: {
+      label: 'Export publish-ready film',
+      rendering: 'Rendering publish-ready film...',
+      done: 'Done — ready to post',
+      failed: 'Export failed. Please retry.',
+      desktopOnly: 'Publish-ready export runs locally in the Mac desktop app. Download it to enable this.',
+      noSource: 'Local source not available. Re-run the analysis from a local file or link first.',
+      cta: 'Follow for more',
+    },
     subtitleStyle: {
       label: 'Subtitle style',
       size: 'Size',

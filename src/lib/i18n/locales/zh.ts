@@ -408,6 +408,15 @@ const translations = {
     downloading: '正在烧录卡拉OK字幕...',
     noSubs: '该片段没有可用字幕。',
   },
+  publishable: {
+    label: '导出可直接发布成片',
+    rendering: '正在渲染可直接发布的成片...',
+    done: '完成，可直接发布',
+    failed: '导出失败，请重试。',
+    desktopOnly: '可直接发布成片需在 Mac 桌面客户端本地渲染，请先下载客户端。',
+    noSource: '本地源不可用，请先使用本地文件或链接重新分析。',
+    cta: '关注我看更多',
+  },
   subtitleStyle: {
     label: '字幕样式',
     size: '字号',

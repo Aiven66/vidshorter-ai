@@ -208,12 +208,12 @@ IPC local-download ({ url, cookieMode, cookieFile?, maxHeight? })
 ## 5. 任务清单（可执行，按依赖排序）
 
 ### S1 · 本地 AI 引擎（P0-1）
-- [ ] T1.1 `local-models.js`：模型注册表 + 下载/校验 + 进度事件
-- [ ] T1.2 `local-asr.js`：引擎探测（whisper.cpp/sherpa-onnx/faster-whisper）+ cues/words 归一化 + sha256 缓存
-- [ ] T1.3 `local-signals.js`：ffmpeg 响度/静音/频谱信号
-- [ ] T1.4 `main.js` 注册 `local-models:*` / `local-transcribe` IPC + 「本地模型」页对接
-- [ ] T1.5 `agent-job-store.ts` + `jobs/route.ts`：`type` 字段与能力过滤
-- [ ] T1.6 `scripts/test-local-asr.js` + npm script
+- [x] T1.1 `local-models.js`：模型注册表 + 下载/校验 + 进度事件
+- [x] T1.2 `local-asr.js`：引擎探测（whisper.cpp/sherpa-onnx/faster-whisper）+ cues/words 归一化 + sha256 缓存
+- [ ] T1.3 `local-signals.js`：ffmpeg 响度/静音/频谱信号（未实现，高光暂以 ASR 语义 + 均匀兜底）
+- [x] T1.4 `main.js` 注册 `local-models:*` / `local-transcribe` IPC + 「本地模型」页对接
+- [x] T1.5 `agent-job-store.ts` + `jobs/route.ts`：`type` 字段与能力过滤
+- [x] T1.6 `scripts/test-local-asr.js` + npm script
 
 ### S2 · 意图可控高光（P0-2）
 - [x] T2.1 `local-highlight-scorer.js`（纯函数打分 + keep/drop 强约束）
@@ -223,10 +223,10 @@ IPC local-download ({ url, cookieMode, cookieFile?, maxHeight? })
 - [x] T2.5 `scripts/test-highlight-scorer.js`
 
 ### S3 · 一键可发布成片（P0-3）
-- [ ] T3.1 `local-render.js`：jump-cut → reframe 9:16 → ASS 卡拉OK → hook → CTA → 分级
-- [ ] T3.2 plan 本地判定（fail-closed）+ 水印/画质分级
-- [ ] T3.3 `scripts/test-local-render.js`（全解码 + 分辨率断言）
-- [ ] T3.4 web 端本地导出入口 + 失败重试 UI
+- [x] T3.1 `local-render.js`：jump-cut → reframe 9:16 → ASS 卡拉OK → hook → CTA → 分级
+- [x] T3.2 plan 本地判定（fail-closed）+ 水印/画质分级
+- [x] T3.3 `scripts/test-local-render.js`（全解码 + 分辨率断言）
+- [x] T3.4 web 端本地导出入口 + 失败重试 UI
 
 ### S4 · 本地下载器（P0-4）
 - [ ] T4.1 `ytdlp.js`：cookieMode/cookieFile + `--continue` + 缓存
@@ -234,8 +234,8 @@ IPC local-download ({ url, cookieMode, cookieFile?, maxHeight? })
 - [ ] T4.3 `scripts/test-ytdlp-download-youtube.js` 扩展三类用例
 
 ### S5 · 计费与埋点
-- [ ] T5.1 免费版「一次性完整成片导出」额度在本地渲染路径生效（复用 `export-allowance.ts`）
-- [ ] T5.2 埋点：本地转写/成片/规则命中率/二次回访（PostHog）
+- [x] T5.1 免费版「一次性完整成片导出」额度在本地渲染路径生效（复用 `export-allowance.ts`）
+- [ ] T5.2 埋点：本地转写/成片/规则命中率/二次回访（PostHog）——已埋「可发布成片导出」事件，其余待补
 
 ---
 

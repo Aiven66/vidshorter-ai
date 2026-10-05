@@ -195,6 +195,9 @@ const translations = {
   stage: {
   init: '初始化中...', extractFrames: '提取影片幀...', framesExtracted: '幀提取成功', framesUnavailable: '繼續分析', aiAnalysis: 'AI 正在分析影片內容...', analysisComplete: '分析完成', generatingClip: '正在建立精彩片段...', clipReady: '精彩片段已就緒', saving: '儲存結果中...', complete: '處理完成！', error: '發生錯誤',
   },
+  publishable: {
+  label: '匯出可直接發布成片', rendering: '正在渲染可直接發布的成片...', done: '完成，可直接發布', failed: '匯出失敗，請重試。', desktopOnly: '可直接發布成片需在 Mac 桌面用戶端本機渲染，請先下載用戶端。', noSource: '本機來源不可用，請先使用本機檔案或連結重新分析。', cta: '追蹤我看更多',
+  },
   },
   pricing: {
   title: '簡單透明的定價', subtitle: '選擇適合您需求的方案',

@@ -51,6 +51,7 @@ const desktopBridge = {
   localHighlightRulesLoad: (profileId) => ipcRenderer.invoke('local-highlight-rules:load', { profileId }),
   localHighlightRulesSave: (rules) => ipcRenderer.invoke('local-highlight-rules:save', { rules }),
   localHighlightsPlan: (input) => ipcRenderer.invoke('local-highlights:plan', input),
+  localRenderPublishable: (input) => ipcRenderer.invoke('local-render:publishable', input),
   onLocalModelsProgress: (cb) => {
     const handler = (_e, payload) => cb(payload);
     ipcRenderer.on('local-models:progress', handler);
