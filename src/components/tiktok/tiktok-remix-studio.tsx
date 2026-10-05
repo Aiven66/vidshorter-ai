@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -50,6 +50,16 @@ function templateAccent(id: string): string {
   return AI_VIDEO_TEMPLATES.find((t) => t.id === id)?.accent || '#4f8cff';
 }
 
+/** 读出服务端错误原因（render_failed 的 detail / error），解析失败返回空串。 */
+async function readErrorDetail(res: Response): Promise<string> {
+  try {
+    const j = (await res.json()) as { detail?: string; error?: string };
+    return String(j?.detail || j?.error || '');
+  } catch {
+    return '';
+  }
+}
+
 export function TiktokRemixStudio({ defaultTemplate }: { defaultTemplate?: string }) {
   const { locale } = useLocale();
   const copy = REMIX_COPY[remixLocale(locale)];
@@ -65,6 +75,19 @@ export function TiktokRemixStudio({ defaultTemplate }: { defaultTemplate?: strin
   const [generateError, setGenerateError] = useState('');
   const [insufficientOpen, setInsufficientOpen] = useState(false);
   const [balance, setBalance] = useState(0);
+  const [videoUrl, setVideoUrl] = useState('');
+  const videoUrlRef = useRef('');
+
+  /** 释放上一条成片的 blob URL（切换/卸载时），避免内存泄漏。 */
+  const releaseVideo = useCallback(() => {
+    if (videoUrlRef.current) {
+      URL.revokeObjectURL(videoUrlRef.current);
+      videoUrlRef.current = '';
+    }
+    setVideoUrl('');
+  }, []);
+
+  useEffect(() => releaseVideo, [releaseVideo]);
 
   const activeTemplate = useMemo(() => {
     if (selectedTemplate) return selectedTemplate;
@@ -80,6 +103,7 @@ export function TiktokRemixStudio({ defaultTemplate }: { defaultTemplate?: strin
     }
     setAnalyzing(true);
     setData(null);
+    releaseVideo();
     try {
       const res = await fetch('/api/tiktok-breakdown', {
         method: 'POST',
@@ -102,12 +126,13 @@ export function TiktokRemixStudio({ defaultTemplate }: { defaultTemplate?: strin
     } finally {
       setAnalyzing(false);
     }
-  }, [url, locale, topicHint, copy, defaultTemplate]);
+  }, [url, locale, topicHint, copy, defaultTemplate, releaseVideo]);
 
   const handleGenerate = useCallback(async () => {
     if (!data) return;
     setGenerateError('');
     setGenerating(true);
+    releaseVideo();
     try {
       const res = await fetch('/api/ai-video', {
         method: 'POST',
@@ -130,25 +155,46 @@ export function TiktokRemixStudio({ defaultTemplate }: { defaultTemplate?: strin
         return;
       }
       if (!res.ok) {
-        setGenerateError(copy.result.errorGeneric);
+        // 带出服务端真实原因（render_failed / detail），避免只显示「出错了」而无从定位
+        const detail = await readErrorDetail(res);
+        setGenerateError(detail ? `${copy.result.errorGeneric} (${detail})` : copy.result.errorGeneric);
+        return;
+      }
+
+      // 上游若把错误包装成 200（非视频响应），这里必须拦下，否则会存成一个坏文件
+      if (!(res.headers.get('content-type') || '').includes('video/')) {
+        const detail = await readErrorDetail(res);
+        setGenerateError(detail ? `${copy.result.errorGeneric} (${detail})` : copy.result.errorGeneric);
         return;
       }
 
       const blob = await res.blob();
+      if (!blob.size) {
+        setGenerateError(copy.result.errorGeneric);
+        return;
+      }
+      // 只在页面内预览（不自动触发下载）：自动下载会被浏览器按弹窗/下载策略静默拦截，
+      // 用户看不到任何结果便误判为「生成失败」。
       const objectUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = objectUrl;
-      a.download = `clipop-tiktok-remix-${Date.now()}.mp4`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(objectUrl);
+      videoUrlRef.current = objectUrl;
+      setVideoUrl(objectUrl);
     } catch {
       setGenerateError(copy.result.errorGeneric);
     } finally {
       setGenerating(false);
     }
-  }, [data, locale, activeTemplate, copy]);
+  }, [data, locale, activeTemplate, copy, releaseVideo]);
+
+  /** 下载必须由用户手势触发（Safari/Chrome 会拦截异步等待后的自动下载）。 */
+  const handleDownloadVideo = useCallback(() => {
+    if (!videoUrl) return;
+    const a = document.createElement('a');
+    a.href = videoUrl;
+    a.download = `clipop-tiktok-remix-${activeTemplate}-${Date.now()}.mp4`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }, [videoUrl, activeTemplate]);
 
   return (
     <div className="space-y-6">
@@ -420,7 +466,7 @@ export function TiktokRemixStudio({ defaultTemplate }: { defaultTemplate?: strin
                 {generating ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    {copy.hero.analyzing}
+                    {copy.result.generatingCta}
                   </>
                 ) : (
                   <>
@@ -442,6 +488,21 @@ export function TiktokRemixStudio({ defaultTemplate }: { defaultTemplate?: strin
                 </p>
               )}
             </div>
+
+            {/* 成片预览 + 下载：把结果显性化，确保「生成成功」可被用户看到并经手势下载 */}
+            {videoUrl && (
+              <div className="space-y-3 border-t border-border pt-4">
+                <p className="text-sm font-medium text-foreground">{copy.result.videoReadyLabel}</p>
+                <div className="mx-auto aspect-[9/16] w-full max-w-[260px] overflow-hidden rounded-xl border border-border bg-muted">
+                  {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                  <video src={videoUrl} controls autoPlay loop playsInline className="h-full w-full object-contain" />
+                </div>
+                <Button variant="secondary" className="w-full gap-2" onClick={handleDownloadVideo}>
+                  <Download className="h-4 w-4" />
+                  {copy.result.downloadCta}
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

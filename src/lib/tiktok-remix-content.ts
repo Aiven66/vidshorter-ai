@@ -52,6 +52,10 @@ export interface RemixCopy {
     errorInvalid: string;
     errorRate: string;
     errorGeneric: string;
+    videoReadyLabel: string;
+    downloadCta: string;
+    /** 生成中的按钮文案（渲染通常需要 1-3 分钟，必须让用户知道在跑而不是卡死） */
+    generatingCta: string;
   };
   complianceResult: string;
   faq: { title: string; items: RemixFaqItem[] };
@@ -109,6 +113,9 @@ export const REMIX_COPY: Record<RemixLocale, RemixCopy> = {
       errorInvalid: 'That does not look like a valid TikTok video link. Please paste a full video URL.',
       errorRate: 'Too many requests. Please wait a minute and try again.',
       errorGeneric: 'Something went wrong. Please try again.',
+      videoReadyLabel: 'Your original video is ready',
+      downloadCta: 'Download MP4',
+      generatingCta: 'Generating your video...',
     },
     complianceResult:
       'These are structural suggestions only. Your generated video is your own original work — review it before publishing, and never reuse someone else\'s footage or audio.',
@@ -189,6 +196,9 @@ export const REMIX_COPY: Record<RemixLocale, RemixCopy> = {
       errorInvalid: '这不像是一个有效的 TikTok 视频链接，请粘贴完整的视频地址。',
       errorRate: '请求过于频繁，请等待一分钟后重试。',
       errorGeneric: '出错了，请重试。',
+      videoReadyLabel: '你的原创视频已生成',
+      downloadCta: '下载 MP4',
+      generatingCta: '正在生成你的视频…',
     },
     complianceResult:
       '以上仅为结构建议。生成的内容是你自己的原创作品——发布前请自行审核，切勿直接使用他人的画面或音频。',
@@ -269,6 +279,9 @@ export const REMIX_COPY: Record<RemixLocale, RemixCopy> = {
       errorInvalid: '這不像是一個有效的 TikTok 影片連結，請貼上完整的影片位址。',
       errorRate: '請求過於頻繁，請等待一分鐘後重試。',
       errorGeneric: '出錯了，請重試。',
+      videoReadyLabel: '你的原創影片已生成',
+      downloadCta: '下載 MP4',
+      generatingCta: '正在生成你的影片…',
     },
     complianceResult:
       '以上僅為結構建議。生成的內容是你自己的原創作品——發布前請自行審核，切勿直接使用他人的畫面或音訊。',
