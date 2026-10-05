@@ -4,6 +4,16 @@ import path from 'node:path';
 
 export type AgentJobStatus = 'queued' | 'processing' | 'completed' | 'failed';
 
+/**
+ * 任务类型。本地 agent 按自身能力拉取，避免把 transcribe 派发给无 ASR 的机器。
+ *  - highlight：抓取/分析 + 本地剪辑（原默认行为）
+ *  - transcribe：本地 ASR 转写
+ *  - render：本地成片渲染
+ */
+export type AgentJobType = 'highlight' | 'transcribe' | 'render';
+
+export const AGENT_JOB_TYPES: AgentJobType[] = ['highlight', 'transcribe', 'render'];
+
 export interface AgentClip {
   id: string;
   title: string;
@@ -28,6 +38,7 @@ export interface AgentHighlight {
 
 export interface AgentJob {
   id: string;
+  type: AgentJobType;
   videoUrl: string;
   userId: string;
   desiredClipCount: number;
@@ -89,6 +100,7 @@ export async function createAgentJob(params: {
   videoUrl: string;
   userId: string;
   desiredClipCount?: number;
+  type?: AgentJobType;
 }): Promise<AgentJob> {
   return withWriteLock(async () => {
     const store = await readStore();
@@ -99,6 +111,7 @@ export async function createAgentJob(params: {
         : 0;
     const job: AgentJob = {
       id: `job-${randomUUID()}`,
+      type: AGENT_JOB_TYPES.includes(params.type as AgentJobType) ? (params.type as AgentJobType) : 'highlight',
       videoUrl: params.videoUrl,
       userId: params.userId,
       desiredClipCount: desiredClipCount > 0 ? Math.max(1, Math.min(10, desiredClipCount)) : 0,
@@ -120,12 +133,24 @@ export async function getAgentJob(jobId: string): Promise<AgentJob | null> {
   return store.jobs.find(j => j.id === jobId) || null;
 }
 
-export async function pullNextAgentJob(agentId: string): Promise<AgentJob | null> {
+export async function pullNextAgentJob(
+  agentId: string,
+  capabilities?: AgentJobType[],
+): Promise<AgentJob | null> {
   return withWriteLock(async () => {
     const store = await readStore();
     const now = new Date().toISOString();
-    const job = store.jobs.find(j => j.status === 'queued');
+    const allowed = Array.isArray(capabilities) && capabilities.length > 0
+      ? new Set(capabilities)
+      : null;
+    const job = store.jobs.find((j) => {
+      if (j.status !== 'queued') return false;
+      if (!allowed) return true;
+      const type: AgentJobType = AGENT_JOB_TYPES.includes(j.type) ? j.type : 'highlight';
+      return allowed.has(type);
+    });
     if (!job) return null;
+    if (!AGENT_JOB_TYPES.includes(job.type)) job.type = 'highlight';
     job.status = 'processing';
     job.claimedBy = agentId;
     job.updatedAt = now;

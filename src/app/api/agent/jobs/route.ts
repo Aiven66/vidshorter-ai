@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { createAgentJob } from '@/lib/server/agent-job-store';
+import { createAgentJob, AGENT_JOB_TYPES, type AgentJobType } from '@/lib/server/agent-job-store';
 import { isSupabaseConfigured } from '@/storage/database/supabase-client';
 
 export const runtime = 'nodejs';
@@ -24,12 +24,14 @@ export async function POST(req: NextRequest) {
     videoUrl?: string;
     userId?: string;
     desiredClipCount?: number;
+    type?: string;
   };
 
   const videoUrl = typeof body?.videoUrl === 'string' ? body.videoUrl.trim() : '';
   const requestedUserId = typeof body?.userId === 'string' ? body.userId.trim() : '';
   const desiredClipCount =
     typeof body?.desiredClipCount === 'number' ? body.desiredClipCount : undefined;
+  const type = AGENT_JOB_TYPES.includes(body?.type as AgentJobType) ? (body?.type as AgentJobType) : undefined;
 
   if (!videoUrl) {
     return new Response(JSON.stringify({ error: 'Missing videoUrl' }), { status: 400 });
@@ -51,6 +53,7 @@ export async function POST(req: NextRequest) {
     videoUrl,
     userId,
     desiredClipCount,
+    type,
   });
 
   return new Response(JSON.stringify({ job }), {
