@@ -8,6 +8,17 @@ function run(cmd, args, cwd, env) {
   if (res.status !== 0) process.exit(res.status ?? 1);
 }
 
+/** best-effort 版本：失败只告警、不中断构建（用于可选增强产物的准备）。 */
+function runBestEffort(cmd, args, cwd, env) {
+  const res = spawnSync(cmd, args, { cwd, stdio: 'inherit', env: env ? { ...process.env, ...env } : process.env });
+  if (res.status !== 0) {
+    console.warn(
+      `[prepare-runner] 可选步骤失败（已忽略）: ${cmd} ${args.join(' ')} -> exit ${res.status ?? res.error}`,
+    );
+  }
+  return res.status === 0;
+}
+
 async function copyDir(src, dst) {
   await fsp.mkdir(dst, { recursive: true });
   const items = await fsp.readdir(src, { withFileTypes: true });
@@ -124,6 +135,9 @@ async function main() {
   try {
     run('node', [path.join(__dirname, 'prepare-ytdlp.js')], path.join(root, 'apps', 'macos-agent'));
     run('node', [path.join(__dirname, 'prepare-whisper.js')], path.join(root, 'apps', 'macos-agent'));
+    // sherpa-onnx（SenseVoice 转写 + 说话人分离）是 whisper 之外的增强引擎，缺失时可自动回落，
+    // 故用 best-effort：失败仅告警，不阻断构建。
+    runBestEffort('node', [path.join(__dirname, 'prepare-sherpa-asr.js')], path.join(root, 'apps', 'macos-agent'));
 
     run('pnpm', ['agent:build'], root);
     run('pnpm', ['next', 'build', '--webpack'], root, {

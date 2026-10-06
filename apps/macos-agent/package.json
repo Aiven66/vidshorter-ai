@@ -6,6 +6,7 @@
   "scripts": {
     "prepare:runner": "node scripts/prepare-runner.js",
     "prepare:whisper": "node scripts/prepare-whisper.js",
+    "prepare:sherpa": "node scripts/prepare-sherpa-asr.js",
     "finalize:mac": "node scripts/finalize-mac-app.js",
     "prebuild:dmg": "node scripts/cleanup-dmg-mounts.js",
     "dist:dmg:fallback": "node scripts/build-dmg-hybrid.js",

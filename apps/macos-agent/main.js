@@ -1352,7 +1352,11 @@ function localBinDirs() {
 
 ipcMain.handle('local-models:status', async () => {
   const store = createModelStore({ modelsDir: localWhisperDir(), binDir: localBinDirs()[0] });
-  const engine = detectEngine({ modelsDir: store.modelsDir, binDirs: localBinDirs() });
+  const engine = detectEngine({
+    modelsDir: store.modelsDir,
+    binDirs: localBinDirs(),
+    sherpaBinDirs: localSherpaBinDirs(),
+  });
   return { ...store.status(), engine };
 });
 
@@ -1364,12 +1368,40 @@ ipcMain.handle('local-models:prepare', async (event, input) => {
   });
 });
 
+/**
+ * 随包分发的 sherpa-onnx ASR 目录（prepare-sherpa-asr.js 产出）。
+ * 与 kokoro TTS 的 sherpa-onnx/bin 隔离，避免 dylib ABI 互相影响。
+ */
+function localSherpaBinDirs() {
+  const res = process.resourcesPath || '';
+  const dirs = [
+    path.join(__dirname, 'resources', 'sherpa-onnx', 'asr', 'bin'),
+    path.join(res, 'sherpa-onnx', 'asr', 'bin'),
+    path.join(res, 'app.asar.unpacked', 'sherpa-onnx', 'asr', 'bin'),
+    path.join(res, 'sherpa-onnx', 'bin'),
+  ];
+  const seen = new Set();
+  return dirs
+    .map((d) => d.replace(/\.asar([/\\])/, '.asar.unpacked$1'))
+    .filter((d) => d && !seen.has(d) && seen.add(d));
+}
+
 function createLocalTranscriber() {
+  const sherpaBinDirs = localSherpaBinDirs();
+  const detected = detectEngine({
+    modelsDir: localWhisperDir(),
+    binDirs: localBinDirs(),
+    sherpaBinDirs,
+  });
+  // 说话人分离配置交给转写器：缺失/失败都会被内部忽略（不影响转写）。
+  const diarization = (detected.engines && detected.engines.senseVoice && detected.engines.senseVoice.diarization) || null;
   return createTranscriber({
     modelsDir: localWhisperDir(),
     cacheDir: path.join(app.getPath('userData'), 'transcripts'),
     ffmpegPath: ffmpegPath(),
     binDirs: localBinDirs(),
+    sherpaBinDirs,
+    diarization,
   });
 }
 
@@ -1379,6 +1411,7 @@ ipcMain.handle('local-transcribe', async (_event, input) => {
     locale: input?.locale ? String(input.locale) : undefined,
     quality: input?.quality ? String(input.quality) : undefined,
     wantWords: input?.wantWords !== false,
+    engine: input?.engine ? String(input.engine) : undefined,
   });
 });
 
@@ -1458,6 +1491,7 @@ async function planLocalHighlights(input) {
         locale: locale || undefined,
         quality: input?.quality ? String(input.quality) : undefined,
         wantWords: true,
+        engine: input?.engine ? String(input.engine) : undefined,
       });
       cues = Array.isArray(res?.cues) ? res.cues : [];
       words = Array.isArray(res?.words) ? res.words : [];
@@ -1517,7 +1551,7 @@ async function planLocalHighlights(input) {
 
 ipcMain.handle('local-highlights:plan', async (_event, input) => {
   const { planned, duration, asr, analysis } = await planLocalHighlights(input);
-  return { ...planned, duration, engine: 'whisper.cpp', asr, analysis };
+  return { ...planned, duration, engine: asr.engine || '', asr, analysis };
 });
 
 // ==================== LOCAL DOWNLOADER (P0-4 本地 YouTube 下载器) ====================
