@@ -518,6 +518,58 @@ function karaokeLineText(tokens: { tok: string; w: number; sp: boolean }[], line
 }
 
 /**
+ * 生成逐词卡拉OK 的 ASS 行文本（`\k` 标签，按词宽占比把总时长分摊到每个词）。
+ *
+ * 智能分组为 ≤ maxRows 行（行内宽度 ≤ maxWidth 权重），多行按行宽占比共享总时长；
+ * 返回以 `\N` 连接的 ASS 文本，无有效 token 时返回空串。
+ *
+ * 供 clip 卡拉OK 字幕与 AI 成片（render.ts）共用，避免两套实现漂移。
+ *
+ * @param text 一行文本（已转义、无换行）
+ * @param totalMs 该行/该分镜的总时长（毫秒）
+ * @param maxRows 最大行数（默认 2）
+ * @param maxWidth 行内宽度上限（拉丁按字符数、CJK 每字记 2；默认 40）
+ */
+export function buildKaraokeText(
+  text: string,
+  totalMs: number,
+  maxRows = 2,
+  maxWidth = 40,
+): string {
+  const tokens = karaokeTokens(text);
+  if (tokens.length === 0) return '';
+
+  const rows: { tokens: typeof tokens; w: number }[] = [];
+  let cur: typeof tokens = [];
+  let curW = 0;
+  for (const t of tokens) {
+    if (curW + t.w > maxWidth && cur.length) {
+      rows.push({ tokens: cur, w: curW });
+      cur = [];
+      curW = 0;
+      if (rows.length >= maxRows) break;
+    }
+    cur.push(t);
+    curW += t.w;
+  }
+  if (cur.length && rows.length < maxRows) rows.push({ tokens: cur, w: curW });
+  if (rows.length === 0) return '';
+
+  const cueMs = Math.max(300, Math.round(totalMs));
+  const totalRowW = rows.reduce((s, r) => s + r.w, 0) || 1;
+  let usedMs = 0;
+  const rowTexts: string[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    const lineMs = i === rows.length - 1
+      ? Math.max(100, cueMs - usedMs)
+      : Math.max(100, Math.round((rows[i].w / totalRowW) * cueMs));
+    usedMs += lineMs;
+    rowTexts.push(karaokeLineText(rows[i].tokens, lineMs));
+  }
+  return rowTexts.join('\\N');
+}
+
+/**
  * 生成卡拉OK 动态字幕 ASS 文件（逐词高亮，SecondaryColour 亮黄）并返回路径。
  * 无 tokens 时返回 null。PlayRes 按 orientation 自适应（横屏 1280x720 / 竖屏 1080x1920），
  * 使字幕字号在输出分辨率下直接合适（不依赖 force_style 缩放）。
@@ -564,41 +616,14 @@ export async function buildKaraokeAssFile(
   for (const cue of cues) {
     const text = escapeAss(cue.text);
     if (!text) continue;
-    const tokens = karaokeTokens(text);
-    if (tokens.length === 0) continue;
-
-    // 智能分组行（≤40 宽度，最多 2 行）；多行共享 cue 时长（按行宽占比分配）。
-    const rows: { tokens: typeof tokens; w: number }[] = [];
-    let cur: typeof tokens = [];
-    let curW = 0;
-    for (const t of tokens) {
-      if (curW + t.w > 40 && cur.length) {
-        rows.push({ tokens: cur, w: curW });
-        cur = [];
-        curW = 0;
-        if (rows.length >= 2) break; // 已 2 行，丢弃剩余（保持字幕简洁）
-      }
-      cur.push(t);
-      curW += t.w;
-    }
-    if (cur.length && rows.length < 2) rows.push({ tokens: cur, w: curW });
-
     const cueMs = Math.max(300, Math.round((cue.end - cue.start) * 1000));
-    const totalW = rows.reduce((s, r) => s + r.w, 0) || 1;
-    let usedMs = 0;
-    const rowTexts: string[] = [];
-    for (let i = 0; i < rows.length; i++) {
-      const lineMs = i === rows.length - 1
-        ? Math.max(100, cueMs - usedMs)
-        : Math.max(100, Math.round((rows[i].w / totalW) * cueMs));
-      usedMs += lineMs;
-      rowTexts.push(karaokeLineText(rows[i].tokens, lineMs));
-    }
+    const karaokeText = buildKaraokeText(text, cueMs, 2, 40);
+    if (!karaokeText) continue;
 
     // 时间单调递增（与静态字幕一致）
     const clipStart = Math.min(cue.end, Math.max(0, cue.start));
     const clipEnd = Math.max(clipStart + 0.2, cue.end);
-    lines.push(`Dialogue: 0,${fmtTime(clipStart)},${fmtTime(clipEnd)},Sub,,0,0,0,,${rowTexts.join('\\N')}`);
+    lines.push(`Dialogue: 0,${fmtTime(clipStart)},${fmtTime(clipEnd)},Sub,,0,0,0,,${karaokeText}`);
   }
 
   if (lines.length === 0) return null;

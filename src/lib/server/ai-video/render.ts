@@ -25,7 +25,7 @@ import {
   stitchClipsXfade,
   stitchClipsConcat,
 } from '../recap/render';
-import { setupFontConfig, DEFAULT_SUBTITLE_STYLE, type SubtitleStyle } from '../subtitles';
+import { setupFontConfig, buildKaraokeText, DEFAULT_SUBTITLE_STYLE, type SubtitleStyle } from '../subtitles';
 import { synthesizeVoiceover, type VoiceProsody } from '../voiceover';
 import { getWatermarkPngPath } from '../video-export';
 import {
@@ -65,6 +65,17 @@ function escapeAssText(text: string): string {
     .trim();
 }
 
+/** #RRGGBB → {r,g,b}；非法输入返回 null（调用方跳过该层）。 */
+function hexToRgb(hex?: string): { r: number; g: number; b: number } | null {
+  const m = /^#?([0-9a-f]{6})$/i.exec((hex || '').trim());
+  if (!m) return null;
+  return {
+    r: parseInt(m[1].slice(0, 2), 16),
+    g: parseInt(m[1].slice(2, 4), 16),
+    b: parseInt(m[1].slice(4, 6), 16),
+  };
+}
+
 /** #RRGGBB → ASS 的 &HAABBGGRR（ASS 是 BGR 序）。非法输入回落白色。 */
 function hexToAssColor(hex: string, alpha = '00'): string {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
@@ -98,7 +109,11 @@ export async function buildSceneAssFile(
   const outlineColor = light ? '&H00FFFFFF' : '&H00101010';
   const titleOutline = light ? 1 : outline + 1;
   const subOutline = light ? 1 : outline;
-  const subColor = light ? hexToAssColor(visual?.ink || '#111111') : '&H00FFFFFF';
+  // 逐词卡拉OK：实测 libass 的 \k 用 **PrimaryColour 画"已读到"的词**、SecondaryColour
+  // 画未读到的词（用 ffmpeg+libass 抽帧验证：词从行首起随朗读逐个由 Secondary 翻成 Primary）。
+  // 因此 PrimaryColour = 强调色（已读到→点亮），SecondaryColour = 基准色（未读到）。
+  const subBase = light ? hexToAssColor(visual?.ink || '#111111') : '&H00FFFFFF';
+  const subHighlight = hexToAssColor(visual?.accent || '#FFD400');
   // 浅底不使用字幕黑框（黑框在浅色纸上非常突兀）
   const subBack = light ? '&H00000000' : style.background === 'box' ? '&H96000000' : '&H00000000';
   const brand = escapeAssText(opts?.brand || '');
@@ -115,7 +130,7 @@ export async function buildSceneAssFile(
     // Title：顶部居中大字（Alignment 8），MarginV 从上往下 300px
     `Style: Title, Noto Sans SC, ${titleSize}, ${titleColor}, &H000000FF, ${outlineColor}, &H00000000, ${titleBold}, 0, 0, 0, 100, 100, 0, 0, 1, ${titleOutline}, ${light ? 1 : 3}, 8, 70, 70, 300, 1`,
     // Sub：底部居中字幕（Alignment 2），MarginV 从下往上 300px（对齐 Pixelle image_full 的 bottom: 300px）
-    `Style: Sub, Noto Sans SC, 56, ${subColor}, &H000000FF, ${outlineColor}, ${subBack}, -1, 0, 0, 0, 100, 100, 0, 0, 1, ${subOutline}, 2, 2, 70, 70, 300, 1`,
+    `Style: Sub, Noto Sans SC, 64, ${subHighlight}, ${subBase}, ${outlineColor}, ${subBack}, -1, 0, 0, 0, 100, 100, 0, 0, 1, ${subOutline}, 3, 2, 70, 70, 300, 1`,
     // Foot：左下角品牌页脚（Alignment 1）
     `Style: Foot, Noto Sans SC, 30, ${light ? hexToAssColor(visual?.ink || '#111111') : '&H00FFFFFF'}, &H000000FF, ${outlineColor}, &H00000000, 0, 0, 0, 0, 100, 100, 0, 0, 1, 0, 0, 1, 90, 90, 150, 1`,
     '',
@@ -124,13 +139,23 @@ export async function buildSceneAssFile(
   ].join('\n');
 
   const events: string[] = [];
+  // 标题入场：淡入 + 轻微放大回弹（纯 ASS \t 动画，零渲染成本，对应 Capite/OpenCut 的
+  // "motion typography" 里最通用的 pop-in）。
+  const titleAnim = '{\\fad(200,160)\\t(0,300,\\fscx108\\fscy108)\\t(300,520,\\fscx100\\fscy100)}';
+  const subAnim = '{\\fad(90,0)}';
   for (const c of cues) {
     const start = assTime(c.start);
     const end = assTime(c.end);
     const headline = escapeAssText(c.headline);
     const narration = escapeAssText(c.narration);
-    if (headline) events.push(`Dialogue: 0,${start},${end},Title,,0,0,0,,${headline}`);
-    if (narration) events.push(`Dialogue: 0,${start},${end},Sub,,0,0,0,,${narration}`);
+    if (headline) events.push(`Dialogue: 0,${start},${end},Title,,0,0,0,,${titleAnim}${headline}`);
+    if (narration) {
+      // 逐词卡拉OK：按本分镜旁白时长把 \k 时长分摊到每个词（maxWidth 28 ≈ 竖屏 940px 行宽），
+      // 词随朗读逐一点亮。无 token 时回落静态整句，保证任何文案都能出字幕。
+      const span = Math.max(0.3, c.end - c.start);
+      const karaoke = buildKaraokeText(narration, span * 1000, 2, 28);
+      events.push(`Dialogue: 0,${start},${end},Sub,,0,0,0,,${subAnim}${karaoke || narration}`);
+    }
   }
   // 品牌页脚贯穿全片（对应 Pixelle 模版左下角的作者署名）
   const totalSec = opts?.totalSec && opts.totalSec > 0 ? opts.totalSec : cues[cues.length - 1].end;
@@ -297,14 +322,18 @@ export async function renderAiVideo(params: {
 
   // 转场重叠使净时间轴提前：每发生一次 xfade，其后内容整体前移 AI_VIDEO_XFADE_SEC。
   // concat 兜底是硬拼（不重叠），时间轴保持原样，绝不能位移。
+  //
+  // 同时把每条文字窗按「半个转场」内缩：xfade 期间前后两个分镜在画面上是叠化共存，
+  // 若标题/字幕窗口也重叠，会看到两行文字硬叠在一起（实测抽帧为糊成一团）。内缩半拍后
+  // 上一分镜的字幕在叠化中点即收，下一分镜的字幕在叠化中点才起，首尾相接且互不覆盖。
   if (usedXfade) {
-    for (let i = 0; i < cues.length; i++) {
+    const half = AI_VIDEO_XFADE_SEC / 2;
+    const n = cues.length;
+    for (let i = 0; i < n; i++) {
       const shift = i * AI_VIDEO_XFADE_SEC;
-      cues[i] = {
-        ...cues[i],
-        start: Math.max(0, cues[i].start - shift),
-        end: Math.max(0.4, cues[i].end - shift),
-      };
+      const start = Math.max(0, cues[i].start - shift + (i > 0 ? half : 0));
+      const end = cues[i].end - shift - (i < n - 1 ? half : 0);
+      cues[i] = { ...cues[i], start, end: Math.max(start + 0.3, end) };
     }
   }
 
@@ -324,6 +353,22 @@ export async function renderAiVideo(params: {
   const bgmStat = await stat(bgmCandidate).catch(() => null);
   if (bgmStat && bgmStat.size > 5_000) bgmPath = bgmCandidate;
 
+  // 底部进度条素材：一张与成片等宽的强调色实心条，供 overlay 按时间做"从 0 长满"动画。
+  // 为什么不用 drawbox 的时间表达式：drawbox 表达式里的 `t` 是"线宽"不是时间戳，
+  // `w='iw*min(t/T,1)'` 实测恒等于 iw（进度条永远是满的）。overlay 的 x 表达式才支持
+  // 真正的时间戳 t，因此把实心条从 -W 线性推到 0，得到真实的增长动画。
+  const barTotalSec = cues.length > 0 ? Math.max(0.5, cues[cues.length - 1].end) : 0;
+  const barRgb = hexToRgb(template.visual.accent);
+  const barHeight = 14;
+  let barPngPath = '';
+  if (barTotalSec > 0 && barRgb) {
+    barPngPath = join(tmpdir(), `aivideo-bar-${runId}.png`);
+    await sharp({ create: { width: W, height: barHeight, channels: 4, background: { ...barRgb, alpha: 0.98 } } })
+      .png()
+      .toFile(barPngPath);
+    tempPaths.push(barPngPath);
+  }
+
   const args: string[] = ['-y', '-i', stitchedPath];
   let wmIndex = -1;
   if (wmPng) {
@@ -334,6 +379,11 @@ export async function renderAiVideo(params: {
   if (bgmPath) {
     bgmIndex = args.filter((a) => a === '-i').length;
     args.push('-stream_loop', '-1', '-i', bgmPath);
+  }
+  let barIndex = -1;
+  if (barPngPath) {
+    barIndex = args.filter((a) => a === '-i').length;
+    args.push('-loop', '1', '-i', barPngPath);
   }
 
   const filters: string[] = [];
@@ -351,6 +401,16 @@ export async function renderAiVideo(params: {
     filters.push(`[${wmIndex}:v]scale=w=-2:h=64[wm]`);
     filters.push(`${videoBase}[wm]overlay=(main_w-overlay_w-24):(main_h-overlay_h-24):eof_action=repeat[vout]`);
     videoBase = '[vout]';
+  }
+  // 底部进度条：先铺半透明暗轨、再用强调色条从 0 长满整宽（对应 Auto-Clip & Burn 的
+  // retention bar，给观众明确的"还剩多少"预期）。暗轨是必需的——分镜帧本身在贴底处已有
+  // 一条强调色装饰条，若不加暗轨，进度色与装饰条同色同位置，肉眼完全看不出进度增长。
+  if (barIndex >= 0) {
+    filters.push(`${videoBase}drawbox=x=0:y=ih-${barHeight}:w=iw:h=${barHeight}:color=0x000000@0.34:t=fill[vtrack]`);
+    filters.push(
+      `[vtrack][${barIndex}:v]overlay=x='-${W}+${W}*min(t/${barTotalSec.toFixed(3)},1)':y=${H - barHeight}:eof_action=repeat[vbar]`,
+    );
+    videoBase = '[vbar]';
   }
   const videoLabel = filters.length > 0 ? videoBase : '0:v';
 

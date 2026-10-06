@@ -286,7 +286,16 @@ export function buildKenBurnsVf(
   fps = 30,
 ): string {
   const d = Math.max(1, durSec).toFixed(3);
-  const sweep = `0.5-0.35*cos(PI*t/${d})`;
+  // ≥4.5s 的分镜用「两拍」运镜：前半段横扫 0.12→0.88，中点瞬间跳回 0.12 再扫到 0.88。
+  // 同一张静帧在两个取景之间硬切，让长镜头读起来像两个镜头，零素材成本地提升剪辑节奏。
+  let sweep: string;
+  if (durSec >= 4.5) {
+    const half = (durSec / 2).toFixed(3);
+    sweep = `if(lt(t,${half}),0.12+0.76*(t/${half}),0.12+0.76*((t-${half})/${half}))`;
+  } else {
+    // 短分镜：单次缓入缓出横扫，避免抖得太快
+    sweep = `0.5-0.35*cos(PI*t/${d})`;
+  }
   const xExpr = index % 2 === 0 ? sweep : '0.5';
   const yExpr = index % 2 === 0 ? '0.5' : sweep;
   return [
