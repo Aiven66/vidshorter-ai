@@ -51,7 +51,11 @@ export async function POST(request: NextRequest) {
   const locale = typeof body.locale === 'string' ? body.locale.slice(0, 10) : undefined;
   const streamUrl = typeof body.streamUrl === 'string' ? body.streamUrl.trim() : undefined;
   const streamMetadata = body.streamMetadata && typeof body.streamMetadata === 'object' ? body.streamMetadata as Record<string, unknown> : undefined;
-  const desiredClipCount = typeof body.desiredClipCount === 'number' ? Math.max(1, Math.min(10, Math.floor(body.desiredClipCount))) : undefined;
+  const desiredClipCount = typeof body.desiredClipCount === 'number' ? Math.max(1, Math.min(12, Math.floor(body.desiredClipCount))) : undefined;
+  // 单条成片目标时长（秒）：Shorts 成片走「多而短」，传 30s 等。
+  const clipTargetSeconds = typeof body.clipSeconds === 'number'
+    ? Math.max(10, Math.min(90, Math.floor(body.clipSeconds)))
+    : undefined;
   // P0-2：注册后继承试跑分析结果。仅透传；服务端校验失败会静默回落正常分析。
   const trialId = typeof body.trialId === 'string' ? body.trialId.trim().slice(0, 64) : undefined;
 
@@ -174,6 +178,7 @@ export async function POST(request: NextRequest) {
     ...(streamUrl ? { streamUrl } : {}),
     ...(streamMetadata ? { streamMetadata } : {}),
     ...(desiredClipCount ? { desiredClipCount } : {}),
+    ...(clipTargetSeconds ? { clipTargetSeconds } : {}),
     ...(trialId ? { trialId } : {}),
   };
 

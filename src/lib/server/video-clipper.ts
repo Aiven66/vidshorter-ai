@@ -195,7 +195,19 @@ function ensureEven(n: number) {
   return n % 2 === 0 ? n : n - 1;
 }
 
-function clipDurations(duration: number) {
+/**
+ * 单条成片的时长分级。
+ *
+ * `targetSeconds` 为显式覆盖（Shorts 成片走「多而短」，传 30s 等）：
+ * 覆盖时按它推导出 min/max（min ≈ 0.7×target、max ≈ target+5），保证每条都落在
+ * 目标附近的紧凑区间（如 30s → 21~35s），而不是被自动分级拉长到 60s。
+ */
+function clipDurations(duration: number, targetSeconds?: number) {
+  const override = Number(targetSeconds);
+  if (Number.isFinite(override) && override >= 10 && override <= 90) {
+    const target = Math.round(override);
+    return { target, min: Math.max(10, Math.round(target * 0.7)), max: target + 5 };
+  }
   const d = Math.max(0, Math.floor(duration));
   if (d <= 8 * 60) return { target: 35, min: 20, max: 45 };
   if (d <= 20 * 60) return { target: 50, min: 35, max: 60 };
@@ -338,26 +350,59 @@ function cleanCueText(value: string) {
   return value.replace(/<[^>]+>/g, ' ').replace(/\[[^\]]+\]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-function buildHighlightReason(text: string, score: number) {
-  const t = (text || '').toLowerCase();
-  const hasPunct = /[!?！？]/.test(text);
-  const hasKeyword = [
+/**
+ * 入选理由（差异化）。
+ *
+ * 旧实现只返回 3 句固定文案，导致结果卡片上「理由」几乎完全一样。新实现把
+ * **该片段自身的字幕内容**提炼成一句可读的理由：
+ *   - 先按信号（提问 / 数据 / 关键词 / 高密度）决定「定性前缀」；
+ *   - 再拼上该片段里最有钩子的一句原话，因此每条理由天然不同；
+ *   - 无字幕（纯兜底窗口）时退化为「位置 + 时长」的客观描述，同样逐条不同。
+ */
+function buildHighlightReason(text: string, startSeconds = 0, durationSeconds = 0) {
+  const cleaned = (text || '').replace(/\s+/g, ' ').trim();
+  const t = cleaned.toLowerCase();
+  const hasQuestion = /[?？]/.test(cleaned) || /\b(why|how|what|when|should|could)\b/.test(t);
+  const hasNumber = /\d/.test(cleaned);
+  const keywords = [
     'important', 'secret', 'best', 'amazing', 'crazy', 'must', 'mistake', 'learn',
     '关键', '重点', '一定', '震惊', '厉害', '方法', '秘诀', '技巧',
-  ].some((k) => t.includes(k.toLowerCase()));
-  const dense = text.length >= 160;
-  if (hasPunct || score >= 8 || hasKeyword) {
-    return 'High information density with key moments, making it a strong highlight.';
+  ];
+  const hitKeyword = keywords.find((k) => t.includes(k.toLowerCase()));
+  const dense = cleaned.length >= 160;
+
+  const lead = hasQuestion
+    ? '提出疑问、制造悬念'
+    : hasNumber
+      ? '给出具体数据或步骤'
+      : hitKeyword
+        ? `强调核心要点「${hitKeyword}」`
+        : dense
+          ? '信息密度高、适合直接出片'
+          : '节奏完整、能独立成段';
+
+  // 从片段文本里挑一句最有钩子的原话作为理由的「证据」，保证逐条不同。
+  const clauses = cleaned
+    .split(/[.!?！？。；;]+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 8);
+  const evidence = (clauses.length > 0 ? clauses : [cleaned])
+    .map((c) => ({ c, len: c.length }))
+    .filter((x) => x.c.length >= 8)
+    .sort((a, b) => (a.len >= 20 && a.len <= 70 ? 0 : 1) - (b.len >= 20 && b.len <= 70 ? 0 : 1) || a.len - b.len)[0]?.c;
+  const quote = evidence
+    ? `：${evidence.length > 56 ? `${evidence.slice(0, 56).trim()}…` : evidence}`
+    : '';
+
+  if (!cleaned) {
+    return `第 ${formatSeconds(startSeconds)} 起约 ${Math.max(1, Math.round(durationSeconds))} 秒的候选片段，按时间轴均衡采样选出。`;
   }
-  if (dense) {
-    return 'Clear, content-rich segment selected as a concise highlight.';
-  }
-  return 'Representative moment selected to summarize the video.';
+  return `${lead}${quote}`;
 }
 
-function normalizeHighlights(input: Highlight[], duration: number) {
+function normalizeHighlights(input: Highlight[], duration: number, targetSeconds?: number) {
   const safeDuration = Math.max(duration, 60);
-  const cfg = clipDurations(safeDuration);
+  const cfg = clipDurations(safeDuration, targetSeconds);
   const normalized = input
     .filter((item) => item && typeof item === 'object')
     .map((item, index) => {
@@ -372,10 +417,6 @@ function normalizeHighlights(input: Highlight[], duration: number) {
         typeof item.summary === 'string' && item.summary.trim()
           ? item.summary.trim().slice(0, 220)
           : title;
-      const reason = buildHighlightReason(baseText, score);
-      const summary = baseText && baseText.length > 20
-        ? `${reason} ${baseText.slice(0, 120)}`
-        : reason;
 
       let start = Number.isFinite(item.start_time) ? Math.floor(item.start_time) : 0;
       let end = Number.isFinite(item.end_time)
@@ -389,6 +430,8 @@ function normalizeHighlights(input: Highlight[], duration: number) {
         end = safeDuration;
         start = Math.max(0, end - cfg.target);
       }
+      // 理由带上该片段自身的内容与位置 —— 每条天然不同，不再是一句模板文案。
+      const summary = buildHighlightReason(baseText, start, end - start);
       return { title, summary, engagement_score: score, start_time: start, end_time: end };
     })
     .sort((a, b) => a.start_time - b.start_time);
@@ -406,12 +449,30 @@ function normalizeHighlights(input: Highlight[], duration: number) {
       end_time: Math.min(adjustedEnd, adjustedStart + cfg.max),
     });
   }
-  return deduped.slice(0, MAX_HIGHLIGHTS);
+  return spreadScores(deduped.slice(0, MAX_HIGHLIGHTS));
 }
 
-function buildFallbackHighlights(duration: number) {
+/**
+ * 评分差异化。
+ *
+ * 旧实现的分数由关键词/标点/密度的加权和再 Math.min(10) 封顶，长视频里大量片段会被
+ * 一起顶到 10 分 —— 结果卡片上「评分全一样」。改为：保留内容信号算出的**相对次序**，
+ * 再按位次映射成严格递减的 10→1 分档，任意两条都不相同（≤10 条时必然全网不同）。
+ */
+function spreadScores(items: Highlight[]): Highlight[] {
+  if (items.length <= 1) return items;
+  const ranked = [...items].sort(
+    (a, b) => (b.engagement_score - a.engagement_score) || (a.start_time - b.start_time),
+  );
+  ranked.forEach((h, rank) => {
+    h.engagement_score = Math.max(1, 10 - rank);
+  });
+  return items;
+}
+
+function buildFallbackHighlights(duration: number, targetSeconds?: number) {
   const safeDuration = Math.max(duration, 60);
-  const cfg = clipDurations(safeDuration);
+  const cfg = clipDurations(safeDuration, targetSeconds);
   const maxClips = Math.min(MAX_HIGHLIGHTS, Math.floor(safeDuration / (cfg.min + 8)));
   const clipCount = Math.max(6, Math.min(MAX_HIGHLIGHTS, Math.min(maxClips, Math.round(safeDuration / 120) + 5)));
   const spacing = Math.floor(safeDuration / (clipCount + 1));
@@ -422,11 +483,14 @@ function buildFallbackHighlights(duration: number) {
         title: `Highlight ${i + 1}`,
         start_time: start,
         end_time: Math.min(start + cfg.target, safeDuration),
-        summary: 'AI-selected representative segment sampled across the video.',
-        engagement_score: 7,
+        // 无字幕兜底：不带内容，理由由 normalizeHighlights 按「位置 + 时长」客观描述，逐条不同。
+        summary: '',
+        // 原始分留同值，最终由 spreadScores 按位次拉开；这里给时间越靠前略高的先验。
+        engagement_score: 5 + (clipCount - i) * 0.1,
       };
     }),
     duration,
+    targetSeconds,
   );
 }
 
@@ -473,11 +537,11 @@ function buildHookTitle(text: string, start: number) {
   return title || `Highlight at ${formatSeconds(start)}`;
 }
 
-function buildHeuristicHighlights(cues: CaptionCue[], duration: number) {
-  if (cues.length === 0) return buildFallbackHighlights(duration);
+function buildHeuristicHighlights(cues: CaptionCue[], duration: number, targetSeconds?: number) {
+  if (cues.length === 0) return buildFallbackHighlights(duration, targetSeconds);
   const windows: Highlight[] = [];
   const step = 20;
-  const cfg = clipDurations(duration);
+  const cfg = clipDurations(duration, targetSeconds);
   const len = cfg.target;
   const keywords = [
     'important', 'secret', 'best', 'amazing', 'crazy', 'must', 'mistake', 'learn',
@@ -508,7 +572,7 @@ function buildHeuristicHighlights(cues: CaptionCue[], duration: number) {
     )) selected.push(c);
     if (selected.length === targetCount) break;
   }
-  return normalizeHighlights(selected.length >= 2 ? selected : buildFallbackHighlights(duration), duration);
+  return normalizeHighlights(selected.length >= 2 ? selected : buildFallbackHighlights(duration, targetSeconds), duration, targetSeconds);
 }
 
 // ── Ensure dirs ──────────────────────────────────────────────────────────────
@@ -1033,10 +1097,11 @@ async function getYouTubeInfoViaCFWorker(
   // Override maxHeight for SD fallback mode (forceMaxHeight=360 → request 360p from CF Worker).
   // This bypasses HD entirely and gets 360p combined stream which is more likely
   // to succeed when bot detection blocks 720p adaptiveFormats.
-  const defaultMaxHeight = getCfWorkerMaxHeight();
+  // 显式传入的 maxHeightOverride（按套餐裁定的清晰度）直接生效，最高 2160；
+  // 未传时回落到 CF Worker 默认上限（Vercel 720 / 本地 CLIP_MAX_HEIGHT）。
   const maxHeight = maxHeightOverride > 0
-    ? Math.min(maxHeightOverride, defaultMaxHeight)
-    : defaultMaxHeight;
+    ? Math.min(maxHeightOverride, 2160)
+    : getCfWorkerMaxHeight();
 
   // Check in-memory cache first — avoids hitting CF Worker repeatedly,
   // which triggers YouTube rate-limiting (502 errors on subsequent calls).
@@ -1742,7 +1807,7 @@ async function getYouTubeDurationFromWatchPage(videoId: string): Promise<number 
 }
 
 // ── YouTube analysis via YouTube.js / Invidious / Piped + transcript ─────────
-async function analyzeYouTubeViaPipedAndTranscript(videoUrl: string): Promise<VideoAnalysisResult> {
+async function analyzeYouTubeViaPipedAndTranscript(videoUrl: string, opts?: { targetSeconds?: number }): Promise<VideoAnalysisResult> {
   const videoId = extractYouTubeVideoId(videoUrl);
   if (!videoId) throw new Error('Invalid YouTube URL');
 
@@ -1852,7 +1917,7 @@ async function analyzeYouTubeViaPipedAndTranscript(videoUrl: string): Promise<Vi
     } catch { /* ignore */ }
   }
 
-  return { duration, title, highlights: buildHeuristicHighlights(cues, duration) };
+  return { duration, title, highlights: buildHeuristicHighlights(cues, duration, opts?.targetSeconds) };
 }
 
 // ── Cookie helpers (macOS local dev) ─────────────────────────────────────────
@@ -1940,13 +2005,13 @@ function parseYtDlpJson(stdout: string): Record<string, unknown> {
 }
 
 // ── YouTube analysis via yt-dlp ───────────────────────────────────────────────
-async function analyzeYouTubeVideo(videoUrl: string, workDir: string): Promise<VideoAnalysisResult> {
+async function analyzeYouTubeVideo(videoUrl: string, workDir: string, opts?: { targetSeconds?: number }): Promise<VideoAnalysisResult> {
   // On Vercel, yt-dlp cannot solve YouTube's JS signature challenges and
   // its repeated failed requests trigger YouTube rate-limiting (LOGIN_REQUIRED).
   // Skip yt-dlp entirely on Vercel and go straight to proxy-based analysis.
   if (FORCE_YOUTUBE_STREAM_FALLBACKS) {
     console.log('Vercel environment detected: skipping yt-dlp analysis, using proxy+transcript');
-    return analyzeYouTubeViaPipedAndTranscript(videoUrl);
+    return analyzeYouTubeViaPipedAndTranscript(videoUrl, opts);
   }
 
   const outputTemplate = path.join(workDir, 'analysis.%(ext)s');
@@ -1996,7 +2061,7 @@ async function analyzeYouTubeVideo(videoUrl: string, workDir: string): Promise<V
     // yt-dlp failed (expected on Vercel due to YouTube bot detection)
     const ytdlpErr = stderr.slice(0, 200) || (lastError instanceof Error ? lastError.message.slice(0, 200) : '');
     console.warn(`yt-dlp analysis failed (${ytdlpErr}), falling back to Piped+transcript…`);
-    return await analyzeYouTubeViaPipedAndTranscript(videoUrl);
+    return await analyzeYouTubeViaPipedAndTranscript(videoUrl, opts);
   }
 
   const info = parseYtDlpJson(stdout);
@@ -2004,7 +2069,7 @@ async function analyzeYouTubeVideo(videoUrl: string, workDir: string): Promise<V
   const title = typeof info.title === 'string' && info.title.trim() ? info.title.trim() : 'Source video';
   const subtitleFile = await findFirstFile(workDir, ['.vtt']);
   const cues = subtitleFile ? await parseVttFile(path.join(workDir, subtitleFile)) : [];
-  return { duration, title, highlights: buildHeuristicHighlights(cues, duration) };
+  return { duration, title, highlights: buildHeuristicHighlights(cues, duration, opts?.targetSeconds) };
 }
 
 // ── Bilibili analysis ─────────────────────────────────────────────────────────
@@ -2047,7 +2112,7 @@ async function getBilibiliVideoMeta(videoUrl: string): Promise<{ title: string; 
   };
 }
 
-async function analyzeBilibiliVideo(videoUrl: string, workDir: string): Promise<VideoAnalysisResult> {
+async function analyzeBilibiliVideo(videoUrl: string, workDir: string, opts?: { targetSeconds?: number }): Promise<VideoAnalysisResult> {
   // On Vercel: skip yt-dlp entirely — use Bilibili's public API for title/duration
   // (yt-dlp binary download is slow on cold start and the binary often fails from HKG1)
   if (process.env.VERCEL) {
@@ -2055,10 +2120,10 @@ async function analyzeBilibiliVideo(videoUrl: string, workDir: string): Promise<
     try {
       const { title, duration } = await getBilibiliVideoMeta(videoUrl);
       console.log(`Bilibili API: "${title.slice(0, 50)}", duration=${duration}s`);
-      return { duration, title, highlights: buildFallbackHighlights(duration) };
+      return { duration, title, highlights: buildFallbackHighlights(duration, opts?.targetSeconds) };
     } catch (err) {
       console.warn('Bilibili direct API failed:', err instanceof Error ? err.message.slice(0, 100) : err);
-      return { duration: 300, title: 'Bilibili Video', highlights: buildFallbackHighlights(300) };
+      return { duration: 300, title: 'Bilibili Video', highlights: buildFallbackHighlights(300, opts?.targetSeconds) };
     }
   }
   const outputTemplate = path.join(workDir, 'analysis.%(ext)s');
@@ -2099,10 +2164,10 @@ async function analyzeBilibiliVideo(videoUrl: string, workDir: string): Promise<
     console.warn(`Bilibili analysis fallback: yt-dlp failed (${msg.slice(0, 120)}), using direct API meta`);
     try {
       const { title, duration } = await getBilibiliVideoMeta(videoUrl);
-      return { duration, title, highlights: buildFallbackHighlights(duration) };
+      return { duration, title, highlights: buildFallbackHighlights(duration, opts?.targetSeconds) };
     } catch (err) {
       console.warn('Bilibili direct API failed:', err instanceof Error ? err.message.slice(0, 100) : err);
-      return { duration: 300, title: 'Bilibili Video', highlights: buildFallbackHighlights(300) };
+      return { duration: 300, title: 'Bilibili Video', highlights: buildFallbackHighlights(300, opts?.targetSeconds) };
     }
   }
 
@@ -2111,7 +2176,7 @@ async function analyzeBilibiliVideo(videoUrl: string, workDir: string): Promise<
   const title = typeof info.title === 'string' && info.title.trim() ? info.title.trim() : 'Bilibili video';
   const subtitleFile = await findFirstFile(workDir, ['.vtt']);
   const cues = subtitleFile ? await parseVttFile(path.join(workDir, subtitleFile)) : [];
-  return { duration, title, highlights: buildHeuristicHighlights(cues, duration) };
+  return { duration, title, highlights: buildHeuristicHighlights(cues, duration, opts?.targetSeconds) };
 }
 
 // ── Video download ─────────────────────────────────────────────────────────────
@@ -2708,8 +2773,9 @@ function wrapInStreamProxyIfNeeded(
     }
 
     const defaultMaxHeight = getCfWorkerMaxHeight();
+    // 显式传入（按套餐裁定）时直接生效，最高 2160；未传时回落默认上限。
     const maxHeight = maxHeightOverride > 0
-      ? Math.min(maxHeightOverride, defaultMaxHeight)
+      ? Math.min(maxHeightOverride, 2160)
       : defaultMaxHeight;
     const endpoint = new URL(cfWorkerUrl);
     endpoint.pathname = `${endpoint.pathname.replace(/\/$/, '')}/stream`;
@@ -3086,6 +3152,10 @@ async function createLocalClip(params: {
   // 可选：限制最终可内联的最大字节数。用于 /api/download-youtube-clip 这种
   // 对响应体大小有严格限制（Vercel 4.5/6MB）的端点。
   maxInlineBytes?: number;
+  // 清晰度上限（输出高度 px，按套餐裁定）。缺省走 VERCEL_SCALE 的默认上限。
+  targetHeight?: number;
+  // 目标 CRF；缺省走 INLINE_CRF / 远端 16 / 本地 17。
+  crf?: number;
 }): Promise<ClipResult> {
   await ensureDirectories();
   const ffmpegPath = await ensureFfmpegAvailable();
@@ -3145,10 +3215,18 @@ async function createLocalClip(params: {
   // On Vercel: use aggressive compression to keep output small for base64 inline transport.
   // 360p + CRF 28 + ultrafast → typically 1.5-4 MB for a 30-60s clip.
   const maxInlineBytes = Math.min(params.maxInlineBytes ?? MAX_INLINE_BYTES, MAX_INLINE_BYTES);
-  const videoFilter = SHOULD_INLINE_CLIPS
-    ? ['-vf', VERCEL_SCALE]
-    : ['-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2'];
-  const crf = SHOULD_INLINE_CLIPS ? INLINE_CRF : (isRemoteInput ? '16' : '17');
+  // 清晰度上限：调用方按套餐裁定（见 video-job.resolveQualityTier）。
+  // 传了就按它缩放，未传则回落到 VERCEL_SCALE 的默认上限（保持既有行为）。
+  const tierHeight = clampInt(params.targetHeight, 144, 2160, 0);
+  const tierWidth = tierHeight > 0 ? ensureEven(Math.round(tierHeight * 16 / 9)) : 0;
+  const videoFilter = tierHeight > 0
+    ? ['-vf', `scale=trunc(min(iw\\,${tierWidth})/2)*2:trunc(min(ih\\,${ensureEven(tierHeight)})/2)*2:force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2`]
+    : SHOULD_INLINE_CLIPS
+      ? ['-vf', VERCEL_SCALE]
+      : ['-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2'];
+  const crf = params.crf
+    ? String(clampInt(params.crf, 14, 34, 20))
+    : SHOULD_INLINE_CLIPS ? INLINE_CRF : (isRemoteInput ? '16' : '17');
   const preset = SHOULD_INLINE_CLIPS ? INLINE_PRESET : (isRemoteInput ? 'medium' : 'fast');
 
   const isInvidiousProxy = isRemoteInput && INVIDIOUS_INSTANCES.some(inst => params.inputPath.startsWith(inst));
@@ -3277,7 +3355,7 @@ async function createLocalClip(params: {
 
     if (SHOULD_INLINE_CLIPS && fileSizeBytes > maxInlineBytes) {
       const attempts = [
-        { crfDelta: 6, width: VERCEL_TARGET_WIDTH_NUM, height: VERCEL_TARGET_HEIGHT_NUM },
+        { crfDelta: 6, width: tierWidth || VERCEL_TARGET_WIDTH_NUM, height: tierHeight || VERCEL_TARGET_HEIGHT_NUM },
         { crfDelta: 10, width: 854, height: 480 },
         { crfDelta: 14, width: 640, height: 360 },
         { crfDelta: 18, width: 426, height: 240 },
@@ -3343,7 +3421,7 @@ async function createLocalClip(params: {
 }
 
 // ── Video analysis (public API) ────────────────────────────────────────────────
-async function analyzeVideo(videoUrl: string): Promise<VideoAnalysisResult> {
+async function analyzeVideo(videoUrl: string, opts?: { targetSeconds?: number }): Promise<VideoAnalysisResult> {
   const normalizedUrl = await normalizeVideoUrl(videoUrl);
   await ensureDirectories();
   const workDir = path.join(CACHE_DIR, sourceId(normalizedUrl));
@@ -3351,28 +3429,28 @@ async function analyzeVideo(videoUrl: string): Promise<VideoAnalysisResult> {
 
   if (isYouTubeUrl(normalizedUrl)) {
     try {
-      return await analyzeYouTubeVideo(normalizedUrl, workDir);
+      return await analyzeYouTubeVideo(normalizedUrl, workDir, opts);
     } catch (error) {
       console.warn('YouTube analysis failed completely, using fallback:', error instanceof Error ? error.message.slice(0, 100) : '');
       // Final fallback: try Piped/transcript one more time without yt-dlp
       try {
-        return await analyzeYouTubeViaPipedAndTranscript(normalizedUrl);
+        return await analyzeYouTubeViaPipedAndTranscript(normalizedUrl, opts);
       } catch {
-        return { duration: 600, title: 'YouTube video', highlights: buildFallbackHighlights(600) };
+        return { duration: 600, title: 'YouTube video', highlights: buildFallbackHighlights(600, opts?.targetSeconds) };
       }
     }
   }
 
   if (isBilibiliUrl(normalizedUrl)) {
     try {
-      return await analyzeBilibiliVideo(normalizedUrl, workDir);
+      return await analyzeBilibiliVideo(normalizedUrl, workDir, opts);
     } catch (error) {
       console.warn('Bilibili analysis failed, using fallback:', error instanceof Error ? error.message.slice(0, 100) : '');
-      return { duration: 180, title: 'Bilibili video', highlights: buildFallbackHighlights(180) };
+      return { duration: 180, title: 'Bilibili video', highlights: buildFallbackHighlights(180, opts?.targetSeconds) };
     }
   }
 
-  return { duration: 180, title: 'Source video', highlights: buildFallbackHighlights(180) };
+  return { duration: 180, title: 'Source video', highlights: buildFallbackHighlights(180, opts?.targetSeconds) };
 }
 
 /**
@@ -4112,10 +4190,17 @@ async function createClipFromYouTubeStream(params: {
   // Much faster (5-10x) but can only cut at keyframes.
   // Ideal for SD mode where speed is prioritized over frame-accurate cuts.
   fastCopy?: boolean;
+  /** 源流清晰度上限（按套餐裁定，见 video-job 的 resolveQualityTier）。 */
+  maxHeight?: number;
+  /** 目标 CRF（越低越清晰、体积越大）。 */
+  crf?: number;
 }): Promise<ClipResult | null> {
   const { videoId, title, summary, startTime, endTime, preResolvedStreamUrl, preResolvedMetadata } = params;
   const duration = Math.max(1, endTime - startTime);
   const internalBaseUrl = getAppBaseUrl();
+  // 清晰度：调用方传（按套餐），缺省回落到 360（保持旧行为）。
+  const clipMaxHeight = Math.max(144, Math.min(2160, Math.round(params.maxHeight || 360)));
+  const clipCrf = params.crf;
 
   // Collect candidate input URLs for ffmpeg fast-seek.
   // fast-seek only downloads the needed 60-second portion (~10-30MB at 360p),
@@ -4137,7 +4222,7 @@ async function createClipFromYouTubeStream(params: {
     const endpoint = new URL(cfWorkerUrl);
     endpoint.pathname = `${endpoint.pathname.replace(/\/$/, '')}/stream`;
     endpoint.searchParams.set('videoId', videoId);
-    endpoint.searchParams.set('maxHeight', '360');
+    endpoint.searchParams.set('maxHeight', String(clipMaxHeight));
     endpoint.searchParams.set('streamUrl', preResolvedStreamUrl);
     if (preResolvedMetadata?.userAgent) endpoint.searchParams.set('userAgent', preResolvedMetadata.userAgent);
     if (preResolvedMetadata?.visitorData) endpoint.searchParams.set('visitorData', preResolvedMetadata.visitorData);
@@ -4154,7 +4239,7 @@ async function createClipFromYouTubeStream(params: {
       const audioEndpoint = new URL(cfWorkerUrl);
       audioEndpoint.pathname = `${audioEndpoint.pathname.replace(/\/$/, '')}/stream`;
       audioEndpoint.searchParams.set('videoId', videoId);
-      audioEndpoint.searchParams.set('maxHeight', '360');
+      audioEndpoint.searchParams.set('maxHeight', String(clipMaxHeight));
       audioEndpoint.searchParams.set('streamUrl', preResolvedMetadata.audioUrl);
       audioEndpoint.searchParams.set('audio', '1');
       if (preResolvedMetadata?.userAgent) audioEndpoint.searchParams.set('userAgent', preResolvedMetadata.userAgent);
@@ -4173,7 +4258,7 @@ async function createClipFromYouTubeStream(params: {
   // when CF Worker /stream fast path fails due to colo-mismatch.
   try {
     console.log(`createClipFromYouTubeStream: trying Invidious local proxy...`);
-    const invidiousResult = await getInvidiousLocalProxiedStreams(videoId, 360);
+    const invidiousResult = await getInvidiousLocalProxiedStreams(videoId, clipMaxHeight);
     if (invidiousResult) {
       const invidiousHeaders = 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36\r\nAccept: */*\r\nAccept-Encoding: identity\r\n';
       const candidate: { url: string; headers: string; label: string; audioUrl?: string } = {
@@ -4202,7 +4287,7 @@ async function createClipFromYouTubeStream(params: {
   // /stream has stale-while-revalidate: even if fresh resolution fails, it
   // returns stale cached streamUrl (with IP-binding bypass).
   if (cfWorkerUrl) {
-    const slowStreamUrl = `${cfWorkerUrl}/stream?videoId=${encodeURIComponent(videoId)}&maxHeight=360`;
+    const slowStreamUrl = `${cfWorkerUrl}/stream?videoId=${encodeURIComponent(videoId)}&maxHeight=${clipMaxHeight}`;
     candidates.push({ url: slowStreamUrl, headers: bypassHeaders, label: 'CFWorkerSlowPath' });
     console.log(`createClipFromYouTubeStream: added CFWorkerSlowPath candidate`);
   }
@@ -4212,17 +4297,17 @@ async function createClipFromYouTubeStream(params: {
   // If /resolve succeeds, this is faster than SlowPath (no re-resolve in /stream).
   // If /resolve fails (YouTube rate-limiting), CF Worker returns stale cache.
   try {
-    console.log(`createClipFromYouTubeStream: calling getYouTubeStreamUrlWithFallbacks(videoId=${videoId}, maxHeight=360)...`);
-    const result = await getYouTubeStreamUrlWithFallbacks(videoId, 360);
+    console.log(`createClipFromYouTubeStream: calling getYouTubeStreamUrlWithFallbacks(videoId=${videoId}, maxHeight=${clipMaxHeight})...`);
+    const result = await getYouTubeStreamUrlWithFallbacks(videoId, clipMaxHeight);
     console.log(`createClipFromYouTubeStream: getYouTubeStreamUrlWithFallbacks returned streamUrl=${result.streamUrl ? result.streamUrl.slice(0, 100) : 'null'}${result.audioUrl ? ' + audio' : ''}`);
     if (result.streamUrl) {
       const isGooglevideo = result.streamUrl.includes('googlevideo.com');
       const wrappedUrl = isGooglevideo
-        ? wrapInStreamProxyIfNeeded(result.streamUrl, videoId, false, 360)
+        ? wrapInStreamProxyIfNeeded(result.streamUrl, videoId, false, clipMaxHeight)
         : result.streamUrl;
       const wrappedAudio = result.audioUrl
         ? (result.audioUrl.includes('googlevideo.com')
-            ? wrapInStreamProxyIfNeeded(result.audioUrl, videoId, true, 360)
+            ? wrapInStreamProxyIfNeeded(result.audioUrl, videoId, true, clipMaxHeight)
             : result.audioUrl)
         : undefined;
 
@@ -4268,7 +4353,7 @@ async function createClipFromYouTubeStream(params: {
   if (cfWorkerUrl) {
     try {
       console.log(`createClipFromYouTubeStream: trying full local stream candidate (${startTime}s-${endTime}s)`);
-      const fullStreamPath = await getFullYouTubeStreamLocalPath(videoId, 360);
+      const fullStreamPath = await getFullYouTubeStreamLocalPath(videoId, clipMaxHeight);
       if (fullStreamPath) {
         const result = await createLocalClip({
           inputPath: fullStreamPath,
@@ -4276,6 +4361,8 @@ async function createClipFromYouTubeStream(params: {
           endTime,
           title,
           fastCopy: false,
+          targetHeight: clipMaxHeight,
+          ...(clipCrf ? { crf: clipCrf } : {}),
         });
         console.log(`createClipFromYouTubeStream: full local stream candidate succeeded!`);
         return {
@@ -4316,6 +4403,8 @@ async function createClipFromYouTubeStream(params: {
         endTime,
         title,
         fastCopy: params.fastCopy && !audioUrl,
+        targetHeight: clipMaxHeight,
+        ...(clipCrf ? { crf: clipCrf } : {}),
         // Pass a timeout hint to createLocalClip (uses execFile timeout)
       });
       const timeoutPromise = new Promise<never>((_, reject) =>

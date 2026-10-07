@@ -3,6 +3,7 @@ import videoClipper from '@/lib/server/video-clipper';
 import { enqueueJob, type VideoJobMessage } from '@/lib/server/video-queue';
 import { CREDIT_COST, refundIfCharged } from '@/lib/server/video-refund';
 import { readTrialAnalysis } from '@/lib/server/guest-trial';
+import { resolveEffectivePlan } from '@/lib/server/effective-plan';
 import { pumpUserQueue } from '@/lib/server/video-batch-queue';
 import { TERMINAL_VIDEO_STATUSES, BATCH_KICK_MIN_AGE_MS } from '@/lib/video-batch';
 import {
@@ -48,6 +49,36 @@ export async function isAdminUser(client: SupabaseClient, userId: string): Promi
   } catch {
     return false;
   }
+}
+
+/**
+ * 清晰度分层（server-authoritative）。
+ *
+ * 「清晰度不够」的根因：clipping 管线把源流高度硬编码成 360p，再靠下载时二次放大，
+ * 放大不出细节。改为在**生成阶段**按套餐解析源流上限，让成片本身就是对应的清晰度：
+ *   - 免费     → 720p
+ *   - Starter  → 1080p
+ *   - Pro      → 2160p（源不支持时自动落到最佳可用）
+ *   - 管理员   → 2160p（最高）
+ *
+ * 高度只在这里裁定，**绝不接受客户端传入**（否则免费用户改请求体即可拿 4K）。
+ */
+export interface QualityTier {
+  maxHeight: number;
+  crf: number;
+  label: '720p' | '1080p' | '4K';
+}
+
+export async function resolveQualityTier(client: SupabaseClient, userId: string): Promise<QualityTier> {
+  try {
+    if (await isAdminUser(client, userId)) return { maxHeight: 2160, crf: 18, label: '4K' };
+    const ent = await resolveEffectivePlan(userId);
+    if (ent.plan === 'pro') return { maxHeight: 2160, crf: 18, label: '4K' };
+    if (ent.plan === 'starter') return { maxHeight: 1080, crf: 20, label: '1080p' };
+  } catch (e) {
+    console.warn('[video-job] resolveQualityTier failed, defaulting to 720p:', e instanceof Error ? e.message.slice(0, 160) : e);
+  }
+  return { maxHeight: 720, crf: 23, label: '720p' };
 }
 
 function getServiceRoleClient(): SupabaseClient | null {
@@ -276,7 +307,14 @@ async function persistClip(
 export async function produceClip(
   videoUrl: string,
   highlight: Highlight,
-  params: { preResolvedStreamUrl?: string; preResolvedMetadata?: Record<string, unknown> },
+  params: {
+    preResolvedStreamUrl?: string;
+    preResolvedMetadata?: Record<string, unknown>;
+    /** 源流清晰度上限（按套餐裁定，见 resolveQualityTier）。 */
+    maxHeight?: number;
+    /** 目标 CRF（越低越清晰、体积越大）。 */
+    crf?: number;
+  },
 ): Promise<AnalyzedClip> {
   const rawStart = Math.max(0, Number.isFinite(highlight.start_time) ? highlight.start_time : 0);
   const rawEnd = Math.max(0, Number.isFinite(highlight.end_time) ? highlight.end_time : rawStart + 60);
@@ -298,6 +336,8 @@ export async function produceClip(
         startTime: start,
         endTime: end,
         fastCopy: true,
+        ...(params.maxHeight ? { maxHeight: params.maxHeight } : {}),
+        ...(params.crf ? { crf: params.crf } : {}),
         ...(params.preResolvedStreamUrl
           ? { preResolvedStreamUrl: params.preResolvedStreamUrl, preResolvedMetadata: params.preResolvedMetadata as never }
           : {}),
@@ -332,7 +372,7 @@ export async function produceClip(
 
   // Non-YouTube (Bilibili / hosted upload): download + local cut.
   try {
-    const source = await videoClipper.downloadSourceVideo(videoUrl, { forceMaxHeight: 360 });
+    const source = await videoClipper.downloadSourceVideo(videoUrl, { forceMaxHeight: params.maxHeight || 720 });
     if (!source?.inputPath) throw new Error('download returned no file');
     const result = await videoClipper.createLocalClip({
       inputPath: source.inputPath,
@@ -340,6 +380,8 @@ export async function produceClip(
       endTime: end,
       title: highlight.title,
       fastCopy: true,
+      ...(params.maxHeight ? { targetHeight: params.maxHeight } : {}),
+      ...(params.crf ? { crf: params.crf } : {}),
     });
     if (!result?.dataUrl && !result?.publicUrl) throw new Error('clip produced no url');
     return {
@@ -392,7 +434,8 @@ async function runAnalyze(client: SupabaseClient, msg: VideoJobMessage): Promise
   }
   if (!analysis) {
     try {
-      analysis = await videoClipper.analyzeVideo(videoUrl);
+      // Shorts 成片走「多而短」：clipTargetSeconds 透传到分析器，决定每条高光的窗口长度。
+      analysis = await videoClipper.analyzeVideo(videoUrl, { targetSeconds: msg.clipTargetSeconds });
     } catch (e) {
       await setVideo(client, videoId, { status: 'failed', progress: 0, error_message: (e instanceof Error ? e.message : 'AI analysis failed.') });
       // P0-1 失败零损失：失败的终态一律走一次幂等退款（此处通常尚未扣费，属空操作，仅统一不变式）。
@@ -409,11 +452,11 @@ async function runAnalyze(client: SupabaseClient, msg: VideoJobMessage): Promise
   // evenly instead of taking the first N — the degraded (offline/LLM-less)
   // analyzer emits evenly spaced candidates, and first-N would be intro-biased.
   const allHighlights = analysis.highlights as Highlight[];
-  const requestedCount = clampInt(msg.desiredClipCount, 1, 10, 0);
+  const requestedCount = clampInt(msg.desiredClipCount, 1, 12, 0);
   const highlights =
     requestedCount > 0 && allHighlights.length > requestedCount
       ? Array.from({ length: requestedCount }, (_, i) => allHighlights[Math.floor((i * allHighlights.length) / requestedCount)])
-      : allHighlights.slice(0, 10);
+      : allHighlights.slice(0, 12);
   if (highlights.length === 0) {
     await setVideo(client, videoId, { status: 'failed', progress: 0, error_message: 'No highlight moments found. Try another video.' });
     // P0-1 失败零损失：见上。失败终态保证用户积分分文未损。
@@ -443,7 +486,7 @@ async function runAnalyze(client: SupabaseClient, msg: VideoJobMessage): Promise
   });
 
   // Enqueue one micro-task per highlight (or run inline for the fallback dev mode).
-  const desiredCount = clampInt(msg.desiredClipCount, 1, 10, 0) || recommendClipCount(analysis.duration || 0);
+  const desiredCount = clampInt(msg.desiredClipCount, 1, 12, 0) || recommendClipCount(analysis.duration || 0);
   for (let i = 0; i < highlights.length; i += 1) {
     const clipMsg: VideoJobMessage = {
       step: 'clip',
@@ -457,6 +500,7 @@ async function runAnalyze(client: SupabaseClient, msg: VideoJobMessage): Promise
       streamMetadata: msg.streamMetadata,
       index: i,
       desiredClipCount: desiredCount,
+      clipTargetSeconds: msg.clipTargetSeconds,
     };
     // Durable queue → real micro-task. No queue → run inline sequentially.
     const queued = await enqueueJob(clipMsg);
@@ -484,7 +528,14 @@ async function runClip(client: SupabaseClient, msg: VideoJobMessage): Promise<vo
 
   const preResolvedStreamUrl = msg.streamUrl;
   const preResolvedMetadata = msg.streamMetadata as Record<string, unknown> | undefined;
-  const { artifact, duration: clipDuration } = await produceClip(videoUrl, highlight, { preResolvedStreamUrl, preResolvedMetadata });
+  // 清晰度分层：按订阅/角色裁定源流上限（免费 720 / Starter 1080 / Pro·管理员 2160）。
+  const tier = await resolveQualityTier(client, userId);
+  const { artifact, duration: clipDuration } = await produceClip(videoUrl, highlight, {
+    preResolvedStreamUrl,
+    preResolvedMetadata,
+    maxHeight: tier.maxHeight,
+    crf: tier.crf,
+  });
 
   // Persist the short clip (idempotent per index). Remove any prior row for this
   // index — legacy rows may hold either a `data-url:${clipKey}` placeholder or a

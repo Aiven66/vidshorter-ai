@@ -199,7 +199,7 @@ const translations = {
     },
     input: {
       title: '貼上長影片連結',
-      subtitle: '9:16 直式 · AI 字幕 · 3 條成片，每條 ≤60 秒',
+      subtitle: '9:16 直式 · AI 字幕 · 6 條成片，每條 ≤30 秒',
       placeholder: '貼上 YouTube / B站 長影片連結...',
     },
     generate: '生成直式 Shorts',

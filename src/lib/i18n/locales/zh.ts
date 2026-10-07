@@ -251,7 +251,7 @@ const translations = {
     },
     input: {
       title: '粘贴长视频链接',
-      subtitle: '9:16 竖屏 · AI 字幕 · 3 条成片，每条 ≤60 秒',
+      subtitle: '9:16 竖屏 · AI 字幕 · 6 条成片，每条 ≤30 秒',
       placeholder: '粘贴 YouTube / B站 长视频链接...',
     },
     generate: '生成竖屏 Shorts',

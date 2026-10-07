@@ -638,9 +638,9 @@ export default function VideoProcessor({
   // 场景化预置（P0）：选中的场景 id（'' = 自定义，不预填参数）
   const [scenario, setScenario] = useState('');
   // #2 时长分级：生成条数（0=系统推荐）+ 目标短片时长秒（0=不限制，保留 AI 自然时长）
-  // Shorts 成片模式固定 3 条 × ≤60s
-  const [maxClips, setMaxClips] = useState(variant === 'shorts' ? 3 : 0);
-  const [targetDuration, setTargetDuration] = useState(variant === 'shorts' ? 60 : 0);
+  // Shorts 成片模式走「多而短」：默认 6 条 × 每条 ≤30s，合计约 3 分钟最精彩时刻。
+  const [maxClips, setMaxClips] = useState(variant === 'shorts' ? 6 : 0);
+  const [targetDuration, setTargetDuration] = useState(variant === 'shorts' ? 30 : 0);
   // 高级设置折叠面板：默认收起，降低使用门槛（不打开则全部按默认值导出）
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [videoUrl, setVideoUrl] = useState(initialUrl ?? '');
@@ -1107,7 +1107,10 @@ export default function VideoProcessor({
               const resolveUrl = new URL(cfWorkerUrl);
               resolveUrl.pathname = `${resolveUrl.pathname.replace(/\/$/, '')}/resolve`;
               resolveUrl.searchParams.set('videoId', ytVideoId);
-              resolveUrl.searchParams.set('maxHeight', '360');
+              // 清晰度按套餐预解析：免费 720p / 付费与管理员 1080p。
+              // 付费墙内的 4K 由服务端二次裁定，这里取 1080 以保证下载成功率。
+              const preResolveHeight = isAdminUser(user) || plan !== 'free' ? 1080 : 720;
+              resolveUrl.searchParams.set('maxHeight', String(preResolveHeight));
               // muxed=1: request a combined video+audio stream. Without it, /resolve
               // returns a video-only DASH stream + separate audioUrl — clips cut from
               // it would have no sound.
@@ -1218,8 +1221,9 @@ export default function VideoProcessor({
             sourceType: selectedFile ? 'upload' : 'url',
             quality: effQuality,
             locale,
-            // Shorts 成片：固定产出 3 条竖屏成片
+            // Shorts 成片：多而短 —— 默认 6 条、每条 ≤30s 的竖屏成片
             ...(isShorts && effMaxClips > 0 ? { desiredClipCount: effMaxClips } : {}),
+            ...(isShorts && effTargetDuration > 0 ? { clipSeconds: effTargetDuration } : {}),
             ...(preResolvedStreamUrl ? { streamUrl: preResolvedStreamUrl } : {}),
             ...(preResolvedMetadata ? { streamMetadata: preResolvedMetadata } : {}),
             // P0-2：注册后继承试跑分析结果（服务端校验失败会静默回落正常分析）。

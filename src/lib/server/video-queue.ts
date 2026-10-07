@@ -25,6 +25,8 @@ export interface VideoJobMessage {
   /** For clip steps: which highlight to process. */
   index?: number;
   desiredClipCount?: number;
+  /** 单条成片的目标时长（秒）。Shorts 成片传 30 等；缺省走 clipDurations 自动分级。 */
+  clipTargetSeconds?: number;
   /**
    * P0-2 免登录试跑：注册后带上试跑 id，analyze 步骤可继承试跑时已算好的分析结果
    * （<24h 且 URL 匹配）而跳过 LLM。校验失败静默回落正常分析。
