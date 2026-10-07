@@ -409,6 +409,25 @@ export default function LocalEnginePage() {
               {tr('localEngine.step3', 'Everything runs offline; results are cached on disk so repeat runs are instant.')}
             </li>
           </ol>
+          {/* 「下载即用」闭环：模型就绪后直接给一个可点的下一步，避免用户看完说明无处可去 */}
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <Link
+              href="/video-clips"
+              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+            >
+              {tr('localEngine.goClips', 'Open Highlight Clips')}
+            </Link>
+            {(status?.readyCount ?? 0) > 0 ? (
+              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                {tr('localEngine.readyHint', 'Model ready — you can start now')}
+              </span>
+            ) : (
+              <span className="text-xs text-muted-foreground">
+                {tr('localEngine.notReadyHint', 'Download a model first to unlock offline transcription')}
+              </span>
+            )}
+          </div>
         </section>
       </div>
     </div>

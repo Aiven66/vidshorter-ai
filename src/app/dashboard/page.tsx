@@ -17,9 +17,11 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   CreditCard, Video, History, Settings, ArrowRight, Play, FileVideo,
   Download, ChevronDown, ChevronRight, Image as ImageIcon, Film, ExternalLink,
-  Loader2, Gift, CheckCircle2, BarChart3,
+  Loader2, Gift, CheckCircle2, BarChart3, Search, RotateCcw, Layers, Sparkles,
 } from 'lucide-react';
 import Link from 'next/link';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
 import { isSupabaseConfigured } from '@/storage/database/supabase-client';
 import {
   downloadYouTubeClip,
@@ -32,6 +34,8 @@ import {
   getPublishMap, setPublishInfo, summarizePublish, type PublishInfo,
 } from '@/lib/publish-tracker';
 import { MarkPublishedDialog } from '@/components/mark-published-dialog';
+import { DailyTasksCard } from '@/components/retention/daily-tasks-card';
+import { trackEvent, trackCustomEvent, takeVisitGapDays, setAnalyticsUser, VIDEO_FUNNEL, LOCAL_EVENTS } from '@/lib/analytics';
 
 const ReferralDialog = dynamic(
   () => import('@/components/referral-dialog').then(m => ({ default: m.ReferralDialog })),
@@ -156,6 +160,13 @@ function fmtCompact(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, '')}K`;
   return String(Math.floor(n));
+}
+
+// 创作中心筛选：DB 的 pending 也归入「处理中」，避免进行中的作品在筛选下消失
+function normalizeStatusForFilter(status: string): 'completed' | 'processing' | 'failed' {
+  if (status === 'completed') return 'completed';
+  if (status === 'failed') return 'failed';
+  return 'processing';
 }
 
 /* ── Clip Video Player Dialog ── */
@@ -339,6 +350,13 @@ function ClipPlayerDialog({
       setDownloadProgress('Opening highlight on YouTube...');
       const embedUrl = `https://www.youtube.com/embed/${ytVideoId}?start=${Math.floor(clip.startTime)}&end=${Math.floor(clip.endTime)}&autoplay=1`;
       window.open(embedUrl, '_blank');
+    } else {
+      // 留存引擎：导出任务以 clip_download 事件计数（与首页导出同一口径）
+      trackEvent(VIDEO_FUNNEL.CLIP_DOWNLOAD, {
+        userId: user?.id,
+        userEmail: user?.email,
+        data: { clip_id: clip.id, clip_title: clip.title, source: 'dashboard' },
+      });
     }
     setDownloading(false);
     setTimeout(() => setDownloadProgress(null), 1500);
@@ -544,13 +562,17 @@ function ClipCard({ clip, onPlay, publish, onMarkPublished }: {
 }
 
 /* ── Video Record Row ── */
-function VideoRecordRow({ video, formatDate, getStatusBadge, t, publishMap, onMarkPublished }: {
+function VideoRecordRow({ video, formatDate, getStatusBadge, t, publishMap, onMarkPublished, selected, onToggleSelect, onRerun, onContinue }: {
   video: VideoRecord;
   formatDate: (s: string) => string;
   getStatusBadge: (s: string) => React.ReactNode;
   t: (key: string) => string;
   publishMap: Record<string, PublishInfo>;
   onMarkPublished: (clip: VideoClip) => void;
+  selected?: boolean;
+  onToggleSelect?: () => void;
+  onRerun?: () => void;
+  onContinue?: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [playingClip, setPlayingClip] = useState<VideoClip | null>(null);
@@ -564,6 +586,16 @@ function VideoRecordRow({ video, formatDate, getStatusBadge, t, publishMap, onMa
         onClick={() => hasClips && setExpanded(e => !e)}
       >
         <div className="flex items-center gap-3 min-w-0">
+          {/* 批量选择：点击需阻止冒泡，否则会误触展开/收起 */}
+          {onToggleSelect && (
+            <div className="flex items-center pr-1" onClick={(e) => e.stopPropagation()}>
+              <Checkbox
+                checked={!!selected}
+                onCheckedChange={() => onToggleSelect()}
+                aria-label="select"
+              />
+            </div>
+          )}
           {/* Thumbnail from first clip or placeholder */}
           <div className="h-12 w-20 bg-muted rounded overflow-hidden flex-shrink-0 relative">
             {video.clips?.[0]?.thumbnailUrl ? (
@@ -590,6 +622,30 @@ function VideoRecordRow({ video, formatDate, getStatusBadge, t, publishMap, onMa
           </div>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+          {/* 复跑：复用原链接走既有处理链路，不调用大模型 */}
+          {onRerun && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-xs gap-1"
+              title={t('creationCenter.rerunHint')}
+              onClick={(e) => { e.stopPropagation(); onRerun(); }}
+            >
+              <RotateCcw className="h-3 w-3" />{t('creationCenter.rerun')}
+            </Button>
+          )}
+          {/* 续作：仅 YouTube 来源，语义上「用同一来源再跑一次」 */}
+          {onContinue && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-xs gap-1 text-primary"
+              title={t('creationCenter.continueSeriesHint')}
+              onClick={(e) => { e.stopPropagation(); onContinue(); }}
+            >
+              <Sparkles className="h-3 w-3" />{t('creationCenter.continueSeries')}
+            </Button>
+          )}
           {getStatusBadge(video.status)}
           {hasClips && (
             <Badge variant="outline" className="text-xs gap-1">
@@ -638,7 +694,7 @@ function VideoRecordRow({ video, formatDate, getStatusBadge, t, publishMap, onMa
 export default function DashboardPage() {
   const { t, locale } = useLocale();
   const { user, accessToken, loading: authLoading } = useAuth();
-  const { balance, loading: creditsLoading } = useCredits();
+  const { balance, plan, loading: creditsLoading } = useCredits();
   const router = useRouter();
   const [videos, setVideos] = useState<VideoRecord[]>([]);
   const [videosLoading, setVideosLoading] = useState(true);
@@ -653,6 +709,18 @@ export default function DashboardPage() {
   const [publishMap, setPublishMap] = useState<Record<string, PublishInfo>>({});
   const [publishDialogClip, setPublishDialogClip] = useState<VideoClip | null>(null);
 
+  // P0-2 创作中心：筛选 / 搜索 / 排序 / 批量选择与导出（纯客户端，基于已加载的 videos）
+  const [sourceFilter, setSourceFilter] = useState<'all' | 'youtube' | 'bilibili' | 'upload'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'processing' | 'failed'>('all');
+  const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [batchExporting, setBatchExporting] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<string | null>(null);
+  const [batchResult, setBatchResult] = useState<string | null>(null);
+  // 批量导出为付费档权益：免费用户拦截后弹升级引导
+  const [batchPaywallOpen, setBatchPaywallOpen] = useState(false);
+
   useEffect(() => {
     if (!authLoading && !user) {
       router.push('/login');
@@ -662,6 +730,22 @@ export default function DashboardPage() {
   useEffect(() => {
     if (user?.id) setPublishMap(getPublishMap(user.id));
   }, [user?.id]);
+
+  // 留存埋点：登录态回访间隔。首页 video-processor 只覆盖落地页，直接回到
+  // dashboard 的老用户此前完全没有回访信号，导致 D1/D7/D30 与复访链路失真。
+  useEffect(() => {
+    if (authLoading || !user) return;
+    setAnalyticsUser({ id: user.id, email: user.email });
+    const gapDays = takeVisitGapDays();
+    // 仅记「跨天回访」，同一天重复打开不再重复计数（首页已覆盖当日访问）
+    if (gapDays !== null && gapDays >= 1) {
+      trackCustomEvent(LOCAL_EVENTS.RETURN_VISIT, {
+        gap_days: gapDays,
+        returning: true,
+        source: 'dashboard',
+      });
+    }
+  }, [authLoading, user]);
 
   useEffect(() => {
     const check = () => {
@@ -839,6 +923,119 @@ export default function DashboardPage() {
     setPublishMap(setPublishInfo(user.id, clipId, info));
   };
 
+  // P0-2 筛选 + 搜索 + 排序（全部在客户端基于已加载的 videos 计算）
+  const filteredVideos = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return videos
+      .filter((v) => sourceFilter === 'all' || v.source_type === sourceFilter)
+      .filter((v) => statusFilter === 'all' || normalizeStatusForFilter(v.status) === statusFilter)
+      .filter((v) => {
+        if (!q) return true;
+        return (v.title || '').toLowerCase().includes(q)
+          || (v.original_url || '').toLowerCase().includes(q);
+      })
+      .sort((a, b) => {
+        const ta = new Date(a.created_at).getTime();
+        const tb = new Date(b.created_at).getTime();
+        return sortOrder === 'newest' ? tb - ta : ta - tb;
+      });
+  }, [videos, sourceFilter, statusFilter, searchQuery, sortOrder]);
+
+  const selectedVideos = useMemo(
+    () => videos.filter((v) => selectedIds.includes(v.id)),
+    [videos, selectedIds],
+  );
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+  // 「全选当前筛选结果」：用筛选结果替换当前选择，避免选中被筛掉后仍然计数
+  const selectAllFiltered = () => setSelectedIds(filteredVideos.map((v) => v.id));
+  const clearSelection = () => setSelectedIds([]);
+
+  // 复跑 / 续作：都复用「原链接 → 首页处理器」的既有约定 /video-clips?url=<encoded>
+  // （video-clips/page.tsx 读取 searchParams.url 并透传给 processor，见该文件注释）
+  const handleRerun = (video: VideoRecord) => {
+    router.push(`/video-clips?url=${encodeURIComponent(video.original_url)}`);
+  };
+
+  // 批量导出：对每条选中记录取第一个「已完成且有可下载来源」的片段，串行复用既有导出链路
+  const handleBatchExport = async () => {
+    // 付费门控：批量导出仅面向非免费档（管理员豁免）
+    if (plan === 'free' && !isAdminUser(user)) {
+      setBatchPaywallOpen(true);
+      return;
+    }
+    const jobs = selectedVideos
+      .map((v) => ({
+        clip: (v.clips ?? []).find((c) => c.status === 'completed' && (c.videoUrl || c.linkOnlyUrl)) ?? null,
+      }))
+      .filter((j): j is { clip: VideoClip } => j.clip !== null);
+    if (jobs.length === 0) {
+      setBatchResult(t('creationCenter.batchNothing'));
+      return;
+    }
+    setBatchExporting(true);
+    setBatchResult(null);
+    let ok = 0;
+    let fail = 0;
+    for (let i = 0; i < jobs.length; i++) {
+      const clip = jobs[i].clip;
+      setBatchProgress(
+        t('creationCenter.batchProgress')
+          .replace('{i}', String(i + 1))
+          .replace('{n}', String(jobs.length)),
+      );
+      const ytId = extractYouTubeVideoId(clip.linkOnlyUrl) || extractYouTubeVideoId(clip.videoUrl || undefined);
+      let success = false;
+      if (ytId) {
+        try {
+          await downloadClipViaBrowser({
+            videoId: ytId,
+            startTime: clip.startTime,
+            endTime: clip.endTime,
+            title: clip.title,
+            exportPlan: plan,
+          });
+          success = true;
+        } catch {
+          // 主链路失败 → 回退到既有备用导出函数
+          try {
+            await downloadYouTubeClip({
+              videoId: ytId,
+              startTime: clip.startTime,
+              endTime: clip.endTime,
+              title: clip.title,
+              exportPlan: plan,
+            });
+            success = true;
+          } catch {
+            success = false;
+          }
+        }
+      }
+      if (success) {
+        ok++;
+        trackEvent(VIDEO_FUNNEL.CLIP_DOWNLOAD, {
+          userId: user?.id,
+          userEmail: user?.email,
+          data: { clip_id: clip.id, clip_title: clip.title, source: 'dashboard_batch' },
+        });
+      } else {
+        fail++;
+      }
+      // 串行 + 间隔，避免并发请求打爆服务端切片接口
+      if (i < jobs.length - 1) await new Promise((r) => setTimeout(r, 800));
+    }
+    setBatchProgress(null);
+    setBatchExporting(false);
+    setBatchResult(
+      t('creationCenter.batchDone')
+        .replace('{ok}', String(ok))
+        .replace('{fail}', String(fail)),
+    );
+  };
+
   if (authLoading) {
     return (
       <div className="container mx-auto px-4 py-16 text-center">
@@ -936,6 +1133,9 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
 
+        {/* 每日创作任务：签到 + 生成 + 导出 → 领取奖励，维持连续创作 Streak */}
+        <DailyTasksCard />
+
         {/* Main Content */}
         <Tabs defaultValue="history" className="space-y-6">
           <TabsList>
@@ -959,9 +1159,9 @@ export default function DashboardPage() {
           <TabsContent value="history">
             <Card>
               <CardHeader>
-                <CardTitle>{t('dashboard.history')}</CardTitle>
+                <CardTitle>{t('creationCenter.title')}</CardTitle>
                 <CardDescription>
-                  {t('dashboard.historyHint')}
+                  {t('creationCenter.subtitle')}
                 </CardDescription>
                 {/* P1-2 发布汇总条 */}
                 {publishSummary.published > 0 && (
@@ -990,19 +1190,140 @@ export default function DashboardPage() {
                     </Button>
                   </div>
                 ) : (
-                  <div className="space-y-3">
-                    {videos.map((video) => (
-                      <VideoRecordRow
-                        key={video.id}
-                        video={video}
-                        formatDate={formatDate}
-                        getStatusBadge={getStatusBadge}
-                        t={t}
-                        publishMap={publishMap}
-                        onMarkPublished={setPublishDialogClip}
-                      />
-                    ))}
-                  </div>
+                  <>
+                    {/* 筛选 / 搜索 / 排序工具条 */}
+                    <div className="mb-4 space-y-3">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                        <div className="relative flex-1">
+                          <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                          <Input
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            placeholder={t('creationCenter.searchPlaceholder')}
+                            className="pl-8"
+                          />
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <select
+                            value={sourceFilter}
+                            onChange={(e) => setSourceFilter(e.target.value as typeof sourceFilter)}
+                            aria-label={t('creationCenter.filterSource')}
+                            className="h-9 rounded-md border bg-background px-2 text-sm"
+                          >
+                            <option value="all">{t('creationCenter.sourceAll')}</option>
+                            <option value="youtube">{t('creationCenter.sourceYoutube')}</option>
+                            <option value="bilibili">{t('creationCenter.sourceBilibili')}</option>
+                            <option value="upload">{t('creationCenter.sourceUpload')}</option>
+                          </select>
+                          <select
+                            value={statusFilter}
+                            onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
+                            aria-label={t('creationCenter.filterStatus')}
+                            className="h-9 rounded-md border bg-background px-2 text-sm"
+                          >
+                            <option value="all">{t('creationCenter.statusAll')}</option>
+                            <option value="completed">{t('creationCenter.statusCompleted')}</option>
+                            <option value="processing">{t('creationCenter.statusProcessing')}</option>
+                            <option value="failed">{t('creationCenter.statusFailed')}</option>
+                          </select>
+                          <select
+                            value={sortOrder}
+                            onChange={(e) => setSortOrder(e.target.value as typeof sortOrder)}
+                            aria-label={t('creationCenter.sortLabel')}
+                            className="h-9 rounded-md border bg-background px-2 text-sm"
+                          >
+                            <option value="newest">{t('creationCenter.sortNewest')}</option>
+                            <option value="oldest">{t('creationCenter.sortOldest')}</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                        <span>
+                          {t('creationCenter.showingCount')
+                            .replace('{shown}', String(filteredVideos.length))
+                            .replace('{total}', String(videos.length))}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-xs"
+                            onClick={selectAllFiltered}
+                            disabled={filteredVideos.length === 0}
+                          >
+                            {t('creationCenter.selectAll')}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 text-xs"
+                            onClick={clearSelection}
+                            disabled={selectedIds.length === 0}
+                          >
+                            {t('creationCenter.clearSelection')}
+                          </Button>
+                        </div>
+                      </div>
+
+                      {/* 选中 ≥1 时出现的批量操作条 */}
+                      {selectedIds.length > 0 && (
+                        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2">
+                          <span className="text-sm font-medium">
+                            {t('creationCenter.selectedCount').replace('{n}', String(selectedIds.length))}
+                            {plan === 'free' && !isAdminUser(user) && (
+                              <span className="ml-2 text-xs font-normal text-muted-foreground">
+                                {t('creationCenter.batchExportFreeHint')}
+                              </span>
+                            )}
+                          </span>
+                          <Button
+                            size="sm"
+                            className="gap-1.5"
+                            onClick={handleBatchExport}
+                            disabled={batchExporting}
+                          >
+                            {batchExporting
+                              ? <Loader2 className="h-4 w-4 animate-spin" />
+                              : <Layers className="h-4 w-4" />}
+                            {t('creationCenter.batchExport')}
+                          </Button>
+                        </div>
+                      )}
+
+                      {/* 导出进度 / 结果反馈（不静默） */}
+                      {(batchProgress || batchResult) && (
+                        <p className="text-xs text-muted-foreground">
+                          {batchProgress || batchResult}
+                        </p>
+                      )}
+                    </div>
+
+                    {filteredVideos.length === 0 ? (
+                      <div className="text-center py-12">
+                        <Search className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                        <p className="text-muted-foreground">{t('creationCenter.emptyFiltered')}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">{t('creationCenter.emptyFilteredHint')}</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {filteredVideos.map((video) => (
+                          <VideoRecordRow
+                            key={video.id}
+                            video={video}
+                            formatDate={formatDate}
+                            getStatusBadge={getStatusBadge}
+                            t={t}
+                            publishMap={publishMap}
+                            onMarkPublished={setPublishDialogClip}
+                            selected={selectedIds.includes(video.id)}
+                            onToggleSelect={() => toggleSelect(video.id)}
+                            onRerun={() => handleRerun(video)}
+                            onContinue={video.source_type === 'youtube' ? () => handleRerun(video) : undefined}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </>
                 )}
               </CardContent>
             </Card>
@@ -1067,6 +1388,13 @@ export default function DashboardPage() {
         onSave={(info) => {
           if (publishDialogClip) handlePublishSave(publishDialogClip.id, info);
         }}
+      />
+
+      {/* P0-2 批量导出付费门控：免费用户弹升级引导（订阅优先 + 积分包兜底） */}
+      <InsufficientCreditsDialog
+        open={batchPaywallOpen}
+        onOpenChange={setBatchPaywallOpen}
+        reason="export"
       />
     </div>
   );

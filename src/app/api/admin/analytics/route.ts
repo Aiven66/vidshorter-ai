@@ -176,10 +176,24 @@ export async function GET(request: NextRequest) {
           .select('user_id, created_at')
           .in('user_id', userIds);
 
+        // 留存活动信号不能只看 videos：只看成片会把「登录/签到/浏览」的用户全部判为流失，
+        // 导致 D1/D7/D30 恒为 0。这里并入 behavior_events 的真实回来行为（任意事件即可）。
+        const behaviorsActivityRes = await client
+          .from('behavior_events')
+          .select('user_id, created_at')
+          .in('user_id', userIds)
+          .limit(50000);
+
         const activityByUser: Record<string, string[]> = {};
         for (const v of videosActivityRes.data || []) {
           if (!activityByUser[v.user_id]) activityByUser[v.user_id] = [];
           activityByUser[v.user_id].push(v.created_at);
+        }
+        for (const b of behaviorsActivityRes.data || []) {
+          const uid = String((b as { user_id?: string }).user_id || '');
+          if (!uid) continue;
+          if (!activityByUser[uid]) activityByUser[uid] = [];
+          activityByUser[uid].push((b as { created_at: string }).created_at);
         }
 
         const calcRetention = (days: number) => {
