@@ -12,6 +12,7 @@ export type NavKey =
   | 'inviteFriends'
   | 'shorts'
   | 'notes'
+  | 'tokpure'
   | 'blog'
   | 'pricing'
   | 'about'
@@ -42,6 +43,7 @@ export const NAV_LABELS: Record<NavKey, { zh: string; en: string }> = {
   inviteFriends: { zh: '邀请好友', en: 'Invite Friends' },
   shorts: { zh: 'Shorts 成片', en: 'Shorts' },
   notes: { zh: '高光笔记', en: 'Video Notes' },
+  tokpure: { zh: 'TokPure', en: 'TokPure' },
   marketing: { zh: '营销视频', en: 'Marketing Video' },
   digitalHuman: { zh: '普通带货短视频', en: 'Digital Human' },
   digitalHumanLive: { zh: '数字人带货短视频', en: 'Live Digital Human' },
@@ -74,6 +76,7 @@ export const DEFAULT_NAV_CONFIG: NavConfig = {
     'inviteFriends',
     'shorts',
     'notes',
+    'tokpure',
     'marketing',
     'digitalHuman',
     'digitalHumanLive',
@@ -112,12 +115,24 @@ export function normalizeNavConfig(raw: unknown): NavConfig {
       order.push(k as NavKey);
     }
   }
-  // 补齐默认 order 里缺失的 key，避免新菜单上线后被吞掉
-  for (const k of DEFAULT_NAV_CONFIG.order) {
-    if (!seen.has(k)) {
-      seen.add(k);
-      order.push(k);
+  // 补齐默认 order 里缺失的 key，避免新菜单上线后被吞掉。
+  // 插入位置 = 默认顺序中它后面最近一个「已存在」的 key 之前，这样新上线的菜单会落在
+  // 设计好的位置（例如 TokPure 紧跟高光笔记），而不是一律沉到菜单末尾；
+  // 走到末尾仍找不到锚点则追加（不会因为管理员把某个 key 挪到前面而把新 key 拽到菜单顶部）。
+  const defaults = DEFAULT_NAV_CONFIG.order;
+  for (const k of defaults) {
+    if (seen.has(k)) continue;
+    seen.add(k);
+    let insertAt = -1;
+    for (let i = defaults.indexOf(k) + 1; i < defaults.length; i += 1) {
+      const idx = order.indexOf(defaults[i]);
+      if (idx >= 0) {
+        insertAt = idx;
+        break;
+      }
     }
+    if (insertAt < 0) order.push(k);
+    else order.splice(insertAt, 0, k);
   }
 
   const hidden: NavKey[] = [];

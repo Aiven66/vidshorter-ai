@@ -31,6 +31,7 @@ import {
   PersonStanding,
   Cpu,
   Music2,
+  Sparkles,
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { useCredits } from '@/lib/credits-context';
@@ -93,6 +94,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/local-engine', labelKey: 'localEngine', icon: Cpu },
   { href: '#invite', labelKey: 'inviteFriends', icon: Gift, action: 'referral' },
   { href: '/video-notes', labelKey: 'notes', icon: FileText, badge: 'NEW' },
+  { href: 'https://tokpure.clipopai.com/', labelKey: 'tokpure', icon: Sparkles, external: true },
   { href: '/marketing-video', labelKey: 'marketing', icon: ShoppingBag, badge: 'NEW' },
   { href: '/digital-human', labelKey: 'digitalHuman', icon: Bot },
   { href: '/digital-human-live', labelKey: 'digitalHumanLive', icon: PersonStanding, badge: 'NEW' },
@@ -258,7 +260,7 @@ function AppSidebarContent({
                 rel="noopener noreferrer"
                 onClick={onNavigate}
                 className={className}
-                title={collapsed ? 'Podcast AI' : undefined}
+                title={collapsed ? item.labelKey : undefined}
               >
                 {content}
               </a>
@@ -296,6 +298,7 @@ function SidebarLabel({ labelKey }: { labelKey: NavItem['labelKey'] }) {
     inviteFriends: '邀请好友',
     shorts: 'Shorts 成片',
     notes: '高光笔记',
+    tokpure: 'TokPure',
     marketing: '营销视频',
     digitalHuman: '普通带货短视频',
     digitalHumanLive: '数字人带货短视频',

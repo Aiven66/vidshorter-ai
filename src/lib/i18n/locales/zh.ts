@@ -14,6 +14,7 @@ const translations = {
   'aiVideo': 'AI 成片',
   'localEngine': '本地引擎',
   'tiktokRemix': 'TikTok 二创',
+  'tokpure': 'TokPure',
   },
   localEngine: {
   title: '本地 AI 引擎',

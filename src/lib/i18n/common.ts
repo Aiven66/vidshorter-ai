@@ -33,6 +33,7 @@ export const commonTranslations = {
     aiVideo: 'AI Video Maker',
     localEngine: 'Local Engine',
     tiktokRemix: 'TikTok Remix',
+    tokpure: 'TokPure',
   },
   localEngine: {
     title: 'Local AI Engine',
