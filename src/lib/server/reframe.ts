@@ -4,6 +4,7 @@ import { mkdir, readdir, readFile, rm } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import type { KeepSegment } from '@/lib/server/jump-cut';
+import { detectFaceCenter } from '@/lib/server/face-detect';
 
 /**
  * P0 — 竖屏智能追焦构图（Auto-Reframe，Starter+ 权益）。
@@ -11,10 +12,13 @@ import type { KeepSegment } from '@/lib/server/jump-cut';
  * 目标：把 16:9 横屏源按 9:16 裁切时，让裁切窗跟着说话人水平移动，主体居中，
  * 而不是像 blur-fit 那样「整幅缩小 + 上下模糊条」（主体偏小、观感差）。
  *
- * ⚠️ 本项目没有任何人脸/视觉检测依赖（生产 ffmpeg-static 无人脸滤镜，package.json
- * 无 ML/vision）。这里的追焦是**零新增依赖的启发式人物定位**：
+ * ⚠️ 主体定位分两级：**优先真实人脸检测**（face-detect.ts 的 YuNet ONNX，232KB
+ * 公开 CDN 直链），检测器不可用或本帧无脸时，回落到**零新增依赖的启发式**
+ * （YCbCr 肤色掩码 + 列向边缘能量）。两级产出同一个契约（水平重心 + 置信度），
+ * 后段的时序平滑与滤镜构建完全共用：
  *   1. 用 ffmpeg 按固定间隔抽帧（缩到宽 320）到 /tmp，**逐帧处理完立刻删除**；
- *   2. 用 sharp 解码为原始 RGB，算 YCbCr 肤色掩码 + 列向边缘能量；
+ *   2. 人脸检测命中 → 取主脸重心；否则用 sharp 解码为 RGB 跑启发式（YCbCr 肤色
+ *      掩码 + 列向边缘能量）；
  *   3. 得到该帧人物的水平重心与置信度；
  *   4. 时序 EMA 平滑 + deadband 抑制抖动 → 少量控制点 → 裁切路径。
  *
@@ -135,7 +139,15 @@ export async function analyzeSubjectPath(
         .raw()
         .toBuffer({ resolveWithObject: true });
       if (!normH) normH = info.height;
-      stats.push(analyzeFrame(data, info.width, info.height, info.channels, i * step));
+      const t = i * step;
+      // 优先真实人脸检测（主体定位更准，不再靠「像皮肤的区域」猜）；
+      // 检测器不可用、或本帧无足够大的脸 → 回落到启发式（同一归一化坐标系）。
+      const face = await detectFaceCenter(buf);
+      stats.push(
+        face
+          ? { t, center: face.centerX * NORM_W, conf: face.confidence }
+          : analyzeFrame(data, info.width, info.height, info.channels, t),
+      );
     }
 
     if (!normH || normH <= 0) return null;
