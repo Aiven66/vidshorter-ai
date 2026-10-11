@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { isSupabaseConfigured } from '@/storage/database/supabase-client';
 import videoClipper from '@/lib/server/video-clipper';
+import { detectPlatform } from '@/lib/server/platforms';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createClient } from '@supabase/supabase-js';
 import {
@@ -380,13 +381,16 @@ export async function POST(request: NextRequest) {
         })) return;
 
         const isBilibili = videoUrl.includes('bilibili.com') || videoUrl.includes('b23.tv');
+        // Platform-aware progress copy (YouTube / Bilibili / TikTok / Douyin /
+        // Xiaohongshu / Instagram ...), derived from the shared registry.
+        const platformName = detectPlatform(videoUrl).name;
         if (abortSignal.aborted) return;
         if (!send({
           stage: 'ai_analysis',
           progress: 20,
           message: isBilibili
             ? 'Analyzing Bilibili video metadata and timeline...'
-            : 'Analyzing subtitles and timeline to find highlight moments...',
+            : `Analyzing ${platformName} video metadata and timeline to find highlight moments...`,
           data: { jobId },
         })) return;
 
@@ -536,7 +540,7 @@ export async function POST(request: NextRequest) {
 
         if (isHD) {
           startSourceProgressTimer(46, [
-            { p: 47, m: isBilibili ? 'Connecting to Bilibili video stream (HD)...' : 'Connecting to video stream (HD)...' },
+            { p: 47, m: isBilibili ? 'Connecting to Bilibili video stream (HD)...' : `Connecting to ${platformName} video stream (HD)...` },
             { p: 48, m: 'Downloading HD video to local cache...' },
             { p: 49, m: 'Finalizing HD video source...' },
           ], 10000);
@@ -616,7 +620,7 @@ export async function POST(request: NextRequest) {
             })) return;
           } else {
             startSourceProgressTimer(46, [
-              { p: 47, m: isBilibili ? 'Connecting to Bilibili video stream...' : 'Connecting to video stream...' },
+              { p: 47, m: isBilibili ? 'Connecting to Bilibili video stream...' : `Connecting to ${platformName} video stream...` },
               { p: 48, m: 'Downloading video to local cache...' },
               { p: 49, m: 'Finalizing video source...' },
             ], 8000);

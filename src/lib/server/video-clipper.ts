@@ -25,6 +25,13 @@ import { Readable } from 'node:stream';
 import https from 'node:https';
 import http from 'node:http';
 import { HttpsProxyAgent } from 'https-proxy-agent';
+import {
+  BILIBILI_HEADERS,
+  detectPlatform,
+  isShortLinkHost,
+  mapYtDlpError,
+  type Platform,
+} from '@/lib/server/platforms';
 
 const execFile = promisify(execFileCallback);
 
@@ -301,6 +308,11 @@ async function normalizeVideoUrl(videoUrl: string): Promise<string> {
     if (isYouTubeUrl(trimmed)) {
       const id = extractYouTubeVideoId(trimmed);
       if (id) return `https://www.youtube.com/watch?v=${id}`;
+    }
+    // Short links (b23.tv / v.douyin.com / xhslink.com / vm.tiktok.com / t.co)
+    // must be resolved to their real target before yt-dlp can handle them.
+    if (isShortLinkHost(trimmed)) {
+      return await resolveFinalUrl(trimmed);
     }
     if (u.hostname.includes('b23.tv')) {
       return await resolveFinalUrl(trimmed);
@@ -675,21 +687,22 @@ async function ensureYtDlp(): Promise<void> {
   throw new Error('yt-dlp not available. Install with: pip3 install yt-dlp');
 }
 
-async function runYtDlp(args: string[], isBilibili = false) {
+async function runYtDlp(args: string[], platformOrBilibili: Platform | boolean = false) {
   await ensureYtDlp();
   const ffmpegPath = await ensureFfmpegAvailable().catch(() => '');
   const ffmpegDir = ffmpegPath ? path.dirname(ffmpegPath) : '';
+
+  // Backward compatible: legacy call sites pass a boolean (true = Bilibili headers).
+  const headers = typeof platformOrBilibili === 'boolean'
+    ? (platformOrBilibili ? BILIBILI_HEADERS : [])
+    : (platformOrBilibili?.headers ?? []);
 
   const commonArgs = [
     '--no-check-certificate', '--ignore-errors', '--socket-timeout', '30',
     '--retries', '3', '--fragment-retries', '3',
     '--user-agent', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
     ...(ffmpegDir ? ['--ffmpeg-location', ffmpegDir] : []),
-    ...(isBilibili ? [
-      '--add-header', 'Referer: https://www.bilibili.com/',
-      '--add-header', 'Origin: https://www.bilibili.com',
-      '--add-header', 'Accept-Language: zh-CN,zh;q=0.9,en;q=0.8',
-    ] : []),
+    ...headers.flatMap((h) => ['--add-header', h]),
   ];
 
   const env: NodeJS.ProcessEnv = { ...process.env, PYTHONWARNINGS: 'ignore' };
@@ -2179,6 +2192,52 @@ async function analyzeBilibiliVideo(videoUrl: string, workDir: string, opts?: { 
   return { duration, title, highlights: buildHeuristicHighlights(cues, duration, opts?.targetSeconds) };
 }
 
+/**
+ * Analyze a non-YouTube / non-Bilibili platform (TikTok, Douyin, Xiaohongshu,
+ * Instagram, Vimeo, X/Twitter, or any generic URL) via yt-dlp: fetch real
+ * metadata + subtitles, then derive highlights.
+ *
+ * Public content only. On failure this THROWS a clear, user-facing error
+ * (via mapYtDlpError) — it never fabricates placeholder highlights.
+ */
+async function analyzeGenericVideo(
+  videoUrl: string,
+  workDir: string,
+  platform: Platform,
+  opts?: { targetSeconds?: number },
+): Promise<VideoAnalysisResult> {
+  const outputTemplate = path.join(workDir, 'analysis.%(ext)s');
+  const analysisArgs = [
+    '--no-playlist', '--skip-download', '--dump-single-json',
+    '--write-subs', '--write-auto-subs',
+    '--sub-langs', platform.subLangs,
+    '--convert-subs', 'vtt',
+    '-o', outputTemplate, videoUrl,
+  ];
+
+  let stdout = '', stderr = '', lastError: unknown;
+  try {
+    const r = await runYtDlp(analysisArgs, platform);
+    stdout = r.stdout; stderr = r.stderr; lastError = null;
+  } catch (err) {
+    lastError = err;
+    stdout = (err && typeof err === 'object' && 'stdout' in err) ? String(err.stdout) : '';
+    stderr = (err && typeof err === 'object' && 'stderr' in err) ? String(err.stderr) : '';
+  }
+
+  if (!stdout.trim()) {
+    const raw = stderr.trim() || (lastError instanceof Error ? lastError.message : '');
+    throw mapYtDlpError(raw, platform);
+  }
+
+  const info = parseYtDlpJson(stdout);
+  const duration = Math.max(45, Math.floor((info.duration as number) || 180));
+  const title = typeof info.title === 'string' && info.title.trim() ? info.title.trim() : `${platform.name} video`;
+  const subtitleFile = await findFirstFile(workDir, ['.vtt']);
+  const cues = subtitleFile ? await parseVttFile(path.join(workDir, subtitleFile)) : [];
+  return { duration, title, highlights: buildHeuristicHighlights(cues, duration, opts?.targetSeconds) };
+}
+
 // ── Video download ─────────────────────────────────────────────────────────────
 async function downloadSourceVideo(
   videoUrl: string,
@@ -2222,7 +2281,8 @@ async function downloadSourceVideo(
   if (isBilibiliUrl(normalizedUrl)) {
     return { inputPath: await downloadBilibiliVideo(normalizedUrl, outputTemplate, hasCookies) };
   }
-  return downloadYouTubeOrGenericVideo(normalizedUrl, outputTemplate, hasCookies, forceH);
+  const platform = detectPlatform(normalizedUrl);
+  return downloadYouTubeOrGenericVideo(normalizedUrl, outputTemplate, hasCookies, forceH, platform);
 }
 
 async function downloadBilibiliVideo(
@@ -2807,6 +2867,7 @@ function wrapInStreamProxyIfNeeded(
 async function downloadYouTubeOrGenericVideo(
   videoUrl: string, outputTemplate: string, hasCookies: boolean,
   forceMaxHeight: number = 0,
+  platform: Platform = detectPlatform(videoUrl),
 ): Promise<PreparedSource> {
   // On Vercel, yt-dlp cannot solve YouTube's JS signature challenges.
   // More critically: each yt-dlp attempt makes YouTube API requests that accumulate
@@ -3059,14 +3120,19 @@ async function downloadYouTubeOrGenericVideo(
     strategies.push(['--extractor-args', 'youtube:player_client=tv_embedded', ...baseArgs, '-f', 'best', videoUrl]);
     strategies.push([...baseArgs, '-f', 'best', videoUrl]);
   } else {
-    strategies.push([...baseArgs, '-f', 'bestvideo*+bestaudio/best', videoUrl]);
+    // Generic platform (TikTok / Douyin / Xiaohongshu / Instagram / Vimeo /
+    // Twitter ...): use the platform's preferred format selector and headers.
+    // runYtDlp injects platform.headers via --add-header for non-YouTube hosts.
+    strategies.push([...baseArgs, '-f', platform.format, videoUrl]);
   }
 
   let stdout = '', stderr = '', lastError: unknown;
   for (let i = 0; i < strategies.length; i++) {
     try {
       console.log(`yt-dlp download strategy ${i + 1}/${strategies.length}…`);
-      const r = await runYtDlp(strategies[i], false);
+      // YouTube keeps its legacy boolean (false) path; every other host passes
+      // the platform descriptor so its headers/UA are applied.
+      const r = await runYtDlp(strategies[i], isYouTubeUrl(videoUrl) ? false : platform);
       stdout = r.stdout; stderr = r.stderr; lastError = null;
       console.log(`yt-dlp download strategy ${i + 1} succeeded`);
       break;
@@ -3093,8 +3159,8 @@ async function downloadYouTubeOrGenericVideo(
   }
 
   if (!resolvedPath) {
-    const msg = stderr.trim() || (lastError instanceof Error ? lastError.message : '') || 'No file path returned.';
-    throw new Error(`Failed to download video: ${msg}`);
+    const raw = stderr.trim() || (lastError instanceof Error ? lastError.message : '') || 'No file path returned.';
+    throw mapYtDlpError(raw, platform);
   }
   return { inputPath: resolvedPath };
 }
@@ -3450,7 +3516,13 @@ async function analyzeVideo(videoUrl: string, opts?: { targetSeconds?: number })
     }
   }
 
-  return { duration: 180, title: 'Source video', highlights: buildFallbackHighlights(180, opts?.targetSeconds) };
+  // Non-YouTube / non-Bilibili link: resolve the platform from the registry and
+  // run the generic yt-dlp analysis pipeline. This makes short-video platforms
+  // (TikTok / Douyin / Xiaohongshu / Instagram / Vimeo / Twitter ...) produce
+  // real highlights based on subtitles + audio features instead of a fake
+  // placeholder. Failures bubble up so the caller can surface a clear message.
+  const platform = detectPlatform(normalizedUrl);
+  return await analyzeGenericVideo(normalizedUrl, workDir, platform, opts);
 }
 
 /**

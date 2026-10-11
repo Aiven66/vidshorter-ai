@@ -39,7 +39,8 @@ declare global {
   }
 }
 
-const PLATFORMS = ['YouTube', '哔哩哔哩 (Bilibili)', 'TikTok / 抖音', '小宇宙播客', 'MP4 / WebM'];
+/** 平台徽标索引：真实渲染时经 t('landing.workspace.platformList.N') 本地化 */
+const PLATFORM_INDEXES = [0, 1, 2, 3, 4, 5];
 
 /** 展示区配图：纯 CSS 合成画面，无外部依赖、永远不破版 */
 const frameGlow = (a: string, b: string) =>
@@ -202,11 +203,16 @@ export default function HomeLanding() {
             {/* 平台支持 */}
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="text-[11px] uppercase tracking-wider text-muted-foreground">{platformsLabel}:</span>
-              {PLATFORMS.map((p) => (
-                <span key={p} className="rounded bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-                  {p}
-                </span>
-              ))}
+              {PLATFORM_INDEXES.map((i) => {
+                const key = `landing.workspace.platformList.${i}`;
+                const label = t(key);
+                if (!label || label === key) return null;
+                return (
+                  <span key={key} className="rounded bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                    {label}
+                  </span>
+                );
+              })}
             </div>
 
             {/* URL 输入 + 生成 */}
