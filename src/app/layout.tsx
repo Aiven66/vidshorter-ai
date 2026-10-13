@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { Providers } from './providers';
 import { AppShell } from '@/components/app-shell';
@@ -14,6 +14,22 @@ const siteUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://www.clipopai.com').
 const SITE_TITLE = 'Clipop AI - AI Video Clipper | Turn Long Videos into Viral Shorts';
 const SITE_DESCRIPTION =
   'Clipop AI is an AI-powered video tool to auto generate highlight shorts from long videos. Paste YouTube & Bilibili links or upload local videos, get auto captions for TikTok, Reels and more. New users gain 60 free credits.';
+
+/**
+ * 移动端视口：
+ * - width=device-width / initialScale=1：标准移动适配
+ * - viewportFit=cover：启用刘海屏安全区（env(safe-area-inset-*)）
+ * - 不禁止用户缩放（保留无障碍缩放能力）
+ */
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
+  themeColor: [
+    { media: '(prefers-color-scheme: dark)', color: '#0c0d10' },
+    { media: '(prefers-color-scheme: light)', color: '#ffffff' },
+  ],
+};
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),

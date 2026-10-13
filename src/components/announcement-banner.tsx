@@ -76,8 +76,8 @@ export function AnnouncementBanner() {
         }}
       />
 
-      <div className="relative z-10 flex items-center justify-between gap-4 px-4 py-2.5 text-white">
-        <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
+      <div className="relative z-10 flex items-center justify-between gap-2 px-3 py-2 text-white sm:gap-4 sm:px-4 sm:py-2.5">
+        <div className="flex min-w-0 items-center gap-2 text-xs font-medium sm:text-sm">
           {/* 金色皇冠图标 */}
           <span
             className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full"
@@ -101,10 +101,10 @@ export function AnnouncementBanner() {
           </span>
         </div>
 
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
           <Link
             href="/pricing"
-            className="group inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition-all"
+            className="group inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold sm:gap-1.5 sm:px-3"
             style={{
               background: 'linear-gradient(135deg, var(--gold-light) 0%, var(--gold) 100%)',
               color: 'var(--primary-foreground)',
@@ -113,11 +113,11 @@ export function AnnouncementBanner() {
           >
             <Zap className="h-3 w-3" />
             {ctaText}
-            <ChevronRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
+            <ChevronRight className="hidden h-3 w-3 transition-transform group-hover:translate-x-0.5 sm:block" />
           </Link>
           <button
             onClick={handleDismiss}
-            className="flex h-6 w-6 items-center justify-center rounded-full text-white/70 transition-colors hover:bg-white/20 hover:text-white"
+            className="flex h-7 w-7 items-center justify-center rounded-full text-white/70 transition-colors hover:bg-white/20 hover:text-white sm:h-6 sm:w-6"
             aria-label="Dismiss subscription banner"
           >
             <X className="h-3.5 w-3.5" />

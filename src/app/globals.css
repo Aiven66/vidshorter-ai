@@ -144,10 +144,25 @@
     @apply border-border outline-ring/50;
 
   }
+  html {
+    /* 防止移动端浏览器自动放大字体导致排版错乱 */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
   body {
     @apply bg-background text-foreground font-sans;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    /* 移除移动端点击链接/按钮时的灰色高亮块（焦点样式仍保留） */
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* iOS Safari：输入框字号 <16px 时聚焦会自动放大页面，移动端统一 16px */
+  @media (max-width: 640px) {
+    input:not([type='checkbox']):not([type='radio']):not([type='range']),
+    select,
+    textarea {
+      font-size: 16px;
+    }
   }
 
   /* Selection styling — 跟随黑金主题 */

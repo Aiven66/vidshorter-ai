@@ -64,11 +64,14 @@ export function RegistrationBanner() {
     : t('registerBanner.subtitle');
 
   return (
-    <div className="fixed bottom-4 right-4 z-50 w-[340px] max-w-[calc(100vw-2rem)] animate-banner-in">
-      <div className="relative overflow-hidden rounded-2xl border border-border/50 bg-card/95 shadow-2xl backdrop-blur-xl">
+    <div
+      className="fixed inset-x-3 z-50 w-auto animate-banner-in sm:inset-x-auto sm:bottom-4 sm:right-4 sm:w-[340px]"
+      style={{ bottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
+    >
+      <div className="relative flex max-h-[calc(100dvh_-_1.5rem)] flex-col overflow-hidden rounded-2xl border border-border/50 bg-card/95 shadow-2xl backdrop-blur-xl sm:max-h-[calc(100dvh_-_2rem)]">
         {/* Top accent bar */}
         <div
-          className="h-1 w-full"
+          className="h-1 w-full shrink-0"
           style={{
             background: 'linear-gradient(90deg, var(--gold-dim), var(--gold), var(--gold-light))',
           }}
@@ -77,31 +80,31 @@ export function RegistrationBanner() {
         {/* Close button */}
         <button
           onClick={handleDismiss}
-          className="absolute right-3 top-3 flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          className="absolute right-2 top-2 z-10 flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:right-3 sm:top-3 sm:h-7 sm:w-7"
           aria-label="Dismiss registration banner"
         >
           <X className="h-4 w-4" />
         </button>
 
-        <div className="p-5">
+        <div className="overflow-y-auto p-4 sm:p-5">
           {/* Header */}
-          <div className="mb-4 flex items-start gap-3">
+          <div className="mb-3 flex items-start gap-3 pr-8 sm:mb-4">
             <div
-              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-primary-foreground shadow-lg"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-primary-foreground shadow-lg sm:h-12 sm:w-12"
               style={{
                 background: 'linear-gradient(135deg, var(--gold-light) 0%, var(--gold-dim) 100%)',
                 boxShadow: '0 8px 24px -6px color-mix(in oklab, var(--gold) 45%, transparent)',
               }}
             >
-              <Gift className="h-6 w-6" />
+              <Gift className="h-5 w-5 sm:h-6 sm:w-6" />
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-1.5">
-                <h3 className="text-base font-bold text-foreground">{titleText}</h3>
+                <h3 className="text-sm font-bold text-foreground sm:text-base">{titleText}</h3>
               </div>
               <div className="mt-0.5 flex items-baseline gap-1.5">
                 <span
-                  className="text-2xl font-extrabold tracking-tight"
+                  className="text-xl font-extrabold tracking-tight sm:text-2xl"
                   style={{
                     background: 'linear-gradient(135deg, var(--gold-light) 0%, var(--gold-dim) 100%)',
                     WebkitBackgroundClip: 'text',
@@ -117,12 +120,12 @@ export function RegistrationBanner() {
             </div>
           </div>
 
-          <p className="mb-4 text-sm text-muted-foreground">{subtitleText}</p>
+          <p className="mb-3 text-xs text-muted-foreground sm:mb-4 sm:text-sm">{subtitleText}</p>
 
           {/* Feature list */}
-          <ul className="mb-4 space-y-2">
+          <ul className="mb-3 space-y-1.5 sm:mb-4 sm:space-y-2">
             {[feature1, feature2, feature3].map((feat, i) => (
-              <li key={i} className="flex items-start gap-2 text-sm">
+              <li key={i} className="flex items-start gap-2 text-xs sm:text-sm">
                 <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
                 <span className="text-foreground/90">{feat}</span>
               </li>

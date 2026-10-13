@@ -32,6 +32,7 @@ import {
   Cpu,
   Music2,
   Sparkles,
+  Clapperboard,
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { useCredits } from '@/lib/credits-context';
@@ -62,6 +63,14 @@ const MobileUserSection = dynamic(
   { ssr: false }
 );
 
+const MobileHeaderUser = dynamic(
+  () => import('@/components/navbar/mobile-user-section').then(m => ({ default: m.MobileHeaderUser })),
+  {
+    ssr: false,
+    loading: () => <div className="h-9 w-14 animate-pulse rounded-md bg-muted" aria-hidden />,
+  }
+);
+
 const LanguageSwitcher = dynamic(
   () => import('@/components/navbar/language-switcher').then(m => ({ default: m.LanguageSwitcher })),
   { ssr: false }
@@ -81,8 +90,10 @@ type NavItem = {
   badge?: 'NEW';
   // 外部链接（如 Podcast AI）: web 端新标签页打开，桌面端经 setWindowOpenHandler 用系统浏览器打开
   external?: boolean;
-  // 行为型入口（当前仅邀请好友）：不跳转路由，改为触发回调
-  action?: 'referral';
+  // 行为型入口：referral=邀请弹窗；yuecut=拉起桌面端「粤剪」批量剪辑独立窗口
+  action?: 'referral' | 'yuecut';
+  // 仅桌面客户端可见（如 AI 批量剪辑，依赖本地 ASR/ffmpeg）
+  desktopOnly?: boolean;
 };
 
 const NAV_ITEMS: NavItem[] = [
@@ -90,6 +101,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/ai-video', labelKey: 'aiVideo', icon: Wand2, badge: 'NEW' },
   { href: '/shorts', labelKey: 'shorts', icon: Smartphone, badge: 'NEW' },
   { href: '/video-clips', labelKey: 'clips', icon: Scissors },
+  { href: '#yuecut', labelKey: 'yuecut', icon: Clapperboard, badge: 'NEW', action: 'yuecut', desktopOnly: true },
   { href: '/tiktok-remix', labelKey: 'tiktokRemix', icon: Music2, badge: 'NEW' },
   { href: '/local-engine', labelKey: 'localEngine', icon: Cpu },
   { href: '#invite', labelKey: 'inviteFriends', icon: Gift, action: 'referral' },
@@ -126,6 +138,7 @@ function AppSidebarContent({
   onToggleCollapse,
   navConfig,
   onOpenReferral,
+  isDesktop = false,
 }: {
   pathname: string | null;
   onNavigate?: () => void;
@@ -133,6 +146,7 @@ function AppSidebarContent({
   onToggleCollapse?: () => void;
   navConfig: NavConfig;
   onOpenReferral?: () => void;
+  isDesktop?: boolean;
 }) {
   const isActive = (path: string) => path === '/' ? pathname === '/' : pathname?.startsWith(path);
 
@@ -147,20 +161,20 @@ function AppSidebarContent({
     for (const key of navConfig.order) {
       if (hidden.has(key)) continue;
       const item = byKey.get(key);
-      if (item && !used.has(key)) {
+      if (item && !used.has(key) && (!item.desktopOnly || isDesktop)) {
         used.add(key);
         out.push(item);
       }
     }
     // 兜底：未列入 order 的入口仍展示（例如上线了新菜单但配置未更新）
     for (const item of NAV_ITEMS) {
-      if (!used.has(item.labelKey) && !hidden.has(item.labelKey)) {
+      if (!used.has(item.labelKey) && !hidden.has(item.labelKey) && (!item.desktopOnly || isDesktop)) {
         used.add(item.labelKey);
         out.push(item);
       }
     }
     return out;
-  }, [navConfig]);
+  }, [navConfig, isDesktop]);
 
   return (
     <nav className="flex flex-col h-full">
@@ -250,6 +264,28 @@ function AppSidebarContent({
             );
           }
 
+          // 行为型入口（AI 批量剪辑 / 粤剪 YueCut）：拉起桌面端独立批量剪辑窗口
+          if (item.action === 'yuecut') {
+            return (
+              <button
+                key={item.href}
+                type="button"
+                onClick={() => {
+                  onNavigate?.();
+                  const w = window as unknown as {
+                    clipopDesktop?: { openYuecut?: () => Promise<unknown> };
+                    vidshorterDesktop?: { openYuecut?: () => Promise<unknown> };
+                  };
+                  w.clipopDesktop?.openYuecut?.() ?? w.vidshorterDesktop?.openYuecut?.();
+                }}
+                className={`${className} w-full text-left`}
+                title={collapsed ? 'AI 批量剪辑' : undefined}
+              >
+                {content}
+              </button>
+            );
+          }
+
           // 外部链接（Podcast AI）: web 端新标签页打开，桌面端经 setWindowOpenHandler 转系统浏览器
           if (item.external) {
             return (
@@ -294,6 +330,7 @@ function SidebarLabel({ labelKey }: { labelKey: NavItem['labelKey'] }) {
     home: '首页',
     aiVideo: 'AI 成片',
     clips: '高光剪辑',
+    yuecut: 'AI 批量剪辑',
     tiktokRemix: 'TikTok 二创',
     inviteFriends: '邀请好友',
     shorts: 'Shorts 成片',
@@ -448,6 +485,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           onToggleCollapse={toggleSidebar}
           navConfig={navConfig}
           onOpenReferral={() => setReferralOpen(true)}
+          isDesktop={isDesktop}
         />
         <SidebarCreditsCard mounted={mounted} collapsed={collapsed} />
       </aside>
@@ -456,63 +494,78 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <div className="flex-1 flex flex-col min-w-0">
         {/* 顶栏 — 右上角用户区 */}
         <header className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-          <div className="flex h-14 items-center justify-end gap-1.5 px-4 md:px-6 flex-nowrap overflow-x-auto overflow-y-hidden">
-            {/* 移动端汉堡 + Logo */}
+          <div className="flex h-14 items-center gap-1 px-3 sm:px-4 md:gap-1.5 md:px-6">
+            {/* 移动端汉堡 + 抽屉菜单 */}
             <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-              <SheetTrigger asChild className="md:hidden mr-auto">
-                <Button variant="ghost" size="icon">
+              <SheetTrigger asChild className="md:hidden">
+                <Button variant="ghost" size="icon" className="shrink-0">
                   <Menu className="h-5 w-5" />
                 </Button>
               </SheetTrigger>
-              <SheetContent side="left" className="w-64 p-0">
+              <SheetContent side="left" className="flex w-72 max-w-[85vw] flex-col gap-0 p-0">
                 <SheetTitle className="sr-only">Menu</SheetTitle>
-                <AppSidebarContent
-                  pathname={pathname}
-                  onNavigate={() => setMobileOpen(false)}
-                  navConfig={navConfig}
-                  onOpenReferral={() => setReferralOpen(true)}
-                />
-                <SidebarCreditsCard mounted={mounted} />
+                {/* 导航区可纵向滚动，账户区固定在底部 */}
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  <AppSidebarContent
+                    pathname={pathname}
+                    onNavigate={() => setMobileOpen(false)}
+                    navConfig={navConfig}
+                    onOpenReferral={() => setReferralOpen(true)}
+                    isDesktop={isDesktop}
+                  />
+                </div>
+                <div
+                  className="border-t border-border p-3"
+                  style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
+                >
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <a
+                      href={USER_FEEDBACK_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    >
+                      <MessageSquare className="h-4 w-4" />
+                      {feedbackLabel}
+                    </a>
+                    <LanguageSwitcher />
+                  </div>
+                  <MobileUserSection mounted={mounted} isDesktop={isDesktop} onCloseMobile={() => setMobileOpen(false)} />
+                </div>
               </SheetContent>
             </Sheet>
 
-            <div className="md:hidden mr-auto flex items-center gap-1 font-bold">
+            {/* 移动端 Logo（mr-auto 把右侧控件推到最右） */}
+            <div className="mr-auto flex items-center gap-1.5 font-bold md:hidden">
               <SidebarLogo />
               <span className="leading-tight">Clipop AI</span>
             </div>
 
-            {/* 右上角用户区 */}
-            {/* 用户反馈入口 — 常驻醒目按钮，新标签页打开 Tally 表单 */}
-            <Button variant="outline" size="sm" asChild className="hidden md:inline-flex">
-              <a href={USER_FEEDBACK_URL} target="_blank" rel="noopener noreferrer">
-                <MessageSquare className="h-4 w-4 mr-1.5" />
-                {feedbackLabel}
-              </a>
-            </Button>
+            {/* 桌面端右侧控件 */}
+            <div className="ml-auto hidden items-center gap-1.5 md:flex">
+              {/* 用户反馈入口 — 常驻醒目按钮，新标签页打开 Tally 表单 */}
+              <Button variant="outline" size="sm" asChild>
+                <a href={USER_FEEDBACK_URL} target="_blank" rel="noopener noreferrer">
+                  <MessageSquare className="h-4 w-4 mr-1.5" />
+                  {feedbackLabel}
+                </a>
+              </Button>
 
-            <Button variant="ghost" size="icon" onClick={toggleTheme} title="Toggle theme" className="hidden md:inline-flex">
-              {mounted && theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
-            </Button>
+              <Button variant="ghost" size="icon" onClick={toggleTheme} title="Toggle theme">
+                {mounted && theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+              </Button>
 
-            <div className="hidden md:block">
               <LanguageSwitcher />
-            </div>
 
-            <div className="hidden md:block">
               <NavbarUserSection mounted={mounted} isDesktop={isDesktop} />
             </div>
 
-            {/* 移动端简化 */}
-            <div className="md:hidden flex items-center gap-1">
-              <Button variant="ghost" size="icon" asChild title={feedbackLabel}>
-                <a href={USER_FEEDBACK_URL} target="_blank" rel="noopener noreferrer">
-                  <MessageSquare className="h-5 w-5" />
-                </a>
-              </Button>
-              <Button variant="ghost" size="icon" onClick={toggleTheme}>
+            {/* 移动端右侧：主题切换 + 紧凑账户区（完整登录/注册/语言/反馈在抽屉内） */}
+            <div className="flex shrink-0 items-center gap-0.5 md:hidden">
+              <Button variant="ghost" size="icon" onClick={toggleTheme} title="Toggle theme">
                 {mounted && theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
               </Button>
-              <MobileUserSection mounted={mounted} isDesktop={isDesktop} onCloseMobile={() => setMobileOpen(false)} />
+              <MobileHeaderUser mounted={mounted} isDesktop={isDesktop} />
             </div>
           </div>
         </header>
