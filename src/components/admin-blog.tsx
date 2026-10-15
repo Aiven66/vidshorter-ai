@@ -25,6 +25,7 @@ import {
   GripVertical,
   ChevronUp,
   ChevronDown,
+  ExternalLink,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import {
@@ -36,6 +37,7 @@ import {
   getDefaultCoverImage,
   saveAdminBlogPosts,
   stripHtml,
+  buildBlogUrl,
 } from '@/lib/blog-content';
 import type { BlogPost } from '@/lib/blog-content';
 
@@ -174,6 +176,17 @@ import { type Locale } from './admin-layout';
 
 interface BlogPageProps {
   locale: Locale;
+}
+
+/**
+ * 管理后台「点击标题查看详情」的跳转地址。
+ *
+ * 已发布文章走 SEO 友好地址 /blog/{slug}-{shortId}.html（与 C 端列表一致，
+ * 详情页会按 slug 在已发布集合中匹配）；草稿在 slug 匹配时被 is_published
+ * 过滤掉，会 404，因此草稿改用 UUID 直查地址 /blog/{id}。
+ */
+function getBlogDetailUrl(post: BlogPost): string {
+  return post.is_published ? buildBlogUrl(post) : `/blog/${post.id}`;
 }
 
 export function BlogPage({ locale }: BlogPageProps) {
@@ -1083,9 +1096,16 @@ export function BlogPage({ locale }: BlogPageProps) {
                     </div>
 
                     <div className="flex-1 min-w-0">
-                      <h3 className="font-semibold text-lg mb-1 line-clamp-1">
-                        {post.title}
-                      </h3>
+                      <a
+                        href={getBlogDetailUrl(post)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={locale === 'zh' ? '在新标签页打开详情' : 'Open detail in new tab'}
+                        className="group/title inline-flex items-center gap-1.5 max-w-full font-semibold text-lg mb-1 text-foreground hover:text-primary transition-colors"
+                      >
+                        <span className="line-clamp-1">{post.title}</span>
+                        <ExternalLink className="h-4 w-4 flex-shrink-0 text-muted-foreground opacity-0 group-hover/title:opacity-100 transition-opacity" />
+                      </a>
                       <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground mb-2">
                         <Badge variant="secondary">{post.category}</Badge>
                         <span className="flex items-center gap-1">
