@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
   }
 
   // 容错解析：只保留合法 NavKey，非法输入回落默认配置
-  const cfg = normalizeNavConfig({ order: body.order, hidden: body.hidden });
+  const cfg = normalizeNavConfig({ order: body.order, hidden: body.hidden, badges: body.badges });
 
   try {
     await writeNavConfig(cfg, admin);

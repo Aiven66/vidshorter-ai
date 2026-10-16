@@ -87,7 +87,7 @@ type NavItem = {
   // 通过 useLocale().t('nav.xxx') 读取翻译
   labelKey: NavKey;
   icon: typeof Scissors;
-  badge?: 'NEW';
+  // 是否展示「NEW」徽标由管理后台导航配置决定（NavConfig.badges），此处不再硬编码
   // 外部链接（如 Podcast AI）: web 端新标签页打开，桌面端经 setWindowOpenHandler 用系统浏览器打开
   external?: boolean;
   // 行为型入口：referral=邀请弹窗；yuecut=拉起桌面端「粤剪」批量剪辑独立窗口
@@ -98,20 +98,20 @@ type NavItem = {
 
 const NAV_ITEMS: NavItem[] = [
   { href: '/', labelKey: 'home', icon: Home },
-  { href: '/ai-video', labelKey: 'aiVideo', icon: Wand2, badge: 'NEW' },
-  { href: '/shorts', labelKey: 'shorts', icon: Smartphone, badge: 'NEW' },
+  { href: '/ai-video', labelKey: 'aiVideo', icon: Wand2 },
+  { href: '/shorts', labelKey: 'shorts', icon: Smartphone },
   { href: '/video-clips', labelKey: 'clips', icon: Scissors },
-  { href: '#yuecut', labelKey: 'yuecut', icon: Clapperboard, badge: 'NEW', action: 'yuecut', desktopOnly: true },
-  { href: '/tiktok-remix', labelKey: 'tiktokRemix', icon: Music2, badge: 'NEW' },
+  { href: '#yuecut', labelKey: 'yuecut', icon: Clapperboard, action: 'yuecut', desktopOnly: true },
+  { href: '/tiktok-remix', labelKey: 'tiktokRemix', icon: Music2 },
   { href: '/local-engine', labelKey: 'localEngine', icon: Cpu },
   { href: '#invite', labelKey: 'inviteFriends', icon: Gift, action: 'referral' },
-  { href: '/video-notes', labelKey: 'notes', icon: FileText, badge: 'NEW' },
+  { href: '/video-notes', labelKey: 'notes', icon: FileText },
   { href: 'https://tokpure.clipopai.com/', labelKey: 'tokpure', icon: Sparkles, external: true },
-  { href: '/marketing-video', labelKey: 'marketing', icon: ShoppingBag, badge: 'NEW' },
+  { href: '/marketing-video', labelKey: 'marketing', icon: ShoppingBag },
   { href: '/digital-human', labelKey: 'digitalHuman', icon: Bot },
-  { href: '/digital-human-live', labelKey: 'digitalHumanLive', icon: PersonStanding, badge: 'NEW' },
-  { href: 'https://podcastai.clipopai.com/', labelKey: 'podcast', icon: Podcast, badge: 'NEW', external: true },
-  { href: '/ai-tools', labelKey: 'aiTools', icon: Wrench, badge: 'NEW' },
+  { href: '/digital-human-live', labelKey: 'digitalHumanLive', icon: PersonStanding },
+  { href: 'https://podcastai.clipopai.com/', labelKey: 'podcast', icon: Podcast, external: true },
+  { href: '/ai-tools', labelKey: 'aiTools', icon: Wrench },
   { href: '/blog', labelKey: 'blog', icon: Newspaper },
   { href: '/pricing', labelKey: 'pricing', icon: Tag },
   { href: '/download', labelKey: 'download', icon: Download },
@@ -149,6 +149,9 @@ function AppSidebarContent({
   isDesktop?: boolean;
 }) {
   const isActive = (path: string) => path === '/' ? pathname === '/' : pathname?.startsWith(path);
+
+  // 「NEW」徽标入口集合：由管理后台「导航配置」决定，缺省值见 DEFAULT_NAV_CONFIG.badges
+  const badgeKeys = useMemo(() => new Set<NavKey>(navConfig.badges), [navConfig.badges]);
 
   // 按后台配置计算可见入口：先按 order 排序，过滤 hidden，再补上未出现在 order 里的入口
   const items = useMemo(() => {
@@ -237,7 +240,7 @@ function AppSidebarContent({
                   <SidebarLabel labelKey={item.labelKey} />
                 </span>
               )}
-              {item.badge === 'NEW' && !collapsed && (
+              {badgeKeys.has(item.labelKey) && !collapsed && (
                 <span className="ml-auto text-[10px] font-bold bg-gold text-black px-1.5 py-0.5 rounded">
                   NEW
                 </span>

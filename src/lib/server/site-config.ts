@@ -33,7 +33,13 @@ interface NavConfigStored {
 let cache: { at: number; data: NavConfigStored } | null = null;
 
 function defaultStored(): NavConfigStored {
-  return { nav: { order: [...DEFAULT_NAV_CONFIG.order], hidden: [...DEFAULT_NAV_CONFIG.hidden] } };
+  return {
+    nav: {
+      order: [...DEFAULT_NAV_CONFIG.order],
+      hidden: [...DEFAULT_NAV_CONFIG.hidden],
+      badges: [...DEFAULT_NAV_CONFIG.badges],
+    },
+  };
 }
 
 function normalizeStored(raw: unknown): NavConfigStored {
@@ -52,7 +58,7 @@ function normalizeStored(raw: unknown): NavConfigStored {
 export async function readNavConfig(): Promise<NavConfig> {
   if (cache && Date.now() - cache.at < CACHE_TTL_MS) return cache.data.nav;
   const creds = serviceCreds();
-  if (!creds) return { ...DEFAULT_NAV_CONFIG, order: [...DEFAULT_NAV_CONFIG.order], hidden: [...DEFAULT_NAV_CONFIG.hidden] };
+  if (!creds) return defaultStored().nav;
   try {
     const res = await fetch(`${creds.url}/storage/v1/object/${BUCKET}/${OBJECT}`, {
       headers: { apikey: creds.key, Authorization: `Bearer ${creds.key}` },
@@ -67,7 +73,7 @@ export async function readNavConfig(): Promise<NavConfig> {
     cache = { at: Date.now(), data: stored };
     return stored.nav;
   } catch {
-    return { ...DEFAULT_NAV_CONFIG, order: [...DEFAULT_NAV_CONFIG.order], hidden: [...DEFAULT_NAV_CONFIG.hidden] };
+    return defaultStored().nav;
   }
 }
 

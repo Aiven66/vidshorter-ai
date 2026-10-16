@@ -1,13 +1,14 @@
 /**
  * 前台左侧菜单栏配置（管理后台可改）——client / server 共用，零依赖。
  *
- * 仅描述「顺序 + 显隐」，不 import next / react / supabase，保证可在任意环境使用。
+ * 仅描述「顺序 + 显隐 + NEW 徽标」，不 import next / react / supabase，保证可在任意环境使用。
  * 存储位置与读取逻辑见 `src/lib/server/site-config.ts`（私有桶 clipop-config）。
  */
 
 export type NavKey =
   | 'home'
   | 'clips'
+  | 'yuecut'
   | 'tiktokRemix'
   | 'inviteFriends'
   | 'shorts'
@@ -32,6 +33,12 @@ export interface NavConfig {
   order: NavKey[];
   /** 需要隐藏的入口 */
   hidden: NavKey[];
+  /**
+   * 需要在入口右侧展示「NEW」徽标的入口（管理后台可配置）。
+   * 缺省（存储里没有该字段）时回落 DEFAULT_NAV_CONFIG.badges，保证老配置升级后
+   * 老菜单的 NEW 标识不丢；显式存了空数组则代表「一个都不显示」。
+   */
+  badges: NavKey[];
 }
 
 /** 管理后台展示用名称；中文沿用 app-shell 的 fallback 文案。 */
@@ -39,6 +46,7 @@ export const NAV_LABELS: Record<NavKey, { zh: string; en: string }> = {
   home: { zh: '首页', en: 'Home' },
   aiVideo: { zh: 'AI 成片', en: 'AI Video' },
   clips: { zh: '高光剪辑', en: 'Video Clips' },
+  yuecut: { zh: 'AI 批量剪辑', en: 'AI Batch Clips' },
   tiktokRemix: { zh: 'TikTok 二创', en: 'TikTok Remix' },
   inviteFriends: { zh: '邀请好友', en: 'Invite Friends' },
   shorts: { zh: 'Shorts 成片', en: 'Shorts' },
@@ -65,12 +73,15 @@ const NAV_KEY_SET = new Set<string>(ALL_NAV_KEYS);
 /**
  * 默认配置：
  *  - `clips`（高光剪辑）紧跟 `home` 正下方；
- *  - `aiVideo`（AI 成片，耗算力）默认隐藏，且不排进 order。
+ *  - `aiVideo`（AI 成片，耗算力）默认隐藏，且不排进 order；
+ *  - `badges` 为历史上写在 app-shell 里的硬编码 NEW 入口，逐条搬到配置里，
+ *    并新增 `tokpure`（TokPure 上线后需要 NEW 标识曝光）。
  */
 export const DEFAULT_NAV_CONFIG: NavConfig = {
   order: [
     'home',
     'clips',
+    'yuecut',
     'tiktokRemix',
     'localEngine',
     'inviteFriends',
@@ -88,16 +99,34 @@ export const DEFAULT_NAV_CONFIG: NavConfig = {
     'about',
   ],
   hidden: ['aiVideo'],
+  badges: [
+    'aiVideo',
+    'shorts',
+    'yuecut',
+    'tiktokRemix',
+    'notes',
+    'tokpure',
+    'marketing',
+    'digitalHumanLive',
+    'podcast',
+    'aiTools',
+  ],
 };
 
 function cloneDefault(): NavConfig {
-  return { order: [...DEFAULT_NAV_CONFIG.order], hidden: [...DEFAULT_NAV_CONFIG.hidden] };
+  return {
+    order: [...DEFAULT_NAV_CONFIG.order],
+    hidden: [...DEFAULT_NAV_CONFIG.hidden],
+    badges: [...DEFAULT_NAV_CONFIG.badges],
+  };
 }
 
 /**
  * 容错解析任意输入为合法 NavConfig：
  *  - order 只保留合法 NavKey 并去重，再补齐 DEFAULT 中缺失的 key（保证新菜单上线后仍会显示）；
  *  - hidden 走白名单过滤并去重；
+ *  - badges 走白名单过滤并去重；字段完全缺失 → 回落默认（老配置升级不丢 NEW 标识），
+ *    显式传 [] → 尊重「全不显示」；
  *  - 非法输入返回 DEFAULT_NAV_CONFIG 的副本。
  */
 export function normalizeNavConfig(raw: unknown): NavConfig {
@@ -106,6 +135,7 @@ export function normalizeNavConfig(raw: unknown): NavConfig {
 
   const orderRaw = Array.isArray(obj.order) ? obj.order : [];
   const hiddenRaw = Array.isArray(obj.hidden) ? obj.hidden : [];
+  const badgesRaw = Array.isArray(obj.badges) ? obj.badges : DEFAULT_NAV_CONFIG.badges;
 
   const order: NavKey[] = [];
   const seen = new Set<string>();
@@ -144,7 +174,16 @@ export function normalizeNavConfig(raw: unknown): NavConfig {
     }
   }
 
-  return { order, hidden };
+  const badges: NavKey[] = [];
+  const badgeSeen = new Set<string>();
+  for (const k of badgesRaw) {
+    if (typeof k === 'string' && NAV_KEY_SET.has(k) && !badgeSeen.has(k)) {
+      badgeSeen.add(k);
+      badges.push(k as NavKey);
+    }
+  }
+
+  return { order, hidden, badges };
 }
 
 /** 全部 NavKey（顺序：默认 order 优先，其余按定义顺序补齐）。用于后台完整列表。 */

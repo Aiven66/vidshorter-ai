@@ -12,7 +12,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { useAuth } from '@/lib/auth-context';
-import { Loader2, Save, RotateCcw, ChevronUp, ChevronDown, CheckCircle2, XCircle, PanelLeft } from 'lucide-react';
+import { Loader2, Save, RotateCcw, ChevronUp, ChevronDown, CheckCircle2, XCircle, PanelLeft, GripVertical } from 'lucide-react';
 import {
   DEFAULT_NAV_CONFIG,
   NAV_LABELS,
@@ -91,6 +91,19 @@ export function NavPage({ locale }: NavPageProps) {
     });
   };
 
+  const hasBadge = (key: NavKey) => nav.badges.includes(key);
+
+  /** 切换「NEW」徽标：开启 = 该入口在前台左侧菜单显示 NEW */
+  const toggleBadge = (key: NavKey) => {
+    setNotice(null);
+    setNav((prev) => {
+      const badges = prev.badges.includes(key)
+        ? prev.badges.filter((k) => k !== key)
+        : [...prev.badges, key];
+      return { ...prev, badges };
+    });
+  };
+
   const move = (index: number, dir: -1 | 1) => {
     const target = index + dir;
     if (target < 0 || target >= orderedKeys.length) return;
@@ -102,6 +115,27 @@ export function NavPage({ locale }: NavPageProps) {
     });
   };
 
+  // ── 拖动排序 ──────────────────────────────────────────────
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [overIndex, setOverIndex] = useState<number | null>(null);
+
+  /** 把 from 位置的入口插到 to 位置（其余顺延） */
+  const reorder = (from: number, to: number) => {
+    if (from === to) return;
+    setNotice(null);
+    setNav((prev) => {
+      const order = [...orderedKeys];
+      const [moved] = order.splice(from, 1);
+      order.splice(to, 0, moved);
+      return { ...prev, order };
+    });
+  };
+
+  const endDrag = () => {
+    setDragIndex(null);
+    setOverIndex(null);
+  };
+
   const save = useCallback(
     async (cfg: NavConfig) => {
       setBusy(true);
@@ -110,7 +144,7 @@ export function NavPage({ locale }: NavPageProps) {
         const res = await fetch('/api/admin/nav', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
-          body: JSON.stringify({ order: cfg.order, hidden: cfg.hidden }),
+          body: JSON.stringify({ order: cfg.order, hidden: cfg.hidden, badges: cfg.badges }),
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
@@ -158,16 +192,49 @@ export function NavPage({ locale }: NavPageProps) {
             </CardTitle>
             <CardDescription className="mt-2">
               {zh
-                ? '开关控制显示 / 隐藏，箭头调整顺序（越靠上越靠前）。'
-                : 'Toggle to show/hide, use arrows to reorder (top shows first).'}
+                ? '开关控制显示 / 隐藏；点击「NEW」切换该入口是否展示 NEW 徽标；按住左侧手柄拖动调整顺序（箭头亦可）。'
+                : 'Toggle to show/hide, click NEW to switch the badge, drag the handle to reorder (arrows also work).'}
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             <div className="flex flex-col divide-y divide-border rounded-lg border border-border">
               {orderedKeys.map((key, index) => {
                 const hidden = isHidden(key);
+                const badged = hasBadge(key);
+                const isDropTarget = dragIndex !== null && overIndex === index && dragIndex !== index;
                 return (
-                  <div key={key} className="flex items-center gap-3 px-3 py-2.5">
+                  <div
+                    key={key}
+                    draggable
+                    onDragStart={(e) => {
+                      setDragIndex(index);
+                      e.dataTransfer.effectAllowed = 'move';
+                      // Firefox 需要 setData 才会真正开始拖动
+                      e.dataTransfer.setData('text/plain', key);
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = 'move';
+                      if (overIndex !== index) setOverIndex(index);
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      if (dragIndex !== null) reorder(dragIndex, index);
+                      endDrag();
+                    }}
+                    onDragEnd={endDrag}
+                    className={`flex items-center gap-3 px-3 py-2.5 transition-colors ${
+                      isDropTarget ? 'bg-primary/5 ring-1 ring-inset ring-primary/40' : ''
+                    } ${dragIndex === index ? 'opacity-50' : ''}`}
+                  >
+                    {/* 拖动手柄（整行可拖，手柄为视觉提示） */}
+                    <span
+                      className="flex-shrink-0 cursor-grab active:cursor-grabbing text-muted-foreground"
+                      title={zh ? '按住拖动调整顺序' : 'Drag to reorder'}
+                    >
+                      <GripVertical className="w-4 h-4" />
+                    </span>
+
                     <span className="flex-1 min-w-0">
                       <span
                         className={`text-sm font-medium ${hidden ? 'text-muted-foreground line-through' : ''}`}
@@ -176,6 +243,21 @@ export function NavPage({ locale }: NavPageProps) {
                       </span>
                       <span className="ml-2 text-xs text-muted-foreground">{key}</span>
                     </span>
+
+                    {/* NEW 徽标开关：开启后前台左侧菜单该项显示 NEW */}
+                    <button
+                      type="button"
+                      onClick={() => toggleBadge(key)}
+                      aria-pressed={badged}
+                      title={zh ? '切换 NEW 徽标' : 'Toggle NEW badge'}
+                      className={`flex-shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded transition-colors ${
+                        badged
+                          ? 'bg-gold text-black'
+                          : 'border border-border text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      NEW
+                    </button>
 
                     {/* 显示 / 隐藏：Switch 开启 = 显示 */}
                     <Switch
