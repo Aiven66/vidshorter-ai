@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Slider } from '@/components/ui/slider';
 import { useLocale } from '@/lib/locale-context';
-import { useAuth } from '@/lib/auth-context';
+import { useAiToolAuth } from '@/lib/ai-tools/use-ai-tool-auth';
 import {
   AiToolError,
   callAiTool,
@@ -30,7 +30,7 @@ interface Stroke {
 
 export function ImageDewatermark() {
   const { t } = useLocale();
-  const { user, accessToken, loading: authLoading } = useAuth();
+  const { user, getToken, authLoading } = useAiToolAuth();
   const { requestSpend, insufficientOpen, setInsufficientOpen, balance } = useAiToolCredit();
   const [file, setFile] = useState<File | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -164,7 +164,7 @@ export function ImageDewatermark() {
 
   const handleAutoProcess = async () => {
     if (!file || !imageRef.current) return;
-    if (!user || !accessToken) {
+    if (!user) {
       setError(t('aiTools.needsLogin'));
       return;
     }
@@ -176,7 +176,7 @@ export function ImageDewatermark() {
       // 一键模式: 只上传原图，服务端自动检测水印
       setStage(t('aiTools.uploading'));
       const imageUpload = await uploadAiInput(
-        accessToken,
+        getToken,
         user.id,
         file,
         file.name || 'image.png',
@@ -184,7 +184,7 @@ export function ImageDewatermark() {
       );
 
       setStage(t('aiTools.serverProcessing'));
-      const result = await callAiTool<AiImageResult>(accessToken, 'image-dewatermark', {
+      const result = await callAiTool<AiImageResult>(getToken, 'image-dewatermark', {
         imageUrl: imageUpload.signedUrl,
       });
 
@@ -214,7 +214,7 @@ export function ImageDewatermark() {
       setError(t('aiTools.maskRequired'));
       return;
     }
-    if (!user || !accessToken) {
+    if (!user) {
       setError(t('aiTools.needsLogin'));
       return;
     }
@@ -226,7 +226,7 @@ export function ImageDewatermark() {
       // 上传原图
       setStage(t('aiTools.uploading'));
       const imageUpload = await uploadAiInput(
-        accessToken,
+        getToken,
         user.id,
         file,
         file.name || 'image.png',
@@ -236,7 +236,7 @@ export function ImageDewatermark() {
       // 上传掩码（白色涂抹区域）
       const maskBlob = await canvasToBlob(maskRef.current, 'image/png');
       const maskUpload = await uploadAiInput(
-        accessToken,
+        getToken,
         user.id,
         maskBlob,
         'mask.png',
@@ -245,7 +245,7 @@ export function ImageDewatermark() {
 
       // 服务端 LaMa 推理（掩码 = 涂抹 + 自动检测并集）
       setStage(t('aiTools.serverProcessing'));
-      const result = await callAiTool<AiImageResult>(accessToken, 'image-dewatermark', {
+      const result = await callAiTool<AiImageResult>(getToken, 'image-dewatermark', {
         imageUrl: imageUpload.signedUrl,
         maskUrl: maskUpload.signedUrl,
       });

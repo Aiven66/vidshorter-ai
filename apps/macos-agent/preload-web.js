@@ -53,6 +53,23 @@ const desktopBridge = {
   localHighlightsPlan: (input) => ipcRenderer.invoke('local-highlights:plan', input),
   localRenderPublishable: (input) => ipcRenderer.invoke('local-render:publishable', input),
   localDownload: (input) => ipcRenderer.invoke('local-download', input),
+  brandKitList: () => ipcRenderer.invoke('brand-kit:list'),
+  brandKitGetActive: () => ipcRenderer.invoke('brand-kit:get-active'),
+  brandKitSave: (brand) => ipcRenderer.invoke('brand-kit:save', brand),
+  brandKitRemove: (id) => ipcRenderer.invoke('brand-kit:remove', id),
+  brandKitSetActive: (id) => ipcRenderer.invoke('brand-kit:set-active', id),
+  brandKitPickLogo: () => ipcRenderer.invoke('brand-kit:pick-logo'),
+  projectList: () => ipcRenderer.invoke('project:list'),
+  projectCreate: (input) => ipcRenderer.invoke('project:create', input),
+  projectRead: (input) => ipcRenderer.invoke('project:read', input),
+  projectSave: (input) => ipcRenderer.invoke('project:save', input),
+  projectRemove: (id) => ipcRenderer.invoke('project:remove', { id }),
+  projectImport: () => ipcRenderer.invoke('project:import'),
+  projectExport: (id) => ipcRenderer.invoke('project:export', { id }),
+  projectRelink: (input) => ipcRenderer.invoke('project:relink', input),
+  ahaPickVideo: () => ipcRenderer.invoke('local-aha:pick-video'),
+  ahaFirstClip: (input) => ipcRenderer.invoke('local-aha:first-clip', input),
+  ahaExport: (input) => ipcRenderer.invoke('local-aha:export', input),
   onLocalModelsProgress: (cb) => {
     const handler = (_e, payload) => cb(payload);
     ipcRenderer.on('local-models:progress', handler);

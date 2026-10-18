@@ -11,7 +11,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { useLocale } from '@/lib/locale-context';
-import { useAuth } from '@/lib/auth-context';
+import { useAiToolAuth } from '@/lib/ai-tools/use-ai-tool-auth';
 import {
   AiToolError,
   AiChatVideoEditResult,
@@ -72,7 +72,7 @@ function getAdminAiConfig(): Record<string, unknown> | null {
 
 export function ChatVideoEditor() {
   const { t, locale } = useLocale();
-  const { user, accessToken, loading: authLoading } = useAuth();
+  const { user, getToken, authLoading } = useAiToolAuth();
   const { requestSpend, insufficientOpen, setInsufficientOpen, balance } = useAiToolCredit();
   const [videos, setVideos] = useState<VideoEntry[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -111,7 +111,7 @@ export function ChatVideoEditor() {
 
   /** 上传单个视频 */
   const uploadSingleVideo = useCallback(async (file: File, index: number) => {
-    if (!accessToken || !user?.id) {
+    if (!user?.id) {
       setError(t('aiTools.needsLogin'));
       return;
     }
@@ -124,7 +124,7 @@ export function ChatVideoEditor() {
     setStage(t('aiTools.uploading'));
 
     try {
-      const upload = await uploadAiInput(accessToken, user.id, file, file.name, file.type);
+      const upload = await uploadAiInput(getToken, user.id, file, file.name, file.type);
       setVideos(prev => {
         const updated = [...prev];
         updated[index] = { ...updated[index], signedUrl: upload.signedUrl, uploading: false };
@@ -140,7 +140,7 @@ export function ChatVideoEditor() {
     } finally {
       setStage('');
     }
-  }, [accessToken, user, t]);
+  }, [getToken, user, t]);
 
   /** 处理文件选择 */
   const handleFilesSelected = useCallback(async (files: FileList | File[]) => {
@@ -238,7 +238,7 @@ export function ChatVideoEditor() {
 
       const videoUrls = videos.map(v => v.signedUrl);
 
-      const result = await callAiTool<AiChatVideoEditResult>(accessToken!, 'chat-video-edit', {
+      const result = await callAiTool<AiChatVideoEditResult>(getToken, 'chat-video-edit', {
         videoUrls,
         messages: chatHistory,
         locale,
@@ -273,7 +273,7 @@ export function ChatVideoEditor() {
       setProcessing(false);
       setStage('');
     }
-  }, [input, processing, allUploaded, videos, messages, accessToken, locale, t, requestSpend]);
+  }, [input, processing, allUploaded, videos, messages, getToken, locale, t, requestSpend]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {

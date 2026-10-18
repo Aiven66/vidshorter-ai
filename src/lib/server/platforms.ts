@@ -163,6 +163,30 @@ export function detectPlatform(url: string): Platform {
   return GENERIC;
 }
 
+/**
+ * Build an ffmpeg `-headers` value (CRLF-delimited, trailing CRLF required) for a
+ * remote source stream.
+ *
+ * Why this exists: `createLocalClip` used to decide whether to send Bilibili
+ * anti-leech headers by sniffing the *CDN hostname* against a hard-coded
+ * allowlist (bilivideo.com / upos-sz / akamaized.net). Bilibili also serves
+ * `mcdn`/edge hosts outside that list, so those clips were requested WITHOUT a
+ * Referer and the CDN answered `403 Forbidden` — every clip failed, the job
+ * never reached a terminal state, and the UI hung until its 8-minute cap
+ * ("Processing is taking too long"). Passing the headers explicitly removes the
+ * hostname guesswork.
+ *
+ * Returns undefined when the platform needs no special headers (e.g. YouTube,
+ * whose streams are proxied separately). A default User-Agent is appended when
+ * the platform list has none, because the CDNs require one.
+ */
+export function platformFfmpegHeaders(platform: Platform): string | undefined {
+  if (!platform.headers.length) return undefined;
+  const lines = platform.headers.map((h) => h.replace(/\r?\n/g, '').trim()).filter(Boolean);
+  if (!lines.some((l) => /^user-agent:/i.test(l))) lines.push(`User-Agent: ${UA}`);
+  return lines.map((l) => `${l}\r\n`).join('');
+}
+
 /** Short-link hosts whose real target must be resolved via an HTTP redirect. */
 export function isShortLinkHost(url: string): boolean {
   try {

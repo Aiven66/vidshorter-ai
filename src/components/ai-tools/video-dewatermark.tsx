@@ -9,7 +9,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { useLocale } from '@/lib/locale-context';
-import { useAuth } from '@/lib/auth-context';
+import { useAiToolAuth } from '@/lib/ai-tools/use-ai-tool-auth';
 import {
   AiToolError,
   callAiTool,
@@ -33,7 +33,7 @@ const MAX_VIDEO_BYTES = 48 * 1024 * 1024; // Supabase 桶单文件上限 50MB
 
 export function VideoDewatermark() {
   const { t } = useLocale();
-  const { user, accessToken, loading: authLoading } = useAuth();
+  const { user, getToken, authLoading } = useAiToolAuth();
   const { requestSpend, insufficientOpen, setInsufficientOpen, balance } = useAiToolCredit();
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [videoSize, setVideoSize] = useState<{ w: number; h: number } | null>(null);
@@ -167,7 +167,7 @@ export function VideoDewatermark() {
       setError(t('aiTools.rectRequired'));
       return;
     }
-    if (!user || !accessToken) {
+    if (!user) {
       setError(t('aiTools.needsLogin'));
       return;
     }
@@ -180,7 +180,7 @@ export function VideoDewatermark() {
     try {
       // 上传视频（直传 Storage，避免大文件经 API 中转）
       const upload = await uploadAiInput(
-        accessToken,
+        getToken,
         user.id,
         fileRef.current,
         fileRef.current.name || 'video.mp4',
@@ -189,7 +189,7 @@ export function VideoDewatermark() {
 
       // 服务端 ffmpeg delogo 处理
       setStage(t('aiTools.processingVideo'));
-      const result = await callAiTool<AiVideoResult>(accessToken, 'video-dewatermark', {
+      const result = await callAiTool<AiVideoResult>(getToken, 'video-dewatermark', {
         videoUrl: upload.signedUrl,
         rects: rects.map(({ x, y, w, h }) => ({ x, y, w, h })),
       });

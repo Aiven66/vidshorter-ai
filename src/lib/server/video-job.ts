@@ -380,6 +380,9 @@ export async function produceClip(
       endTime: end,
       title: highlight.title,
       fastCopy: true,
+      // Anti-leech headers for remote sources (Bilibili CDN on Vercel). Without
+      // them the CDN returns 403 and every clip fails to generate.
+      ...(source.ffmpegHeaders ? { inputHeaders: source.ffmpegHeaders } : {}),
       ...(params.maxHeight ? { targetHeight: params.maxHeight } : {}),
       ...(params.crf ? { crf: params.crf } : {}),
     });
@@ -563,6 +566,29 @@ async function runClip(client: SupabaseClient, msg: VideoJobMessage): Promise<vo
       highlight_summary: highlight.summary,
       thumbnail_url: artifact.thumbnail,
     });
+  } else {
+    // FAILURE MARKER — this row is what makes the job able to finish.
+    //
+    // `doneCount` below counts rows in short_videos, and the job only reaches a
+    // terminal state once `doneCount >= highlights.length`. Previously a failed
+    // clip wrote NOTHING, so the counter could never reach the total: the video
+    // stayed `processing` forever and the UI polled until its 8-minute cap,
+    // surfacing "Processing is taking too long. Please try again." even though
+    // the run was already dead (only the clips that happened to succeed showed).
+    //
+    // The `failed:` sentinel is classified as `failed` by classifyClipUrl, so it
+    // is hidden from the UI while still counting as "attempted".
+    await client.from('short_videos').insert({
+      video_id: videoId,
+      user_id: userId,
+      url: `failed:${clipKey}`,
+      start_time: highlight.start_time,
+      end_time: highlight.end_time,
+      duration: clipDuration,
+      highlight_title: highlight.title,
+      highlight_summary: highlight.summary,
+      thumbnail_url: '',
+    });
   }
 
   // Recompute progress + decide terminal state.
@@ -574,7 +600,11 @@ async function runClip(client: SupabaseClient, msg: VideoJobMessage): Promise<vo
 
   if (finished) {
     const { data: clips } = await client.from('short_videos').select('url').eq('video_id', videoId);
-    const playable = (clips ?? []).filter((c) => !!c.url && !(c.url?.includes('data-url:') && c.url?.endsWith('.youtu')));
+    // `failed:` rows are attempt markers for clips that could not be produced —
+    // they must count toward completion but never toward "playable".
+    const playable = (clips ?? []).filter(
+      (c) => !!c.url && !c.url.startsWith('failed:') && !(c.url?.includes('data-url:') && c.url?.endsWith('.youtu')),
+    );
     const allLinkOnly = playable.every((c) => c.url && (c.url.startsWith('https://youtu.be/') || c.url.includes('youtu.be/')) && playable.length === (clips?.length ?? 0));
     let finalStatus: string;
     if (playable.length === 0) {

@@ -30,6 +30,7 @@ import {
   detectPlatform,
   isShortLinkHost,
   mapYtDlpError,
+  platformFfmpegHeaders,
   type Platform,
 } from '@/lib/server/platforms';
 
@@ -2279,7 +2280,17 @@ async function downloadSourceVideo(
   const hasCookies = await hasChromeCookies();
 
   if (isBilibiliUrl(normalizedUrl)) {
-    return { inputPath: await downloadBilibiliVideo(normalizedUrl, outputTemplate, hasCookies) };
+    const inputPath = await downloadBilibiliVideo(normalizedUrl, outputTemplate, hasCookies);
+    // On Vercel `downloadBilibiliVideo` returns a REMOTE CDN stream URL instead of
+    // a local file. Those URLs are anti-leech protected: ffmpeg must send a
+    // Referer (and UA) or the CDN replies 403 and every clip fails. Attach the
+    // platform's headers here so both pipelines (queue + SSE) get them for free —
+    // previously each caller had to guess from the CDN hostname.
+    if (inputPath.startsWith('http')) {
+      const headers = platformFfmpegHeaders(detectPlatform(normalizedUrl));
+      if (headers) return { inputPath, ffmpegHeaders: headers };
+    }
+    return { inputPath };
   }
   const platform = detectPlatform(normalizedUrl);
   return downloadYouTubeOrGenericVideo(normalizedUrl, outputTemplate, hasCookies, forceH, platform);
@@ -3248,11 +3259,14 @@ async function createLocalClip(params: {
     }
   })();
 
-  // Detect Bilibili CDN streams (need anti-leech headers)
+  // Detect Bilibili CDN streams (need anti-leech headers). Broader than the old
+  // hostname allowlist: Bilibili also serves clips from `mcdn`/`hdslb` edges, and
+  // a miss means ffmpeg sends no Referer and the CDN answers 403.
   const isBilibiliStream = isRemoteInput && (
-    params.inputPath.includes('bilivideo.com') ||
-    params.inputPath.includes('bilivideo.cn') ||
-    params.inputPath.includes('upos-sz') ||
+    params.inputPath.includes('bilivideo') ||
+    params.inputPath.includes('hdslb.com') ||
+    params.inputPath.includes('.mcdn.') ||
+    params.inputPath.includes('upos-') ||
     params.inputPath.includes('akamaized.net')
   );
 

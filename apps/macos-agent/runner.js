@@ -34,6 +34,161 @@ var import_node_path = __toESM(require("path"));
 var import_node_fs = require("fs");
 var import_node_events = require("events");
 var import_node_stream = require("stream");
+
+// src/lib/server/platforms.ts
+var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
+var DEFAULT_SUB_LANGS = "en.*,en,zh.*,zh-Hans.*,zh-Hant.*";
+var BILIBILI_HEADERS = [
+  "Referer: https://www.bilibili.com/",
+  "Origin: https://www.bilibili.com",
+  "Accept-Language: zh-CN,zh;q=0.9,en;q=0.8"
+];
+var YOUTUBE = {
+  id: "youtube",
+  name: "YouTube",
+  hosts: [/(^|\.)youtube\.com$/i, /(^|\.)youtu\.be$/i, /(^|\.)youtube-nocookie\.com$/i],
+  headers: [],
+  subLangs: DEFAULT_SUB_LANGS,
+  format: "bestvideo*+bestaudio/best",
+  needsLogin: false
+};
+var BILIBILI = {
+  id: "bilibili",
+  name: "Bilibili",
+  hosts: [/(^|\.)bilibili\.com$/i, /(^|\.)b23\.tv$/i, /(^|\.)b23\.wtf$/i],
+  headers: BILIBILI_HEADERS,
+  subLangs: "zh-Hans,zh-Hant,zh,en.*",
+  format: "bestvideo*+bestaudio/best",
+  needsLogin: false
+};
+var TIKTOK = {
+  id: "tiktok",
+  name: "TikTok",
+  hosts: [/(^|\.)tiktok\.com$/i, /(^|\.)vm\.tiktok\.com$/i, /(^|\.)vt\.tiktok\.com$/i],
+  headers: [`User-Agent: ${UA}`, "Referer: https://www.tiktok.com/"],
+  subLangs: DEFAULT_SUB_LANGS,
+  format: "best[ext=mp4]/best",
+  needsLogin: false
+};
+var DOUYIN = {
+  id: "douyin",
+  name: "\u6296\u97F3 / Douyin",
+  hosts: [/(^|\.)douyin\.com$/i, /(^|\.)iesdouyin\.com$/i],
+  headers: [`User-Agent: ${UA}`, "Referer: https://www.douyin.com/"],
+  subLangs: DEFAULT_SUB_LANGS,
+  format: "best[ext=mp4]/best",
+  needsLogin: true
+};
+var XIAOHONGSHU = {
+  id: "xiaohongshu",
+  name: "\u5C0F\u7EA2\u4E66 / Xiaohongshu",
+  hosts: [/(^|\.)xiaohongshu\.com$/i, /(^|\.)xhslink\.com$/i],
+  headers: [`User-Agent: ${UA}`, "Referer: https://www.xiaohongshu.com/"],
+  subLangs: DEFAULT_SUB_LANGS,
+  format: "best[ext=mp4]/best",
+  needsLogin: true
+};
+var INSTAGRAM = {
+  id: "instagram",
+  name: "Instagram",
+  hosts: [/(^|\.)instagram\.com$/i, /(^|\.)instagr\.am$/i],
+  headers: [`User-Agent: ${UA}`],
+  subLangs: DEFAULT_SUB_LANGS,
+  format: "best[ext=mp4]/best",
+  needsLogin: true
+};
+var VIMEO = {
+  id: "vimeo",
+  name: "Vimeo",
+  hosts: [/(^|\.)vimeo\.com$/i],
+  headers: [`User-Agent: ${UA}`],
+  subLangs: DEFAULT_SUB_LANGS,
+  format: "bestvideo*+bestaudio/best",
+  needsLogin: false
+};
+var TWITTER = {
+  id: "twitter",
+  name: "X / Twitter",
+  hosts: [/(^|\.)twitter\.com$/i, /(^|\.)x\.com$/i, /(^|\.)t\.co$/i],
+  headers: [`User-Agent: ${UA}`],
+  subLangs: DEFAULT_SUB_LANGS,
+  format: "best[ext=mp4]/best",
+  needsLogin: true
+};
+var GENERIC = {
+  id: "generic",
+  name: "Video",
+  hosts: [],
+  headers: [`User-Agent: ${UA}`],
+  subLangs: DEFAULT_SUB_LANGS,
+  format: "bestvideo*+bestaudio/best",
+  needsLogin: false
+};
+var PLATFORMS = [
+  YOUTUBE,
+  BILIBILI,
+  TIKTOK,
+  DOUYIN,
+  XIAOHONGSHU,
+  INSTAGRAM,
+  VIMEO,
+  TWITTER
+];
+function detectPlatform(url) {
+  try {
+    const { hostname } = new URL(url);
+    for (const p of PLATFORMS) {
+      if (p.hosts.some((re) => re.test(hostname))) return p;
+    }
+  } catch {
+  }
+  return GENERIC;
+}
+function platformFfmpegHeaders(platform) {
+  if (!platform.headers.length) return void 0;
+  const lines = platform.headers.map((h) => h.replace(/\r?\n/g, "").trim()).filter(Boolean);
+  if (!lines.some((l) => /^user-agent:/i.test(l))) lines.push(`User-Agent: ${UA}`);
+  return lines.map((l) => `${l}\r
+`).join("");
+}
+function isShortLinkHost(url) {
+  try {
+    const { hostname } = new URL(url);
+    return /(^|\.)b23\.tv$/i.test(hostname) || /(^|\.)v\.douyin\.com$/i.test(hostname) || /(^|\.)xhslink\.com$/i.test(hostname) || /(^|\.)vm\.tiktok\.com$/i.test(hostname) || /(^|\.)vt\.tiktok\.com$/i.test(hostname) || /(^|\.)t\.co$/i.test(hostname);
+  } catch {
+    return false;
+  }
+}
+function mapYtDlpError(stderr, platform) {
+  const raw = (stderr || "").trim();
+  const tail = raw.split("\n").map((l) => l.trim()).filter(Boolean).slice(-1)[0] || "";
+  if (/sign in to confirm|login required|log in|not a bot|confirm you'?re not a bot|age.?restricted|private video/i.test(raw)) {
+    return new Error(
+      `${platform.name}: this video requires a signed-in account and cannot be downloaded anonymously. Please try a different public link.`
+    );
+  }
+  if (/unable to extract|unsupported url|no video formats|no suitable|not a valid url/i.test(raw)) {
+    return new Error(
+      `Could not parse this link (unsupported platform or invalid URL). Please try a different link.`
+    );
+  }
+  if (/http error 403|forbidden|access denied|blocked/i.test(raw)) {
+    return new Error(
+      `${platform.name}: access denied (403). The platform is blocking server requests \u2014 please try again later or use another link.`
+    );
+  }
+  if (/geo.?restrict|not available in your country|only available in/i.test(raw)) {
+    return new Error(`${platform.name}: this video is region-restricted and cannot be downloaded.`);
+  }
+  if (/timed out|timeout/i.test(raw)) {
+    return new Error(`${platform.name}: the download timed out. Try a shorter video or another link.`);
+  }
+  return new Error(
+    `Failed to process this ${platform.name} link${tail ? ` (${tail})` : ""}. Please try a different link.`
+  );
+}
+
+// src/lib/server/video-clipper.ts
 var execFile = (0, import_node_util.promisify)(import_node_child_process.execFile);
 var TMP_DIR = "/tmp";
 var PUBLIC_CLIP_DIR = import_node_path.default.join(TMP_DIR, "generated-clips");
@@ -127,7 +282,12 @@ function clampInt(value, min, max, fallback) {
 function ensureEven(n) {
   return n % 2 === 0 ? n : n - 1;
 }
-function clipDurations(duration) {
+function clipDurations(duration, targetSeconds) {
+  const override = Number(targetSeconds);
+  if (Number.isFinite(override) && override >= 10 && override <= 90) {
+    const target = Math.round(override);
+    return { target, min: Math.max(10, Math.round(target * 0.7)), max: target + 5 };
+  }
   const d = Math.max(0, Math.floor(duration));
   if (d <= 8 * 60) return { target: 35, min: 20, max: 45 };
   if (d <= 20 * 60) return { target: 50, min: 35, max: 60 };
@@ -208,6 +368,9 @@ async function normalizeVideoUrl(videoUrl) {
       const id = extractYouTubeVideoId(trimmed);
       if (id) return `https://www.youtube.com/watch?v=${id}`;
     }
+    if (isShortLinkHost(trimmed)) {
+      return await resolveFinalUrl(trimmed);
+    }
     if (u.hostname.includes("b23.tv")) {
       return await resolveFinalUrl(trimmed);
     }
@@ -244,10 +407,12 @@ function parseVttTimestamp(value) {
 function cleanCueText(value) {
   return value.replace(/<[^>]+>/g, " ").replace(/\[[^\]]+\]/g, " ").replace(/\s+/g, " ").trim();
 }
-function buildHighlightReason(text, score) {
-  const t = (text || "").toLowerCase();
-  const hasPunct = /[!?！？]/.test(text);
-  const hasKeyword = [
+function buildHighlightReason(text, startSeconds = 0, durationSeconds = 0) {
+  const cleaned = (text || "").replace(/\s+/g, " ").trim();
+  const t = cleaned.toLowerCase();
+  const hasQuestion = /[?？]/.test(cleaned) || /\b(why|how|what|when|should|could)\b/.test(t);
+  const hasNumber = /\d/.test(cleaned);
+  const keywords = [
     "important",
     "secret",
     "best",
@@ -264,25 +429,25 @@ function buildHighlightReason(text, score) {
     "\u65B9\u6CD5",
     "\u79D8\u8BC0",
     "\u6280\u5DE7"
-  ].some((k) => t.includes(k.toLowerCase()));
-  const dense = text.length >= 160;
-  if (hasPunct || score >= 8 || hasKeyword) {
-    return "High information density with key moments, making it a strong highlight.";
+  ];
+  const hitKeyword = keywords.find((k) => t.includes(k.toLowerCase()));
+  const dense = cleaned.length >= 160;
+  const lead = hasQuestion ? "\u63D0\u51FA\u7591\u95EE\u3001\u5236\u9020\u60AC\u5FF5" : hasNumber ? "\u7ED9\u51FA\u5177\u4F53\u6570\u636E\u6216\u6B65\u9AA4" : hitKeyword ? `\u5F3A\u8C03\u6838\u5FC3\u8981\u70B9\u300C${hitKeyword}\u300D` : dense ? "\u4FE1\u606F\u5BC6\u5EA6\u9AD8\u3001\u9002\u5408\u76F4\u63A5\u51FA\u7247" : "\u8282\u594F\u5B8C\u6574\u3001\u80FD\u72EC\u7ACB\u6210\u6BB5";
+  const clauses = cleaned.split(/[.!?！？。；;]+/).map((s) => s.trim()).filter((s) => s.length >= 8);
+  const evidence = (clauses.length > 0 ? clauses : [cleaned]).map((c) => ({ c, len: c.length })).filter((x) => x.c.length >= 8).sort((a, b) => (a.len >= 20 && a.len <= 70 ? 0 : 1) - (b.len >= 20 && b.len <= 70 ? 0 : 1) || a.len - b.len)[0]?.c;
+  const quote = evidence ? `\uFF1A${evidence.length > 56 ? `${evidence.slice(0, 56).trim()}\u2026` : evidence}` : "";
+  if (!cleaned) {
+    return `\u7B2C ${formatSeconds(startSeconds)} \u8D77\u7EA6 ${Math.max(1, Math.round(durationSeconds))} \u79D2\u7684\u5019\u9009\u7247\u6BB5\uFF0C\u6309\u65F6\u95F4\u8F74\u5747\u8861\u91C7\u6837\u9009\u51FA\u3002`;
   }
-  if (dense) {
-    return "Clear, content-rich segment selected as a concise highlight.";
-  }
-  return "Representative moment selected to summarize the video.";
+  return `${lead}${quote}`;
 }
-function normalizeHighlights(input, duration) {
+function normalizeHighlights(input, duration, targetSeconds) {
   const safeDuration = Math.max(duration, 60);
-  const cfg = clipDurations(safeDuration);
+  const cfg = clipDurations(safeDuration, targetSeconds);
   const normalized = input.filter((item) => item && typeof item === "object").map((item, index) => {
     const title = typeof item.title === "string" && item.title.trim() ? item.title.trim().slice(0, 80) : `Highlight ${index + 1}`;
     const score = Number.isFinite(item.engagement_score) ? Math.max(1, Math.min(10, Math.round(item.engagement_score))) : 7;
     const baseText = typeof item.summary === "string" && item.summary.trim() ? item.summary.trim().slice(0, 220) : title;
-    const reason = buildHighlightReason(baseText, score);
-    const summary = baseText && baseText.length > 20 ? `${reason} ${baseText.slice(0, 120)}` : reason;
     let start = Number.isFinite(item.start_time) ? Math.floor(item.start_time) : 0;
     let end = Number.isFinite(item.end_time) ? Math.ceil(item.end_time) : start + cfg.target;
     start = Math.max(0, Math.min(start, Math.max(0, safeDuration - cfg.min)));
@@ -292,6 +457,7 @@ function normalizeHighlights(input, duration) {
       end = safeDuration;
       start = Math.max(0, end - cfg.target);
     }
+    const summary = buildHighlightReason(baseText, start, end - start);
     return { title, summary, engagement_score: score, start_time: start, end_time: end };
   }).sort((a, b) => a.start_time - b.start_time);
   const deduped = [];
@@ -310,11 +476,21 @@ function normalizeHighlights(input, duration) {
       end_time: Math.min(adjustedEnd, adjustedStart + cfg.max)
     });
   }
-  return deduped.slice(0, MAX_HIGHLIGHTS);
+  return spreadScores(deduped.slice(0, MAX_HIGHLIGHTS));
 }
-function buildFallbackHighlights(duration) {
+function spreadScores(items) {
+  if (items.length <= 1) return items;
+  const ranked = [...items].sort(
+    (a, b) => b.engagement_score - a.engagement_score || a.start_time - b.start_time
+  );
+  ranked.forEach((h, rank) => {
+    h.engagement_score = Math.max(1, 10 - rank);
+  });
+  return items;
+}
+function buildFallbackHighlights(duration, targetSeconds) {
   const safeDuration = Math.max(duration, 60);
-  const cfg = clipDurations(safeDuration);
+  const cfg = clipDurations(safeDuration, targetSeconds);
   const maxClips = Math.min(MAX_HIGHLIGHTS, Math.floor(safeDuration / (cfg.min + 8)));
   const clipCount = Math.max(6, Math.min(MAX_HIGHLIGHTS, Math.min(maxClips, Math.round(safeDuration / 120) + 5)));
   const spacing = Math.floor(safeDuration / (clipCount + 1));
@@ -325,18 +501,65 @@ function buildFallbackHighlights(duration) {
         title: `Highlight ${i + 1}`,
         start_time: start,
         end_time: Math.min(start + cfg.target, safeDuration),
-        summary: "AI-selected representative segment sampled across the video.",
-        engagement_score: 7
+        // 无字幕兜底：不带内容，理由由 normalizeHighlights 按「位置 + 时长」客观描述，逐条不同。
+        summary: "",
+        // 原始分留同值，最终由 spreadScores 按位次拉开；这里给时间越靠前略高的先验。
+        engagement_score: 5 + (clipCount - i) * 0.1
       };
     }),
-    duration
+    duration,
+    targetSeconds
   );
 }
-function buildHeuristicHighlights(cues, duration) {
-  if (cues.length === 0) return buildFallbackHighlights(duration);
+function buildHookTitle(text, start) {
+  const cleaned = (text || "").replace(/\s+/g, " ").trim();
+  if (!cleaned) return `Highlight at ${formatSeconds(start)}`;
+  const keywords = [
+    "important",
+    "secret",
+    "best",
+    "amazing",
+    "crazy",
+    "must",
+    "mistake",
+    "learn",
+    "why",
+    "how",
+    "\u5173\u952E",
+    "\u91CD\u70B9",
+    "\u4E00\u5B9A",
+    "\u9707\u60CA",
+    "\u5389\u5BB3",
+    "\u65B9\u6CD5",
+    "\u79D8\u8BC0",
+    "\u6280\u5DE7",
+    "\u4E3A\u4EC0\u4E48"
+  ];
+  const clauses = cleaned.split(/[.!?！？。；;]+/).map((s) => s.trim()).filter((s) => s.length >= 12);
+  const scored = (clauses.length > 0 ? clauses : [cleaned]).map((clause) => {
+    const lower = clause.toLowerCase();
+    const keywordHits = keywords.filter((k) => lower.includes(k.toLowerCase())).length;
+    const hasPunct = /[?!？！]/.test(clause) ? 1 : 0;
+    const lenScore = clause.length >= 30 && clause.length <= 60 ? 2 : clause.length < 30 ? 1 : 0;
+    return { clause, score: keywordHits * 2 + hasPunct + lenScore };
+  });
+  scored.sort((a, b) => b.score - a.score || a.clause.length - b.clause.length);
+  let title = scored[0].clause.replace(/^(so|and|but|well|okay|yeah|然后|所以|而且|就是|这个|那个)\b[\s,，]*/i, "").trim();
+  if (title.length < 12) {
+    title = cleaned.replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter(Boolean).slice(0, 8).join(" ");
+  }
+  if (title.length > 60) {
+    const cut = title.slice(0, 60);
+    const lastSpace = cut.lastIndexOf(" ");
+    title = (lastSpace > 30 ? cut.slice(0, lastSpace) : cut).trim();
+  }
+  return title || `Highlight at ${formatSeconds(start)}`;
+}
+function buildHeuristicHighlights(cues, duration, targetSeconds) {
+  if (cues.length === 0) return buildFallbackHighlights(duration, targetSeconds);
   const windows = [];
   const step = 20;
-  const cfg = clipDurations(duration);
+  const cfg = clipDurations(duration, targetSeconds);
   const len = cfg.target;
   const keywords = [
     "important",
@@ -364,7 +587,7 @@ function buildHeuristicHighlights(cues, duration) {
     const punctuationScore = (text.match(/[!?！？]/g) || []).length;
     const densityScore = Math.min(8, Math.floor(text.length / 80));
     const score = 4 + keywordScore + punctuationScore + densityScore;
-    const title = text.replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter(Boolean).slice(0, 8).join(" ") || `Highlight at ${formatSeconds(start)}`;
+    const title = buildHookTitle(text, start);
     windows.push({ title: title.slice(0, 80), start_time: start, end_time: end, summary: text.slice(0, 140), engagement_score: Math.min(10, score) });
   }
   windows.sort((a, b) => b.engagement_score - a.engagement_score);
@@ -376,7 +599,7 @@ function buildHeuristicHighlights(cues, duration) {
     )) selected.push(c);
     if (selected.length === targetCount) break;
   }
-  return normalizeHighlights(selected.length >= 2 ? selected : buildFallbackHighlights(duration), duration);
+  return normalizeHighlights(selected.length >= 2 ? selected : buildFallbackHighlights(duration, targetSeconds), duration, targetSeconds);
 }
 async function ensureDirectories() {
   await (0, import_promises.mkdir)(PUBLIC_CLIP_DIR, { recursive: true });
@@ -474,10 +697,11 @@ async function ensureYtDlp() {
   }
   throw new Error("yt-dlp not available. Install with: pip3 install yt-dlp");
 }
-async function runYtDlp(args, isBilibili = false) {
+async function runYtDlp(args, platformOrBilibili = false) {
   await ensureYtDlp();
   const ffmpegPath = await ensureFfmpegAvailable().catch(() => "");
   const ffmpegDir = ffmpegPath ? import_node_path.default.dirname(ffmpegPath) : "";
+  const headers = typeof platformOrBilibili === "boolean" ? platformOrBilibili ? BILIBILI_HEADERS : [] : platformOrBilibili?.headers ?? [];
   const commonArgs = [
     "--no-check-certificate",
     "--ignore-errors",
@@ -490,14 +714,7 @@ async function runYtDlp(args, isBilibili = false) {
     "--user-agent",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
     ...ffmpegDir ? ["--ffmpeg-location", ffmpegDir] : [],
-    ...isBilibili ? [
-      "--add-header",
-      "Referer: https://www.bilibili.com/",
-      "--add-header",
-      "Origin: https://www.bilibili.com",
-      "--add-header",
-      "Accept-Language: zh-CN,zh;q=0.9,en;q=0.8"
-    ] : []
+    ...headers.flatMap((h) => ["--add-header", h])
   ];
   const env = { ...process.env, PYTHONWARNINGS: "ignore" };
   if (ffmpegDir) env.PATH = `${ffmpegDir}:${process.env.PATH || ""}`;
@@ -780,8 +997,7 @@ var CF_WORKER_CACHE_TTL_MS = 4 * 60 * 1e3;
 async function getYouTubeInfoViaCFWorker(videoId, maxHeightOverride = 0, wantMuxed = false) {
   const cfWorkerUrl = getCfWorkerUrl();
   if (!cfWorkerUrl) throw new Error("CF_WORKER_URL not configured");
-  const defaultMaxHeight = getCfWorkerMaxHeight();
-  const maxHeight = maxHeightOverride > 0 ? Math.min(maxHeightOverride, defaultMaxHeight) : defaultMaxHeight;
+  const maxHeight = maxHeightOverride > 0 ? Math.min(maxHeightOverride, 2160) : getCfWorkerMaxHeight();
   const cacheKey = `${videoId}:${maxHeight}${wantMuxed ? ":muxed" : ""}`;
   const cached = cfWorkerResolveCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
@@ -1294,7 +1510,7 @@ async function getYouTubeDurationFromWatchPage(videoId) {
   }
   return null;
 }
-async function analyzeYouTubeViaPipedAndTranscript(videoUrl) {
+async function analyzeYouTubeViaPipedAndTranscript(videoUrl, opts) {
   const videoId = extractYouTubeVideoId(videoUrl);
   if (!videoId) throw new Error("Invalid YouTube URL");
   let title = "YouTube video";
@@ -1376,7 +1592,7 @@ async function analyzeYouTubeViaPipedAndTranscript(videoUrl) {
     } catch {
     }
   }
-  return { duration, title, highlights: buildHeuristicHighlights(cues, duration) };
+  return { duration, title, highlights: buildHeuristicHighlights(cues, duration, opts?.targetSeconds) };
 }
 async function hasChromeCookies() {
   try {
@@ -1470,10 +1686,10 @@ function parseYtDlpJson(stdout) {
   if (jsonStart === -1) throw new Error("No JSON in yt-dlp output");
   return JSON.parse(stdout.slice(jsonStart));
 }
-async function analyzeYouTubeVideo(videoUrl, workDir) {
+async function analyzeYouTubeVideo(videoUrl, workDir, opts) {
   if (FORCE_YOUTUBE_STREAM_FALLBACKS) {
     console.log("Vercel environment detected: skipping yt-dlp analysis, using proxy+transcript");
-    return analyzeYouTubeViaPipedAndTranscript(videoUrl);
+    return analyzeYouTubeViaPipedAndTranscript(videoUrl, opts);
   }
   const outputTemplate = import_node_path.default.join(workDir, "analysis.%(ext)s");
   const baseArgs = [
@@ -1524,14 +1740,14 @@ async function analyzeYouTubeVideo(videoUrl, workDir) {
   if (!stdout.trim()) {
     const ytdlpErr = stderr.slice(0, 200) || (lastError instanceof Error ? lastError.message.slice(0, 200) : "");
     console.warn(`yt-dlp analysis failed (${ytdlpErr}), falling back to Piped+transcript\u2026`);
-    return await analyzeYouTubeViaPipedAndTranscript(videoUrl);
+    return await analyzeYouTubeViaPipedAndTranscript(videoUrl, opts);
   }
   const info = parseYtDlpJson(stdout);
   const duration = Math.max(45, Math.floor(info.duration || 180));
   const title = typeof info.title === "string" && info.title.trim() ? info.title.trim() : "Source video";
   const subtitleFile = await findFirstFile(workDir, [".vtt"]);
   const cues = subtitleFile ? await parseVttFile(import_node_path.default.join(workDir, subtitleFile)) : [];
-  return { duration, title, highlights: buildHeuristicHighlights(cues, duration) };
+  return { duration, title, highlights: buildHeuristicHighlights(cues, duration, opts?.targetSeconds) };
 }
 async function getBilibiliVideoMeta(videoUrl) {
   const bvMatch = videoUrl.match(/\/video\/(BV[a-zA-Z0-9]+)/i);
@@ -1556,16 +1772,16 @@ async function getBilibiliVideoMeta(videoUrl) {
     duration: data.data.duration || 300
   };
 }
-async function analyzeBilibiliVideo(videoUrl, workDir) {
+async function analyzeBilibiliVideo(videoUrl, workDir, opts) {
   if (process.env.VERCEL) {
     console.log("Vercel environment: using Bilibili direct API for analysis");
     try {
       const { title: title2, duration: duration2 } = await getBilibiliVideoMeta(videoUrl);
       console.log(`Bilibili API: "${title2.slice(0, 50)}", duration=${duration2}s`);
-      return { duration: duration2, title: title2, highlights: buildFallbackHighlights(duration2) };
+      return { duration: duration2, title: title2, highlights: buildFallbackHighlights(duration2, opts?.targetSeconds) };
     } catch (err) {
       console.warn("Bilibili direct API failed:", err instanceof Error ? err.message.slice(0, 100) : err);
-      return { duration: 300, title: "Bilibili Video", highlights: buildFallbackHighlights(300) };
+      return { duration: 300, title: "Bilibili Video", highlights: buildFallbackHighlights(300, opts?.targetSeconds) };
     }
   }
   const outputTemplate = import_node_path.default.join(workDir, "analysis.%(ext)s");
@@ -1615,10 +1831,10 @@ async function analyzeBilibiliVideo(videoUrl, workDir) {
     console.warn(`Bilibili analysis fallback: yt-dlp failed (${msg.slice(0, 120)}), using direct API meta`);
     try {
       const { title: title2, duration: duration2 } = await getBilibiliVideoMeta(videoUrl);
-      return { duration: duration2, title: title2, highlights: buildFallbackHighlights(duration2) };
+      return { duration: duration2, title: title2, highlights: buildFallbackHighlights(duration2, opts?.targetSeconds) };
     } catch (err) {
       console.warn("Bilibili direct API failed:", err instanceof Error ? err.message.slice(0, 100) : err);
-      return { duration: 300, title: "Bilibili Video", highlights: buildFallbackHighlights(300) };
+      return { duration: 300, title: "Bilibili Video", highlights: buildFallbackHighlights(300, opts?.targetSeconds) };
     }
   }
   const info = parseYtDlpJson(stdout);
@@ -1626,7 +1842,45 @@ async function analyzeBilibiliVideo(videoUrl, workDir) {
   const title = typeof info.title === "string" && info.title.trim() ? info.title.trim() : "Bilibili video";
   const subtitleFile = await findFirstFile(workDir, [".vtt"]);
   const cues = subtitleFile ? await parseVttFile(import_node_path.default.join(workDir, subtitleFile)) : [];
-  return { duration, title, highlights: buildHeuristicHighlights(cues, duration) };
+  return { duration, title, highlights: buildHeuristicHighlights(cues, duration, opts?.targetSeconds) };
+}
+async function analyzeGenericVideo(videoUrl, workDir, platform, opts) {
+  const outputTemplate = import_node_path.default.join(workDir, "analysis.%(ext)s");
+  const analysisArgs = [
+    "--no-playlist",
+    "--skip-download",
+    "--dump-single-json",
+    "--write-subs",
+    "--write-auto-subs",
+    "--sub-langs",
+    platform.subLangs,
+    "--convert-subs",
+    "vtt",
+    "-o",
+    outputTemplate,
+    videoUrl
+  ];
+  let stdout = "", stderr = "", lastError;
+  try {
+    const r = await runYtDlp(analysisArgs, platform);
+    stdout = r.stdout;
+    stderr = r.stderr;
+    lastError = null;
+  } catch (err) {
+    lastError = err;
+    stdout = err && typeof err === "object" && "stdout" in err ? String(err.stdout) : "";
+    stderr = err && typeof err === "object" && "stderr" in err ? String(err.stderr) : "";
+  }
+  if (!stdout.trim()) {
+    const raw = stderr.trim() || (lastError instanceof Error ? lastError.message : "");
+    throw mapYtDlpError(raw, platform);
+  }
+  const info = parseYtDlpJson(stdout);
+  const duration = Math.max(45, Math.floor(info.duration || 180));
+  const title = typeof info.title === "string" && info.title.trim() ? info.title.trim() : `${platform.name} video`;
+  const subtitleFile = await findFirstFile(workDir, [".vtt"]);
+  const cues = subtitleFile ? await parseVttFile(import_node_path.default.join(workDir, subtitleFile)) : [];
+  return { duration, title, highlights: buildHeuristicHighlights(cues, duration, opts?.targetSeconds) };
 }
 async function downloadSourceVideo(videoUrl, options) {
   const normalizedUrl = await normalizeVideoUrl(videoUrl);
@@ -1656,9 +1910,15 @@ async function downloadSourceVideo(videoUrl, options) {
   const outputTemplate = import_node_path.default.join(sourceDirForced, "source.%(ext)s");
   const hasCookies = await hasChromeCookies();
   if (isBilibiliUrl(normalizedUrl)) {
-    return { inputPath: await downloadBilibiliVideo(normalizedUrl, outputTemplate, hasCookies) };
+    const inputPath = await downloadBilibiliVideo(normalizedUrl, outputTemplate, hasCookies);
+    if (inputPath.startsWith("http")) {
+      const headers = platformFfmpegHeaders(detectPlatform(normalizedUrl));
+      if (headers) return { inputPath, ffmpegHeaders: headers };
+    }
+    return { inputPath };
   }
-  return downloadYouTubeOrGenericVideo(normalizedUrl, outputTemplate, hasCookies, forceH);
+  const platform = detectPlatform(normalizedUrl);
+  return downloadYouTubeOrGenericVideo(normalizedUrl, outputTemplate, hasCookies, forceH, platform);
 }
 async function downloadBilibiliVideo(videoUrl, outputTemplate, hasCookies) {
   if (process.env.VERCEL) {
@@ -2122,7 +2382,7 @@ function wrapInStreamProxyIfNeeded(streamUrl, videoId, isAudio = false, maxHeigh
       return streamUrl;
     }
     const defaultMaxHeight = getCfWorkerMaxHeight();
-    const maxHeight = maxHeightOverride > 0 ? Math.min(maxHeightOverride, defaultMaxHeight) : defaultMaxHeight;
+    const maxHeight = maxHeightOverride > 0 ? Math.min(maxHeightOverride, 2160) : defaultMaxHeight;
     const endpoint = new URL(cfWorkerUrl);
     endpoint.pathname = `${endpoint.pathname.replace(/\/$/, "")}/stream`;
     endpoint.searchParams.set("videoId", videoId);
@@ -2139,7 +2399,7 @@ function wrapInStreamProxyIfNeeded(streamUrl, videoId, isAudio = false, maxHeigh
   }
   return streamUrl;
 }
-async function downloadYouTubeOrGenericVideo(videoUrl, outputTemplate, hasCookies, forceMaxHeight = 0) {
+async function downloadYouTubeOrGenericVideo(videoUrl, outputTemplate, hasCookies, forceMaxHeight = 0, platform = detectPlatform(videoUrl)) {
   if (FORCE_YOUTUBE_STREAM_FALLBACKS && isYouTubeUrl(videoUrl)) {
     const videoId = extractYouTubeVideoId(videoUrl);
     if (!videoId) throw new Error("Invalid YouTube URL");
@@ -2322,13 +2582,13 @@ Accept-Encoding: identity\r
     strategies.push(["--extractor-args", "youtube:player_client=tv_embedded", ...baseArgs, "-f", "best", videoUrl]);
     strategies.push([...baseArgs, "-f", "best", videoUrl]);
   } else {
-    strategies.push([...baseArgs, "-f", "bestvideo*+bestaudio/best", videoUrl]);
+    strategies.push([...baseArgs, "-f", platform.format, videoUrl]);
   }
   let stdout = "", stderr = "", lastError;
   for (let i = 0; i < strategies.length; i++) {
     try {
       console.log(`yt-dlp download strategy ${i + 1}/${strategies.length}\u2026`);
-      const r = await runYtDlp(strategies[i], false);
+      const r = await runYtDlp(strategies[i], isYouTubeUrl(videoUrl) ? false : platform);
       stdout = r.stdout;
       stderr = r.stderr;
       lastError = null;
@@ -2353,8 +2613,8 @@ Accept-Encoding: identity\r
     };
   }
   if (!resolvedPath) {
-    const msg = stderr.trim() || (lastError instanceof Error ? lastError.message : "") || "No file path returned.";
-    throw new Error(`Failed to download video: ${msg}`);
+    const raw = stderr.trim() || (lastError instanceof Error ? lastError.message : "") || "No file path returned.";
+    throw mapYtDlpError(raw, platform);
   }
   return { inputPath: resolvedPath };
 }
@@ -2423,7 +2683,7 @@ async function createLocalClip(params) {
       return false;
     }
   })();
-  const isBilibiliStream = isRemoteInput && (params.inputPath.includes("bilivideo.com") || params.inputPath.includes("bilivideo.cn") || params.inputPath.includes("upos-sz") || params.inputPath.includes("akamaized.net"));
+  const isBilibiliStream = isRemoteInput && (params.inputPath.includes("bilivideo") || params.inputPath.includes("hdslb.com") || params.inputPath.includes(".mcdn.") || params.inputPath.includes("upos-") || params.inputPath.includes("akamaized.net"));
   const httpInputFlags = isRemoteInput ? [
     "-rw_timeout",
     "30000000",
@@ -2442,8 +2702,10 @@ async function createLocalClip(params) {
   const inputHeaders = isRemoteInput ? `${(params.inputHeaders || "").replace(/\r?\n/g, "\r\n")}${params.inputHeaders ? params.inputHeaders.endsWith("\n") || params.inputHeaders.endsWith("\r\n") ? "" : "\r\n" : ""}${bilibiliHeaders.join("")}` : "";
   const ffmpegInputHeaders = isRemoteInput && inputHeaders ? ["-headers", inputHeaders] : [];
   const maxInlineBytes = Math.min(params.maxInlineBytes ?? MAX_INLINE_BYTES, MAX_INLINE_BYTES);
-  const videoFilter = SHOULD_INLINE_CLIPS ? ["-vf", VERCEL_SCALE] : ["-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2"];
-  const crf = SHOULD_INLINE_CLIPS ? INLINE_CRF : isRemoteInput ? "16" : "17";
+  const tierHeight = clampInt(params.targetHeight, 144, 2160, 0);
+  const tierWidth = tierHeight > 0 ? ensureEven(Math.round(tierHeight * 16 / 9)) : 0;
+  const videoFilter = tierHeight > 0 ? ["-vf", `scale=trunc(min(iw\\,${tierWidth})/2)*2:trunc(min(ih\\,${ensureEven(tierHeight)})/2)*2:force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2`] : SHOULD_INLINE_CLIPS ? ["-vf", VERCEL_SCALE] : ["-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2"];
+  const crf = params.crf ? String(clampInt(params.crf, 14, 34, 20)) : SHOULD_INLINE_CLIPS ? INLINE_CRF : isRemoteInput ? "16" : "17";
   const preset = SHOULD_INLINE_CLIPS ? INLINE_PRESET : isRemoteInput ? "medium" : "fast";
   const isInvidiousProxy = isRemoteInput && INVIDIOUS_INSTANCES.some((inst) => params.inputPath.startsWith(inst));
   const fastSeek = !params.forceSlowSeek && (!isRemoteInput || isWorkerStream || params.inputPath.includes("googlevideo.com") || isInvidiousProxy);
@@ -2581,7 +2843,7 @@ ${errStdout}`.trim();
     let fileSizeBytes = fileBuffer.length;
     if (SHOULD_INLINE_CLIPS && fileSizeBytes > maxInlineBytes) {
       const attempts = [
-        { crfDelta: 6, width: VERCEL_TARGET_WIDTH_NUM, height: VERCEL_TARGET_HEIGHT_NUM },
+        { crfDelta: 6, width: tierWidth || VERCEL_TARGET_WIDTH_NUM, height: tierHeight || VERCEL_TARGET_HEIGHT_NUM },
         { crfDelta: 10, width: 854, height: 480 },
         { crfDelta: 14, width: 640, height: 360 },
         { crfDelta: 18, width: 426, height: 240 }
@@ -2655,32 +2917,33 @@ ${errStdout}`.trim();
     thumbnailUrl
   };
 }
-async function analyzeVideo(videoUrl) {
+async function analyzeVideo(videoUrl, opts) {
   const normalizedUrl = await normalizeVideoUrl(videoUrl);
   await ensureDirectories();
   const workDir = import_node_path.default.join(CACHE_DIR, sourceId(normalizedUrl));
   await (0, import_promises.mkdir)(workDir, { recursive: true });
   if (isYouTubeUrl(normalizedUrl)) {
     try {
-      return await analyzeYouTubeVideo(normalizedUrl, workDir);
+      return await analyzeYouTubeVideo(normalizedUrl, workDir, opts);
     } catch (error) {
       console.warn("YouTube analysis failed completely, using fallback:", error instanceof Error ? error.message.slice(0, 100) : "");
       try {
-        return await analyzeYouTubeViaPipedAndTranscript(normalizedUrl);
+        return await analyzeYouTubeViaPipedAndTranscript(normalizedUrl, opts);
       } catch {
-        return { duration: 600, title: "YouTube video", highlights: buildFallbackHighlights(600) };
+        return { duration: 600, title: "YouTube video", highlights: buildFallbackHighlights(600, opts?.targetSeconds) };
       }
     }
   }
   if (isBilibiliUrl(normalizedUrl)) {
     try {
-      return await analyzeBilibiliVideo(normalizedUrl, workDir);
+      return await analyzeBilibiliVideo(normalizedUrl, workDir, opts);
     } catch (error) {
       console.warn("Bilibili analysis failed, using fallback:", error instanceof Error ? error.message.slice(0, 100) : "");
-      return { duration: 180, title: "Bilibili video", highlights: buildFallbackHighlights(180) };
+      return { duration: 180, title: "Bilibili video", highlights: buildFallbackHighlights(180, opts?.targetSeconds) };
     }
   }
-  return { duration: 180, title: "Source video", highlights: buildFallbackHighlights(180) };
+  const platform = detectPlatform(normalizedUrl);
+  return await analyzeGenericVideo(normalizedUrl, workDir, platform, opts);
 }
 async function downloadYouTubeClip(params) {
   const videoId = extractYouTubeVideoId(params.videoUrl);
@@ -3071,27 +3334,19 @@ async function createClipFromYouTubeStream(params) {
   const { videoId, title, summary, startTime, endTime, preResolvedStreamUrl, preResolvedMetadata } = params;
   const duration = Math.max(1, endTime - startTime);
   const internalBaseUrl = getAppBaseUrl();
+  const clipMaxHeight = Math.max(144, Math.min(2160, Math.round(params.maxHeight || 360)));
+  const clipCrf = params.crf;
   const candidates = [];
   const cfWorkerUrl = getCfWorkerUrl();
   const bypassHeaders = `${getBypassFfmpegHeaderString()}Accept: */*\r
 Accept-Encoding: identity\r
 `;
   if (preResolvedStreamUrl && cfWorkerUrl) {
-    const strippedStreamUrl = (() => {
-      try {
-        const u = new URL(preResolvedStreamUrl);
-        u.searchParams.delete("ip");
-        u.searchParams.set("ipbits", "0");
-        return u.toString();
-      } catch {
-        return preResolvedStreamUrl;
-      }
-    })();
     const endpoint = new URL(cfWorkerUrl);
     endpoint.pathname = `${endpoint.pathname.replace(/\/$/, "")}/stream`;
     endpoint.searchParams.set("videoId", videoId);
-    endpoint.searchParams.set("maxHeight", "360");
-    endpoint.searchParams.set("streamUrl", strippedStreamUrl);
+    endpoint.searchParams.set("maxHeight", String(clipMaxHeight));
+    endpoint.searchParams.set("streamUrl", preResolvedStreamUrl);
     if (preResolvedMetadata?.userAgent) endpoint.searchParams.set("userAgent", preResolvedMetadata.userAgent);
     if (preResolvedMetadata?.visitorData) endpoint.searchParams.set("visitorData", preResolvedMetadata.visitorData);
     if (preResolvedMetadata?.xClientName !== void 0) endpoint.searchParams.set("xClientName", String(preResolvedMetadata.xClientName));
@@ -3102,21 +3357,11 @@ Accept-Encoding: identity\r
     candidates.push({ url: fastPathUrl, headers: bypassHeaders, label: "PreResolvedFastPath" });
     console.log(`createClipFromYouTubeStream: added PreResolvedFastPath candidate (streamUrl from frontend)`);
     if (preResolvedMetadata?.audioUrl) {
-      const strippedAudioUrl = (() => {
-        try {
-          const u = new URL(preResolvedMetadata.audioUrl);
-          u.searchParams.delete("ip");
-          u.searchParams.set("ipbits", "0");
-          return u.toString();
-        } catch {
-          return preResolvedMetadata.audioUrl;
-        }
-      })();
       const audioEndpoint = new URL(cfWorkerUrl);
       audioEndpoint.pathname = `${audioEndpoint.pathname.replace(/\/$/, "")}/stream`;
       audioEndpoint.searchParams.set("videoId", videoId);
-      audioEndpoint.searchParams.set("maxHeight", "360");
-      audioEndpoint.searchParams.set("streamUrl", strippedAudioUrl);
+      audioEndpoint.searchParams.set("maxHeight", String(clipMaxHeight));
+      audioEndpoint.searchParams.set("streamUrl", preResolvedMetadata.audioUrl);
       audioEndpoint.searchParams.set("audio", "1");
       if (preResolvedMetadata?.userAgent) audioEndpoint.searchParams.set("userAgent", preResolvedMetadata.userAgent);
       if (preResolvedMetadata?.visitorData) audioEndpoint.searchParams.set("visitorData", preResolvedMetadata.visitorData);
@@ -3128,7 +3373,7 @@ Accept-Encoding: identity\r
   }
   try {
     console.log(`createClipFromYouTubeStream: trying Invidious local proxy...`);
-    const invidiousResult = await getInvidiousLocalProxiedStreams(videoId, 360);
+    const invidiousResult = await getInvidiousLocalProxiedStreams(videoId, clipMaxHeight);
     if (invidiousResult) {
       const invidiousHeaders = "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36\r\nAccept: */*\r\nAccept-Encoding: identity\r\n";
       const candidate = {
@@ -3151,18 +3396,18 @@ Accept-Encoding: identity\r
     );
   }
   if (cfWorkerUrl) {
-    const slowStreamUrl = `${cfWorkerUrl}/stream?videoId=${encodeURIComponent(videoId)}&maxHeight=360`;
+    const slowStreamUrl = `${cfWorkerUrl}/stream?videoId=${encodeURIComponent(videoId)}&maxHeight=${clipMaxHeight}`;
     candidates.push({ url: slowStreamUrl, headers: bypassHeaders, label: "CFWorkerSlowPath" });
     console.log(`createClipFromYouTubeStream: added CFWorkerSlowPath candidate`);
   }
   try {
-    console.log(`createClipFromYouTubeStream: calling getYouTubeStreamUrlWithFallbacks(videoId=${videoId}, maxHeight=360)...`);
-    const result = await getYouTubeStreamUrlWithFallbacks(videoId, 360);
+    console.log(`createClipFromYouTubeStream: calling getYouTubeStreamUrlWithFallbacks(videoId=${videoId}, maxHeight=${clipMaxHeight})...`);
+    const result = await getYouTubeStreamUrlWithFallbacks(videoId, clipMaxHeight);
     console.log(`createClipFromYouTubeStream: getYouTubeStreamUrlWithFallbacks returned streamUrl=${result.streamUrl ? result.streamUrl.slice(0, 100) : "null"}${result.audioUrl ? " + audio" : ""}`);
     if (result.streamUrl) {
       const isGooglevideo = result.streamUrl.includes("googlevideo.com");
-      const wrappedUrl = isGooglevideo ? wrapInStreamProxyIfNeeded(result.streamUrl, videoId, false, 360) : result.streamUrl;
-      const wrappedAudio = result.audioUrl ? result.audioUrl.includes("googlevideo.com") ? wrapInStreamProxyIfNeeded(result.audioUrl, videoId, true, 360) : result.audioUrl : void 0;
+      const wrappedUrl = isGooglevideo ? wrapInStreamProxyIfNeeded(result.streamUrl, videoId, false, clipMaxHeight) : result.streamUrl;
+      const wrappedAudio = result.audioUrl ? result.audioUrl.includes("googlevideo.com") ? wrapInStreamProxyIfNeeded(result.audioUrl, videoId, true, clipMaxHeight) : result.audioUrl : void 0;
       const candidateHeaders = isGooglevideo || wrappedUrl.includes(internalBaseUrl || "x") || cfWorkerUrl && wrappedUrl.includes(cfWorkerUrl.replace(/^https?:\/\//, "")) ? bypassHeaders : "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36\r\nAccept: */*\r\nAccept-Encoding: identity\r\n";
       candidates.push({
         url: wrappedUrl,
@@ -3191,14 +3436,16 @@ Accept-Encoding: identity\r
   if (cfWorkerUrl) {
     try {
       console.log(`createClipFromYouTubeStream: trying full local stream candidate (${startTime}s-${endTime}s)`);
-      const fullStreamPath = await getFullYouTubeStreamLocalPath(videoId, 360);
+      const fullStreamPath = await getFullYouTubeStreamLocalPath(videoId, clipMaxHeight);
       if (fullStreamPath) {
         const result = await createLocalClip({
           inputPath: fullStreamPath,
           startTime,
           endTime,
           title,
-          fastCopy: false
+          fastCopy: false,
+          targetHeight: clipMaxHeight,
+          ...clipCrf ? { crf: clipCrf } : {}
         });
         console.log(`createClipFromYouTubeStream: full local stream candidate succeeded!`);
         return {
@@ -3235,7 +3482,9 @@ Accept-Encoding: identity\r
         startTime,
         endTime,
         title,
-        fastCopy: params.fastCopy && !audioUrl
+        fastCopy: params.fastCopy && !audioUrl,
+        targetHeight: clipMaxHeight,
+        ...clipCrf ? { crf: clipCrf } : {}
         // Pass a timeout hint to createLocalClip (uses execFile timeout)
       });
       const timeoutPromise = new Promise(
@@ -3427,6 +3676,7 @@ async function main() {
   const agentId = mustGetEnv("VIDSHORTER_AGENT_ID", `agent-${(0, import_node_crypto2.randomUUID)()}`);
   const secret = mustGetEnv("AGENT_SECRET");
   const headers = secret ? { "x-agent-secret": secret } : {};
+  const capabilities = ["highlight"];
   process.env.APP_BASE_URL = serverUrl;
   if (!process.env.PREFER_EDGE_YOUTUBE) process.env.PREFER_EDGE_YOUTUBE = "0";
   if (!process.env.INLINE_CLIPS) process.env.INLINE_CLIPS = "0";
@@ -3435,7 +3685,7 @@ async function main() {
     try {
       const { job } = await postJson(
         `${serverUrl}/api/agent/jobs/pull`,
-        { agentId },
+        { agentId, capabilities },
         headers
       );
       if (!job) {

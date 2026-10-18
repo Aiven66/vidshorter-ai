@@ -8,7 +8,6 @@
 export type NavKey =
   | 'home'
   | 'clips'
-  | 'yuecut'
   | 'tiktokRemix'
   | 'inviteFriends'
   | 'shorts'
@@ -18,10 +17,8 @@ export type NavKey =
   | 'pricing'
   | 'about'
   | 'download'
-  | 'marketing'
   | 'news'
   | 'article'
-  | 'digitalHuman'
   | 'digitalHumanLive'
   | 'aiTools'
   | 'podcast'
@@ -46,14 +43,11 @@ export const NAV_LABELS: Record<NavKey, { zh: string; en: string }> = {
   home: { zh: '首页', en: 'Home' },
   aiVideo: { zh: 'AI 成片', en: 'AI Video' },
   clips: { zh: '高光剪辑', en: 'Video Clips' },
-  yuecut: { zh: 'AI 批量剪辑', en: 'AI Batch Clips' },
   tiktokRemix: { zh: 'TikTok 二创', en: 'TikTok Remix' },
   inviteFriends: { zh: '邀请好友', en: 'Invite Friends' },
   shorts: { zh: 'Shorts 成片', en: 'Shorts' },
   notes: { zh: '高光笔记', en: 'Video Notes' },
   tokpure: { zh: 'TokPure', en: 'TokPure' },
-  marketing: { zh: '营销视频', en: 'Marketing Video' },
-  digitalHuman: { zh: '普通带货短视频', en: 'Digital Human' },
   digitalHumanLive: { zh: '数字人带货短视频', en: 'Live Digital Human' },
   news: { zh: '资讯视频', en: 'News Video' },
   article: { zh: '文章转视频', en: 'Article to Video' },
@@ -81,15 +75,12 @@ export const DEFAULT_NAV_CONFIG: NavConfig = {
   order: [
     'home',
     'clips',
-    'yuecut',
     'tiktokRemix',
     'localEngine',
     'inviteFriends',
     'shorts',
     'notes',
     'tokpure',
-    'marketing',
-    'digitalHuman',
     'digitalHumanLive',
     'podcast',
     'aiTools',
@@ -102,11 +93,9 @@ export const DEFAULT_NAV_CONFIG: NavConfig = {
   badges: [
     'aiVideo',
     'shorts',
-    'yuecut',
     'tiktokRemix',
     'notes',
     'tokpure',
-    'marketing',
     'digitalHumanLive',
     'podcast',
     'aiTools',

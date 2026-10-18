@@ -529,6 +529,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           token = (window as any).__clipopDesktopToken;
         }
 
+        // 桌面端原生侧持有的 token（登录走在线 web 端校验后回传）。此前只看了
+        // electronAPI / api 两个别名，漏了实际注入的 clipopDesktop，导致桌面端
+        // 「界面已登录、云 AI 工具却提示请先登录」。
+        const desktopBridge = (window as typeof window & {
+          clipopDesktop?: { getAuthToken?: () => Promise<string | null> };
+        }).clipopDesktop;
+        if (!token && desktopBridge?.getAuthToken) {
+          token = await desktopBridge.getAuthToken();
+        }
+
         if (!token && window.electronAPI?.getAuthToken) {
           token = await window.electronAPI.getAuthToken();
         }
@@ -599,6 +609,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUseDemo(true);
           if (storedToken) {
             setAccessToken(storedToken);
+          } else {
+            // 本地缓存的 demo 用户还在、但 token 丢了：补签一个 demo token。
+            // 否则 user 有、accessToken 为 null，云 AI 工具会误判成「未登录」。
+            const minted = generateDemoToken(demoUser);
+            setAccessToken(minted);
+            try {
+              localStorage.setItem('clipop_access_token', minted);
+            } catch {}
           }
         }
         setLoading(false);

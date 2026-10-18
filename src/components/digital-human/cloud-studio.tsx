@@ -25,6 +25,7 @@ import { Button } from '@/components/ui/button';
 import { useAuth } from '@/lib/auth-context';
 import { useLocale } from '@/lib/locale-context';
 import { uploadAiInput } from '@/lib/ai-tools/client-api';
+import { useAiToolAuth } from '@/lib/ai-tools/use-ai-tool-auth';
 import { useAiToolCredit, AI_TOOL_COST } from '@/lib/ai-tools/use-ai-tool-credit';
 import { InsufficientCreditsDialog } from '@/components/insufficient-credits-dialog';
 import { PHOTO_AVATARS } from '@/components/video-templates/talking-avatar';
@@ -78,6 +79,7 @@ function sampleTextFor(locale: string | undefined): string {
 export function CloudDigitalHumanStudio() {
   const { t, locale } = useLocale();
   const { user, accessToken } = useAuth();
+  const { getToken } = useAiToolAuth();
   const { requestSpend, insufficientOpen, setInsufficientOpen, balance } = useAiToolCredit();
 
   const [cap, setCap] = useState<Capability | null>(null);
@@ -189,7 +191,12 @@ export function CloudDigitalHumanStudio() {
   /* ---------------- 声音克隆 ---------------- */
 
   const handleCloneFile = useCallback(async (file: File) => {
-    if (!user || !accessToken) {
+    if (!user) {
+      setError(tr('digitalHumanCloud.needLogin', '请先登录后再克隆音色'));
+      return;
+    }
+    const token = await getToken();
+    if (!token) {
       setError(tr('digitalHumanCloud.needLogin', '请先登录后再克隆音色'));
       return;
     }
@@ -198,10 +205,10 @@ export function CloudDigitalHumanStudio() {
     setError('');
     setNotice('');
     try {
-      const up = await uploadAiInput(accessToken, user.id, file, file.name || 'voice-ref.wav', file.type || 'audio/wav');
+      const up = await uploadAiInput(getToken, user.id, file, file.name || 'voice-ref.wav', file.type || 'audio/wav');
       const r = await fetch('/api/digital-human/voice', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${accessToken}` },
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
         body: JSON.stringify({ referenceObjectPath: up.objectPath, name: cloneName.trim() || undefined }),
       });
       const d = (await r.json().catch(() => ({}))) as { voice?: ClonedVoice; message?: string; error?: string };
@@ -215,7 +222,7 @@ export function CloudDigitalHumanStudio() {
     } finally {
       setCloning(false);
     }
-  }, [user, accessToken, requestSpend, cloneName, tr]);
+  }, [user, getToken, requestSpend, cloneName, tr]);
 
   const handlePreview = useCallback(
     async (voiceId: string) => {
@@ -289,7 +296,12 @@ export function CloudDigitalHumanStudio() {
   );
 
   const handleGenerate = useCallback(async () => {
-    if (!user || !accessToken) {
+    if (!user) {
+      setError(tr('digitalHumanCloud.needLogin', '请先登录后再克隆音色'));
+      return;
+    }
+    const token = await getToken();
+    if (!token) {
       setError(tr('digitalHumanCloud.needLogin', '请先登录后再克隆音色'));
       return;
     }
@@ -313,11 +325,11 @@ export function CloudDigitalHumanStudio() {
 
     try {
       const { blob, filename } = await resolveImageBlob();
-      const up = await uploadAiInput(accessToken, user.id, blob, filename, blob.type || 'image/jpeg');
+      const up = await uploadAiInput(getToken, user.id, blob, filename, blob.type || 'image/jpeg');
       setProgressNote(tr('digitalHumanCloud.submitting', '提交生成任务…'));
       const r = await fetch('/api/digital-human/generate', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${accessToken}` },
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
         body: JSON.stringify({ imageObjectPath: up.objectPath, text: narration, voice, resolution }),
       });
       const d = (await r.json().catch(() => ({}))) as { taskId?: string; message?: string; error?: string };
@@ -330,7 +342,7 @@ export function CloudDigitalHumanStudio() {
       setProgressNote('');
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [user, accessToken, text, maxChars, requestSpend, stopPolling, resolveImageBlob, voice, resolution, poll, tr]);
+  }, [user, getToken, text, maxChars, requestSpend, stopPolling, resolveImageBlob, voice, resolution, poll, tr]);
 
   /* ---------------- 渲染 ---------------- */
 
@@ -361,7 +373,7 @@ export function CloudDigitalHumanStudio() {
           <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <div className="space-y-1">
             <p>{cap.reason || tr('digitalHumanCloud.unavailable', '云端模型密钥未配置')}</p>
-            <Link href="/digital-human" className="inline-flex items-center gap-1 font-medium text-primary hover:underline">
+            <Link href="/digital-human-live" className="inline-flex items-center gap-1 font-medium text-primary hover:underline">
               <LinkIcon className="h-3 w-3" />
               {tr('digitalHumanCloud.gotoCanvas', '改用零门槛画布数字人')}
             </Link>

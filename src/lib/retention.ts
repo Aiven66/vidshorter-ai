@@ -26,7 +26,7 @@ export function streakMilestoneCredits(streak: number): number {
   return STREAK_MILESTONE_CREDITS;
 }
 
-export type RetentionTaskId = 'checkin' | 'create' | 'export';
+export type RetentionTaskId = 'create' | 'export';
 
 export interface RetentionTask {
   id: RetentionTaskId;
@@ -77,10 +77,6 @@ export function shiftDayKey(dayKey: string, deltaDays: number): string {
  */
 export const CHECKIN_SESSION_PREFIX = 'daily_checkin_';
 
-export function checkinSessionId(userId: string, dayKey: string): string {
-  return `${CHECKIN_SESSION_PREFIX}${userId}_${dayKey}`;
-}
-
 /** 领取奖励在 `credit_transactions.description` 上的标记（幂等判定用）。 */
 export const TASK_REWARD_MARKER = 'daily_task_reward';
 export const TASK_REWARD_TX_TYPE = 'task_reward';
@@ -112,9 +108,8 @@ export function daysToNextMilestone(streak: number): number {
   return mod === 0 && streak > 0 ? 0 : STREAK_MILESTONE_DAYS - mod;
 }
 
-/** 任务元信息（顺序即 UI 展示顺序）。 */
+/** 任务元信息（顺序即 UI 展示顺序）。「每日签到」已下线，仅保留创作类任务。 */
 export const RETENTION_TASKS: ReadonlyArray<{ id: RetentionTaskId }> = [
-  { id: 'checkin' },
   { id: 'create' },
   { id: 'export' },
 ];

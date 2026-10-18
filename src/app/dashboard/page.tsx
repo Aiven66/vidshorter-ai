@@ -15,9 +15,10 @@ import { useCredits } from '@/lib/credits-context';
 import { useRouter } from 'next/navigation';
 import { Textarea } from '@/components/ui/textarea';
 import {
-  CreditCard, Video, History, Settings, ArrowRight, Play, FileVideo,
+  CreditCard, Video, History, Settings, ArrowRight, Play, FileVideo, FileText,
   Download, ChevronDown, ChevronRight, Image as ImageIcon, Film, ExternalLink,
   Loader2, Gift, CheckCircle2, BarChart3, Search, RotateCcw, Layers, Sparkles,
+  Trash2, Pencil,
 } from 'lucide-react';
 import Link from 'next/link';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -31,10 +32,13 @@ import {
 import { isAdminUser } from '@/lib/admin-gate';
 import { InsufficientCreditsDialog } from '@/components/insufficient-credits-dialog';
 import {
-  getPublishMap, setPublishInfo, summarizePublish, type PublishInfo,
+  getPublishMap, setPublishInfo, removePublishInfo, summarizePublish, cachePublishMap,
+  fetchServerPublishMap, saveServerPublish, deleteServerPublish, migrateLocalPublish,
+  hasMigrated, markMigrated, PUBLISH_PLATFORMS, type PublishInfo,
 } from '@/lib/publish-tracker';
 import { MarkPublishedDialog } from '@/components/mark-published-dialog';
 import { DailyTasksCard } from '@/components/retention/daily-tasks-card';
+import { NotesLibrary } from '@/components/notes-library';
 import { trackEvent, trackCustomEvent, takeVisitGapDays, setAnalyticsUser, VIDEO_FUNNEL, LOCAL_EVENTS } from '@/lib/analytics';
 
 const ReferralDialog = dynamic(
@@ -705,9 +709,12 @@ export default function DashboardPage() {
   const [isFromDesktop, setIsFromDesktop] = useState(false);
   // 邀请好友弹窗
   const [referralOpen, setReferralOpen] = useState(false);
-  // P1-2 发布标记（localStorage，按 userId 隔离）
+  // 控制台主内容区页签（快捷入口可切换）
+  const [activeTab, setActiveTab] = useState('history');
+  // P1-2/P0 发布记录（本地缓存 + 服务端跨设备持久化）
   const [publishMap, setPublishMap] = useState<Record<string, PublishInfo>>({});
-  const [publishDialogClip, setPublishDialogClip] = useState<VideoClip | null>(null);
+  // 发布弹窗目标：只需 clipId（既来自作品卡片，也来自发布运营台列表）
+  const [publishDialogClip, setPublishDialogClip] = useState<{ id: string } | null>(null);
 
   // P0-2 创作中心：筛选 / 搜索 / 排序 / 批量选择与导出（纯客户端，基于已加载的 videos）
   const [sourceFilter, setSourceFilter] = useState<'all' | 'youtube' | 'bilibili' | 'upload'>('all');
@@ -727,8 +734,32 @@ export default function DashboardPage() {
     }
   }, [user, authLoading, router]);
 
+  // P1-2 发布记录：先渲染本地缓存（秒开），再与服务端对账（跨设备）。
+  // 本地记录只上云一次（migrated 标记）；此后以服务端为唯一事实源，
+  // 这样在其他设备上的删除才能正确同步过来（不会被本地旧记录复活）。
   useEffect(() => {
-    if (user?.id) setPublishMap(getPublishMap(user.id));
+    if (!user?.id) return;
+    const uid = user.id;
+    const local = getPublishMap(uid);
+    setPublishMap(local);
+    let cancelled = false;
+    (async () => {
+      let server = await fetchServerPublishMap();
+      if (cancelled || server === null) return; // 服务端不可用 → 保留本地
+      if (!hasMigrated(uid)) {
+        if (Object.keys(local).length > 0) {
+          const merged = await migrateLocalPublish(local);
+          if (cancelled) return;
+          // 迁移失败 → 保留本地，下次进入重试（不覆盖、不置标记）
+          if (!merged) return;
+          server = merged;
+        }
+        markMigrated(uid);
+      }
+      setPublishMap(server);
+      cachePublishMap(uid, server);
+    })();
+    return () => { cancelled = true; };
   }, [user?.id]);
 
   // 留存埋点：登录态回访间隔。首页 video-processor 只覆盖落地页，直接回到
@@ -918,9 +949,61 @@ export default function DashboardPage() {
     [user?.id, allClipIds, publishMap],
   );
 
+  // 发布运营台：clipId → 标题（列表显示用），以及按平台拆分的汇总。
+  const clipTitleById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const v of videos) {
+      for (const c of v.clips ?? []) {
+        m.set(c.id, c.title || v.title || '');
+      }
+    }
+    return m;
+  }, [videos]);
+
+  const publishRecords = useMemo(
+    () =>
+      Object.entries(publishMap)
+        .filter(([, info]) => !!info)
+        .map(([clipId, info]) => ({ clipId, info }))
+        .sort((a, b) => (b.info.postedAt || '').localeCompare(a.info.postedAt || '')),
+    [publishMap],
+  );
+
+  // 发布运营台汇总：以「列表实际展示的记录」为准（不随作品库删减而丢失）。
+  const publishRecordsSummary = useMemo(() => {
+    const s = { published: 0, views: 0, likes: 0, comments: 0 };
+    for (const { info } of publishRecords) {
+      s.published += 1;
+      s.views += Number(info.views) || 0;
+      s.likes += Number(info.likes) || 0;
+      s.comments += Number(info.comments) || 0;
+    }
+    return s;
+  }, [publishRecords]);
+
+  const platformBreakdown = useMemo(() => {
+    const rows = PUBLISH_PLATFORMS.map((platform) => ({ platform, count: 0, views: 0 }));
+    const idx = new Map(rows.map((r) => [r.platform, r]));
+    for (const { info } of publishRecords) {
+      const row = idx.get(info.platform);
+      if (!row) continue;
+      row.count += 1;
+      row.views += Number(info.views) || 0;
+    }
+    return rows.filter((r) => r.count > 0);
+  }, [publishRecords]);
+
   const handlePublishSave = (clipId: string, info: PublishInfo) => {
     if (!user?.id) return;
     setPublishMap(setPublishInfo(user.id, clipId, info));
+    // 服务端同步（跨设备）：失败静默忽略 —— 本地已保存，下次进入会重试对账。
+    void saveServerPublish(clipId, info);
+  };
+
+  const handlePublishDelete = (clipId: string) => {
+    if (!user?.id) return;
+    setPublishMap(removePublishInfo(user.id, clipId));
+    void deleteServerPublish(clipId);
   };
 
   // P0-2 筛选 + 搜索 + 排序（全部在客户端基于已加载的 videos 计算）
@@ -1049,9 +1132,10 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen bg-muted/30">
       <div className="container mx-auto px-4 py-8">
-        <div className="mb-8">
+        {/* Hero 头部 */}
+        <div className="mb-6 rounded-2xl border border-border bg-gradient-to-br from-primary/10 via-background to-background p-6 sm:p-7">
           {isFromDesktop && (
-            <div className="mb-4 p-4 border border-primary/30 bg-primary/5 rounded-lg">
+            <div className="mb-4 rounded-lg border border-primary/30 bg-primary/5 p-4">
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="font-medium">{t('dashboard.desktopLoginDetected')}</h3>
@@ -1063,87 +1147,170 @@ export default function DashboardPage() {
               </div>
             </div>
           )}
-          <h1 className="text-3xl font-bold">{t('dashboard.title')}</h1>
-          <p className="text-muted-foreground">{t('dashboard.welcomeBack')}, {user.name || user.email}!</p>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <h1 className="text-2xl font-bold md:text-3xl">{t('dashboard.title')}</h1>
+              <p className="mt-1 text-muted-foreground">
+                {t('dashboard.welcomeBack')}, {user.name || user.email}!
+              </p>
+            </div>
+            <Button asChild className="flex-shrink-0">
+              <Link href="/#process">
+                <Video className="mr-2 h-4 w-4" />
+                {t('dashboard.processNewVideo')}
+              </Link>
+            </Button>
+          </div>
         </div>
 
         {/* Stats Cards */}
-        <div className="grid md:grid-cols-4 gap-6 mb-8">
+        <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">{t('dashboard.credits')}</CardTitle>
-              <CreditCard className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold">{creditsLoading ? '...' : balance.toLocaleString()}</div>
-              <p className="text-xs text-muted-foreground mt-1">{t('dashboard.creditsReset')}</p>
+            <CardContent className="p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm text-muted-foreground">{t('dashboard.credits')}</p>
+                  <div className="mt-1 truncate text-2xl font-bold tabular-nums">
+                    {creditsLoading ? '...' : balance.toLocaleString()}
+                  </div>
+                </div>
+                <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                  <CreditCard className="h-5 w-5 text-primary" />
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">{t('dashboard.creditsReset')}</p>
             </CardContent>
           </Card>
 
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">{t('dashboard.videosProcessed')}</CardTitle>
-              <Video className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold">{videos.length}</div>
-              <p className="text-xs text-muted-foreground mt-1">{t('dashboard.videosProcessedDesc')}</p>
+            <CardContent className="p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm text-muted-foreground">{t('dashboard.videosProcessed')}</p>
+                  <div className="mt-1 truncate text-2xl font-bold tabular-nums">{videos.length}</div>
+                </div>
+                <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                  <Video className="h-5 w-5 text-primary" />
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">{t('dashboard.videosProcessedDesc')}</p>
             </CardContent>
           </Card>
 
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">{t('dashboard.clipsGenerated')}</CardTitle>
-              <Film className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold">{totalClips}</div>
-              <p className="text-xs text-muted-foreground mt-1">{t('dashboard.clipsGeneratedDesc')}</p>
+            <CardContent className="p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm text-muted-foreground">{t('dashboard.clipsGenerated')}</p>
+                  <div className="mt-1 truncate text-2xl font-bold tabular-nums">{totalClips}</div>
+                </div>
+                <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                  <Film className="h-5 w-5 text-primary" />
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">{t('dashboard.clipsGeneratedDesc')}</p>
             </CardContent>
           </Card>
 
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">{t('dashboard.currentPlan')}</CardTitle>
-              <Settings className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold">{user.role === 'admin' ? t('nav.admin') : t('pricing.free.title')}</div>
-              <Button variant="link" className="p-0 h-auto text-xs" asChild>
+            <CardContent className="p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm text-muted-foreground">{t('dashboard.currentPlan')}</p>
+                  <div className="mt-1 truncate text-2xl font-bold">
+                    {user.role === 'admin' ? t('nav.admin') : t('pricing.free.title')}
+                  </div>
+                </div>
+                <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                  <Settings className="h-5 w-5 text-primary" />
+                </span>
+              </div>
+              <Button variant="link" className="mt-1 h-auto p-0 text-xs" asChild>
                 <Link href="/pricing">{t('dashboard.upgradePlan')}</Link>
               </Button>
             </CardContent>
           </Card>
         </div>
 
-        {/* 邀请好友卡片：双方各得 100 积分 */}
-        <Card className="mb-8 border-primary/20 bg-primary/5">
-          <CardContent className="flex flex-col sm:flex-row sm:items-center gap-4 p-5">
-            <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full bg-primary/15">
-              <Gift className="h-5 w-5 text-primary" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="font-semibold text-sm">{t('referral.cardTitle')}</p>
-              <p className="text-xs text-muted-foreground mt-0.5">{t('referral.cardDesc')}</p>
-            </div>
-            <Button onClick={() => setReferralOpen(true)} className="flex-shrink-0">
-              <Gift className="h-4 w-4 mr-1.5" />
-              {t('referral.cardCta')}
-            </Button>
-          </CardContent>
-        </Card>
+        {/* 快捷入口（含「我的笔记」） */}
+        <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <button
+            type="button"
+            onClick={() => setActiveTab('notes')}
+            className="group flex items-center gap-3 rounded-xl border border-border bg-background p-4 text-left transition-colors hover:border-primary/40 hover:bg-accent"
+          >
+            <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10">
+              <FileText className="h-5 w-5 text-primary" />
+            </span>
+            <span className="min-w-0 flex-1 text-sm font-medium">{t('notes.libraryTitle')}</span>
+            <ChevronRight className="h-4 w-4 flex-shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
+          </button>
 
-        {/* 每日创作任务：签到 + 生成 + 导出 → 领取奖励，维持连续创作 Streak */}
-        <DailyTasksCard />
+          <Link
+            href="/video-notes"
+            className="group flex items-center gap-3 rounded-xl border border-border bg-background p-4 text-left transition-colors hover:border-primary/40 hover:bg-accent"
+          >
+            <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10">
+              <Sparkles className="h-5 w-5 text-primary" />
+            </span>
+            <span className="min-w-0 flex-1 text-sm font-medium">{t('notes.libraryGenerate')}</span>
+            <ChevronRight className="h-4 w-4 flex-shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
+          </Link>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('publish')}
+            className="group flex items-center gap-3 rounded-xl border border-border bg-background p-4 text-left transition-colors hover:border-primary/40 hover:bg-accent"
+          >
+            <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10">
+              <BarChart3 className="h-5 w-5 text-primary" />
+            </span>
+            <span className="min-w-0 flex-1 text-sm font-medium">{t('dashboard.publishDeskTab')}</span>
+            <ChevronRight className="h-4 w-4 flex-shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
+          </button>
+        </div>
+
+        {/* 邀请好友卡片 + 每日创作任务 */}
+        <div className="mb-6 grid gap-4 lg:grid-cols-2">
+          <Card className="border-primary/20 bg-primary/5">
+            <CardContent className="flex h-full flex-col gap-4 p-5 sm:flex-row sm:items-center">
+              <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full bg-primary/15">
+                <Gift className="h-5 w-5 text-primary" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold">{t('referral.cardTitle')}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">{t('referral.cardDesc')}</p>
+              </div>
+              <Button onClick={() => setReferralOpen(true)} className="flex-shrink-0">
+                <Gift className="mr-1.5 h-4 w-4" />
+                {t('referral.cardCta')}
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* 每日创作任务：生成 + 导出 → 领取奖励（「每日签到」已下线） */}
+          <DailyTasksCard />
+        </div>
 
         {/* Main Content */}
-        <Tabs defaultValue="history" className="space-y-6">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
           <TabsList>
             <TabsTrigger value="history" className="gap-2">
               <History className="h-4 w-4" />
               {t('dashboard.history')}
               {videos.length > 0 && (
                 <Badge variant="secondary" className="ml-1 h-5 text-xs">{videos.length}</Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="notes" className="gap-2">
+              <FileText className="h-4 w-4" />
+              {t('notes.libraryTitle')}
+            </TabsTrigger>
+            <TabsTrigger value="publish" className="gap-2">
+              <BarChart3 className="h-4 w-4" />
+              {t('dashboard.publishDeskTab')}
+              {publishRecords.length > 0 && (
+                <Badge variant="secondary" className="ml-1 h-5 text-xs">{publishRecords.length}</Badge>
               )}
             </TabsTrigger>
             <TabsTrigger value="new" className="gap-2">
@@ -1155,6 +1322,27 @@ export default function DashboardPage() {
               {t('dashboard.feedback')}
             </TabsTrigger>
           </TabsList>
+
+          {/* 我的笔记：内嵌笔记库，方便直接查看与操作 */}
+          <TabsContent value="notes">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0">
+                <div>
+                  <CardTitle>{t('notes.libraryTitle')}</CardTitle>
+                  <CardDescription className="mt-1">{t('notes.librarySubtitle')}</CardDescription>
+                </div>
+                <Button variant="outline" size="sm" asChild className="flex-shrink-0">
+                  <Link href="/video-notes">
+                    <Sparkles className="mr-1.5 h-4 w-4" />
+                    {t('notes.libraryGenerate')}
+                  </Link>
+                </Button>
+              </CardHeader>
+              <CardContent>
+                <NotesLibrary />
+              </CardContent>
+            </Card>
+          </TabsContent>
 
           <TabsContent value="history">
             <Card>
@@ -1314,7 +1502,7 @@ export default function DashboardPage() {
                             getStatusBadge={getStatusBadge}
                             t={t}
                             publishMap={publishMap}
-                            onMarkPublished={setPublishDialogClip}
+                            onMarkPublished={(clip) => setPublishDialogClip({ id: clip.id })}
                             selected={selectedIds.includes(video.id)}
                             onToggleSelect={() => toggleSelect(video.id)}
                             onRerun={() => handleRerun(video)}
@@ -1371,6 +1559,118 @@ export default function DashboardPage() {
                 >
                   {feedbackSending ? t('common.loading') : t('dashboard.submitFeedback')}
                 </Button>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="publish">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <BarChart3 className="h-5 w-5" />
+                  {t('dashboard.publishDeskTitle')}
+                </CardTitle>
+                <CardDescription>{t('dashboard.publishDeskSubtitle')}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {publishRecords.length === 0 ? (
+                  <div className="text-center py-12">
+                    <BarChart3 className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                    <p className="text-muted-foreground mb-4">{t('dashboard.publishDeskEmpty')}</p>
+                    <Button asChild variant="outline">
+                      <Link href="/#process">
+                        {t('dashboard.publishDeskGoPublish')}
+                        <ArrowRight className="ml-2 h-4 w-4" />
+                      </Link>
+                    </Button>
+                  </div>
+                ) : (
+                  <>
+                    {/* 汇总 */}
+                    <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                      {[
+                        { label: t('dashboard.published'), value: publishRecordsSummary.published },
+                        { label: t('dashboard.totalViews'), value: fmtCompact(publishRecordsSummary.views) },
+                        { label: t('dashboard.totalLikes'), value: fmtCompact(publishRecordsSummary.likes) },
+                        { label: t('dashboard.totalComments'), value: fmtCompact(publishRecordsSummary.comments) },
+                      ].map((s) => (
+                        <div key={s.label} className="rounded-md border bg-muted/30 px-3 py-2">
+                          <div className="text-lg font-semibold tabular-nums">{s.value}</div>
+                          <div className="text-xs text-muted-foreground">{s.label}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* 按平台拆分 */}
+                    {platformBreakdown.length > 0 && (
+                      <div className="mb-5">
+                        <p className="mb-2 text-xs font-medium text-muted-foreground">
+                          {t('dashboard.publishDeskByPlatform')}
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {platformBreakdown.map((row) => (
+                            <div key={row.platform} className="rounded-md border px-3 py-1.5 text-xs">
+                              <span className="font-medium">{t(`dashboard.platform.${row.platform}`)}</span>
+                              <span className="ml-2 text-muted-foreground">
+                                {row.count} · {fmtCompact(row.views)} {t('dashboard.metricViews').toLowerCase()}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 作品列表 */}
+                    <div className="space-y-2">
+                      {publishRecords.map(({ clipId, info }) => (
+                        <div
+                          key={clipId}
+                          className="flex flex-wrap items-center justify-between gap-3 rounded-md border px-3 py-2"
+                        >
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <Badge variant="outline">{t(`dashboard.platform.${info.platform}`)}</Badge>
+                              <span className="truncate text-sm font-medium">
+                                {clipTitleById.get(clipId) || t('dashboard.clip')}
+                              </span>
+                            </div>
+                            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                              <span>{t('dashboard.metricViews')} {fmtCompact(info.views || 0)}</span>
+                              <span>{t('dashboard.metricLikes')} {fmtCompact(info.likes || 0)}</span>
+                              <span>{t('dashboard.metricComments')} {fmtCompact(info.comments || 0)}</span>
+                              <span>{t('dashboard.publishDeskPostedAt')} {info.postedAt.slice(0, 10)}</span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            {info.postUrl && (
+                              <Button asChild variant="ghost" size="sm" title={t('dashboard.publishDeskOpen')}>
+                                <a href={info.postUrl} target="_blank" rel="noopener noreferrer">
+                                  <ExternalLink className="h-3.5 w-3.5" />
+                                </a>
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              title={t('dashboard.updateMetrics')}
+                              onClick={() => setPublishDialogClip({ id: clipId })}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              title={t('dashboard.publishDeskDelete')}
+                              onClick={() => handlePublishDelete(clipId)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
               </CardContent>
             </Card>
           </TabsContent>

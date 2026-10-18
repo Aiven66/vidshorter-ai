@@ -18,14 +18,19 @@ const { planHighlights } = require('./local-highlight-scorer');
 const { extractSignals, normalizeSignals } = require('./local-signals');
 const { createRuleStore } = require('./local-highlight-rules');
 const { renderPublishable, resolveExportTarget } = require('./local-render');
+const { buildFirstClipSpec, buildTimingReport } = require('./local-aha');
+const { createBrandKitStore, normalizeBrand } = require('./brand-kit');
+const { createProjectStore } = require('./project-store');
 const { runYtDlp, downloadWithYtDlp } = require('./ytdlp');
 const { createMediaServer } = require('./media-server');
+const { registerYuecutIpc } = require('./yuecut-ipc');
 const { t, currentLocale, setLocale, detectLocale } = require('./i18n');
 const { registerRealHumanIpc } = require('./real-human-ipc');
 const APP_VERSION = require('./package.json').version;
 
 let mainWindow = null;
 let webWindow = null;
+let mediaUploadDir = '';
 let logBuffer = [];
 let logFilePath = '';
 let mediaServer = null;
@@ -1019,6 +1024,7 @@ function startMediaServer() {
   });
   mediaServer = ms.server;
   mediaReady = ms.ready;
+  mediaUploadDir = ms.dirs.uploadDir;
   mediaReady.then(() => { mediaBaseUrl = ms.getBaseUrl(); });
 }
 
@@ -1060,6 +1066,7 @@ async function applyMenu() {
           label: t('menu.debugConsole'),
           click: () => ensureSettingsWindow(),
         },
+        { type: 'separator' },
         {
           label: isLoggedIn ? t('menu.signOut') : t('menu.signIn'),
           click: async () => {
@@ -1428,6 +1435,109 @@ ipcMain.handle('local-highlight-rules:save', async (_event, input) => {
   return await localRuleStore().save(input?.rules);
 });
 
+// ==================== BRAND KIT (P0-1 品牌套件 · 本地零上传) ====================
+function localBrandStore() {
+  const dir = app.getPath('userData');
+  return createBrandKitStore({
+    filePath: path.join(dir, 'brand-kit.json'),
+    assetsDir: path.join(dir, 'brand-kit-assets'),
+  });
+}
+
+ipcMain.handle('brand-kit:list', async () => localBrandStore().list());
+ipcMain.handle('brand-kit:get-active', async () => localBrandStore().getActive());
+ipcMain.handle('brand-kit:save', async (_event, brand) => localBrandStore().save(brand));
+ipcMain.handle('brand-kit:remove', async (_event, id) => localBrandStore().remove(String(id || '')));
+ipcMain.handle('brand-kit:set-active', async (_event, id) => localBrandStore().setActive(String(id || '')));
+ipcMain.handle('brand-kit:pick-logo', async () => {
+  const r = await dialog.showOpenDialog({
+    title: '选择品牌 Logo',
+    properties: ['openFile'],
+    filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'] }],
+  });
+  if (r.canceled || !r.filePaths?.[0]) return { ok: false, canceled: true };
+  try {
+    return await localBrandStore().importLogo(r.filePaths[0]);
+  } catch (e) {
+    return { ok: false, code: (e && e.code) || 'LOGO_ERROR', message: (e && e.message) || String(e) };
+  }
+});
+
+// ==================== PROJECT FILE (P0-2 本地工程文件 · 零上传) ====================
+function localProjectStore() {
+  return createProjectStore({ rootDir: path.join(app.getPath('userData'), 'projects') });
+}
+
+ipcMain.handle('project:list', async () => localProjectStore().list());
+
+ipcMain.handle('project:create', async (_event, input) => localProjectStore().create(input));
+
+ipcMain.handle('project:read', async (_event, input) => localProjectStore().read(input));
+
+ipcMain.handle('project:save', async (_event, input) => localProjectStore().save(input));
+
+ipcMain.handle('project:remove', async (_event, input) => {
+  const id = typeof input === 'string' ? input : input && input.id;
+  return localProjectStore().remove(id);
+});
+
+ipcMain.handle('project:import', async () => {
+  const r = await dialog.showOpenDialog({
+    title: '导入工程文件',
+    properties: ['openFile'],
+    filters: [{ name: 'Clipop 工程', extensions: ['clipop'] }],
+  });
+  if (r.canceled || !r.filePaths?.[0]) return { ok: false, canceled: true };
+  try {
+    return await localProjectStore().importFromPath(r.filePaths[0]);
+  } catch (e) {
+    return { ok: false, code: (e && e.code) || 'PROJECT_IMPORT_ERROR', message: (e && e.message) || String(e) };
+  }
+});
+
+ipcMain.handle('project:export', async (_event, input) => {
+  const store = localProjectStore();
+  let name = 'clipop-project';
+  try {
+    const cur = await store.read({ id: input && input.id });
+    name = (cur.project && cur.project.name) || name;
+  } catch {
+    // 读不到就用默认名，后续 exportTo 会给出结构化错误
+  }
+  const r = await dialog.showSaveDialog({
+    title: '导出工程文件',
+    defaultPath: `${String(name).replace(/[\\/:*?"<>|]/g, '_')}.clipop`,
+    filters: [{ name: 'Clipop 工程', extensions: ['clipop'] }],
+  });
+  if (r.canceled || !r.filePath) return { ok: false, canceled: true };
+  try {
+    return await store.exportTo({ id: input && input.id, destPath: r.filePath });
+  } catch (e) {
+    return { ok: false, code: (e && e.code) || 'PROJECT_EXPORT_ERROR', message: (e && e.message) || String(e) };
+  }
+});
+
+ipcMain.handle('project:relink', async (_event, input) => {
+  const r = await dialog.showOpenDialog({
+    title: '重新定位素材文件',
+    properties: ['openFile'],
+    filters: [
+      { name: '媒体文件', extensions: ['mp4', 'mov', 'mkv', 'webm', 'avi', 'm4v'] },
+      { name: '所有文件', extensions: ['*'] },
+    ],
+  });
+  if (r.canceled || !r.filePaths?.[0]) return { ok: false, canceled: true };
+  try {
+    return await localProjectStore().relink({
+      id: input && input.id,
+      materialId: input && input.materialId,
+      newPath: r.filePaths[0],
+    });
+  } catch (e) {
+    return { ok: false, code: (e && e.code) || 'PROJECT_RELINK_ERROR', message: (e && e.message) || String(e) };
+  }
+});
+
 // ==================== PUBLISHABLE RENDER (P0-3 一键可发布成片) ====================
 /**
  * 本地渲染「可直接发布」成片：粗剪 → 9:16 blur-fit → 卡拉OK字幕 → 钩子/CTA → 分级水印。
@@ -1443,6 +1553,15 @@ ipcMain.handle('local-render:publishable', async (_event, input) => {
   await fs.mkdir(outDir, { recursive: true });
 
   const target = resolveExportTarget(input?.plan, input?.aspect);
+  // P0-1 品牌套件：显式传入优先，否则用当前激活品牌（本地读取，零上传）
+  let brand = null;
+  try {
+    brand = input?.brand && typeof input.brand === 'object'
+      ? normalizeBrand(input.brand, input.brand.id)
+      : await localBrandStore().getActive();
+  } catch (err) {
+    appendLog(`[brand-kit] 读取品牌失败：${(err && err.message) || err}`);
+  }
   const result = await renderPublishable({
     inputPath,
     clip: input?.clip,
@@ -1455,6 +1574,7 @@ ipcMain.handle('local-render:publishable', async (_event, input) => {
     aspect: input?.aspect,
     outDir,
     fontName: input?.fontName ? String(input.fontName) : undefined,
+    brand,
   });
   return {
     ...result,
@@ -1554,6 +1674,143 @@ ipcMain.handle('local-highlights:plan', async (_event, input) => {
   return { ...planned, duration, engine: asr.engine || '', asr, analysis };
 });
 
+// ==================== FIRST CLIP AHA ENGINE (P0-4 首片 5 分钟 · 一键出片) ====================
+/**
+ * 选源视频（原生对话框）：只返回路径 + 轻量元数据，文件不出本机。
+ */
+ipcMain.handle('local-aha:pick-video', async () => {
+  const r = await dialog.showOpenDialog({
+    title: '选择源视频',
+    properties: ['openFile'],
+    filters: [
+      { name: '视频', extensions: ['mp4', 'mov', 'mkv', 'webm', 'avi', 'm4v'] },
+      { name: '所有文件', extensions: ['*'] },
+    ],
+  });
+  if (r.canceled || !r.filePaths?.[0]) return { ok: false, canceled: true };
+  const p = r.filePaths[0];
+  let duration = 0;
+  let bytes = 0;
+  try { duration = await probeDurationSeconds(p, 0); } catch {}
+  try { bytes = (await fs.stat(p)).size; } catch {}
+  return { ok: true, path: p, name: path.basename(p), duration, bytes };
+});
+
+/**
+ * 一键出首片：本地转写 → 高光打分 → 取分数最高的一条 → 竖屏渲染可直接发布成片。
+ * 零设置：默认竖屏 + 大字幕 + 粗剪 + 片头钩子 + 当前激活品牌套件；全程零上传。
+ * 无 ASR 时 fail-open 退化为「开头一段」，不阻断出片（UI 侧据 noTranscript 提示）。
+ */
+ipcMain.handle('local-aha:first-clip', async (_event, input) => {
+  let inputPath = String(input?.inputPath || '').trim();
+  if (inputPath.startsWith('file://')) inputPath = fileURLToPath(inputPath);
+  if (!inputPath || !fsSync.existsSync(inputPath)) {
+    return { ok: false, code: 'AHA_INPUT_MISSING', message: '待处理的视频不存在。' };
+  }
+  const locale = input?.locale ? String(input.locale) : '';
+  const quality = input?.quality ? String(input.quality) : '';
+  const plan = ['free', 'starter', 'pro'].includes(String(input?.plan)) ? String(input.plan) : 'starter';
+
+  try {
+    const t0 = Date.now();
+    const plannedRes = await planLocalHighlights({ inputPath, locale, quality });
+    const tPlan = Date.now() - t0;
+
+    const spec = buildFirstClipSpec({
+      clips: plannedRes.planned?.clips,
+      sourceDuration: plannedRes.duration,
+      locale,
+      aspect: input?.aspect,
+      plan,
+      quality,
+      usedFallback: plannedRes.planned?.usedFallback === true,
+    });
+    if (!spec.ok) return { ok: false, code: spec.code, message: spec.message };
+
+    // P0-1 品牌套件：显式传入优先，否则用当前激活品牌（本地读取，零上传）
+    let brand = null;
+    try {
+      brand = input?.brand && typeof input.brand === 'object'
+        ? normalizeBrand(input.brand, input.brand.id)
+        : await localBrandStore().getActive();
+    } catch (err) {
+      appendLog(`[aha] 读取品牌失败：${(err && err.message) || err}`);
+    }
+
+    startMediaServer();
+    if (mediaReady) await mediaReady;
+    const outDir = path.join(app.getPath('userData'), 'generated-clips');
+    await fs.mkdir(outDir, { recursive: true });
+
+    const tRenderStart = Date.now();
+    const render = await renderPublishable({
+      inputPath,
+      clip: spec.clip,
+      cues: spec.cues,
+      words: spec.words,
+      title: spec.title,
+      ctaText: spec.ctaText,
+      style: spec.style,
+      plan,
+      aspect: spec.aspect,
+      outDir,
+      brand,
+    });
+    const tRender = Date.now() - tRenderStart;
+
+    const timings = buildTimingReport({ plan: tPlan, render: tRender }, input?.budgetSec);
+    appendLog(`[aha] 首片完成 ${render.outputName}（${timings.totalSec}s / 预算 ${timings.budgetSec}s，within=${timings.withinBudget}）`);
+
+    return {
+      ok: true,
+      spec: {
+        clip: spec.clip,
+        title: spec.title,
+        score: spec.score,
+        reason: spec.reason,
+        noTranscript: spec.noTranscript,
+        usedFallback: spec.usedFallback,
+        candidateCount: spec.candidateCount,
+        aspect: spec.aspect,
+        plan: spec.plan,
+        quality: spec.quality,
+        subtitleCueCount: spec.cues.length,
+        subtitleWordCount: spec.words.length,
+      },
+      render,
+      analysis: plannedRes.analysis,
+      timings,
+      videoUrl: mediaBaseUrl ? `${mediaBaseUrl}/api/serve-clip/${render.outputName}` : '',
+    };
+  } catch (err) {
+    const code = (err && err.code) || 'AHA_FAILED';
+    appendLog(`[aha] 首片失败 ${code}: ${(err && err.message) || err}`);
+    return { ok: false, code, message: (err && err.message) || String(err), retryable: (err && err.retryable) !== false };
+  }
+});
+
+/**
+ * 一键导出首片到用户指定位置（成片已在本机，导出仅做一次拷贝，不上传）。
+ */
+ipcMain.handle('local-aha:export', async (_event, input) => {
+  const src = String(input?.outputPath || '').trim();
+  if (!src || !fsSync.existsSync(src)) {
+    return { ok: false, code: 'AHA_EXPORT_MISSING', message: '成片文件不存在。' };
+  }
+  const r = await dialog.showSaveDialog({
+    title: '导出成片',
+    defaultPath: String(input?.suggestedName || path.basename(src)),
+    filters: [{ name: '视频', extensions: ['mp4'] }],
+  });
+  if (r.canceled || !r.filePath) return { ok: false, canceled: true };
+  try {
+    await fs.copyFile(src, r.filePath);
+    return { ok: true, path: r.filePath };
+  } catch (err) {
+    return { ok: false, code: 'AHA_EXPORT_FAILED', message: (err && err.message) || String(err) };
+  }
+});
+
 // ==================== LOCAL DOWNLOADER (P0-4 本地 YouTube 下载器) ====================
 /**
  * 用本地 IP + 可配 Cookie 下载，避免机房出口 LOGIN_REQUIRED；失败返回结构化错误码。
@@ -1625,6 +1882,33 @@ app.on('ready', async () => {
 
   startAuthCallbackServer();
   startMediaServer();
+  registerYuecutIpc({
+    ipcMain,
+    app,
+    dialog,
+    getMediaBaseUrl: async () => {
+      startMediaServer();
+      await mediaReady;
+      return mediaBaseUrl;
+    },
+    getUploadDir: () => mediaUploadDir || '/tmp/video-cache/uploads',
+    createLocalTranscriber,
+    modelStatus: () => {
+      const store = createModelStore({ modelsDir: localWhisperDir(), binDir: localBinDirs()[0] });
+      const engine = detectEngine({
+        modelsDir: store.modelsDir,
+        binDirs: localBinDirs(),
+        sherpaBinDirs: localSherpaBinDirs(),
+      });
+      return { ...store.status(), engine };
+    },
+    modelPrepare: async (ids, onProgress) => {
+      const store = createModelStore({ modelsDir: localWhisperDir(), binDir: localBinDirs()[0] });
+      return store.prepare(ids && ids.length ? ids : undefined, typeof onProgress === 'function' ? onProgress : () => {});
+    },
+    ffmpegPath,
+    probeDurationSeconds,
+  });
   await applyMenu();
   // 只打开主窗口，设置窗口按需打开
   setTimeout(ensureWebWindow, 100);

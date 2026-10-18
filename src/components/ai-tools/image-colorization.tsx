@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Slider } from '@/components/ui/slider';
 import { useLocale } from '@/lib/locale-context';
-import { useAuth } from '@/lib/auth-context';
+import { useAiToolAuth } from '@/lib/ai-tools/use-ai-tool-auth';
 import {
   AiToolError,
   callAiTool,
@@ -30,7 +30,7 @@ import Link from 'next/link';
 
 export function ImageColorization() {
   const { t } = useLocale();
-  const { user, accessToken, loading: authLoading } = useAuth();
+  const { user, getToken, authLoading } = useAiToolAuth();
   const { requestSpend, insufficientOpen, setInsufficientOpen, balance } = useAiToolCredit();
   const [file, setFile] = useState<File | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -104,7 +104,7 @@ export function ImageColorization() {
 
   const handleProcess = async () => {
     if (!file || !imageRef.current) return;
-    if (!user || !accessToken) {
+    if (!user) {
       setError(t('aiTools.needsLogin'));
       return;
     }
@@ -116,7 +116,7 @@ export function ImageColorization() {
     try {
       setStage(t('aiTools.uploading'));
       const upload = await uploadAiInput(
-        accessToken,
+        getToken,
         user.id,
         file,
         file.name || 'image.png',
@@ -124,7 +124,7 @@ export function ImageColorization() {
       );
 
       setStage(t('aiTools.serverProcessing'));
-      const result = await callAiTool<AiImageResult>(accessToken, 'image-colorization', {
+      const result = await callAiTool<AiImageResult>(getToken, 'image-colorization', {
         imageUrl: upload.signedUrl,
       });
       setServerResult(result);

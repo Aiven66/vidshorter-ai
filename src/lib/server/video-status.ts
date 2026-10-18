@@ -9,10 +9,16 @@ import { TERMINAL_VIDEO_STATUSES, type BatchClip, type BatchClipStatus } from '@
 
 const TERMINAL = new Set<string>(TERMINAL_VIDEO_STATUSES);
 
-/** 片段 URL → 播放状态。空 URL=failed；存储签名/data URL=completed；YouTube 时间戳页=link_only。 */
+/**
+ * 片段 URL → 播放状态。空 URL=failed；存储签名/data URL=completed；YouTube 时间戳页=link_only。
+ *
+ * `failed:` 前缀是生成失败时写入的「尝试标记」行（见 video-job.runClip）：
+ * 它存在的意义是让任务能推进到终态，本身不可播放，必须判定为 failed 而不是泄漏到 UI。
+ */
 export function classifyClipUrl(url: string | null | undefined): BatchClipStatus {
   const value = url || '';
   if (!value) return 'failed';
+  if (value.startsWith('failed:')) return 'failed';
   // 可内联播放的形态：data / data-url 占位 + 存储签名 https URL。
   const isStorageSigned =
     value.startsWith('data:') || value.startsWith('data-url:') || value.includes('/storage/v1/object/sign/');

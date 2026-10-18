@@ -3,9 +3,7 @@ import {
   CHECKIN_SESSION_PREFIX,
   RETENTION_TASKS,
   TASK_REWARD_CREDITS,
-  TASK_REWARD_MARKER,
   TASK_REWARD_TX_TYPE,
-  checkinSessionId,
   computeStreak,
   daysToNextMilestone,
   shiftDayKey,
@@ -102,7 +100,6 @@ export async function getRetentionStatus(userId: string): Promise<RetentionStatu
 
   const today = utcDayKey();
   const sinceIso = utcDayStartIso(today);
-  const yesterday = shiftDayKey(today, -1);
 
   const [signedDays, createCount, exportCount, claimedCount] = await Promise.all([
     loadSignedDays(client, userId),
@@ -112,7 +109,6 @@ export async function getRetentionStatus(userId: string): Promise<RetentionStatu
   ]);
 
   const done: Record<RetentionTaskId, number> = {
-    checkin: signedDays.has(today) ? 1 : 0,
     create: createCount,
     export: exportCount,
   };
@@ -149,44 +145,6 @@ export interface ClaimResult {
   already?: boolean;
   reason?: string;
   status?: RetentionStatus;
-}
-
-/**
- * 签到（幂等）：写入 `behavior_events` 一条 checkin 记录。
- * 已签到直接返回，不重复写入。
- */
-export async function checkIn(userId: string): Promise<{ ok: boolean; already: boolean }> {
-  const client = retentionServiceClient();
-  if (!client) return { ok: false, already: false };
-
-  const today = utcDayKey();
-  const sessionId = checkinSessionId(userId, today);
-
-  const { data: existing } = await client
-    .from('behavior_events')
-    .select('id')
-    .eq('session_id', sessionId)
-    .maybeSingle();
-  if (existing) return { ok: true, already: true };
-
-  const { error } = await client.from('behavior_events').insert({
-    event_name: 'daily_checkin',
-    funnel_id: 'retention',
-    step_index: 1,
-    event_data: { day: today },
-    session_id: sessionId,
-    user_id: userId,
-    user_email: '',
-    page_url: '',
-    referrer: '',
-    user_agent: 'server/retention',
-    ip: '',
-  });
-  if (error) {
-    console.warn('[retention] checkin insert failed:', error.message);
-    return { ok: false, already: false };
-  }
-  return { ok: true, already: false };
 }
 
 /**

@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { bearerToken, resolveBearerUserId } from '@/lib/server/plan-gate';
-import { checkIn, claimTaskReward, getRetentionStatus } from '@/lib/server/retention';
+import { claimTaskReward, getRetentionStatus } from '@/lib/server/retention';
 
 /**
- * 留存引擎 API —— 每日创作任务 / 连续签到 / 奖励领取。
+ * 留存引擎 API —— 每日创作任务 / 奖励领取（「每日签到」已下线）。
  *
- *   GET  /api/retention/daily            → 当日任务与 streak 状态（只读，无副作用）
- *   POST /api/retention/daily {action}   → action='checkin' 签到 | action='claim' 领取奖励
+ *   GET  /api/retention/daily            → 当日任务状态（只读，无副作用）
+ *   POST /api/retention/daily {action}   → action='claim' 领取奖励
  *
  * 身份：只认服务端可核验的 access token（`Authorization: Bearer` 或 `clipop_access_token`
- * cookie），**绝不接受请求体里的 userId** —— 否则任意用户可刷他人签到与奖励。
+ * cookie），**绝不接受请求体里的 userId** —— 否则任意用户可刷他人奖励。
  */
 
 export const runtime = 'nodejs';
@@ -48,15 +48,6 @@ export async function POST(request: NextRequest) {
   }
 
   const action = String(body.action || '');
-
-  if (action === 'checkin') {
-    const res = await checkIn(userId);
-    if (!res.ok) {
-      return NextResponse.json({ error: 'Check-in failed' }, { status: 500 });
-    }
-    const status = await getRetentionStatus(userId);
-    return NextResponse.json({ ok: true, already: res.already, status });
-  }
 
   if (action === 'claim') {
     const res = await claimTaskReward(userId);

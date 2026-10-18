@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>粤剪 YueCut · AI 批量剪辑</title>
+  <link rel="stylesheet" href="batch.css" />
+</head>
+<body>
+  <div class="app">
+    <!-- 窗口栏 -->
+    <header class="winbar">
+      <div class="winbar-left">
+        <span class="win-drag"></span>
+        <span class="win-title">粤剪 YueCut <i>/</i> AI 批量剪辑</span>
+      </div>
+      <div class="winbar-mid win-drag" data-i18n="win.workspace">本地工作区</div>
+      <div class="winbar-right">
+        <span class="win-chip">Apple Silicon</span>
+        <span class="win-ver" id="app-version">v--</span>
+      </div>
+    </header>
+
+    <!-- 品牌栏 -->
+    <div class="brandbar">
+      <div class="brand">
+        <div class="brand-logo" id="brand-logo"></div>
+        <div>
+          <div class="brand-name">YueCut <span data-i18n="brand.sub">AI 批量剪辑</span></div>
+          <div class="brand-slogan" data-i18n="brand.slogan">让剪辑回到判断本身</div>
+        </div>
+      </div>
+      <div class="brand-actions">
+        <button class="tool streamer-btn" id="streamer-btn">
+          <span class="avatar" id="streamer-avatar">欣</span>
+          <span><b id="streamer-name">阿欣甄选</b> <span class="muted" id="streamer-platform">/ 抖音主号</span></span>
+        </button>
+        <div class="vline"></div>
+        <div class="seg" id="ui-lang">
+          <button data-lang="zh">中文</button>
+          <button data-lang="en">English</button>
+          <button data-lang="yue">粤语</button>
+        </div>
+        <button class="engine-btn" id="engine-open">
+          <span class="dot" id="engine-dot"></span>
+          <span id="engine-label">本地引擎就绪</span>
+          <span class="tiny" id="engine-sub">离线可用 · 无需模型 API</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- 批次 stepper -->
+    <section class="stepper">
+      <div class="stepper-info">
+        <div class="stepper-title-row">
+          <input id="batch-name" class="batch-name-input" value="" spellcheck="false" />
+          <span class="pill primary" data-i18n="batch.internal">内部验证</span>
+        </div>
+        <p class="tiny" id="batch-meta"></p>
+      </div>
+      <div class="steps" id="steps">
+        <span class="step done"><i class="ic-check"></i><span data-i18n="step.import">导入素材</span></span>
+        <i>—</i>
+        <span class="step done"><i class="ic-check"></i><span data-i18n="step.analyze">AI 分析</span></span>
+        <i>—</i>
+        <span class="step active"><b>3</b><span data-i18n="step.confirm">批量确认</span></span>
+        <i>—</i>
+        <span class="step"><b>4</b><span data-i18n="step.export">导出</span></span>
+      </div>
+      <button class="tool" id="rules-open"><i class="ic-sliders"></i><span data-i18n="drawer.rules">剪切规则</span> <span class="muted" id="rules-ver">v1.3</span></button>
+    </section>
+
+    <main>
+      <!-- 左：素材源 -->
+      <aside class="sources">
+        <div class="panel-head">
+          <h2><span data-i18n="sources.title">素材源</span> <span class="muted" id="sources-count">00</span></h2>
+        </div>
+        <div class="sources-actions">
+          <button class="btn-primary" id="btn-import"><i class="ic-plus"></i><span data-i18n="sources.import">批量导入素材</span><span class="kbd">⌘ I</span></button>
+          <input id="files" type="file" multiple accept="video/*" hidden />
+          <p class="tiny center" data-i18n="sources.hint">拖入直播回放 / 原始视频，不上传</p>
+          <div class="grid-2">
+            <button class="tool mini" id="products-open"><i class="ic-cube"></i><span data-i18n="sources.products">商品库</span></button>
+            <button class="tool mini" id="btn-retry-all"><i class="ic-rotate"></i><span data-i18n="sources.retry">重试失败</span></button>
+          </div>
+        </div>
+        <div class="sources-list" id="sources-list"></div>
+        <div class="drop-hint" id="drop-hint"><i class="ic-down"></i><span data-i18n="sources.drop">拖入视频文件即可导入</span></div>
+      </aside>
+
+      <!-- 中：候选片段 -->
+      <section class="candidates">
+        <div class="cand-head">
+          <h2><span data-i18n="cand.title">AI 候选片段</span> <span class="muted" id="cand-total">0</span></h2>
+          <button class="tiny-link" id="cand-rules-link"><i class="ic-wand"></i><span id="cand-rules-name">按「粤语带货 · 高转化」筛选</span></button>
+        </div>
+        <div class="tabs" id="cand-tabs">
+          <button data-tab="pending" class="active"><span data-i18n="tab.pending">待确认</span> <em id="tab-pending">0</em></button>
+          <button data-tab="confirmed"><span data-i18n="tab.confirmed">已确认</span> <em id="tab-confirmed">0</em></button>
+          <button data-tab="deferred"><span data-i18n="tab.deferred">待定</span> <em id="tab-deferred">0</em></button>
+          <span class="ml-auto tiny" id="autosave"></span>
+        </div>
+        <div class="filters">
+          <label class="tool mini select-wrap">
+            <i class="ic-filter muted"></i>
+            <select id="score-filter">
+              <option value="0" data-i18n="filter.score80">评分 ≥ 80</option>
+              <option value="90" data-i18n="filter.score90">评分 ≥ 90</option>
+            </select>
+          </label>
+          <select class="tool mini" id="product-filter"></select>
+          <button class="tool mini" id="btn-low-confidence"><span data-i18n="filter.lowconf">粤语低置信度</span> <em class="muted" id="lowconf-count">0</em></button>
+          <button class="tool mini" id="btn-conflict-only"><span data-i18n="filter.conflict">价格冲突</span> <em class="muted" id="conflict-count">0</em></button>
+          <span class="ml-auto tiny" data-i18n="filter.sort">评分优先</span>
+        </div>
+        <div class="select-row">
+          <label><input type="checkbox" id="select-all" /> <span data-i18n="cand.selectAll">全选当前结果</span> <span class="primary" id="selection-label"></span></label>
+          <span class="tiny" data-i18n="cand.timebase">时间码基于源素材</span>
+        </div>
+        <div class="cards" id="cards"></div>
+        <div class="empty" id="cand-empty" hidden></div>
+        <div class="batch-bar" id="batch-bar" hidden>
+          <span><b class="primary" id="batch-count">0</b><span data-i18n="batch.selected"> 条已选</span></span>
+          <div class="batch-bar-actions">
+            <button class="btn-primary sm" id="btn-batch-confirm"><i class="ic-check"></i><span data-i18n="batch.confirm">批量确认</span></button>
+            <button class="link-btn primary" id="btn-batch-queue"><span data-i18n="batch.queue">加入导出队列</span></button>
+            <button class="link-btn" id="btn-batch-subtitle"><span data-i18n="batch.subtitle">字幕样式</span></button>
+            <span class="sep"></span>
+            <button class="link-btn muted" id="btn-batch-reject"><span data-i18n="batch.reject">剔除</span></button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 右：预览与确认 -->
+      <aside class="preview">
+        <div class="pv-head">
+          <h2 data-i18n="pv.title">预览与确认</h2>
+          <span class="tiny" id="pv-rank"></span>
+        </div>
+        <div class="pv-frame">
+          <div class="pv-stage" id="pv-stage">
+            <video id="pv-video" preload="metadata" playsinline></video>
+            <div class="pv-overlay-top"><span id="pv-streamer">阿欣甄选 · 好物实测</span></div>
+            <div class="pv-burn">
+              <p id="pv-burn-hook"></p>
+              <p id="pv-burn-price"></p>
+            </div>
+            <span class="pv-ratio">9:16</span>
+            <button class="pv-play" id="pv-play"><i class="ic-play"></i></button>
+          </div>
+          <div class="pv-scrub">
+            <div class="pv-progress" id="pv-progress"><div id="pv-progress-fill"></div><i id="pv-progress-knob"></i></div>
+            <div class="pv-time">
+              <span id="pv-play-btn2"><i class="ic-play primary"></i></span>
+              <span class="mono"><b id="pv-cur">00:00</b> / <span id="pv-dur">00:00</span></span>
+              <span class="muted" id="pv-tc-source"></span>
+            </div>
+          </div>
+        </div>
+        <div class="sub-head">
+          <span><b data-i18n="pv.subtitleTrack">字幕轨</b> <span class="tiny" data-i18n="pv.localAsr">本地转写</span></span>
+          <div class="seg sm" id="sub-lang">
+            <button data-lang="yue">粤语</button>
+            <button data-lang="zh">中文</button>
+            <button data-lang="en">English</button>
+          </div>
+        </div>
+        <div class="sub-track" id="sub-track"></div>
+        <div class="sub-meta tiny">
+          <span id="sub-stability" class="primary"></span>
+        </div>
+
+        <div class="pv-section product-card">
+          <div class="pv-section-head">
+            <h3 data-i18n="pv.product">商品与价格</h3>
+            <span class="tiny" id="pv-sku-state"></span>
+          </div>
+          <div class="pv-product" id="pv-product"></div>
+        </div>
+
+        <div class="pv-section">
+          <div class="pv-section-head">
+            <h3 data-i18n="pv.transcript">话术全文</h3>
+            <button class="tiny-link" id="pv-locate"><i class="ic-external"></i><span data-i18n="pv.locate">定位原素材</span></button>
+          </div>
+          <p class="transcript" id="pv-transcript"></p>
+          <p class="tiny en-notice" id="en-notice" hidden></p>
+        </div>
+
+        <div class="dimensions" id="pv-dims"></div>
+
+        <div class="decide-row">
+          <button class="btn-primary" id="btn-decide-confirm"><span data-i18n="decide.confirm">确认</span><span class="key">A</span></button>
+          <button class="tool" id="btn-decide-defer"><span data-i18n="decide.defer">待定</span><span class="key">S</span></button>
+          <button class="tool" id="btn-decide-reject"><span data-i18n="decide.reject">剔除</span><span class="key">D</span></button>
+        </div>
+      </aside>
+    </main>
+
+    <!-- 底部导出队列 -->
+    <footer>
+      <div class="export-head">
+        <div class="export-title">
+          <h2 data-i18n="export.title">本地导出队列</h2>
+          <span class="pill primary" id="export-count">0</span>
+          <span class="tiny" id="export-sum"></span>
+        </div>
+        <div class="export-actions">
+          <span class="tiny" id="export-spec">H.264 / 1080 × 1920 / 30 fps</span>
+          <button class="link-btn muted" id="export-open"><i class="ic-gear"></i><span data-i18n="export.settings">导出设置</span></button>
+          <button class="btn-export" id="btn-export-all"><i class="ic-upload"></i><span id="export-all-label"></span></button>
+        </div>
+      </div>
+      <div class="export-body">
+        <div class="jobs" id="jobs"></div>
+        <div class="stats">
+          <div><p class="tiny" data-i18n="stats.candidates">本批次候选</p><b id="stat-candidates">0 <small>条</small></b></div>
+          <div><p class="tiny" data-i18n="stats.confirmed">已确认</p><b class="primary" id="stat-confirmed">0 <small>条</small></b></div>
+          <div><p class="tiny" data-i18n="stats.pending">待人工判断</p><b id="stat-pending">0 <small>条</small></b></div>
+        </div>
+      </div>
+      <div class="statusbar">
+        <div class="sb-left">
+          <span><i class="ic-chip primary"></i>Apple Silicon</span>
+          <span id="sb-engine">编码器检测中…</span>
+          <span><i class="ic-lock"></i><span data-i18n="sb.localOnly">素材不离开此 Mac</span></span>
+        </div>
+        <div class="sb-right">
+          <span data-i18n="sb.todayPrefix">今日已处理</span> <b id="sb-processed">0</b> <span data-i18n="sb.todayMid">条素材 / 产出</span> <b class="primary" id="sb-clips">0</b> <span data-i18n="sb.todaySuffix">条切片</span>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <!-- 抽屉 -->
+  <div id="overlay" hidden>
+    <section class="drawer">
+      <div class="drawer-head">
+        <h2 id="drawer-title"></h2>
+        <button id="drawer-close" class="drawer-x">×</button>
+      </div>
+      <div class="drawer-body" id="drawer-content"></div>
+      <div class="drawer-foot" id="drawer-foot"></div>
+    </section>
+  </div>
+
+  <div id="toast" hidden><span id="toast-text"></span><button id="toast-undo" hidden>撤销</button></div>
+  <script src="batch.js"></script>
+</body>
+</html>

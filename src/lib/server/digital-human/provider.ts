@@ -10,7 +10,7 @@
  * 本模块只做「能力探测」，不做静默回落：
  *   - 探测到密钥 → available=true，可走服务端真人数字人；
  *   - 未探测到   → available=false 且列出缺失的 env，由 API / UI 明确告知用户，
- *                  并引导到平台已有的**零 Key 画布数字人**（/digital-human，口型由音频包络驱动）。
+ *                  并引导到平台已有的**零 Key 画布数字人**（/digital-human-live，口型由音频包络驱动）。
  *
  * 音色克隆同理：IndexTTS2 需本地 GPU，Edge-TTS 不支持克隆 → 未配置时回落 Edge 神经声线，
  * 由 UI 明确提示「当前使用神经声线，未使用克隆音色」。
@@ -83,7 +83,7 @@ export async function detectDigitalHumanCapability(): Promise<DigitalHumanCapabi
     voiceCloneAvailable: voiceCloneProvider !== null,
     voiceCloneProvider,
     reason:
-      '服务端真人数字人需要模型密钥：请在「管理后台 → 模型配置」里填写 阿里云百炼 DASHSCOPE_API_KEY（wan2.7-r2v），或 RUNNINGHUB_API_KEY + RUNNINGHUB_WORKFLOW_ID。未配置时可使用零门槛的画布数字人（/digital-human）。',
+      '服务端真人数字人需要模型密钥：请在「管理后台 → 模型配置」里填写 阿里云百炼 DASHSCOPE_API_KEY（wan2.7-r2v），或 RUNNINGHUB_API_KEY + RUNNINGHUB_WORKFLOW_ID。未配置时可使用零门槛的画布数字人（/digital-human-live）。',
   };
 }
 

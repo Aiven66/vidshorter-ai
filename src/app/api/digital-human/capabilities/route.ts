@@ -23,6 +23,6 @@ export async function GET() {
     presetVoices: PRESET_VOICES,
     maxNarrationChars: MAX_NARRATION_CHARS,
     /** 零 Key 的画布数字人（现有能力），未配置 provider 时的替代入口 */
-    fallbackHref: '/digital-human',
+    fallbackHref: '/digital-human-live',
   });
 }

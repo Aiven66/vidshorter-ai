@@ -15,7 +15,6 @@ import {
   Star,
   Smartphone,
   Podcast,
-  ShoppingBag,
   Languages,
   MonitorDown,
   Apple,
@@ -52,7 +51,6 @@ const frameGlow = (a: string, b: string) =>
 const PRESETS = [
   { href: '/video-clips', icon: Smartphone, tint: 'text-gold', k: 'c1' },
   { href: '/podcast', icon: Podcast, tint: 'text-ai-cyan', k: 'c2' },
-  { href: '/marketing-video', icon: ShoppingBag, tint: 'text-gold', k: 'c3' },
   { href: '/ai-tools', icon: Languages, tint: 'text-ai-cyan', k: 'c4' },
 ] as const;
 

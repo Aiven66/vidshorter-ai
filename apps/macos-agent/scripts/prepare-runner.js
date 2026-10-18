@@ -164,15 +164,37 @@ async function main() {
   const embeddedDir = path.join(__dirname, '..', 'embedded-web');
   await rmDirSafe(embeddedDir);
 
-  const standaloneSrc = path.join(root, '.next', 'standalone');
-  const staticSrc = path.join(root, '.next', 'static');
-  if (!fs.existsSync(standaloneSrc)) {
+  const standaloneRoot = path.join(root, '.next', 'standalone');
+  if (!fs.existsSync(standaloneRoot)) {
     process.stderr.write('Missing .next/standalone\n');
     process.exit(1);
   }
 
+  // Next.js 检测到上层目录存在 package.json 时（monorepo root 判定），会把 standalone
+  // 输出嵌套为 standalone/<相对路径>/（如 codex/projects/）。递归找到真正含 server.js
+  // 的应用目录，兼容扁平与嵌套两种布局。
+  const findAppDir = (dir, depth) => {
+    if (depth > 6) return null;
+    if (fs.existsSync(path.join(dir, 'server.js'))) return dir;
+    let entries = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return null; }
+    for (const ent of entries) {
+      if (!ent.isDirectory()) continue;
+      const hit = findAppDir(path.join(dir, ent.name), depth + 1);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  const standaloneSrc = findAppDir(standaloneRoot, 0);
+  if (!standaloneSrc) {
+    process.stderr.write('ERROR: server.js not found under .next/standalone\n');
+    process.exit(1);
+  }
+  console.log(`[prepare-runner] standalone app dir: ${path.relative(standaloneRoot, standaloneSrc) || '.'}`);
+
   await copyDir(standaloneSrc, embeddedDir);
 
+  const staticSrc = path.join(root, '.next', 'static');
   if (fs.existsSync(staticSrc)) await copyDir(staticSrc, path.join(embeddedDir, '.next', 'static'));
   const publicSrc = path.join(root, 'public');
   if (fs.existsSync(publicSrc)) await copyDir(publicSrc, path.join(embeddedDir, 'public'));

@@ -85,6 +85,29 @@ async function hasSubtitleFilter() {
   return subtitleFilterMemo;
 }
 
+let movieFilterMemo = null;
+
+/** 探测当前 ffmpeg 是否含 movie 滤镜（片头 Logo 叠加用）。结果 memoized。 */
+async function hasMovieFilter() {
+  if (movieFilterMemo !== null) return movieFilterMemo;
+  const bin = ffmpegPath();
+  if (!bin) {
+    movieFilterMemo = false;
+    return false;
+  }
+  try {
+    const { stdout } = await execFileAsync(bin, ['-hide_banner', '-filters'], {
+      maxBuffer: 8 * 1024 * 1024,
+      timeout: 20_000,
+      env: { ...process.env, LANG: 'C' },
+    });
+    movieFilterMemo = /^\s*\S+\s+movie\s/m.test(String(stdout || ''));
+  } catch {
+    movieFilterMemo = false;
+  }
+  return movieFilterMemo;
+}
+
 /** 读 ffmpeg -i 的 stderr（媒体信息都在 stderr）。 */
 async function probeMedia(inputPath) {
   const bin = ffmpegPath();
@@ -257,6 +280,14 @@ const HIGHLIGHT = {
   orange: '&H0010A5FF',
 };
 
+/** '#RRGGBB' → ASS 颜色（&HAABBGGRR，AA=00 全不透明）。非法返回空串。 */
+function hexToAssColor(hex) {
+  const m = String(hex == null ? '' : hex).trim().match(/^#?([0-9a-fA-F]{6})$/);
+  if (!m) return '';
+  const s = m[1].toUpperCase();
+  return `&H00${s.slice(4, 6)}${s.slice(2, 4)}${s.slice(0, 2)}`;
+}
+
 function fmtAssTime(s) {
   const v = Math.max(0, Number(s) || 0);
   const h = Math.floor(v / 3600);
@@ -379,36 +410,48 @@ async function buildPublishAssFile({
   hook = true,
   ctaText = '',
   fontName = 'PingFang SC',
+  brand = null,
 }) {
+  const b = brand && typeof brand === 'object' ? brand : null;
+  // 品牌套件优先：字体 / 主色 / 片头文案 / 片尾文案（缺项逐一回落原有默认）
+  const useFont = (b && b.font) ? String(b.font) : fontName;
+  const brandColor = b ? hexToAssColor(b.primaryColor) : '';
   const sizeKey = STYLE_SIZE[style.size] ? style.size : 'medium';
   const fontsize = STYLE_SIZE[sizeKey];
   const highlight = HIGHLIGHT[style.highlight] ? style.highlight : 'yellow';
+  const subColor = brandColor || HIGHLIGHT[highlight];
+  const ctaColor = brandColor || '&H0000E5FF';
   const outline = style.outline === 'none' ? 0 : style.outline === 'light' ? 2 : 3;
   const shadow = style.outline === 'none' ? 0 : 2;
   const backColour = style.background === 'none' ? '&H00000000' : '&H96000000';
 
   const styles = [
-    `Style: Sub, ${fontName}, ${fontsize}, &H00FFFFFF, ${HIGHLIGHT[highlight]}, &H00101010, ${backColour}, -1, 0, 0, 0, 100, 100, 0, 0, 1, ${outline}, ${shadow}, 2, 60, 60, 90, 1`,
+    `Style: Sub, ${useFont}, ${fontsize}, &H00FFFFFF, ${subColor}, &H00101010, ${backColour}, -1, 0, 0, 0, 100, 100, 0, 0, 1, ${outline}, ${shadow}, 2, 60, 60, 90, 1`,
     // 片头钩子：顶部居中大字
-    `Style: Hook, ${fontName}, 92, &H00FFFFFF, &H000000FF, &H00101010, &H80000000, -1, 0, 0, 0, 100, 100, 1, 0, 1, 4, 3, 8, 80, 80, 150, 1`,
+    `Style: Hook, ${useFont}, 92, &H00FFFFFF, &H000000FF, &H00101010, &H80000000, -1, 0, 0, 0, 100, 100, 1, 0, 1, 4, 3, 8, 80, 80, 150, 1`,
     // 结尾 CTA：中下居中
-    `Style: CTA, ${fontName}, 64, &H0000E5FF, &H000000FF, &H00101010, &H96000000, -1, 0, 0, 0, 100, 100, 0, 0, 1, 3, 2, 2, 80, 80, 260, 1`,
+    `Style: CTA, ${useFont}, 64, ${ctaColor}, &H000000FF, &H00101010, &H96000000, -1, 0, 0, 0, 100, 100, 0, 0, 1, 3, 2, 2, 80, 80, 260, 1`,
     // 水印：右下角小字
-    `Style: WM, ${fontName}, 36, &H60FFFFFF, &H60FFFFFF, &H50000000, &H00000000, 0, 0, 0, 0, 100, 100, 0, 0, 1, 2, 0, 3, 40, 40, 40, 1`,
+    `Style: WM, ${useFont}, 36, &H60FFFFFF, &H60FFFFFF, &H50000000, &H00000000, 0, 0, 0, 0, 100, 100, 0, 0, 1, 2, 0, 3, 40, 40, 40, 1`,
   ];
 
   const events = [];
 
-  // 片头钩子（前 hookSeconds 秒）
-  const hookSeconds = Number(style.hookFirstSeconds) > 0 ? Number(style.hookFirstSeconds) : 3;
-  if (hook && title && duration > 0.5) {
+  // 片头钩子（前 hookSeconds 秒）；品牌套件可覆盖文案与时长，也可整体关闭
+  const introOn = !b || !b.intro || b.intro.enabled !== false;
+  const introText = (b && b.intro && b.intro.text) ? b.intro.text : title;
+  const hookSeconds = (b && b.intro && Number(b.intro.seconds) > 0)
+    ? Number(b.intro.seconds)
+    : (Number(style.hookFirstSeconds) > 0 ? Number(style.hookFirstSeconds) : 3);
+  if (hook && introOn && introText && duration > 0.5) {
     const hEnd = Math.min(duration, hookSeconds);
-    events.push(`Dialogue: 1,${fmtAssTime(0)},${fmtAssTime(hEnd)},Hook,,0,0,0,,${escapeAss(title)}`);
+    events.push(`Dialogue: 1,${fmtAssTime(0)},${fmtAssTime(hEnd)},Hook,,0,0,0,,${escapeAss(introText)}`);
   }
 
-  // 结尾 CTA（最后 ctaSeconds 秒）
-  const cta = escapeAss(ctaText);
-  if (cta && duration > 1) {
+  // 结尾 CTA（最后 ctaSeconds 秒）；品牌套件可覆盖文案，也可整体关闭
+  const outroOn = !b || !b.outro || b.outro.enabled !== false;
+  const cta = escapeAss((b && b.outro && b.outro.text) ? b.outro.text : ctaText);
+  if (outroOn && cta && duration > 1) {
     const cStart = Math.max(0, duration - 2.5);
     events.push(`Dialogue: 1,${fmtAssTime(cStart)},${fmtAssTime(duration)},CTA,,0,0,0,,${cta}`);
   }
@@ -531,6 +574,8 @@ async function renderPublishable(opts) {
 
   const target = resolveExportTarget(opts.plan, opts.aspect);
   const style = opts.style && typeof opts.style === 'object' ? opts.style : {};
+  // P0-1 品牌套件：字体 / 主色 / 片头片尾 / 片头 Logo（非常驻，非水印）
+  const brand = opts.brand && typeof opts.brand === 'object' ? opts.brand : null;
   const warnings = [];
 
   // 1) 粗剪规划（安全阀：不可用/剪太狠 → 原样输出）
@@ -542,7 +587,8 @@ async function renderPublishable(opts) {
 
   // 2) 字幕时间轴（粗剪后需重映射）
   const effectiveCues = jump.disabled ? opts.cues : remapCues(opts.cues, jump.segments);
-  const effectiveWords = jump.disabled ? opts.words : null; // 词级时间戳不做重映射（粗剪下退化为 cue 级）
+  // 词级时间戳与 cue 同一套「绝对 → 剪后」重映射规则（逐词字幕在粗剪下同样保真）。
+  const effectiveWords = jump.disabled ? opts.words : remapCues(opts.words, jump.segments);
 
   // 3) ASS（字幕 + 钩子 + CTA + 水印）
   const libass = await hasSubtitleFilter();
@@ -561,13 +607,32 @@ async function renderPublishable(opts) {
       hook: style.hook !== false,
       ctaText: opts.ctaText,
       fontName: opts.fontName,
+      brand,
     });
     if (!ass && (opts.cues?.length || opts.words?.length)) warnings.push('NO_SUBTITLE_EVENTS');
   }
 
+  // 3.5) 片头 Logo：拷贝进输出目录（用相对文件名规避路径转义），仅片头时段叠加（非常驻）
+  let logoRel = '';
+  let logoW = 0;
+  const logoPath = brand && brand.logo ? String(brand.logo.path || '') : '';
+  if (logoPath) {
+    if (!fsSync.existsSync(logoPath)) {
+      warnings.push('BRAND_LOGO_MISSING');
+    } else if (!(await hasMovieFilter())) {
+      warnings.push('BRAND_LOGO_UNAVAILABLE');
+    } else {
+      const lext = path.extname(logoPath).toLowerCase() || '.png';
+      logoRel = `brand-logo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${lext}`;
+      await fs.copyFile(logoPath, path.join(outDir, logoRel));
+      const pct = Number(brand.logo.widthPct);
+      logoW = Math.max(24, Math.round((target.width * (Number.isFinite(pct) ? pct : 14)) / 100));
+    }
+  }
+
   onProgress({ stage: 'render', progress: 45, message: 'Rendering publishable video...' });
 
-  // 4) 滤镜图：粗剪 → blur-fit → 字幕
+  // 4) 滤镜图：粗剪 → blur-fit → 字幕 → 片头 Logo
   const chains = [];
   let inLabel = '[0:v]';
   let audioLabel = null;
@@ -585,6 +650,27 @@ async function renderPublishable(opts) {
   const postChain = ass ? `subtitles=${ass.name}:fontsdir=./` : null;
   chains.push(...buildBlurFitChains(inLabel, target.width, target.height, postChain));
 
+  let voutLabel = '[vout]';
+  if (logoRel) {
+    const pos = brand.logo.position || 'br';
+    const opacity = Number(brand.logo.opacity);
+    const opChain = Number.isFinite(opacity) && opacity < 1
+      ? `,colorchannelmixer=aa=${opacity.toFixed(2)}`
+      : '';
+    const introSec = brand.intro && brand.intro.enabled !== false && Number(brand.intro.seconds) > 0
+      ? Number(brand.intro.seconds)
+      : 3;
+    chains.push(`movie=${logoRel},format=rgba,scale=${logoW}:-1${opChain}[brandlogo]`);
+    const xy = {
+      tl: '40:40',
+      tr: 'W-w-40:40',
+      bl: '40:H-h-40',
+      br: 'W-w-40:H-h-40',
+    }[pos] || 'W-w-40:H-h-40';
+    chains.push(`[vout][brandlogo]overlay=${xy}:enable='between(t,0,${introSec.toFixed(2)})'[vbrand]`);
+    voutLabel = '[vbrand]';
+  }
+
   const outputName = `publish-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp4`;
   const outputPath = path.join(outDir, outputName);
 
@@ -596,7 +682,7 @@ async function renderPublishable(opts) {
     '-i', inputPath,
     '-t', String(duration),
     '-filter_complex', chains.join(';'),
-    '-map', '[vout]',
+    '-map', voutLabel,
   ];
   if (audioLabel) args.push('-map', audioLabel);
   else args.push('-map', '0:a:0?');
@@ -661,6 +747,8 @@ module.exports = {
   planKeepSegments,
   remapCues,
   hasSubtitleFilter,
+  hasMovieFilter,
+  hexToAssColor,
   probeMedia,
   TIERS,
   ASPECTS,

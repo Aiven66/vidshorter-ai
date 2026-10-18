@@ -98,3 +98,96 @@ export function parseMetric(raw: string): number | undefined {
   const n = Number(trimmed);
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : undefined;
 }
+
+/** 用服务端返回的整份 map 覆盖本地缓存（跨设备：以服务端为准）。 */
+export function cachePublishMap(userId: string, map: Record<string, PublishInfo>): void {
+  persist(userId, map || {});
+}
+
+// ────────────────────────────────────────────────────────────
+// 服务端同步（跨设备）：/api/publish
+// 同源请求自动携带 clipop_access_token cookie，无需手工加 Authorization 头。
+// 任何失败都返回 null / 静默忽略 —— 服务端不可用时本地 localStorage 仍是可用兜底。
+// ────────────────────────────────────────────────────────────
+
+function pickRecords(data: unknown): Record<string, PublishInfo> | null {
+  if (!data || typeof data !== 'object') return null;
+  const records = (data as { records?: unknown }).records;
+  if (!records || typeof records !== 'object' || Array.isArray(records)) return null;
+  return records as Record<string, PublishInfo>;
+}
+
+async function postPublish(body: object): Promise<Record<string, PublishInfo> | null> {
+  try {
+    const res = await fetch('/api/publish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) return null;
+    return pickRecords(await res.json());
+  } catch {
+    return null;
+  }
+}
+
+/** 拉取服务端发布记录；服务端不可用/未登录 → null（调用方应保留本地）。 */
+export async function fetchServerPublishMap(): Promise<Record<string, PublishInfo> | null> {
+  try {
+    const res = await fetch('/api/publish', { method: 'GET', credentials: 'include' });
+    if (!res.ok) return null;
+    return pickRecords(await res.json());
+  } catch {
+    return null;
+  }
+}
+
+/** 新增/更新一条记录到服务端；返回写入后的完整 map 或 null。 */
+export function saveServerPublish(
+  clipId: string,
+  info: PublishInfo,
+): Promise<Record<string, PublishInfo> | null> {
+  return postPublish({ action: 'upsert', clipId, info });
+}
+
+/** 从服务端删除一条记录；返回删除后的完整 map 或 null。 */
+export function deleteServerPublish(
+  clipId: string,
+): Promise<Record<string, PublishInfo> | null> {
+  return postPublish({ action: 'delete', clipId });
+}
+
+/** 把本地记录一次性并入服务端（首次上云迁移）。 */
+export function migrateLocalPublish(
+  records: Record<string, PublishInfo>,
+): Promise<Record<string, PublishInfo> | null> {
+  return postPublish({ action: 'migrate', records });
+}
+
+// ────────────────────────────────────────────────────────────
+// 迁移标记：本地记录只需上云一次。之后服务端即为唯一事实源，
+// 否则「在 A 设备删除、B 设备本地仍留有旧记录」会被反复并回服务端（复活）。
+// ────────────────────────────────────────────────────────────
+
+function migratedKey(userId: string): string {
+  return `clipop_publish_migrated_${userId || 'anonymous'}`;
+}
+
+export function hasMigrated(userId: string): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return localStorage.getItem(migratedKey(userId)) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function markMigrated(userId: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(migratedKey(userId), '1');
+  } catch {
+    // 隐私模式/配额：忽略
+  }
+}

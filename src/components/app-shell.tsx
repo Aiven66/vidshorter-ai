@@ -20,8 +20,6 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Download,
-  ShoppingBag,
-  Bot,
   Wrench,
   Podcast,
   MessageSquare,
@@ -32,7 +30,6 @@ import {
   Cpu,
   Music2,
   Sparkles,
-  Clapperboard,
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { useCredits } from '@/lib/credits-context';
@@ -90,9 +87,9 @@ type NavItem = {
   // 是否展示「NEW」徽标由管理后台导航配置决定（NavConfig.badges），此处不再硬编码
   // 外部链接（如 Podcast AI）: web 端新标签页打开，桌面端经 setWindowOpenHandler 用系统浏览器打开
   external?: boolean;
-  // 行为型入口：referral=邀请弹窗；yuecut=拉起桌面端「粤剪」批量剪辑独立窗口
-  action?: 'referral' | 'yuecut';
-  // 仅桌面客户端可见（如 AI 批量剪辑，依赖本地 ASR/ffmpeg）
+  // 行为型入口：referral=邀请弹窗
+  action?: 'referral';
+  // 仅桌面客户端可见（依赖本地 ASR/ffmpeg 的入口）
   desktopOnly?: boolean;
 };
 
@@ -101,14 +98,11 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/ai-video', labelKey: 'aiVideo', icon: Wand2 },
   { href: '/shorts', labelKey: 'shorts', icon: Smartphone },
   { href: '/video-clips', labelKey: 'clips', icon: Scissors },
-  { href: '#yuecut', labelKey: 'yuecut', icon: Clapperboard, action: 'yuecut', desktopOnly: true },
   { href: '/tiktok-remix', labelKey: 'tiktokRemix', icon: Music2 },
   { href: '/local-engine', labelKey: 'localEngine', icon: Cpu },
   { href: '#invite', labelKey: 'inviteFriends', icon: Gift, action: 'referral' },
   { href: '/video-notes', labelKey: 'notes', icon: FileText },
   { href: 'https://tokpure.clipopai.com/', labelKey: 'tokpure', icon: Sparkles, external: true },
-  { href: '/marketing-video', labelKey: 'marketing', icon: ShoppingBag },
-  { href: '/digital-human', labelKey: 'digitalHuman', icon: Bot },
   { href: '/digital-human-live', labelKey: 'digitalHumanLive', icon: PersonStanding },
   { href: 'https://podcastai.clipopai.com/', labelKey: 'podcast', icon: Podcast, external: true },
   { href: '/ai-tools', labelKey: 'aiTools', icon: Wrench },
@@ -267,28 +261,6 @@ function AppSidebarContent({
             );
           }
 
-          // 行为型入口（AI 批量剪辑 / 粤剪 YueCut）：拉起桌面端独立批量剪辑窗口
-          if (item.action === 'yuecut') {
-            return (
-              <button
-                key={item.href}
-                type="button"
-                onClick={() => {
-                  onNavigate?.();
-                  const w = window as unknown as {
-                    clipopDesktop?: { openYuecut?: () => Promise<unknown> };
-                    vidshorterDesktop?: { openYuecut?: () => Promise<unknown> };
-                  };
-                  w.clipopDesktop?.openYuecut?.() ?? w.vidshorterDesktop?.openYuecut?.();
-                }}
-                className={`${className} w-full text-left`}
-                title={collapsed ? 'AI 批量剪辑' : undefined}
-              >
-                {content}
-              </button>
-            );
-          }
-
           // 外部链接（Podcast AI）: web 端新标签页打开，桌面端经 setWindowOpenHandler 转系统浏览器
           if (item.external) {
             return (
@@ -333,14 +305,11 @@ function SidebarLabel({ labelKey }: { labelKey: NavItem['labelKey'] }) {
     home: '首页',
     aiVideo: 'AI 成片',
     clips: '高光剪辑',
-    yuecut: 'AI 批量剪辑',
     tiktokRemix: 'TikTok 二创',
     inviteFriends: '邀请好友',
     shorts: 'Shorts 成片',
     notes: '高光笔记',
     tokpure: 'TokPure',
-    marketing: '营销视频',
-    digitalHuman: '普通带货短视频',
     digitalHumanLive: '数字人带货短视频',
     news: '资讯视频',
     article: '文章转视频',
