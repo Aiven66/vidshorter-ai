@@ -13,12 +13,10 @@ import { useLocale } from '@/lib/locale-context';
 import { useAuth } from '@/lib/auth-context';
 import { useCredits } from '@/lib/credits-context';
 import { useRouter } from 'next/navigation';
-import { Textarea } from '@/components/ui/textarea';
 import {
-  CreditCard, Video, History, Settings, ArrowRight, Play, FileVideo, FileText,
+  CreditCard, Video, History, ArrowRight, Play, FileVideo, FileText,
   Download, ChevronDown, ChevronRight, Image as ImageIcon, Film, ExternalLink,
   Loader2, Gift, CheckCircle2, BarChart3, Search, RotateCcw, Layers, Sparkles,
-  Trash2, Pencil,
 } from 'lucide-react';
 import Link from 'next/link';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -32,12 +30,11 @@ import {
 import { isAdminUser } from '@/lib/admin-gate';
 import { InsufficientCreditsDialog } from '@/components/insufficient-credits-dialog';
 import {
-  getPublishMap, setPublishInfo, removePublishInfo, summarizePublish, cachePublishMap,
-  fetchServerPublishMap, saveServerPublish, deleteServerPublish, migrateLocalPublish,
-  hasMigrated, markMigrated, PUBLISH_PLATFORMS, type PublishInfo,
+  getPublishMap, setPublishInfo, summarizePublish, cachePublishMap,
+  fetchServerPublishMap, saveServerPublish, migrateLocalPublish,
+  hasMigrated, markMigrated, type PublishInfo,
 } from '@/lib/publish-tracker';
 import { MarkPublishedDialog } from '@/components/mark-published-dialog';
-import { DailyTasksCard } from '@/components/retention/daily-tasks-card';
 import { NotesLibrary } from '@/components/notes-library';
 import { trackEvent, trackCustomEvent, takeVisitGapDays, setAnalyticsUser, VIDEO_FUNNEL, LOCAL_EVENTS } from '@/lib/analytics';
 
@@ -702,10 +699,6 @@ export default function DashboardPage() {
   const router = useRouter();
   const [videos, setVideos] = useState<VideoRecord[]>([]);
   const [videosLoading, setVideosLoading] = useState(true);
-  const [feedbackContent, setFeedbackContent] = useState('');
-  const [feedbackSending, setFeedbackSending] = useState(false);
-  const [feedbackDone, setFeedbackDone] = useState(false);
-  const [feedbackError, setFeedbackError] = useState('');
   const [isFromDesktop, setIsFromDesktop] = useState(false);
   // 邀请好友弹窗
   const [referralOpen, setReferralOpen] = useState(false);
@@ -870,51 +863,6 @@ export default function DashboardPage() {
     }
   }
 
-  async function submitFeedback() {
-    if (!user) return;
-    const content = feedbackContent.trim();
-    if (!content) return;
-
-    setFeedbackSending(true);
-    setFeedbackDone(false);
-    setFeedbackError('');
-
-    const useDemoMode =
-      !isSupabaseConfigured()
-      || user?.id === 'demo-admin-id'
-      || user?.id?.startsWith('demo-')
-      || user?.id?.startsWith('google-demo-')
-      || !accessToken;
-
-    try {
-      if (useDemoMode) {
-        const key = `clipop_demo_feedbacks_${user.id}`;
-        const stored = typeof window !== 'undefined' ? localStorage.getItem(key) : null;
-        const list = stored ? JSON.parse(stored) : [];
-        list.unshift({ id: `fb-${Date.now()}`, content, created_at: new Date().toISOString() });
-        localStorage.setItem(key, JSON.stringify(list));
-      } else {
-        const res = await fetch('/api/feedback', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${accessToken}`,
-          },
-          body: JSON.stringify({ content }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || t('dashboard.feedbackFailed'));
-      }
-
-      setFeedbackContent('');
-      setFeedbackDone(true);
-    } catch (e) {
-      setFeedbackError(e instanceof Error ? e.message : t('dashboard.feedbackFailed'));
-    } finally {
-      setFeedbackSending(false);
-    }
-  }
-
   const formatDate = (dateString: string) => {
     const dateLocale = locale === 'zh' ? 'zh-CN' : locale === 'zh-Hant' ? 'zh-TW' : locale === 'en' ? 'en-US' : locale;
     return new Date(dateString).toLocaleDateString(dateLocale, {
@@ -949,61 +897,11 @@ export default function DashboardPage() {
     [user?.id, allClipIds, publishMap],
   );
 
-  // 发布运营台：clipId → 标题（列表显示用），以及按平台拆分的汇总。
-  const clipTitleById = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const v of videos) {
-      for (const c of v.clips ?? []) {
-        m.set(c.id, c.title || v.title || '');
-      }
-    }
-    return m;
-  }, [videos]);
-
-  const publishRecords = useMemo(
-    () =>
-      Object.entries(publishMap)
-        .filter(([, info]) => !!info)
-        .map(([clipId, info]) => ({ clipId, info }))
-        .sort((a, b) => (b.info.postedAt || '').localeCompare(a.info.postedAt || '')),
-    [publishMap],
-  );
-
-  // 发布运营台汇总：以「列表实际展示的记录」为准（不随作品库删减而丢失）。
-  const publishRecordsSummary = useMemo(() => {
-    const s = { published: 0, views: 0, likes: 0, comments: 0 };
-    for (const { info } of publishRecords) {
-      s.published += 1;
-      s.views += Number(info.views) || 0;
-      s.likes += Number(info.likes) || 0;
-      s.comments += Number(info.comments) || 0;
-    }
-    return s;
-  }, [publishRecords]);
-
-  const platformBreakdown = useMemo(() => {
-    const rows = PUBLISH_PLATFORMS.map((platform) => ({ platform, count: 0, views: 0 }));
-    const idx = new Map(rows.map((r) => [r.platform, r]));
-    for (const { info } of publishRecords) {
-      const row = idx.get(info.platform);
-      if (!row) continue;
-      row.count += 1;
-      row.views += Number(info.views) || 0;
-    }
-    return rows.filter((r) => r.count > 0);
-  }, [publishRecords]);
-
   const handlePublishSave = (clipId: string, info: PublishInfo) => {
     if (!user?.id) return;
     setPublishMap(setPublishInfo(user.id, clipId, info));
     // 服务端同步（跨设备）：失败静默忽略 —— 本地已保存，下次进入会重试对账。
     void saveServerPublish(clipId, info);
-  };
-
-  const handlePublishDelete = (clipId: string) => {
-    if (!user?.id) return;
-    setPublishMap(removePublishInfo(user.id, clipId));
-    void deleteServerPublish(clipId);
   };
 
   // P0-2 筛选 + 搜索 + 排序（全部在客户端基于已加载的 videos 计算）
@@ -1147,24 +1045,16 @@ export default function DashboardPage() {
               </div>
             </div>
           )}
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              <h1 className="text-2xl font-bold md:text-3xl">{t('dashboard.title')}</h1>
-              <p className="mt-1 text-muted-foreground">
-                {t('dashboard.welcomeBack')}, {user.name || user.email}!
-              </p>
-            </div>
-            <Button asChild className="flex-shrink-0">
-              <Link href="/#process">
-                <Video className="mr-2 h-4 w-4" />
-                {t('dashboard.processNewVideo')}
-              </Link>
-            </Button>
+          <div className="min-w-0">
+            <h1 className="text-2xl font-bold md:text-3xl">{t('dashboard.title')}</h1>
+            <p className="mt-1 text-muted-foreground">
+              {t('dashboard.welcomeBack')}, {user.name || user.email}!
+            </p>
           </div>
         </div>
 
         {/* Stats Cards */}
-        <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <Card>
             <CardContent className="p-5">
               <div className="flex items-start justify-between gap-3">
@@ -1211,85 +1101,6 @@ export default function DashboardPage() {
               <p className="mt-1 text-xs text-muted-foreground">{t('dashboard.clipsGeneratedDesc')}</p>
             </CardContent>
           </Card>
-
-          <Card>
-            <CardContent className="p-5">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-sm text-muted-foreground">{t('dashboard.currentPlan')}</p>
-                  <div className="mt-1 truncate text-2xl font-bold">
-                    {user.role === 'admin' ? t('nav.admin') : t('pricing.free.title')}
-                  </div>
-                </div>
-                <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                  <Settings className="h-5 w-5 text-primary" />
-                </span>
-              </div>
-              <Button variant="link" className="mt-1 h-auto p-0 text-xs" asChild>
-                <Link href="/pricing">{t('dashboard.upgradePlan')}</Link>
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* 快捷入口（含「我的笔记」） */}
-        <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <button
-            type="button"
-            onClick={() => setActiveTab('notes')}
-            className="group flex items-center gap-3 rounded-xl border border-border bg-background p-4 text-left transition-colors hover:border-primary/40 hover:bg-accent"
-          >
-            <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10">
-              <FileText className="h-5 w-5 text-primary" />
-            </span>
-            <span className="min-w-0 flex-1 text-sm font-medium">{t('notes.libraryTitle')}</span>
-            <ChevronRight className="h-4 w-4 flex-shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
-          </button>
-
-          <Link
-            href="/video-notes"
-            className="group flex items-center gap-3 rounded-xl border border-border bg-background p-4 text-left transition-colors hover:border-primary/40 hover:bg-accent"
-          >
-            <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10">
-              <Sparkles className="h-5 w-5 text-primary" />
-            </span>
-            <span className="min-w-0 flex-1 text-sm font-medium">{t('notes.libraryGenerate')}</span>
-            <ChevronRight className="h-4 w-4 flex-shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
-          </Link>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('publish')}
-            className="group flex items-center gap-3 rounded-xl border border-border bg-background p-4 text-left transition-colors hover:border-primary/40 hover:bg-accent"
-          >
-            <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10">
-              <BarChart3 className="h-5 w-5 text-primary" />
-            </span>
-            <span className="min-w-0 flex-1 text-sm font-medium">{t('dashboard.publishDeskTab')}</span>
-            <ChevronRight className="h-4 w-4 flex-shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
-          </button>
-        </div>
-
-        {/* 邀请好友卡片 + 每日创作任务 */}
-        <div className="mb-6 grid gap-4 lg:grid-cols-2">
-          <Card className="border-primary/20 bg-primary/5">
-            <CardContent className="flex h-full flex-col gap-4 p-5 sm:flex-row sm:items-center">
-              <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full bg-primary/15">
-                <Gift className="h-5 w-5 text-primary" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold">{t('referral.cardTitle')}</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">{t('referral.cardDesc')}</p>
-              </div>
-              <Button onClick={() => setReferralOpen(true)} className="flex-shrink-0">
-                <Gift className="mr-1.5 h-4 w-4" />
-                {t('referral.cardCta')}
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* 每日创作任务：生成 + 导出 → 领取奖励（「每日签到」已下线） */}
-          <DailyTasksCard />
         </div>
 
         {/* Main Content */}
@@ -1305,21 +1116,6 @@ export default function DashboardPage() {
             <TabsTrigger value="notes" className="gap-2">
               <FileText className="h-4 w-4" />
               {t('notes.libraryTitle')}
-            </TabsTrigger>
-            <TabsTrigger value="publish" className="gap-2">
-              <BarChart3 className="h-4 w-4" />
-              {t('dashboard.publishDeskTab')}
-              {publishRecords.length > 0 && (
-                <Badge variant="secondary" className="ml-1 h-5 text-xs">{publishRecords.length}</Badge>
-              )}
-            </TabsTrigger>
-            <TabsTrigger value="new" className="gap-2">
-              <Video className="h-4 w-4" />
-              {t('dashboard.processNewVideo')}
-            </TabsTrigger>
-            <TabsTrigger value="feedback" className="gap-2">
-              <Settings className="h-4 w-4" />
-              {t('dashboard.feedback')}
             </TabsTrigger>
           </TabsList>
 
@@ -1517,164 +1313,26 @@ export default function DashboardPage() {
             </Card>
           </TabsContent>
 
-          <TabsContent value="new">
-            <Card>
-              <CardHeader>
-                <CardTitle>{t('dashboard.processNewVideo')}</CardTitle>
-                <CardDescription>{t('dashboard.processNewVideoDesc')}</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Button asChild>
-                  <Link href="/#process">
-                    {t('dashboard.goToProcessor')}
-                    <ArrowRight className="ml-2 h-4 w-4" />
-                  </Link>
-                </Button>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="feedback">
-            <Card>
-              <CardHeader>
-                <CardTitle>{t('dashboard.userFeedback')}</CardTitle>
-                <CardDescription>{t('dashboard.feedbackDesc')}</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <Textarea
-                  value={feedbackContent}
-                  onChange={(e) => { setFeedbackContent(e.target.value); setFeedbackError(''); setFeedbackDone(false); }}
-                  placeholder={t('dashboard.feedbackPlaceholder')}
-                  disabled={feedbackSending}
-                />
-                {feedbackError && (
-                  <p className="text-sm text-destructive">{feedbackError}</p>
-                )}
-                {feedbackDone && (
-                  <p className="text-sm text-green-600">{t('dashboard.feedbackSubmitted')}</p>
-                )}
-                <Button
-                  onClick={submitFeedback}
-                  disabled={feedbackSending || !feedbackContent.trim()}
-                >
-                  {feedbackSending ? t('common.loading') : t('dashboard.submitFeedback')}
-                </Button>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="publish">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <BarChart3 className="h-5 w-5" />
-                  {t('dashboard.publishDeskTitle')}
-                </CardTitle>
-                <CardDescription>{t('dashboard.publishDeskSubtitle')}</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {publishRecords.length === 0 ? (
-                  <div className="text-center py-12">
-                    <BarChart3 className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                    <p className="text-muted-foreground mb-4">{t('dashboard.publishDeskEmpty')}</p>
-                    <Button asChild variant="outline">
-                      <Link href="/#process">
-                        {t('dashboard.publishDeskGoPublish')}
-                        <ArrowRight className="ml-2 h-4 w-4" />
-                      </Link>
-                    </Button>
-                  </div>
-                ) : (
-                  <>
-                    {/* 汇总 */}
-                    <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                      {[
-                        { label: t('dashboard.published'), value: publishRecordsSummary.published },
-                        { label: t('dashboard.totalViews'), value: fmtCompact(publishRecordsSummary.views) },
-                        { label: t('dashboard.totalLikes'), value: fmtCompact(publishRecordsSummary.likes) },
-                        { label: t('dashboard.totalComments'), value: fmtCompact(publishRecordsSummary.comments) },
-                      ].map((s) => (
-                        <div key={s.label} className="rounded-md border bg-muted/30 px-3 py-2">
-                          <div className="text-lg font-semibold tabular-nums">{s.value}</div>
-                          <div className="text-xs text-muted-foreground">{s.label}</div>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* 按平台拆分 */}
-                    {platformBreakdown.length > 0 && (
-                      <div className="mb-5">
-                        <p className="mb-2 text-xs font-medium text-muted-foreground">
-                          {t('dashboard.publishDeskByPlatform')}
-                        </p>
-                        <div className="flex flex-wrap gap-2">
-                          {platformBreakdown.map((row) => (
-                            <div key={row.platform} className="rounded-md border px-3 py-1.5 text-xs">
-                              <span className="font-medium">{t(`dashboard.platform.${row.platform}`)}</span>
-                              <span className="ml-2 text-muted-foreground">
-                                {row.count} · {fmtCompact(row.views)} {t('dashboard.metricViews').toLowerCase()}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* 作品列表 */}
-                    <div className="space-y-2">
-                      {publishRecords.map(({ clipId, info }) => (
-                        <div
-                          key={clipId}
-                          className="flex flex-wrap items-center justify-between gap-3 rounded-md border px-3 py-2"
-                        >
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2">
-                              <Badge variant="outline">{t(`dashboard.platform.${info.platform}`)}</Badge>
-                              <span className="truncate text-sm font-medium">
-                                {clipTitleById.get(clipId) || t('dashboard.clip')}
-                              </span>
-                            </div>
-                            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
-                              <span>{t('dashboard.metricViews')} {fmtCompact(info.views || 0)}</span>
-                              <span>{t('dashboard.metricLikes')} {fmtCompact(info.likes || 0)}</span>
-                              <span>{t('dashboard.metricComments')} {fmtCompact(info.comments || 0)}</span>
-                              <span>{t('dashboard.publishDeskPostedAt')} {info.postedAt.slice(0, 10)}</span>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            {info.postUrl && (
-                              <Button asChild variant="ghost" size="sm" title={t('dashboard.publishDeskOpen')}>
-                                <a href={info.postUrl} target="_blank" rel="noopener noreferrer">
-                                  <ExternalLink className="h-3.5 w-3.5" />
-                                </a>
-                              </Button>
-                            )}
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              title={t('dashboard.updateMetrics')}
-                              onClick={() => setPublishDialogClip({ id: clipId })}
-                            >
-                              <Pencil className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              title={t('dashboard.publishDeskDelete')}
-                              onClick={() => handlePublishDelete(clipId)}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
         </Tabs>
+
+        {/* 邀请好友 */}
+        <div className="mt-6">
+          <Card className="border-primary/20 bg-primary/5">
+            <CardContent className="flex h-full flex-col gap-4 p-5 sm:flex-row sm:items-center">
+              <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full bg-primary/15">
+                <Gift className="h-5 w-5 text-primary" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold">{t('referral.cardTitle')}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">{t('referral.cardDesc')}</p>
+              </div>
+              <Button onClick={() => setReferralOpen(true)} className="flex-shrink-0">
+                <Gift className="mr-1.5 h-4 w-4" />
+                {t('referral.cardCta')}
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
       </div>
 
       {/* 邀请好友弹窗 */}

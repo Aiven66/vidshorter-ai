@@ -4,7 +4,7 @@ const translations = {
   ...commonTranslations,
   nav: {
   home: '首页', blog: '博客', pricing: '定价', about: '关于我们', feedback: '用户反馈', login: '登录', register: '注册', dashboard: '控制台', admin: '管理后台', logout: '退出登录', credits: '积分', creditsBalance: '积分余额', upgradePro: '升级 Pro', inviteFriends: '邀请好友', download: '下载客户端', light: '浅色', dark: '深色',
-  'clips': '高光剪辑', 'shorts': 'Shorts 成片', 'notes': '高光笔记', 'podcast': '播客',
+  'clips': '高光剪辑', 'shorts': 'Shorts 成片', 'notes': '高光笔记', 'podcast': 'AI播客',
   'news': '资讯视频', 'article': '文章转视频',
   'digitalHumanLive': '数字人带货短视频',
   'aiTools': 'AI 工具箱',
@@ -13,7 +13,7 @@ const translations = {
   'aiVideo': 'AI 成片',
   'localEngine': '本地引擎',
   'tiktokRemix': 'TikTok 二创',
-  'tokpure': 'TokPure',
+  'tokpure': 'AI 批量剪辑',
   },
   localEngine: {
   title: '本地 AI 引擎',

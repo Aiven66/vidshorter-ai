@@ -4,12 +4,12 @@ const translations = {
   ...commonTranslations,
   nav: {
   home: '首頁', blog: '部落格', pricing: '定價', about: '關於我們', feedback: '使用者回饋', login: '登入', register: '註冊', dashboard: '儀錶板', admin: '管理後台', logout: '登出', credits: '積分', creditsBalance: '積分餘額', upgradePro: '升級 Pro', inviteFriends: '邀請好友', download: '下載應用程式', light: '淺色', dark: '深色',
-  'clips': '高光剪輯', 'shorts': 'Shorts 成片', 'notes': '高光筆記', 'podcast': '播客',
+  'clips': '高光剪輯', 'shorts': 'Shorts 成片', 'notes': '高光筆記', 'podcast': 'AI播客',
   'news': '資訊影片', 'article': '文章轉影片',
   'aiVideo': 'AI 成片',
   'localEngine': '本地引擎',
   'tiktokRemix': 'TikTok 二創',
-  'tokpure': 'TokPure',
+  'tokpure': 'AI 批量剪輯',
   },
   localEngine: {
   title: '本地 AI 引擎',

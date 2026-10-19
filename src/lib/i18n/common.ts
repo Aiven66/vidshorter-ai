@@ -21,7 +21,7 @@ export const commonTranslations = {
     clips: 'Highlight Clips',
     shorts: 'Shorts Studio',
     notes: 'Highlight Notes',
-    podcast: 'Podcast AI',
+    podcast: 'AI Podcast',
     digitalHumanLive: 'Digital Human Selling',
     news: 'News Video',
     article: 'Article to Video',
@@ -31,7 +31,7 @@ export const commonTranslations = {
     aiVideo: 'AI Video Maker',
     localEngine: 'Local Engine',
     tiktokRemix: 'TikTok Remix',
-    tokpure: 'TokPure',
+    tokpure: 'AI Batch Editor',
   },
   localEngine: {
     title: 'Local AI Engine',
