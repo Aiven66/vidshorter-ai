@@ -839,6 +839,12 @@ export default function VideoProcessor({
       return clip.videoUrl;
     }
 
+    // Supabase Storage 签名/公开 URL：<video> 直接播放，少一跳 /api/video-proxy 更稳
+    // （代理一旦转发失败/超时就是黑屏）。下载仍走代理 —— 需要它加 Content-Disposition。
+    if (!download && /\/storage\/v1\/object\/(sign|public)\//.test(clip.videoUrl)) {
+      return clip.videoUrl;
+    }
+
     console.log('External URL detected:', clip.videoUrl);
     const q = new URLSearchParams({
       url: clip.videoUrl,

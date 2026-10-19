@@ -89,6 +89,9 @@ export default function PreviewDialog({
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [useFallbackEmbed, setUseFallbackEmbed] = useState(false);
+  // 真实 MP4 播放器：加载失败时给出明确提示与重试，避免只看到一块黑屏。
+  const [mp4Error, setMp4Error] = useState(false);
+  const [reloadNonce, setReloadNonce] = useState(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   // Determine if this clip should use YouTube embed
@@ -129,6 +132,8 @@ export default function PreviewDialog({
       setStreamError(null);
       setUseFallbackEmbed(false);
       setStreamLoading(false);
+      setMp4Error(false);
+      setReloadNonce(0);
     }
   }, [open, clip.id]);
 
@@ -197,6 +202,39 @@ export default function PreviewDialog({
     : 'relative bg-black rounded-lg overflow-hidden w-full aspect-video';
   const mediaCls = `absolute inset-0 w-full h-full${vertical ? ' object-cover' : ''}`;
 
+  // 真实 MP4（Storage 签名 URL / data: / 本地路径）统一播放器：带封面、失败提示与重试。
+  const renderInlineMp4 = () => (
+    <div className={frameCls}>
+      <video
+        key={`${clip.id}-${reloadNonce}`}
+        src={proxyUrl(clip)}
+        controls
+        playsInline
+        preload="metadata"
+        poster={clip.thumbnailUrl || undefined}
+        className={mediaCls}
+        onError={() => setMp4Error(true)}
+      />
+      {mp4Error && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 text-white p-4">
+          <AlertCircle className="h-10 w-10 mb-3 text-yellow-400" />
+          <p className="text-sm font-medium mb-1">Video failed to play</p>
+          <p className="text-xs text-white/60 mb-3 text-center">The player could not load this clip.</p>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => {
+              setMp4Error(false);
+              setReloadNonce((n) => n + 1);
+            }}
+          >
+            Retry
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-3xl w-[94vw] max-h-[90vh] overflow-y-auto">
@@ -210,16 +248,7 @@ export default function PreviewDialog({
 
         {/* Video player area — fixed aspect ratio to prevent layout overflow */}
         {hasRealMp4 ? (
-          <div className={frameCls}>
-            <video
-              key={clip.id}
-              src={proxyUrl(clip)}
-              controls
-              playsInline
-              preload="metadata"
-              className={mediaCls}
-            />
-          </div>
+          renderInlineMp4()
         ) : useYouTubeEmbed && ytInfo ? (
           // link_only clips: use CF Worker /stream (with audio) instead of YouTube iframe embed
           <div className={frameCls}>
@@ -283,16 +312,7 @@ export default function PreviewDialog({
             ) : null}
           </div>
         ) : clip.videoUrl ? (
-          <div className={frameCls}>
-            <video
-              key={clip.id}
-              src={proxyUrl(clip)}
-              controls
-              playsInline
-              preload="metadata"
-              className={mediaCls}
-            />
-          </div>
+          renderInlineMp4()
         ) : (
           <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
             <AlertCircle className="h-12 w-12 mb-4" />

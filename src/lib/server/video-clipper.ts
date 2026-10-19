@@ -466,19 +466,27 @@ function normalizeHighlights(input: Highlight[], duration: number, targetSeconds
 }
 
 /**
- * 评分差异化。
+ * 评分差异化（10 分制高位压缩）。
  *
- * 旧实现的分数由关键词/标点/密度的加权和再 Math.min(10) 封顶，长视频里大量片段会被
- * 一起顶到 10 分 —— 结果卡片上「评分全一样」。改为：保留内容信号算出的**相对次序**，
- * 再按位次映射成严格递减的 10→1 分档，任意两条都不相同（≤10 条时必然全网不同）。
+ * 旧实现按位次映射成 10→1 的严格递减分档，于是一条视频里排到第 8/9 位的片段会被
+ * 标成 2/10、1/10 —— 用户看到「满分 10 分怎么还有 2 分」，误以为系统推了垃圾片段。
+ * 实际上候选都是本地信号筛出的高光，位次只代表**相对**强弱，不代表绝对质量。
+ *
+ * 改为：保留相对次序，但整批压缩到 [7,10] 的高分区，任何一条都不低于 7 分；
+ * 真正要剔除的弱片段由上游按分数取前 N 完成（见 video-job.runAnalyze），
+ * 这样用户只会看到「高分 = 好片段」。
  */
 function spreadScores(items: Highlight[]): Highlight[] {
-  if (items.length <= 1) return items;
+  if (items.length <= 1) {
+    if (items.length === 1) items[0].engagement_score = Math.max(7, items[0].engagement_score || 7);
+    return items;
+  }
   const ranked = [...items].sort(
     (a, b) => (b.engagement_score - a.engagement_score) || (a.start_time - b.start_time),
   );
   ranked.forEach((h, rank) => {
-    h.engagement_score = Math.max(1, 10 - rank);
+    // 10, 9, 8, 7, 7, ... 任何一条都不低于 7。
+    h.engagement_score = Math.max(7, 10 - rank);
   });
   return items;
 }
@@ -3233,6 +3241,10 @@ async function createLocalClip(params: {
   targetHeight?: number;
   // 目标 CRF；缺省走 INLINE_CRF / 远端 16 / 本地 17。
   crf?: number;
+  // 保留源文件、跳过 base64 内联：异步任务（video-job）在同一进程内直接读取
+  // outputPath 上传到对象存储，不需要内联，更**不能**为了压进 45MB 内联上限而把
+  // 高画质成片二次降码到 480p/360p/240p（这是「成片模糊」的根因）。
+  preserveFile?: boolean;
 }): Promise<ClipResult> {
   await ensureDirectories();
   const ffmpegPath = await ensureFfmpegAvailable();
@@ -3429,6 +3441,11 @@ async function createLocalClip(params: {
   // directly in the SSE response.  The client stores it as a Blob URL and can
   // play / download it without any additional server round-trip.
   let dataUrl = '';
+  // preserveFile：异步任务会直接读取 outputPath 上传到存储 —— 跳过内联，也跳过
+  // 「为压进内联上限而二次降码」的清晰度损失路径，保证成片就是套餐档位的画质。
+  if (params.preserveFile) {
+    return { outputPath, publicUrl: `${getLocalMediaBaseUrl()}/api/serve-clip/${fileName}`, dataUrl: '', thumbnailUrl };
+  }
   try {
     let fileBuffer = await readFile(outputPath);
     let fileSizeBytes = fileBuffer.length;
@@ -4280,6 +4297,8 @@ async function createClipFromYouTubeStream(params: {
   maxHeight?: number;
   /** 目标 CRF（越低越清晰、体积越大）。 */
   crf?: number;
+  /** 保留源文件、跳过 base64 内联（异步任务用；见 createLocalClip.preserveFile）。 */
+  preserveFile?: boolean;
 }): Promise<ClipResult | null> {
   const { videoId, title, summary, startTime, endTime, preResolvedStreamUrl, preResolvedMetadata } = params;
   const duration = Math.max(1, endTime - startTime);
@@ -4449,6 +4468,7 @@ async function createClipFromYouTubeStream(params: {
           fastCopy: false,
           targetHeight: clipMaxHeight,
           ...(clipCrf ? { crf: clipCrf } : {}),
+          ...(params.preserveFile ? { preserveFile: true } : {}),
         });
         console.log(`createClipFromYouTubeStream: full local stream candidate succeeded!`);
         return {
@@ -4459,7 +4479,13 @@ async function createClipFromYouTubeStream(params: {
           duration,
           summary: summary || '',
           engagementScore: 0,
+          // 同时给出 videoUrl（旧调用方读它）与 dataUrl/publicUrl/outputPath
+          // （video-job 读 dataUrl/outputPath）。此前只给 videoUrl，导致
+          // video-job.produceClip 读不到 URL 而把每条 YouTube 成片降级为 link_only。
           videoUrl: result.dataUrl || result.publicUrl,
+          dataUrl: result.dataUrl,
+          publicUrl: result.publicUrl,
+          outputPath: result.outputPath,
           thumbnailUrl: result.thumbnailUrl || '',
           status: 'completed',
         };
@@ -4491,6 +4517,7 @@ async function createClipFromYouTubeStream(params: {
         fastCopy: params.fastCopy && !audioUrl,
         targetHeight: clipMaxHeight,
         ...(clipCrf ? { crf: clipCrf } : {}),
+        ...(params.preserveFile ? { preserveFile: true } : {}),
         // Pass a timeout hint to createLocalClip (uses execFile timeout)
       });
       const timeoutPromise = new Promise<never>((_, reject) =>
@@ -4507,6 +4534,9 @@ async function createClipFromYouTubeStream(params: {
         summary: summary || '',
         engagementScore: 0,
         videoUrl: result.dataUrl || result.publicUrl,
+        dataUrl: result.dataUrl,
+        publicUrl: result.publicUrl,
+        outputPath: result.outputPath,
         thumbnailUrl: result.thumbnailUrl || '',
         status: 'completed',
       };

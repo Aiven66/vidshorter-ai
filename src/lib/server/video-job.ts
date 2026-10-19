@@ -1,3 +1,4 @@
+import { readFile, unlink } from 'fs/promises';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import videoClipper from '@/lib/server/video-clipper';
 import { enqueueJob, type VideoJobMessage } from '@/lib/server/video-queue';
@@ -243,6 +244,8 @@ interface ClipArtifact {
   linkOnly: boolean;
   isFallback?: boolean;
   duration: number;
+  /** 同一进程内生成的成片本地文件路径（preserveFile 模式下由 persistClip 直传存储）。 */
+  localPath?: string;
 }
 interface AnalyzedClip {
   artifact: ClipArtifact | null;
@@ -270,21 +273,38 @@ async function persistClip(
   clipKey: string,
   artifact: ClipArtifact,
 ): Promise<string> {
-  const { url, linkOnly } = artifact;
+  const { url, linkOnly, localPath } = artifact;
 
   // link_only / already-http URLs pass straight through.
   if (linkOnly) return url;
-  if (url.startsWith('http://') || url.startsWith('https://')) return url;
+  // 已长期托管的 https 直接返回；但 preserveFile 模式下 url 往往只是本机
+  // localBase 的自指地址（跨 Lambda 不可用），此时以 localPath 为准读文件上传。
+  if (!localPath && (url.startsWith('http://') || url.startsWith('https://'))) return url;
 
-  // Only handle inline base64 data URLs here.
-  const m = /^data:video\/mp4;base64,([A-Za-z0-9+/=]+)$/.exec(url);
-  if (!m || !m[1]) {
-    // Unknown shape (e.g. publicUrl relative path) — return as-is.
-    return url;
+  // 优先：同一进程内生成的本地文件（preserveFile 模式）→ 直接读取字节上传，
+  // 保真（无二次降码）且不经过 base64。上传成功后删除临时文件。
+  let buf: Buffer | null = null;
+  if (localPath) {
+    try {
+      buf = await readFile(localPath);
+    } catch (e) {
+      console.warn('[video-job] persistClip could not read local clip file:', e instanceof Error ? e.message : e);
+      buf = null;
+    }
+  }
+
+  // 兜底：内联 base64 data URL。
+  if (!buf) {
+    const m = /^data:video\/mp4;base64,([A-Za-z0-9+/=]+)$/.exec(url);
+    if (!m || !m[1]) {
+      // 本地保留文件但读取失败时，相对路径（/api/serve-clip/…）跨 Lambda 不可用，
+      // 返回空串让上层写入 failed 标记，而不是把一个播不出来的 URL 塞进库。
+      return localPath ? '' : url;
+    }
+    buf = Buffer.from(m[1], 'base64');
   }
 
   try {
-    const buf = Buffer.from(m[1], 'base64');
     const objectPath = `users/${userId}/clips/${clipKey}.mp4`;
     const { error: upErr } = await client.storage.from(CLIPS_BUCKET).upload(objectPath, buf, {
       contentType: 'video/mp4',
@@ -296,11 +316,12 @@ async function persistClip(
       .from(CLIPS_BUCKET)
       .createSignedUrl(objectPath, 60 * 60 * 24 * 7); // 7 days
     if (signErr || !signed?.signedUrl) throw new Error(signErr?.message || 'sign failed');
+    if (localPath) unlink(localPath).catch(() => {});
     console.log(`[video-job] persisted clip ${clipKey}: ${buf.length} bytes -> ${signed.signedUrl.slice(0, 90)}`);
     return signed.signedUrl;
   } catch (e) {
-    console.warn('[video-job] persistClip upload failed (storing raw url):', e instanceof Error ? e.message : e);
-    return url;
+    console.warn('[video-job] persistClip upload failed:', e instanceof Error ? e.message : e);
+    return localPath ? '' : url;
   }
 }
 
@@ -336,17 +357,26 @@ export async function produceClip(
         startTime: start,
         endTime: end,
         fastCopy: true,
+        // 异步任务在同一进程内把成片上传到存储：保留源文件、跳过 base64 内联，
+        // 从而不触发「为压进内联上限而二次降码」的清晰度损失（见 createLocalClip）。
+        preserveFile: true,
         ...(params.maxHeight ? { maxHeight: params.maxHeight } : {}),
         ...(params.crf ? { crf: params.crf } : {}),
         ...(params.preResolvedStreamUrl
           ? { preResolvedStreamUrl: params.preResolvedStreamUrl, preResolvedMetadata: params.preResolvedMetadata as never }
           : {}),
       });
-      const clipUrl = clip?.dataUrl || clip?.publicUrl || '';
-      if (clip && clipUrl) {
+      // createClipFromYouTubeStream 同时返回 videoUrl（旧调用方读它）与
+      // dataUrl/publicUrl/outputPath。此前这里只读 dataUrl/publicUrl，字段对不上，
+      // 导致每条 YouTube 成片都被误判为「无 URL」而降级成 link_only（播放/下载全废）。
+      const yt = clip as unknown as { dataUrl?: string; publicUrl?: string; videoUrl?: string; outputPath?: string } | null;
+      const clipUrl = yt?.dataUrl || yt?.publicUrl || yt?.videoUrl || '';
+      const localPath = yt?.outputPath;
+      if (clip && (clipUrl || localPath)) {
         return {
           artifact: {
             url: clipUrl,
+            localPath,
             thumbnail: clip.thumbnailUrl || youTubeThumbnailUrl(ytId),
             linkOnly: false,
             duration,
@@ -380,15 +410,23 @@ export async function produceClip(
       endTime: end,
       title: highlight.title,
       fastCopy: true,
+      // 同 YouTube 分支：保留源文件、跳过内联降码，保证成片清晰度。
+      preserveFile: true,
       // Anti-leech headers for remote sources (Bilibili CDN on Vercel). Without
       // them the CDN returns 403 and every clip fails to generate.
       ...(source.ffmpegHeaders ? { inputHeaders: source.ffmpegHeaders } : {}),
       ...(params.maxHeight ? { targetHeight: params.maxHeight } : {}),
       ...(params.crf ? { crf: params.crf } : {}),
     });
-    if (!result?.dataUrl && !result?.publicUrl) throw new Error('clip produced no url');
+    if (!result?.dataUrl && !result?.publicUrl && !result?.outputPath) throw new Error('clip produced no url');
     return {
-      artifact: { url: result.dataUrl || result.publicUrl, thumbnail: result.thumbnailUrl || '', linkOnly: false, duration },
+      artifact: {
+        url: result.dataUrl || result.publicUrl,
+        localPath: result.outputPath,
+        thumbnail: result.thumbnailUrl || '',
+        linkOnly: false,
+        duration,
+      },
       duration,
     };
   } catch (e) {
@@ -449,17 +487,25 @@ async function runAnalyze(client: SupabaseClient, msg: VideoJobMessage): Promise
     }
   }
 
-  // Honor the caller's requested clip count (e.g. Shorts 成片 asks for 3).
-  // Without an explicit count keep the legacy behavior (up to 10).
-  // The analyzer always emits highlights in chronological order, so sample
-  // evenly instead of taking the first N — the degraded (offline/LLM-less)
-  // analyzer emits evenly spaced candidates, and first-N would be intro-biased.
+  // 「要质量好的片段、分数高的片段」：分析器已给出带评分的候选，这里取评分最高的
+  // 前 N 条（再按时间顺序输出），而不是按时间均匀采样 —— 后者会把平庸片段也选进来。
+  //
+  // 例外：无 LLM 的占位兜底（标题形如 "Highlight N"）候选是按时间均匀铺开的，评分
+  // 只反映位置而非内容质量；此时仍沿用均匀采样，避免成片全挤在视频开头。
   const allHighlights = analysis.highlights as Highlight[];
   const requestedCount = clampInt(msg.desiredClipCount, 1, 12, 0);
+  const limit = requestedCount > 0 ? requestedCount : 12;
+  const isPlaceholderSet =
+    allHighlights.length > 0 && allHighlights.every((h) => /^Highlight \d+$/.test((h.title || '').trim()));
   const highlights =
-    requestedCount > 0 && allHighlights.length > requestedCount
-      ? Array.from({ length: requestedCount }, (_, i) => allHighlights[Math.floor((i * allHighlights.length) / requestedCount)])
-      : allHighlights.slice(0, 12);
+    allHighlights.length <= limit
+      ? allHighlights.slice(0, 12)
+      : isPlaceholderSet
+        ? Array.from({ length: limit }, (_, i) => allHighlights[Math.floor((i * allHighlights.length) / limit)])
+        : [...allHighlights]
+            .sort((a, b) => (b.engagement_score - a.engagement_score) || (a.start_time - b.start_time))
+            .slice(0, limit)
+            .sort((a, b) => a.start_time - b.start_time);
   if (highlights.length === 0) {
     await setVideo(client, videoId, { status: 'failed', progress: 0, error_message: 'No highlight moments found. Try another video.' });
     // P0-1 失败零损失：见上。失败终态保证用户积分分文未损。
