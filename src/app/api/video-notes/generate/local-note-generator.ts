@@ -1279,12 +1279,12 @@ function generateFallbackNote(
     ? `已用该视频的真实章节把高光时刻铺满整条进度条（共 ${highlights.length} 个时间点）。`
     : knownDuration
       ? `未能获取字幕，已按视频真实时长（${formatTimestamp(totalSec)}）把 ${highlights.length} 个高光时刻均匀铺满整条进度条。`
-      : '未获取到视频时长，高光时刻为保守估算。';
+      : `当前网络环境下服务端无法读取该视频的真实时长，已先生成 ${highlights.length} 个高光时刻骨架；播放器加载完成后会自动按真实时长把它们对齐铺满整条进度条。`;
   const timeHintEn = usedChapters
     ? `Real video chapters were used to spread the highlights across the full timeline (${highlights.length} points).`
     : knownDuration
       ? `Without captions, ${highlights.length} highlight points were spread evenly across the real video length (${formatTimestamp(totalSec)}).`
-      : 'Video length was unavailable, so highlight points use a conservative estimate.';
+      : `The server could not read the real video length in this network environment, so a skeleton of ${highlights.length} highlight points was generated; once the player loads, they will be realigned evenly across the full timeline.`;
 
   const summary = isZh
     ? [
@@ -1550,8 +1550,42 @@ async function fetchDurationFromEdgeRoute(videoId: string): Promise<number> {
 }
 
 /**
+ * 从 watch HTML 里尽力解析真实时长（秒）。多来源冗余，任一命中即可：
+ * ① `"lengthSeconds":"3066"`（videoDetails，最准）
+ * ② `"approxDurationMs":"3066000"`（streamingData）
+ * ③ `itemprop="duration" content="PT51M6S"` / `property="video:duration" content="3066"`（meta 标签）
+ * 返回 0 表示未取到。
+ */
+function extractDurationSecFromHtml(html: string): number {
+  const ls = html.match(/"lengthSeconds":"(\d+)"/);
+  if (ls) {
+    const n = parseInt(ls[1], 10);
+    if (n > 0) return n;
+  }
+  const approx = html.match(/"approxDurationMs":"(\d+)"/);
+  if (approx) {
+    const n = Math.round(parseInt(approx[1], 10) / 1000);
+    if (n > 0) return n;
+  }
+  const metaSec = html.match(/(?:property="video:duration"|itemprop="duration")[^>]*content="(\d+)"/);
+  if (metaSec) {
+    const n = parseInt(metaSec[1], 10);
+    if (n > 0) return n;
+  }
+  const iso = html.match(/itemprop="duration"[^>]*content="PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?"/);
+  if (iso) {
+    const h = parseInt(iso[1] || '0', 10);
+    const m = parseInt(iso[2] || '0', 10);
+    const s = parseInt(iso[3] || '0', 10);
+    const n = h * 3600 + m * 60 + s;
+    if (n > 0) return n;
+  }
+  return 0;
+}
+
+/**
  * 尽力获取视频元信息（用于无字幕时的兜底笔记）。任何失败都返回空对象，绝不抛出。
- * - YouTube：抓 watch HTML，取 "lengthSeconds"（真实时长）、"shortDescription"（简介），
+ * - YouTube：抓 watch HTML，取真实时长、"shortDescription"（简介），
  *   以及自动章节（macroMarkers）或简介里的章节时间戳；时长缺失时再向 Edge 路由兜底要。
  * - B站：走 view 接口读取 data.desc / data.duration。
  */
@@ -1572,11 +1606,8 @@ export async function fetchVideoMeta(
           const html = await res.text();
 
           // 真实时长：这是无字幕兜底高光能「铺满整条进度条」的关键
-          const d = html.match(/"lengthSeconds":"(\d+)"/);
-          if (d) {
-            const n = parseInt(d[1], 10);
-            if (Number.isFinite(n) && n > 0) meta.durationSec = n;
-          }
+          const dur = extractDurationSecFromHtml(html);
+          if (dur > 0) meta.durationSec = dur;
 
           let raw: string | undefined;
           const m = html.match(/"shortDescription":"((?:[^"\\]|\\.)*)"/);

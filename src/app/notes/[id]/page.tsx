@@ -131,6 +131,9 @@ export default function NoteDetailPage() {
 
   async function fetchNote(id: string) {
     setIsLoading(true);
+    // 重置播放器时长：保证兜底高光重排（见 playerDuration 的 effect）对新笔记同样生效。
+    setPlayerDuration(0);
+    setPlayerCurrentTime(0);
     try {
       const res = await fetch(`/api/video-notes/${id}`, {
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -172,6 +175,31 @@ export default function NoteDetailPage() {
     }
     return null;
   }, [note, sourceVideoId]);
+
+  // 无字幕兜底笔记的高光铺排修正（与 /video-notes 生成页同一套逻辑）。
+  // 服务器端在拿不到真实时长时会用保守估算把高光铺在开头附近；浏览器侧播放器能拿到
+  // 真实时长，这里据此把兜底高光重新等分铺满整条进度条。重排后 totalDuration 等于
+  // 真实时长，条件不再命中，因此只执行一次。
+  useEffect(() => {
+    if (playerDuration < 60) return;
+    setNote(prev => {
+      if (!prev) return prev;
+      const content = prev.content_json;
+      if (content.hasTranscript !== false) return prev;
+      const list = content.highlights || [];
+      if (list.length < 3) return prev;
+      if (content.totalDuration && content.totalDuration >= playerDuration * 0.8) return prev;
+      const step = (playerDuration - 20) / (list.length - 1);
+      const highlights = list.map((h, i) => {
+        const t = Math.max(0, Math.round(step * i));
+        return { ...h, startSeconds: t, timestamp: formatSeconds(t) };
+      });
+      return {
+        ...prev,
+        content_json: { ...content, highlights, totalDuration: Math.round(playerDuration) },
+      };
+    });
+  }, [playerDuration]);
 
   const handleJumpToHighlight = useCallback((index: number) => {
     if (!note) return;

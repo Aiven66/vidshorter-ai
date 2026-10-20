@@ -247,6 +247,9 @@ export default function VideoNotesPage() {
     setActiveHighlightIndex(null);
     setActiveTakeawayIndex(null);
     setAnnotations([]);
+    // 重置播放器时长：保证新笔记的兜底高光重排仍会被触发（见 playerDuration 的 effect）。
+    setPlayerDuration(0);
+    setPlayerCurrentTime(0);
     try {
       const res = await fetch('/api/video-notes/generate', {
         method: 'POST',
@@ -419,6 +422,32 @@ export default function VideoNotesPage() {
     if (playerDuration > 0) return playerDuration;
     return result?.note.totalDuration || 0;
   }, [playerDuration, result]);
+
+  // 无字幕兜底笔记的高光铺排修正。
+  //
+  // 服务器端拿不到真实时长时（YouTube 对数据中心 IP 返回 LOGIN_REQUIRED，InnerTube /
+  // CF Worker 等所有通道都取不到 videoDetails.lengthSeconds），会用保守估算时长把
+  // 高光时间点铺在开头附近 —— 这正是「高光全挤在前几分钟」的根因。
+  // 浏览器侧播放器不受风控影响，能拿到真实时长，因此这里在拿到真实时长后把兜底高光
+  // 按真实时长重新等分铺满整条进度条。重排后 totalDuration 等于真实时长，条件自然不再
+  // 命中，所以只会执行一次，不会循环。
+  useEffect(() => {
+    if (playerDuration < 60) return;
+    setResult(prev => {
+      if (!prev) return prev;
+      const note = prev.note;
+      if (note.hasTranscript !== false) return prev;
+      const list = note.highlights || [];
+      if (list.length < 3) return prev;
+      if (note.totalDuration && note.totalDuration >= playerDuration * 0.8) return prev;
+      const step = (playerDuration - 20) / (list.length - 1);
+      const highlights = list.map((h, i) => {
+        const t = Math.max(0, Math.round(step * i));
+        return { ...h, startSeconds: t, timestamp: formatSeconds(t) };
+      });
+      return { ...prev, note: { ...note, highlights, totalDuration: Math.round(playerDuration) } };
+    });
+  }, [playerDuration]);
 
   return (
     <div className="container mx-auto px-4 py-6 md:py-8">
