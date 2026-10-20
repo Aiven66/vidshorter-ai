@@ -9,7 +9,7 @@
  * 适用于 Vercel serverless nodejs runtime，无外部依赖。
  */
 
-import { fetchFullTranscript } from '@/lib/server/subtitles';
+import { fetchFullTranscript, selfBaseUrl } from '@/lib/server/subtitles';
 
 export type TranscriptSegment = {
   /** 字幕开始时间（秒） */
@@ -1527,9 +1527,32 @@ export interface VideoMeta {
 }
 
 /**
+ * 时长兜底：向本项目 Edge 字幕路由要真实时长。
+ * 即使字幕被风控（INNERTUBE 返回 LOGIN_REQUIRED / tracks=0），player response 里的
+ * `videoDetails.lengthSeconds` 通常仍然存在，路由会把 durationSec 一并返回。
+ * 这样无字幕兜底高光就一定能用真实时长铺满整条进度条，而不依赖单次抓取是否成功。
+ */
+async function fetchDurationFromEdgeRoute(videoId: string): Promise<number> {
+  const base = selfBaseUrl();
+  if (!base) return 0;
+  try {
+    const res = await fetchWithTimeout(
+      `${base}/api/yt-transcript?videoId=${encodeURIComponent(videoId)}`,
+      { headers: { Accept: 'application/json' } },
+      20_000,
+    );
+    const data = (await res.json().catch(() => null)) as { durationSec?: unknown } | null;
+    const n = Number(data?.durationSec);
+    return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
  * 尽力获取视频元信息（用于无字幕时的兜底笔记）。任何失败都返回空对象，绝不抛出。
  * - YouTube：抓 watch HTML，取 "lengthSeconds"（真实时长）、"shortDescription"（简介），
- *   以及自动章节（macroMarkers）或简介里的章节时间戳。
+ *   以及自动章节（macroMarkers）或简介里的章节时间戳；时长缺失时再向 Edge 路由兜底要。
  * - B站：走 view 接口读取 data.desc / data.duration。
  */
 export async function fetchVideoMeta(
@@ -1537,42 +1560,47 @@ export async function fetchVideoMeta(
   sourceType: 'youtube' | 'bilibili' | 'local',
 ): Promise<VideoMeta> {
   if (sourceType === 'youtube') {
+    const meta: VideoMeta = {};
+    let id: string | null = null;
     try {
-      const id = extractYouTubeId(videoUrl);
-      if (!id) return {};
-      const res = await fetchWithTimeout(`https://www.youtube.com/watch?v=${id}&hl=en`, {
-        headers: { Accept: 'text/html,*/*' },
-      });
-      if (!res.ok) return {};
-      const html = await res.text();
+      id = extractYouTubeId(videoUrl);
+      if (id) {
+        const res = await fetchWithTimeout(`https://www.youtube.com/watch?v=${id}&hl=en`, {
+          headers: { Accept: 'text/html,*/*' },
+        });
+        if (res.ok) {
+          const html = await res.text();
 
-      const meta: VideoMeta = {};
+          // 真实时长：这是无字幕兜底高光能「铺满整条进度条」的关键
+          const d = html.match(/"lengthSeconds":"(\d+)"/);
+          if (d) {
+            const n = parseInt(d[1], 10);
+            if (Number.isFinite(n) && n > 0) meta.durationSec = n;
+          }
 
-      // 真实时长：这是无字幕兜底高光能「铺满整条进度条」的关键
-      const d = html.match(/"lengthSeconds":"(\d+)"/);
-      if (d) {
-        const n = parseInt(d[1], 10);
-        if (Number.isFinite(n) && n > 0) meta.durationSec = n;
+          let raw: string | undefined;
+          const m = html.match(/"shortDescription":"((?:[^"\\]|\\.)*)"/);
+          if (m) raw = m[1];
+          if (!raw) {
+            const m2 = html.match(/"attributedDescription":\{"content":"((?:[^"\\]|\\.)*)"/);
+            if (m2) raw = m2[1];
+          }
+          const fullDesc = raw ? decodeJsonString(raw).replace(/\r/g, '').trim() : '';
+          if (fullDesc) meta.description = fullDesc.slice(0, 2000);
+
+          const autoChapters = parseAutoChapters(html);
+          const chapters = autoChapters.length >= 3 ? autoChapters : parseChaptersFromText(fullDesc);
+          if (chapters.length >= 3) meta.chapters = chapters;
+        }
       }
-
-      let raw: string | undefined;
-      const m = html.match(/"shortDescription":"((?:[^"\\]|\\.)*)"/);
-      if (m) raw = m[1];
-      if (!raw) {
-        const m2 = html.match(/"attributedDescription":\{"content":"((?:[^"\\]|\\.)*)"/);
-        if (m2) raw = m2[1];
-      }
-      const fullDesc = raw ? decodeJsonString(raw).replace(/\r/g, '').trim() : '';
-      if (fullDesc) meta.description = fullDesc.slice(0, 2000);
-
-      const autoChapters = parseAutoChapters(html);
-      const chapters = autoChapters.length >= 3 ? autoChapters : parseChaptersFromText(fullDesc);
-      if (chapters.length >= 3) meta.chapters = chapters;
-
-      return meta;
     } catch {
-      return {};
+      // watch 页不可达：继续走时长兜底
     }
+    if (!meta.durationSec && id) {
+      const viaEdge = await fetchDurationFromEdgeRoute(id);
+      if (viaEdge > 0) meta.durationSec = viaEdge;
+    }
+    return meta;
   }
   if (sourceType === 'bilibili') {
     try {

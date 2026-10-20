@@ -29,7 +29,7 @@ export interface ClipCuesResult {
 }
 
 /** 本部署可自指的基址（用于 self-fetch 到 Edge Runtime 路由）。 */
-function selfBaseUrl(): string {
+export function selfBaseUrl(): string {
   const vercelUrl = process.env.VERCEL_URL?.trim();
   if (vercelUrl) return `https://${vercelUrl.replace(/^https?:\/\//, '')}`;
   const raw =

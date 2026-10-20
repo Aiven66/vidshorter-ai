@@ -115,6 +115,17 @@ function playabilityOf(player: unknown): string {
   );
 }
 
+/**
+ * 取 player response 里的真实视频时长（秒）。
+ * 关键：即使 playabilityStatus 是 LOGIN_REQUIRED（数据中心 IP 被风控），
+ * `videoDetails.lengthSeconds` 通常仍然存在 —— 因此无字幕兜底高光也能
+ * 用真实时长把时间点铺满整条进度条，而不是挤在开头。
+ */
+function durationOf(player: unknown): number {
+  const n = Number((player as { videoDetails?: { lengthSeconds?: unknown } })?.videoDetails?.lengthSeconds);
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
+}
+
 /** 从 watch 页 HTML 中取出 ytInitialPlayerResponse（与 CF Worker 同一套括号配平逻辑）。 */
 function extractPlayerResponse(html: string): Record<string, unknown> | null {
   const marker = 'ytInitialPlayerResponse';
@@ -179,7 +190,7 @@ async function viaInnerTube(videoId: string, client: (typeof CLIENTS)[number]) {
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();
-  return { tracks: captionTracksOf(data), status: playabilityOf(data) };
+  return { tracks: captionTracksOf(data), status: playabilityOf(data), durationSec: durationOf(data) };
 }
 
 async function viaWatchPage(videoId: string) {
@@ -194,7 +205,7 @@ async function viaWatchPage(videoId: string) {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const player = extractPlayerResponse(await res.text());
   if (!player) throw new Error('ytInitialPlayerResponse not found');
-  return { tracks: captionTracksOf(player), status: playabilityOf(player) };
+  return { tracks: captionTracksOf(player), status: playabilityOf(player), durationSec: durationOf(player) };
 }
 
 function pickTrack(tracks: CaptionTrack[], lang: string): CaptionTrack | null {
@@ -299,29 +310,35 @@ async function fetchCues(baseUrl: string): Promise<{ cues: Cue[]; debug: Record<
   return { cues: [], debug };
 }
 
-/** 依次尝试各来源，返回第一个拿到 captionTracks 的结果。 */
+/** 依次尝试各来源，返回第一个拿到 captionTracks 的结果（同时收集真实时长兜底）。 */
 async function resolveTracks(videoId: string) {
   const attempts: Record<string, unknown>[] = [];
+  let durationSec = 0;
+  const keep = (n: number) => {
+    if (n > durationSec) durationSec = n;
+  };
 
   for (const client of CLIENTS) {
     try {
-      const { tracks, status } = await viaInnerTube(videoId, client);
+      const { tracks, status, durationSec: d } = await viaInnerTube(videoId, client);
+      keep(d);
       attempts.push({ source: client.name, status, tracks: tracks.length });
-      if (tracks.length > 0) return { tracks, attempts };
+      if (tracks.length > 0) return { tracks, attempts, durationSec };
     } catch (err) {
       attempts.push({ source: client.name, error: err instanceof Error ? err.message : String(err) });
     }
   }
 
   try {
-    const { tracks, status } = await viaWatchPage(videoId);
+    const { tracks, status, durationSec: d } = await viaWatchPage(videoId);
+    keep(d);
     attempts.push({ source: 'watch_page', status, tracks: tracks.length });
-    if (tracks.length > 0) return { tracks, attempts };
+    if (tracks.length > 0) return { tracks, attempts, durationSec };
   } catch (err) {
     attempts.push({ source: 'watch_page', error: err instanceof Error ? err.message : String(err) });
   }
 
-  return { tracks: [] as CaptionTrack[], attempts };
+  return { tracks: [] as CaptionTrack[], attempts, durationSec };
 }
 
 export async function GET(request: Request) {
@@ -333,10 +350,10 @@ export async function GET(request: Request) {
   }
 
   try {
-    const { tracks, attempts } = await resolveTracks(videoId);
+    const { tracks, attempts, durationSec } = await resolveTracks(videoId);
     const track = pickTrack(tracks, lang);
     if (!track?.baseUrl) {
-      return Response.json({ error: 'No captions available', attempts }, { status: 404 });
+      return Response.json({ error: 'No captions available', durationSec, attempts }, { status: 404 });
     }
 
     const { cues, debug } = await fetchCues(track.baseUrl);
@@ -352,6 +369,7 @@ export async function GET(request: Request) {
         videoId,
         lang: track.languageCode || null,
         auto: track.kind === 'asr',
+        durationSec,
         source: attempts[attempts.length - 1]?.source,
         cues,
       },
