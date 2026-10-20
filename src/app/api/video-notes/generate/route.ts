@@ -4,10 +4,11 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import {
   fetchTranscript,
   fetchVideoTitle,
-  fetchVideoDescription,
+  fetchVideoMeta,
   generateNoteFromTranscript,
   type LocalVideoNote,
   type TranscriptDiagnostic,
+  type VideoMeta,
 } from './local-note-generator';
 import { generateNoteWithLLM } from '@/lib/server/video-notes/llm-note-generator';
 
@@ -254,10 +255,16 @@ export async function POST(request: NextRequest) {
       }
     }
     if (!generated) {
-      // 无字幕时，尽力抓取视频描述作为补充信息源（失败不影响主流程）
+      // 无字幕时，抓取视频简介 + 真实时长 + 真实章节，作为兜底笔记的信息源，
+      // 保证高光时刻铺满整条视频（而不是挤在开头）。（失败不影响主流程）
       let description: string | undefined;
+      let durationSec: number | undefined;
+      let chapters: { startSeconds: number; title: string }[] | undefined;
       if (transcript.length === 0) {
-        description = await fetchVideoDescription(videoUrl, sourceType).catch(() => undefined);
+        const meta: VideoMeta = await fetchVideoMeta(videoUrl, sourceType).catch(() => ({}));
+        description = meta.description;
+        durationSec = meta.durationSec;
+        chapters = meta.chapters;
       }
       generated = generateNoteFromTranscript(
         transcript,
@@ -266,6 +273,8 @@ export async function POST(request: NextRequest) {
         sourceType,
         clientLocale,
         description,
+        durationSec,
+        chapters,
       );
     }
 

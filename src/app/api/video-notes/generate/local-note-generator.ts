@@ -820,6 +820,8 @@ export function generateNoteFromTranscript(
   sourceType: 'youtube' | 'bilibili' | 'local',
   locale: string | undefined,
   description?: string,
+  durationSec?: number,
+  chapters?: Chapter[],
 ): LocalVideoNote {
   // 合并字幕为完整文本
   const fullText = segments.map(s => s.text).join(' ').trim();
@@ -828,8 +830,8 @@ export function generateNoteFromTranscript(
     : 0;
 
   if (segments.length === 0 || !fullText) {
-    // 没有字幕：返回基于元数据的占位笔记
-    return generateFallbackNote(videoTitle, videoUrl, sourceType, locale, description);
+    // 没有字幕：返回基于元数据的占位笔记（带上真实时长与真实章节，铺满整条进度条）
+    return generateFallbackNote(videoTitle, videoUrl, sourceType, locale, description, durationSec, chapters);
   }
 
   // 1. 高光：把字幕按时长均匀切成 N 段，每段选最关键句
@@ -1178,6 +1180,8 @@ function generateFallbackNote(
   sourceType: 'youtube' | 'bilibili' | 'local',
   locale: string | undefined,
   description?: string,
+  durationSec?: number,
+  chapters?: Chapter[],
 ): LocalVideoNote {
   const isZh = locale && locale.toLowerCase().startsWith('zh');
   const title = videoTitle || (isZh ? '未知视频' : 'Untitled video');
@@ -1204,31 +1208,59 @@ function generateFallbackNote(
         .slice(0, 6)
     : [];
 
-  // 即使没有字幕，也生成结构化的占位笔记（按预估 10 分钟时长均匀分布 6 个时刻）
-  // 这样用户至少能拿到一个有结构的笔记，而不是只有 1 条
-  const estimatedDurationSec = 600; // 10 分钟
-  const segments = Math.max(5, Math.min(8, Math.floor(estimatedDurationSec / 90)));
-  const highlights: Array<{ timestamp: string; startSeconds: number; text: string; level: 'critical' | 'important' }> = [];
+  // 无字幕时的兜底高光：必须「铺满整条视频」，而不是挤在开头。
+  // 优先级：① 真实章节（YouTube 自动章节 / 简介时间戳）→ 最贴近真实高光；
+  //          ② 用抓到的真实时长把 N 个时刻均匀铺满全片；③ 兜底才用保守估算时长。
+  const knownDuration = typeof durationSec === 'number' && durationSec > 60 ? durationSec : 0;
+  const totalSec = knownDuration || 600;
+  const highlights: Array<{
+    timestamp: string;
+    startSeconds: number;
+    text: string;
+    level: 'critical' | 'important';
+  }> = [];
+  let usedChapters = false;
 
-  for (let i = 0; i < segments; i++) {
-    const t = (estimatedDurationSec / segments) * i;
-    const isCritical = i === 0 || i === segments - 1;
-    let text: string;
-    if (isZh) {
-      if (i === 0) text = `开场介绍：${title}`;
-      else if (i === segments - 1) text = '总结回顾与下期预告';
-      else text = `第 ${i} 部分重点内容`;
-    } else {
-      if (i === 0) text = `Opening introduction: ${title}`;
-      else if (i === segments - 1) text = 'Conclusion and key takeaways';
-      else text = `Part ${i} key content`;
-    }
-    highlights.push({
-      timestamp: formatTimestamp(t),
-      startSeconds: Math.round(t),
-      text,
-      level: isCritical ? 'critical' : 'important',
+  if (chapters && chapters.length >= 3) {
+    usedChapters = true;
+    const list = chapters.slice(0, 10);
+    list.forEach((c, i) => {
+      const isEdge = i === 0 || i === list.length - 1;
+      highlights.push({
+        timestamp: formatTimestamp(c.startSeconds),
+        startSeconds: Math.round(c.startSeconds),
+        text: c.title,
+        level: isEdge ? 'critical' : 'important',
+      });
     });
+  } else {
+    // 均匀铺满整条进度条：条数随片长增加（10 分钟 → 5 条，1 小时 → 7-9 条）。
+    // 首条落在 00:00（开场），末条落在接近片尾（总结），中间等分分布，
+    // 从而覆盖整条视频，而不是挤在开头。
+    const segments = Math.max(5, Math.min(10, Math.round(totalSec / 420)));
+    const step = segments > 1 ? totalSec / (segments - 1) : totalSec;
+    for (let i = 0; i < segments; i += 1) {
+      // 末条避免正好压在片尾（点击会跳到 EOF），向前留 20 秒
+      const raw = step * i;
+      const t = i === segments - 1 ? Math.max(0, totalSec - 20) : raw;
+      const isCritical = i === 0 || i === segments - 1;
+      let text: string;
+      if (isZh) {
+        if (i === 0) text = `开场介绍：${title}`;
+        else if (i === segments - 1) text = '总结回顾与下期预告';
+        else text = `第 ${i} 部分重点内容`;
+      } else {
+        if (i === 0) text = `Opening introduction: ${title}`;
+        else if (i === segments - 1) text = 'Conclusion and key takeaways';
+        else text = `Part ${i} key content`;
+      }
+      highlights.push({
+        timestamp: formatTimestamp(t),
+        startSeconds: Math.round(t),
+        text,
+        level: isCritical ? 'critical' : 'important',
+      });
+    }
   }
 
   const takeaways = isZh
@@ -1243,14 +1275,27 @@ function generateFallbackNote(
         'Action items from the conclusion',
       ];
 
+  const timeHintZh = usedChapters
+    ? `已用该视频的真实章节把高光时刻铺满整条进度条（共 ${highlights.length} 个时间点）。`
+    : knownDuration
+      ? `未能获取字幕，已按视频真实时长（${formatTimestamp(totalSec)}）把 ${highlights.length} 个高光时刻均匀铺满整条进度条。`
+      : '未获取到视频时长，高光时刻为保守估算。';
+  const timeHintEn = usedChapters
+    ? `Real video chapters were used to spread the highlights across the full timeline (${highlights.length} points).`
+    : knownDuration
+      ? `Without captions, ${highlights.length} highlight points were spread evenly across the real video length (${formatTimestamp(totalSec)}).`
+      : 'Video length was unavailable, so highlight points use a conservative estimate.';
+
   const summary = isZh
     ? [
         `视频《${title}》暂未提供可自动获取的字幕，AI 已基于视频标题${descExcerpt ? '与简介' : ''}生成笔记骨架。`,
+        timeHintZh,
         descExcerpt ? `视频简介：${descExcerpt}` : '',
         '你可以：1) 确认该视频是否带有官方/CC 字幕；2) 观看后补充你自己的批注；3) 使用下方的「翻译笔记」「分享海报」等功能整理并传播这份笔记。',
       ].filter(Boolean).join(' ')
     : [
         `No auto-capturable transcript is available for "${title}". AI generated a note skeleton from the video title${descExcerpt ? ' and description' : ''}.`,
+        timeHintEn,
         descExcerpt ? `Video description: ${descExcerpt}` : '',
         'What you can do: 1) check whether the video has official/CC captions; 2) add your own viewing notes; 3) use the "Translate note" and "Share poster" features below to organize and share the note.',
       ].filter(Boolean).join(' ');
@@ -1322,7 +1367,7 @@ function generateFallbackNote(
     takeaways,
     corePoints,
     hasTranscript: false,
-    totalDuration: estimatedDurationSec,
+    totalDuration: totalSec,
   };
 }
 
@@ -1420,25 +1465,96 @@ function decodeJsonString(raw: string): string {
     .replace(/\\\\/g, '\\');
 }
 
+/** 把 "1:02:03" / "02:03" 解析为秒；非法返回 null。 */
+function parseClock(value: string): number | null {
+  const m = value.trim().match(/^(?:(\d{1,2}):)?(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  return (m[1] ? parseInt(m[1], 10) * 3600 : 0) + parseInt(m[2], 10) * 60 + parseInt(m[3], 10);
+}
+
+type Chapter = { startSeconds: number; title: string };
+
+/** 从简介文本中解析章节行（形如「00:00 开场」「12:34 第一部分」）。 */
+function parseChaptersFromText(text: string): Chapter[] {
+  if (!text) return [];
+  const out: Chapter[] = [];
+  const re = /(?:^|\n)\s*[[(]?\s*(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\s*[\])]?\s*[-–—:·]?\s*([^\n]{2,80})/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const h = m[1] ? parseInt(m[1], 10) : 0;
+    const mi = parseInt(m[2], 10);
+    const s = parseInt(m[3], 10);
+    const title = String(m[4] || '').replace(/[\s·-–—]+$/, '').trim();
+    if (!title) continue;
+    out.push({ startSeconds: h * 3600 + mi * 60 + s, title });
+  }
+  // 必须严格递增且至少 3 条，才认定为章节列表（避免把正文里的偶发时间戳当章节）
+  for (let i = 1; i < out.length; i += 1) {
+    if (out[i].startSeconds <= out[i - 1].startSeconds) return [];
+  }
+  return out.length >= 3 ? out : [];
+}
+
+/** 从 watch HTML 提取 YouTube 自动章节（macroMarkersListRenderer）。 */
+function parseAutoChapters(html: string): Chapter[] {
+  const out: Chapter[] = [];
+  const pats: RegExp[] = [
+    /"macroMarkersListItemRenderer":\{"title":\{"simpleText":"((?:[^"\\]|\\.)*)"\},"timeDescription":\{"simpleText":"([\d:]+)"\}/g,
+    /"macroMarkersListItemRenderer":\{"timeDescription":\{"simpleText":"([\d:]+)"\},"title":\{"simpleText":"((?:[^"\\]|\\.)*)"\}/g,
+  ];
+  for (let p = 0; p < pats.length; p += 1) {
+    const re = pats[p];
+    const timeFirst = p === 1;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(html)) !== null) {
+      const timeStr = timeFirst ? m[1] : m[2];
+      const rawTitle = timeFirst ? m[2] : m[1];
+      const sec = parseClock(timeStr);
+      const title = decodeJsonString(rawTitle).trim();
+      if (sec !== null && title) out.push({ startSeconds: sec, title });
+    }
+    if (out.length >= 3) break;
+  }
+  out.sort((a, b) => a.startSeconds - b.startSeconds);
+  return out.length >= 3 ? out : [];
+}
+
+/** 视频元信息（无字幕兜底笔记用）：简介 + 真实时长 + 章节。 */
+export interface VideoMeta {
+  description?: string;
+  durationSec?: number;
+  chapters?: Chapter[];
+}
+
 /**
- * 尽力获取视频描述文本（用于无字幕时补充笔记内容）。任何失败都返回 undefined，绝不抛出。
- * - YouTube：抓 watch HTML，从 ytInitialPlayerResponse 中提取 "shortDescription"（或降级正则）。
- * - B站：走 view 接口读取 data.desc。
- * 返回长度 ≤2000。
+ * 尽力获取视频元信息（用于无字幕时的兜底笔记）。任何失败都返回空对象，绝不抛出。
+ * - YouTube：抓 watch HTML，取 "lengthSeconds"（真实时长）、"shortDescription"（简介），
+ *   以及自动章节（macroMarkers）或简介里的章节时间戳。
+ * - B站：走 view 接口读取 data.desc / data.duration。
  */
-export async function fetchVideoDescription(
+export async function fetchVideoMeta(
   videoUrl: string,
   sourceType: 'youtube' | 'bilibili' | 'local',
-): Promise<string | undefined> {
+): Promise<VideoMeta> {
   if (sourceType === 'youtube') {
     try {
       const id = extractYouTubeId(videoUrl);
-      if (!id) return undefined;
+      if (!id) return {};
       const res = await fetchWithTimeout(`https://www.youtube.com/watch?v=${id}&hl=en`, {
         headers: { Accept: 'text/html,*/*' },
       });
-      if (!res.ok) return undefined;
+      if (!res.ok) return {};
       const html = await res.text();
+
+      const meta: VideoMeta = {};
+
+      // 真实时长：这是无字幕兜底高光能「铺满整条进度条」的关键
+      const d = html.match(/"lengthSeconds":"(\d+)"/);
+      if (d) {
+        const n = parseInt(d[1], 10);
+        if (Number.isFinite(n) && n > 0) meta.durationSec = n;
+      }
+
       let raw: string | undefined;
       const m = html.match(/"shortDescription":"((?:[^"\\]|\\.)*)"/);
       if (m) raw = m[1];
@@ -1446,27 +1562,48 @@ export async function fetchVideoDescription(
         const m2 = html.match(/"attributedDescription":\{"content":"((?:[^"\\]|\\.)*)"/);
         if (m2) raw = m2[1];
       }
-      if (!raw) return undefined;
-      const cleaned = decodeJsonString(raw).replace(/\r/g, '').trim();
-      return cleaned ? cleaned.slice(0, 2000) : undefined;
+      const fullDesc = raw ? decodeJsonString(raw).replace(/\r/g, '').trim() : '';
+      if (fullDesc) meta.description = fullDesc.slice(0, 2000);
+
+      const autoChapters = parseAutoChapters(html);
+      const chapters = autoChapters.length >= 3 ? autoChapters : parseChaptersFromText(fullDesc);
+      if (chapters.length >= 3) meta.chapters = chapters;
+
+      return meta;
     } catch {
-      return undefined;
+      return {};
     }
   }
   if (sourceType === 'bilibili') {
     try {
       const bvid = extractBilibiliBvid(videoUrl);
-      if (!bvid) return undefined;
+      if (!bvid) return {};
       const res = await fetchWithTimeout(
         `https://api.bilibili.com/x/web-interface/view?bvid=${encodeURIComponent(bvid)}`,
         { headers: { Accept: 'application/json' } },
       );
-      if (!res.ok) return undefined;
+      if (!res.ok) return {};
       const data = await res.json().catch(() => null);
       const desc = data?.data?.desc;
-      if (typeof desc === 'string' && desc.trim()) return desc.trim().slice(0, 2000);
-    } catch {}
-    return undefined;
+      const dur = data?.data?.duration;
+      return {
+        description:
+          typeof desc === 'string' && desc.trim() ? desc.trim().slice(0, 2000) : undefined,
+        durationSec: typeof dur === 'number' && dur > 0 ? dur : undefined,
+      };
+    } catch {
+      return {};
+    }
   }
-  return undefined;
+  return {};
+}
+
+/**
+ * 尽力获取视频描述文本（用于无字幕时补充笔记内容）。任何失败都返回 undefined，绝不抛出。
+ */
+export async function fetchVideoDescription(
+  videoUrl: string,
+  sourceType: 'youtube' | 'bilibili' | 'local',
+): Promise<string | undefined> {
+  return (await fetchVideoMeta(videoUrl, sourceType)).description;
 }

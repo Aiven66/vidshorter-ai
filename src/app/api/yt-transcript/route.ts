@@ -64,6 +64,41 @@ const CLIENTS = [
     xClientName: '1',
     extra: {},
   },
+  // 以下 client 用于绕过「Sign in to confirm you're not a bot / LOGIN_REQUIRED」：
+  // 数据中心 IP 上 ANDROID/IOS/WEB 常被风控，ANDROID_VR 与 TVHTML5 嵌入端历史上仍可取到 captionTracks。
+  {
+    name: 'ANDROID_VR',
+    clientName: 'ANDROID_VR',
+    clientVersion: '1.62.27',
+    userAgent: 'com.google.android.apps.youtube.vr.oculus/1.62.27 (Linux; U; Android 12; GB) gzip',
+    xClientName: '28',
+    extra: {
+      androidSdkVersion: 32,
+      clientFormFactor: 'SMALL_FORM_FACTOR',
+      deviceMake: 'Oculus',
+      deviceModel: 'Quest 3',
+      osName: 'Android',
+      osVersion: '12',
+    },
+  },
+  {
+    name: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
+    clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
+    clientVersion: '2.0',
+    userAgent:
+      'Mozilla/5.0 (PlayStation; PlayStation 5/2.26) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0 Safari/605.1.15',
+    xClientName: '85',
+    extra: { clientScreen: 'EMBED' },
+  },
+  {
+    name: 'MWEB',
+    clientName: 'MWEB',
+    clientVersion: '2.20250623.01.00',
+    userAgent:
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1',
+    xClientName: '2',
+    extra: {},
+  },
 ];
 
 /** 取 player response 的 captions 节点（InnerTube 与 watch 页结构一致）。 */
