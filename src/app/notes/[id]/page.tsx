@@ -177,9 +177,10 @@ export default function NoteDetailPage() {
   }, [note, sourceVideoId]);
 
   // 无字幕兜底笔记的高光铺排修正（与 /video-notes 生成页同一套逻辑）。
-  // 服务器端在拿不到真实时长时会用保守估算把高光铺在开头附近；浏览器侧播放器能拿到
-  // 真实时长，这里据此把兜底高光重新等分铺满整条进度条。重排后 totalDuration 等于
-  // 真实时长，条件不再命中，因此只执行一次。
+  // 服务器端在拿不到真实时长时会用保守估算（固定 600s）把高光铺在开头附近；浏览器侧
+  // 播放器能拿到真实时长，这里据此把兜底高光重新等分铺满整条进度条。
+  // 仅当服务端 totalDuration 与真实时长偏差超过 15% 才重排：单向阈值（>= 真实时长*0.8）
+  // 会让短于约 12.5 分钟的视频被误判为「已正确」而跳过重排。重排后偏差归零，只执行一次。
   useEffect(() => {
     if (playerDuration < 60) return;
     setNote(prev => {
@@ -188,7 +189,8 @@ export default function NoteDetailPage() {
       if (content.hasTranscript !== false) return prev;
       const list = content.highlights || [];
       if (list.length < 3) return prev;
-      if (content.totalDuration && content.totalDuration >= playerDuration * 0.8) return prev;
+      const serverTotal = content.totalDuration || 0;
+      if (serverTotal > 0 && Math.abs(playerDuration - serverTotal) / playerDuration < 0.15) return prev;
       const step = (playerDuration - 20) / (list.length - 1);
       const highlights = list.map((h, i) => {
         const t = Math.max(0, Math.round(step * i));

@@ -429,25 +429,32 @@ export default function VideoNotesPage() {
   // CF Worker 等所有通道都取不到 videoDetails.lengthSeconds），会用保守估算时长把
   // 高光时间点铺在开头附近 —— 这正是「高光全挤在前几分钟」的根因。
   // 浏览器侧播放器不受风控影响，能拿到真实时长，因此这里在拿到真实时长后把兜底高光
-  // 按真实时长重新等分铺满整条进度条。重排后 totalDuration 等于真实时长，条件自然不再
-  // 命中，所以只会执行一次，不会循环。
+  // 按真实时长重新等分铺满整条进度条。
+  //
+  // 判定「需要重排」的规则：仅当服务端给出的 totalDuration 与真实时长偏差超过 15% 才重排。
+  // 不能用「totalDuration >= 真实时长 * 0.8」这类单向阈值 —— 服务端的兜底估值恰好是 600s，
+  // 对任何短于约 12.5 分钟的视频，600 >= 真实时长 * 0.8 都成立，会导致重排被跳过，
+  // 圆点反而按 600s 铺排、越界溢出到进度条之外。重排后 totalDuration 等于真实时长，
+  // 偏差归零，条件不再命中，因此只会执行一次，不会循环。
   useEffect(() => {
     if (playerDuration < 60) return;
-    setResult(prev => {
-      if (!prev) return prev;
-      const note = prev.note;
-      if (note.hasTranscript !== false) return prev;
-      const list = note.highlights || [];
-      if (list.length < 3) return prev;
-      if (note.totalDuration && note.totalDuration >= playerDuration * 0.8) return prev;
-      const step = (playerDuration - 20) / (list.length - 1);
-      const highlights = list.map((h, i) => {
-        const t = Math.max(0, Math.round(step * i));
-        return { ...h, startSeconds: t, timestamp: formatSeconds(t) };
-      });
-      return { ...prev, note: { ...note, highlights, totalDuration: Math.round(playerDuration) } };
+    const currentNote = result?.note;
+    if (!currentNote || currentNote.hasTranscript !== false) return;
+    const list = currentNote.highlights || [];
+    if (list.length < 3) return;
+    const serverTotal = currentNote.totalDuration || 0;
+    if (serverTotal > 0 && Math.abs(playerDuration - serverTotal) / playerDuration < 0.15) return;
+    const step = (playerDuration - 20) / (list.length - 1);
+    const nextHighlights = list.map((h, i) => {
+      const t = Math.max(0, Math.round(step * i));
+      return { ...h, startSeconds: t, timestamp: formatSeconds(t) };
     });
-  }, [playerDuration]);
+    setResult(prev =>
+      prev
+        ? { ...prev, note: { ...prev.note, highlights: nextHighlights, totalDuration: Math.round(playerDuration) } }
+        : prev,
+    );
+  }, [playerDuration, result?.note]);
 
   return (
     <div className="container mx-auto px-4 py-6 md:py-8">
@@ -684,6 +691,27 @@ function NoteResultView({
     setNoteTransError(null);
   }, [videoUrl]);
   const transcriptSegments = result.transcript ?? [];
+
+  // 原始笔记的高光时间点可能在上层被修正（无字幕兜底笔记等播放器拿到真实时长后按真实
+  // 时长重排）。译文是翻译时的快照，若不同步，右栏列表会停留在旧时间点上，与时间轴圆点
+  // 不一致。这里把译文的高光时间点对齐原始笔记（译文文本保留）。
+  useEffect(() => {
+    setTranslatedNote(prev => {
+      if (!prev) return prev;
+      if (prev.highlights.length !== note.highlights.length) return prev;
+      const same = prev.highlights.every((h, i) => h.startSeconds === note.highlights[i]?.startSeconds);
+      if (same) return prev;
+      return {
+        ...prev,
+        highlights: prev.highlights.map((h, i) => ({
+          ...h,
+          startSeconds: note.highlights[i]?.startSeconds ?? h.startSeconds,
+          timestamp: note.highlights[i]?.timestamp ?? h.timestamp,
+        })),
+        totalDuration: note.totalDuration,
+      };
+    });
+  }, [note.highlights, note.totalDuration]);
 
   // 展示用笔记：译文存在时用译文渲染；原始 result 保持不变（保存/导出/海报仍用原文）
   const viewNote: VideoNote = translatedNote ?? note;
