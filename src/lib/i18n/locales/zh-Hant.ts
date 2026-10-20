@@ -4,7 +4,7 @@ const translations = {
   ...commonTranslations,
   nav: {
   home: '首頁', blog: '部落格', pricing: '定價', about: '關於我們', feedback: '使用者回饋', login: '登入', register: '註冊', dashboard: '儀錶板', admin: '管理後台', logout: '登出', credits: '積分', creditsBalance: '積分餘額', upgradePro: '升級 Pro', inviteFriends: '邀請好友', download: '下載應用程式', light: '淺色', dark: '深色',
-  'clips': '高光剪輯', 'shorts': 'Shorts 成片', 'notes': '高光筆記', 'podcast': 'AI播客',
+  'clips': '高光剪輯', 'shorts': 'Shorts 成片', 'notes': 'YouTube 影片摘要', 'podcast': 'AI播客',
   'news': '資訊影片', 'article': '文章轉影片',
   'aiVideo': 'AI 成片',
   'localEngine': '本地引擎',
@@ -416,6 +416,17 @@ dashboard: { title: '儀錶板', credits: '可用積分', creditsReset: '00:00 U
     posterGenerated: '海報已生成！',
     posterGenerating: '正在渲染海報…',
     posterShareHint: '長按儲存到相簿，或直接截圖分享到社群',
+    // === 社群分享 ===
+    shareTo: '分享到',
+    shareNative: '系統分享…',
+    shareEmail: '郵件',
+    shareCopied: '連結已複製',
+    shareCopyFailed: '複製失敗',
+    // === 筆記翻譯 ===
+    translateNote: '翻譯筆記',
+    translateNoteAgain: '重新翻譯筆記',
+    translateNoteHint: '將整篇筆記（概述、高光內容、金句、核心要點）翻譯為目標語言。',
+    corePointsAutoColorHint: '核心要點已按重要性自動配色：最重要 / 重要 / 一般支撐',
     // === Notes Library ===
     libraryTitle: '我的筆記',
     librarySubtitle: '查看所有已儲存的影片高光筆記。',

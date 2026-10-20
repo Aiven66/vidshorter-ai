@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
 import { LLMClient, Config } from 'coze-coding-dev-sdk';
+import { translateTexts } from '@/lib/server/subtitle-translate';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -39,6 +40,13 @@ const TARGET_LANGS: Record<string, string> = {
   th: 'Thai (ไทย)',
   vi: 'Vietnamese (Tiếng Việt)',
 };
+
+/** 白名单语言代码 → Google gtx 目标代码（zh-Hans/zh-Hant 需映射，其余原样透传）。 */
+function mapToGoogleCode(code: string): string {
+  if (code === 'zh-Hans') return 'zh-CN';
+  if (code === 'zh-Hant') return 'zh-TW';
+  return code;
+}
 
 function createLlmClient(): LLMClient | null {
   const apiKey = process.env.COZE_WORKLOAD_IDENTITY_API_KEY;
@@ -180,57 +188,61 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const llm = createLlmClient();
-  if (!llm) {
-    // 绝不静默降级：明确告知翻译服务不可用（对应环境未配置 LLM key）
-    return Response.json(
-      { error: '翻译服务暂不可用（未配置 LLM 密钥），请稍后重试', code: 'llm_unavailable' },
-      { status: 503 },
-    );
-  }
-
-  const batches = buildBatches(segments);
   const translated = new Map<number, string>();
 
-  try {
-    // 并发池：每批失败重试一次，仍失败则该批行保持未翻译（最终明文报告行数）
-    let cursor = 0;
-    const worker = async () => {
-      while (cursor < batches.length) {
-        const batch = batches[cursor++];
-        for (let attempt = 0; attempt < 2; attempt++) {
-          try {
-            const part = await translateBatch(llm, batch, targetName);
-            if (part.size > 0) {
-              for (const [i, text] of part) translated.set(i, text);
-              break;
+  // 1) LLM 优先（仅在配置了 Coze key 时可用）
+  const llm = createLlmClient();
+  if (llm) {
+    const batches = buildBatches(segments);
+    try {
+      // 并发池：每批失败重试一次，仍失败则该批行保持未翻译（最终明文报告行数）
+      let cursor = 0;
+      const worker = async () => {
+        while (cursor < batches.length) {
+          const batch = batches[cursor++];
+          for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+              const part = await translateBatch(llm, batch, targetName);
+              if (part.size > 0) {
+                for (const [i, text] of part) translated.set(i, text);
+                break;
+              }
+            } catch (err) {
+              console.warn(
+                `[video-notes/translate] batch failed (attempt ${attempt + 1}):`,
+                err instanceof Error ? err.message.slice(0, 160) : err,
+              );
             }
-          } catch (err) {
-            console.warn(
-              `[video-notes/translate] batch failed (attempt ${attempt + 1}):`,
-              err instanceof Error ? err.message.slice(0, 160) : err,
-            );
           }
         }
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, batches.length) }, () => worker()));
-  } catch (err) {
-    console.error('[video-notes/translate] error:', err);
-    return Response.json(
-      {
-        error: '翻译失败，请稍后重试',
-        code: 'translate_failed',
-        detail: err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200),
-      },
-      { status: 500 },
-    );
+      };
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, batches.length) }, () => worker()));
+    } catch (err) {
+      console.warn(
+        '[video-notes/translate] LLM path error, falling back to keyless engine:',
+        err instanceof Error ? err.message.slice(0, 160) : err,
+      );
+    }
+  }
+
+  // 2) 无 LLM key 或 LLM 一条都没翻出来 → 无 Key 机器翻译引擎兜底（Google / MyMemory）
+  if (translated.size === 0) {
+    const texts = segments.map((s) => s.text);
+    const fallback = await translateTexts(texts, mapToGoogleCode(targetLang)).catch(() => null);
+    if (fallback && fallback.length === texts.length) {
+      fallback.forEach((text, idx) => {
+        if (text && text.trim() && text !== texts[idx]) translated.set(idx + 1, text);
+      });
+    }
   }
 
   // 一行都没翻出来 → 视为失败（避免前端把原文当译文显示）
   if (translated.size === 0) {
     return Response.json(
-      { error: '翻译失败：翻译服务未返回有效结果，请稍后重试', code: 'translate_empty' },
+      {
+        error: '翻译失败：翻译服务未返回有效结果，请稍后重试',
+        code: 'translate_empty',
+      },
       { status: 502 },
     );
   }

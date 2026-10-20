@@ -101,7 +101,7 @@ export function parseNoteJson(
   if (!data || typeof data !== 'object') return null;
 
   if (typeof data.summary !== 'string' || !data.summary.trim()) return null;
-  const summary = data.summary.trim().slice(0, 800);
+  const summary = data.summary.trim().slice(0, 2000);
 
   if (!Array.isArray(data.highlights)) return null;
   const highlights: Array<{
@@ -197,7 +197,7 @@ export async function generateNoteWithLLM(
     '',
     'Output a SINGLE JSON object with exactly these fields:',
     '{',
-    '  "summary": "2-4 sentence overview of the video",',
+    '  "summary":"a comprehensive 5-8 sentence overview covering (1) the core topic & premise, (2) the main sections/arguments in order, (3) the key conclusions",',
     '  "highlights": [ {"timestamp":"[MM:SS] copied from the transcript","startSeconds":<seconds as number>,"text":"short quote from the transcript","level":"critical"|"important"} ] (8-15 entries spread across the whole video, with the most important moments marked critical),',
     '  "takeaways": ["3-6 concise actionable takeaways"],',
     '  "corePoints": [ {"index":1,"title":"one-line point title","detail":"2-4 sentence explanation","sourceTimestamps":["[MM:SS]","[MM:SS]"],"weight":0.0-1.0} ] (5-8 numbered lecture points in chronological order)',
@@ -213,7 +213,7 @@ export async function generateNoteWithLLM(
     const resp = await llm.invoke(
       [{ role: 'user', content: prompt }],
       // max_tokens 未声明在 SDK 的 LLMConfig 类型里，但服务端 API 接受该参数（与 categorize.ts 一致）
-      { model: LLM_MODEL, temperature: 0.4, max_tokens: 2000 } as never,
+      { model: LLM_MODEL, temperature: 0.4, max_tokens: 4000 } as never,
     );
     const rawContent = typeof resp?.content === 'string' ? resp.content : '';
     const parsed = parseNoteJson(rawContent);

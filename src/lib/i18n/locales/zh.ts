@@ -4,7 +4,7 @@ const translations = {
   ...commonTranslations,
   nav: {
   home: '首页', blog: '博客', pricing: '定价', about: '关于我们', feedback: '用户反馈', login: '登录', register: '注册', dashboard: '控制台', admin: '管理后台', logout: '退出登录', credits: '积分', creditsBalance: '积分余额', upgradePro: '升级 Pro', inviteFriends: '邀请好友', download: '下载客户端', light: '浅色', dark: '深色',
-  'clips': '高光剪辑', 'shorts': 'Shorts 成片', 'notes': '高光笔记', 'podcast': 'AI播客',
+  'clips': '高光剪辑', 'shorts': 'Shorts 成片', 'notes': 'YouTube 视频总结', 'podcast': 'AI播客',
   'news': '资讯视频', 'article': '文章转视频',
   'digitalHumanLive': '数字人带货短视频',
   'aiTools': 'AI 工具箱',
@@ -869,6 +869,17 @@ dashboard: { title: '控制台', credits: '可用积分', creditsReset: '00:00 U
     posterGenerated: '海报已生成！',
     posterGenerating: '正在渲染海报…',
     posterShareHint: '长按保存到相册，或直接截图分享到朋友圈/小红书/微博',
+    // === 社交分享 ===
+    shareTo: '分享到',
+    shareNative: '系统分享…',
+    shareEmail: '邮件',
+    shareCopied: '链接已复制',
+    shareCopyFailed: '复制失败',
+    // === 笔记翻译 ===
+    translateNote: '翻译笔记',
+    translateNoteAgain: '重新翻译笔记',
+    translateNoteHint: '将整篇笔记（概述、高光内容、金句、核心要点）翻译为目标语言。',
+    corePointsAutoColorHint: '核心要点已按重要性自动配色：最重要 / 重要 / 一般支撑',
     // === Notes Library ===
     libraryTitle: '我的笔记',
     librarySubtitle: '查看所有已保存的视频高光笔记。',

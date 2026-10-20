@@ -4,6 +4,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import {
   fetchTranscript,
   fetchVideoTitle,
+  fetchVideoDescription,
   generateNoteFromTranscript,
   type LocalVideoNote,
   type TranscriptDiagnostic,
@@ -253,12 +254,18 @@ export async function POST(request: NextRequest) {
       }
     }
     if (!generated) {
+      // 无字幕时，尽力抓取视频描述作为补充信息源（失败不影响主流程）
+      let description: string | undefined;
+      if (transcript.length === 0) {
+        description = await fetchVideoDescription(videoUrl, sourceType).catch(() => undefined);
+      }
       generated = generateNoteFromTranscript(
         transcript,
         videoTitle,
         videoUrl,
         sourceType,
         clientLocale,
+        description,
       );
     }
 

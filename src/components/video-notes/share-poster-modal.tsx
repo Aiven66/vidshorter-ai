@@ -5,12 +5,13 @@ import {
   Download,
   Link2,
   Loader2,
+  Mail,
   X,
   Share2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { CorePointAnnotation, AnnotationColor } from '@/app/api/video-notes/[id]/route';
-import { ANNOTATION_COLORS, getColorMeta } from './core-points-annotator';
+import { ANNOTATION_COLORS, getColorMeta, buildDefaultColorMap } from './core-points-annotator';
 
 type CorePoint = {
   index: number;
@@ -64,6 +65,9 @@ export default function SharePosterModal({
     for (const a of annotations) if (a && typeof a.index === 'number') m.set(a.index, a);
     return m;
   }, [annotations]);
+
+  // 默认高亮色（与核心要点标注器一致）：用户未手动选择时按重要性着色，让海报同样有颜色
+  const defaultColorMap = useMemo(() => buildDefaultColorMap(corePoints), [corePoints]);
 
   // 展示用：取前 4 个核心要点，保证海报排版
   const displayPoints = useMemo(() => {
@@ -165,11 +169,52 @@ export default function SharePosterModal({
   }
 
   function copyShareLink() {
-    const url = shareUrl || (typeof window !== 'undefined' ? window.location.href : '');
+    const url = getShareUrl();
     navigator.clipboard.writeText(url).then(
-      () => toast.success('Link copied'),
-      () => toast.error('Copy failed'),
+      () => toast.success(t('notes.shareCopied')),
+      () => toast.error(t('notes.shareCopyFailed')),
     );
+  }
+
+  function getShareUrl(): string {
+    return shareUrl || (typeof window !== 'undefined' ? window.location.href : '');
+  }
+
+  function getShareText(): string {
+    const base = (videoTitle ? videoTitle + ' — ' : '') + BRAND;
+    const snippet = summary ? truncate(summary.replace(/\s+/g, ' ').trim(), 120) : '';
+    return snippet ? `${base} · ${snippet}` : base;
+  }
+
+  function openShareIntent(url: string) {
+    if (typeof window === 'undefined') return;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }
+
+  const enc = (s: string) => encodeURIComponent(s);
+
+  async function handleNativeShare() {
+    if (typeof navigator === 'undefined' || typeof navigator.share !== 'function') return;
+    try {
+      const text = getShareText();
+      const url = getShareUrl();
+      const data: ShareData = { title: videoTitle || BRAND, text, url };
+      if (downloadUrl && typeof navigator.canShare === 'function') {
+        try {
+          const blob = await (await fetch(downloadUrl)).blob();
+          const file = new File([blob], `${safeFilename(videoTitle) || 'clipop-poster'}.png`, {
+            type: 'image/png',
+          });
+          if (navigator.canShare({ files: [file] })) data.files = [file];
+        } catch {
+          // 附带图片失败时忽略，仍以文字/链接分享
+        }
+      }
+      await navigator.share(data);
+    } catch (e: unknown) {
+      if (e instanceof Error && e.name === 'AbortError') return;
+      console.warn('[SharePosterModal] native share failed:', e);
+    }
   }
 
   function downloadCurrent() {
@@ -181,6 +226,13 @@ export default function SharePosterModal({
     a.click();
     document.body.removeChild(a);
   }
+
+  // === 排版中间值（必须在 JSX 之外计算：原先误写在 JSX 子级内会被当作文本、导致变量取不到而崩溃） ===
+  const titleLines = wrapLines(shortTitle, 34, 3);
+  const summaryTop = headerH + 170;
+  const summaryLines = wrapLines(shortSummary, 42, 5);
+  const dTop = headerH + summaryH + 180;
+  const fTop = H - footerH;
 
   // ===== Render =====
   const content = (
@@ -255,7 +307,6 @@ export default function SharePosterModal({
 
       {/* ===== 标题 ===== */}
       <g>
-        const titleLines = {wrapLines(shortTitle, 34, 3)};
         {titleLines.map((line, i) => (
           <text
             key={`tl-${i}`}
@@ -273,7 +324,6 @@ export default function SharePosterModal({
 
       {/* ===== Summary card ===== */}
       <g>
-        const summaryTop = headerH + 170;
         <rect x={padding} y={summaryTop} width={usableW} height={summaryH} rx={22} fill="#ffffff" opacity={0.96} />
         <rect x={padding} y={summaryTop} width={6} height={summaryH} rx={3} fill="#F59E0B" />
         <text
@@ -286,7 +336,6 @@ export default function SharePosterModal({
         >
           📋 Overview
         </text>
-        const summaryLines = wrapLines(shortSummary, 42, 5);
         {summaryLines.map((line, i) => (
           <text
             key={`sl-${i}`}
@@ -303,7 +352,6 @@ export default function SharePosterModal({
 
       {/* ===== Divider + label ===== */}
       <g>
-        const dTop = headerH + summaryH + 180;
         <text x={padding} y={dTop} fontFamily="ui-sans-serif, system-ui" fontSize={20} fontWeight="800" fill="#4C1D95">
           ✨ {t('notes.posterCorePointsLabel')}
         </text>
@@ -313,12 +361,14 @@ export default function SharePosterModal({
       {/* ===== Point cards ===== */}
       {(() => {
         const areaTop = headerH + summaryH + 210;
-        const elems: JSX.Element[] = [];
+        const elems = [];
         for (let i = 0; i < displayPoints.length; i++) {
           const p = displayPoints[i];
           const y = areaTop + i * (pointCardH + pointCardGap);
           const ann = annByIndex.get(p.index);
-          const colorMeta = getColorMeta((ann?.color as AnnotationColor | undefined) || null);
+          const userColor = ann?.color;
+          const effectiveColor = userColor !== undefined ? userColor : (defaultColorMap.get(p.index) ?? null);
+          const colorMeta = getColorMeta(effectiveColor as AnnotationColor | null);
           const bg = colorMeta?.fill || '#FFFFFF';
           const txtColor = '#0F172A';
 
@@ -425,7 +475,6 @@ export default function SharePosterModal({
 
       {/* ===== Footer ===== */}
       <g>
-        const fTop = H - footerH;
         <rect x={0} y={fTop} width={W} height={footerH} fill="#0B1120" />
         {/* Brand text */}
         <text x={padding} y={fTop + 54} fontFamily="ui-sans-serif, system-ui" fontSize={32} fontWeight="900" fill="#ffffff">
@@ -480,6 +529,52 @@ export default function SharePosterModal({
           <div className="mx-auto rounded-2xl overflow-hidden shadow-xl max-w-[360px] ring-1 ring-black/5 bg-white">
             {content}
           </div>
+        </div>
+
+        {/* Share row */}
+        <div className="flex flex-wrap items-center gap-1.5 px-4 py-2.5 border-t border-border/70">
+          <span className="text-[11px] text-muted-foreground mr-0.5">{t('notes.shareTo')}</span>
+          {typeof navigator !== 'undefined' && !!navigator.share && (
+            <button
+              onClick={handleNativeShare}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md border border-border bg-background hover:bg-muted text-xs transition"
+              title={t('notes.shareNative')}
+            >
+              <Share2 className="h-3.5 w-3.5" />
+              {t('notes.shareNative')}
+            </button>
+          )}
+          {(
+            [
+              { key: 'x', label: 'X', url: () => `https://twitter.com/intent/tweet?text=${enc(getShareText())}&url=${enc(getShareUrl())}` },
+              { key: 'fb', label: 'f', url: () => `https://www.facebook.com/sharer/sharer.php?u=${enc(getShareUrl())}` },
+              { key: 'in', label: 'in', url: () => `https://www.linkedin.com/sharing/share-offsite/?url=${enc(getShareUrl())}` },
+              { key: 'wa', label: 'WA', url: () => `https://wa.me/?text=${enc(`${getShareText()} ${getShareUrl()}`)}` },
+              { key: 'tg', label: 'TG', url: () => `https://t.me/share/url?url=${enc(getShareUrl())}&text=${enc(getShareText())}` },
+              { key: 'wb', label: '微博', url: () => `https://service.weibo.com/share/share.php?url=${enc(getShareUrl())}&title=${enc(getShareText())}` },
+            ] as Array<{ key: string; label: string; url: () => string }>
+          ).map((s) => (
+            <button
+              key={s.key}
+              onClick={() => openShareIntent(s.url())}
+              className="inline-flex items-center justify-center min-w-[30px] h-[30px] px-2 rounded-md border border-border bg-background hover:bg-muted text-xs font-semibold transition"
+              title={s.label}
+            >
+              {s.label}
+            </button>
+          ))}
+          <button
+            onClick={() =>
+              openShareIntent(
+                `mailto:?subject=${enc(getShareText())}&body=${enc(`${getShareText()}\n${getShareUrl()}`)}`,
+              )
+            }
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md border border-border bg-background hover:bg-muted text-xs transition"
+            title={t('notes.shareEmail')}
+          >
+            <Mail className="h-3.5 w-3.5" />
+            {t('notes.shareEmail')}
+          </button>
         </div>
 
         {/* Actions */}

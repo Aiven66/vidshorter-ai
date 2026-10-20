@@ -819,6 +819,7 @@ export function generateNoteFromTranscript(
   videoUrl: string,
   sourceType: 'youtube' | 'bilibili' | 'local',
   locale: string | undefined,
+  description?: string,
 ): LocalVideoNote {
   // 合并字幕为完整文本
   const fullText = segments.map(s => s.text).join(' ').trim();
@@ -828,23 +829,21 @@ export function generateNoteFromTranscript(
 
   if (segments.length === 0 || !fullText) {
     // 没有字幕：返回基于元数据的占位笔记
-    return generateFallbackNote(videoTitle, videoUrl, sourceType, locale);
+    return generateFallbackNote(videoTitle, videoUrl, sourceType, locale, description);
   }
 
-  // 1. 概述：取前 2-3 句话 + 整体统计
-  const firstFewTexts = segments.slice(0, Math.min(5, segments.length)).map(s => s.text).join(' ');
-  const sentences = splitSentences(firstFewTexts);
-  const summary = buildSummary(sentences, videoTitle, totalDuration, segments.length, locale);
-
-  // 2. 高光：把字幕按时长均匀切成 N 段，每段选最关键句
+  // 1. 高光：把字幕按时长均匀切成 N 段，每段选最关键句
   const highlightCount = Math.min(10, Math.max(5, Math.floor(totalDuration / 60)));
   const highlights = extractHighlights(segments, highlightCount, locale);
 
-  // 3. 金句：取评分最高的 3-6 句
+  // 2. 金句：取评分最高的 3-6 句
   const takeaways = extractTakeaways(segments, locale);
 
-  // 4. 核心讲义要点（编号形式，5-8 条）
+  // 3. 核心讲义要点（编号形式，5-8 条）
   const corePoints = extractCorePoints(segments, highlights, videoTitle, locale);
+
+  // 4. 概述：基于全片字幕句子评分 + 核心要点脉络，生成尽可能全面的概览
+  const summary = buildOverviewSummary(segments, videoTitle, totalDuration, corePoints, locale);
 
   return {
     summary,
@@ -856,40 +855,89 @@ export function generateNoteFromTranscript(
   };
 }
 
-function buildSummary(
-  firstSentences: string[],
+const OVERVIEW_MAX_CHARS = 1400;
+
+/**
+ * 全片概览：对整段字幕逐句打分，取分数最高的 8 个不重复句子（按时间顺序），
+ * 再加上前 6 个核心要点的标题作为「全片脉络」，生成一段尽可能全面的概述。
+ */
+function buildOverviewSummary(
+  segments: TranscriptSegment[],
   videoTitle: string | undefined,
   totalDuration: number,
-  segCount: number,
+  corePoints: CorePoint[],
   locale: string | undefined,
 ): string {
+  const isZh = !!locale && locale.toLowerCase().startsWith('zh');
+  const isJp = !!locale && locale.toLowerCase().startsWith('ja');
   const durationMin = Math.max(1, Math.round(totalDuration / 60));
-  const isZh = locale && locale.toLowerCase().startsWith('zh');
-  const isJp = locale && locale.toLowerCase().startsWith('ja');
-
   const title = videoTitle ? videoTitle.slice(0, 100) : '';
 
-  const lead = firstSentences.slice(0, 3).join(' ').slice(0, 280);
+  // 1) 全片逐句打分
+  const freq = computeWordFrequency(segments);
+  const totalSentences = Math.max(1, segments.length);
+  const scored: Array<{ text: string; start: number; score: number }> = [];
+  segments.forEach((seg, idx) => {
+    const sents = splitSentences(seg.text);
+    for (const s of sents) {
+      scored.push({ text: s, start: seg.start, score: scoreSentence(s, freq, totalSentences, idx) });
+    }
+  });
 
+  if (scored.length === 0) {
+    // 退化：直接拼接整段字幕
+    const joined = segments.map(s => s.text).join(isZh ? '。' : ' ').trim();
+    return truncate(joined, OVERVIEW_MAX_CHARS);
+  }
+
+  // 2) 高分句子优先，按 token 签名去重，取前 8 句
+  scored.sort((a, b) => b.score - a.score);
+  const seen = new Set<string>();
+  const picked: Array<{ text: string; start: number }> = [];
+  for (const item of scored) {
+    const sig = tokenize(item.text).slice(0, 6).sort().join('|');
+    if (sig && seen.has(sig)) continue;
+    seen.add(sig);
+    picked.push({ text: item.text, start: item.start });
+    if (picked.length >= 8) break;
+  }
+
+  // 3) 按时间顺序重排，构成"关键内容概览"
+  picked.sort((a, b) => a.start - b.start);
+  const keySentences = picked.map(p => truncate(p.text, 180));
+  const pointTitles = corePoints.slice(0, 6).map(p => p.title);
+
+  let summary: string;
   if (isZh) {
-    return [
-      title ? `视频《${title}》` : '本视频',
-      `总时长约 ${durationMin} 分钟，共 ${segCount} 段字幕。`,
-      lead ? `主要内容：${lead}` : 'AI 已自动分析视频字幕并提取核心观点。',
-    ].join(' ').slice(0, 400);
+    const head = title
+      ? `视频《${title}》总长约 ${durationMin} 分钟（共 ${segments.length} 段字幕）。`
+      : `本视频总长约 ${durationMin} 分钟（共 ${segments.length} 段字幕）。`;
+    const body = keySentences.length > 0 ? `核心内容概览：${keySentences.join('；')}。` : '';
+    const structure = pointTitles.length > 0 ? `全片脉络：${pointTitles.join('，')}。` : '';
+    const closing = '以上概述由 AI 从整段字幕中自动提取。';
+    summary = [head, body, structure, closing].filter(Boolean).join('');
+  } else if (isJp) {
+    const head = title
+      ? `動画「${title}」の長さは約 ${durationMin} 分（全 ${segments.length} セグメント）。`
+      : `この動画の長さは約 ${durationMin} 分（全 ${segments.length} セグメント）。`;
+    const body = keySentences.length > 0 ? `主な内容：${keySentences.join('；')}。` : '';
+    const structure = pointTitles.length > 0 ? `全体の流れ：${pointTitles.join('、')}。` : '';
+    const closing = 'この概要は AI が字幕全体から自動抽出しました。';
+    summary = [head, body, structure, closing].filter(Boolean).join('');
+  } else {
+    const head = title
+      ? `Video "${title}" (~${durationMin} min, ${segments.length} transcript segments).`
+      : `This video is ~${durationMin} min long with ${segments.length} transcript segments.`;
+    const body = keySentences.length > 0 ? `Key content overview: ${keySentences.join('; ')}.` : '';
+    const structure =
+      pointTitles.length > 0
+        ? `Full structure: ${pointTitles.map((ttl, i) => `${i + 1}) ${ttl}`).join(' ')}.`
+        : '';
+    const closing = 'This overview was extracted from the entire transcript by AI.';
+    summary = [head, body, structure, closing].filter(Boolean).join(' ');
   }
-  if (isJp) {
-    return [
-      title ? `動画「${title}」` : 'この動画',
-      `（長さ約 ${durationMin} 分、${segCount} セグメント）。`,
-      lead ? `主な内容：${lead}` : 'AI が字幕を分析しハイライトを抽出しました。',
-    ].join(' ').slice(0, 400);
-  }
-  return [
-    title ? `Video "${title}"` : 'This video',
-    `(~${durationMin} min, ${segCount} transcript segments).`,
-    lead ? `Key content: ${lead}` : 'AI analyzed the transcript and extracted key moments.',
-  ].join(' ').slice(0, 400);
+
+  return truncate(summary, OVERVIEW_MAX_CHARS);
 }
 
 function extractHighlights(
@@ -1129,9 +1177,32 @@ function generateFallbackNote(
   videoUrl: string,
   sourceType: 'youtube' | 'bilibili' | 'local',
   locale: string | undefined,
+  description?: string,
 ): LocalVideoNote {
   const isZh = locale && locale.toLowerCase().startsWith('zh');
   const title = videoTitle || (isZh ? '未知视频' : 'Untitled video');
+
+  // 视频描述（当无字幕时作为补充信息源）：句子切分后取前 ~500 字符
+  const descText = description ? description.replace(/\r/g, '').trim() : '';
+  let descExcerpt = '';
+  if (descText) {
+    const sents = splitSentences(descText.replace(/\n+/g, ' '));
+    const parts: string[] = [];
+    let len = 0;
+    for (const s of sents) {
+      if (parts.length > 0 && len + s.length > 500) break;
+      parts.push(s);
+      len += s.length + 1;
+    }
+    descExcerpt = parts.length > 0 ? parts.join(isZh ? '。' : '. ') : descText.slice(0, 500);
+  }
+  const descLines = descText
+    ? descText
+        .split(/\n+/)
+        .map(l => l.replace(/^\s*[-•*]\s*/, '').trim())
+        .filter(Boolean)
+        .slice(0, 6)
+    : [];
 
   // 即使没有字幕，也生成结构化的占位笔记（按预估 10 分钟时长均匀分布 6 个时刻）
   // 这样用户至少能拿到一个有结构的笔记，而不是只有 1 条
@@ -1173,8 +1244,16 @@ function generateFallbackNote(
       ];
 
   const summary = isZh
-    ? `视频《${title}》暂未提供可自动获取的字幕，AI 已基于视频标题和时长生成占位笔记结构。建议手动观看视频后填充实际内容。`
-    : `No transcript available for "${title}". AI generated a placeholder note structure based on the video title and estimated duration. Please watch the video and fill in the actual content.`;
+    ? [
+        `视频《${title}》暂未提供可自动获取的字幕，AI 已基于视频标题${descExcerpt ? '与简介' : ''}生成笔记骨架。`,
+        descExcerpt ? `视频简介：${descExcerpt}` : '',
+        '你可以：1) 确认该视频是否带有官方/CC 字幕；2) 观看后补充你自己的批注；3) 使用下方的「翻译笔记」「分享海报」等功能整理并传播这份笔记。',
+      ].filter(Boolean).join(' ')
+    : [
+        `No auto-capturable transcript is available for "${title}". AI generated a note skeleton from the video title${descExcerpt ? ' and description' : ''}.`,
+        descExcerpt ? `Video description: ${descExcerpt}` : '',
+        'What you can do: 1) check whether the video has official/CC captions; 2) add your own viewing notes; 3) use the "Translate note" and "Share poster" features below to organize and share the note.',
+      ].filter(Boolean).join(' ');
 
   // 核心要点：6 条讲义结构，避免"罗列"而是给用户可填充的讲义骨架
   const corePoints: CorePoint[] = [];
@@ -1225,7 +1304,10 @@ function generateFallbackNote(
     corePoints.push({
       index: idx,
       title: pointTitle,
-      detail: pointDetail,
+      detail:
+        descLines[i] !== undefined
+          ? `${pointDetail} ${isZh ? '视频简介线索：' : 'Description hint: '}${truncate(descLines[i], 120)}`
+          : pointDetail,
       sourceTimestamps:
         highlights.length > 0
           ? [highlights[Math.min(i, highlights.length - 1)].timestamp]
@@ -1317,6 +1399,72 @@ export async function fetchVideoTitle(
         const t = data?.data?.title;
         if (typeof t === 'string') return t.slice(0, 500);
       }
+    } catch {}
+    return undefined;
+  }
+  return undefined;
+}
+
+/** 解码 JSON 字符串字面量（含 \n / \uXXXX 等转义）；失败时退回手工替换。 */
+function decodeJsonString(raw: string): string {
+  try {
+    const parsed = JSON.parse(`"${raw}"`);
+    if (typeof parsed === 'string') return parsed;
+  } catch {}
+  return raw
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '')
+    .replace(/\\t/g, ' ')
+    .replace(/\\"/g, '"')
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, h: string) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/\\\\/g, '\\');
+}
+
+/**
+ * 尽力获取视频描述文本（用于无字幕时补充笔记内容）。任何失败都返回 undefined，绝不抛出。
+ * - YouTube：抓 watch HTML，从 ytInitialPlayerResponse 中提取 "shortDescription"（或降级正则）。
+ * - B站：走 view 接口读取 data.desc。
+ * 返回长度 ≤2000。
+ */
+export async function fetchVideoDescription(
+  videoUrl: string,
+  sourceType: 'youtube' | 'bilibili' | 'local',
+): Promise<string | undefined> {
+  if (sourceType === 'youtube') {
+    try {
+      const id = extractYouTubeId(videoUrl);
+      if (!id) return undefined;
+      const res = await fetchWithTimeout(`https://www.youtube.com/watch?v=${id}&hl=en`, {
+        headers: { Accept: 'text/html,*/*' },
+      });
+      if (!res.ok) return undefined;
+      const html = await res.text();
+      let raw: string | undefined;
+      const m = html.match(/"shortDescription":"((?:[^"\\]|\\.)*)"/);
+      if (m) raw = m[1];
+      if (!raw) {
+        const m2 = html.match(/"attributedDescription":\{"content":"((?:[^"\\]|\\.)*)"/);
+        if (m2) raw = m2[1];
+      }
+      if (!raw) return undefined;
+      const cleaned = decodeJsonString(raw).replace(/\r/g, '').trim();
+      return cleaned ? cleaned.slice(0, 2000) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  if (sourceType === 'bilibili') {
+    try {
+      const bvid = extractBilibiliBvid(videoUrl);
+      if (!bvid) return undefined;
+      const res = await fetchWithTimeout(
+        `https://api.bilibili.com/x/web-interface/view?bvid=${encodeURIComponent(bvid)}`,
+        { headers: { Accept: 'application/json' } },
+      );
+      if (!res.ok) return undefined;
+      const data = await res.json().catch(() => null);
+      const desc = data?.data?.desc;
+      if (typeof desc === 'string' && desc.trim()) return desc.trim().slice(0, 2000);
     } catch {}
     return undefined;
   }

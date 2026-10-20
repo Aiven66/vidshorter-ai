@@ -143,3 +143,40 @@ export async function translateCues(
   }
   return cues.map((c, i) => ({ start: c.start, end: c.end, text: translated[i] || c.text }));
 }
+
+/** 粗略探测源语言：以 CJK 字符占比判断是否中文，供 MyMemory langpair 兜底使用。 */
+function detectSourceLang(texts: string[]): string {
+  const joined = texts.join('');
+  const cjk = (joined.match(/[\u4e00-\u9fa5]/g) || []).length;
+  return joined.length > 0 && cjk / joined.length > 0.2 ? 'zh-Hans' : 'en';
+}
+
+/**
+ * 把任意文本数组翻译成目标语言（用于「笔记级」整段翻译，无需 LLM Key）。
+ * 复用下方的 Google gtx 逐行合并批量（≤25 行/批），失败自动切 MyMemory。
+ *
+ * @param texts      待翻译文本数组（如笔记的 summary / 金句 / 核心点）
+ * @param targetCode 目标语言代码（Google 认 zh-CN / zh-TW / en / ja …）
+ * @param sourceLang 源语言（可选；缺省时按 CJK 占比粗判，仅影响 MyMemory 兜底）
+ * @returns 与输入等长的数组；只要有任何一条无法翻译（数量不匹配）就返回 null。
+ */
+export async function translateTexts(
+  texts: string[],
+  targetCode: string,
+  sourceLang?: string | null,
+): Promise<string[] | null> {
+  if (!texts || texts.length === 0) return [];
+  const cues: SubtitleCue[] = texts.map((text, i) => ({
+    start: i,
+    end: i + 1,
+    text: String(text ?? ''),
+  }));
+
+  let translated = await googleTranslateAll(cues, targetCode);
+  if (!translated) {
+    console.warn('[subtitle-translate] Google unavailable for text batch, switching to MyMemory');
+    translated = await mymemoryTranslateAll(cues, mmSourceCode(sourceLang ?? detectSourceLang(texts)), targetCode);
+  }
+  if (!translated || translated.length < texts.length) return null;
+  return texts.map((t, i) => translated![i] || t);
+}

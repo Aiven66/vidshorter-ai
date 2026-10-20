@@ -83,6 +83,34 @@ export function getColorMeta(id: AnnotationColor | null | undefined): ColorMeta 
   return ANNOTATION_COLORS.find(c => c.id === id) || null;
 }
 
+/**
+ * 依据重要性给核心要点分配默认高亮色（用户未手动选择时展示）：
+ * 按 weight（无 weight 时用 1/index）排序，前 1/3 → pink、中间 1/3 → yellow、后 1/3 → blue；
+ * 仅 2 条时 pink / yellow，仅 1 条时 pink。
+ */
+export function buildDefaultColorMap(corePoints: CorePoint[]): Map<number, AnnotationColor> {
+  const map = new Map<number, AnnotationColor>();
+  if (!corePoints || corePoints.length === 0) return map;
+
+  const ranked = corePoints.map((p, i) => ({
+    index: p.index,
+    score: typeof p.weight === 'number' && Number.isFinite(p.weight) ? p.weight : 1 / (i + 1),
+  }));
+  ranked.sort((a, b) => b.score - a.score);
+
+  const n = ranked.length;
+  ranked.forEach((item, rank) => {
+    let color: AnnotationColor;
+    if (n === 1) color = 'pink';
+    else if (n === 2) color = rank === 0 ? 'pink' : 'yellow';
+    else if (rank < n / 3) color = 'pink';
+    else if (rank < (2 * n) / 3) color = 'yellow';
+    else color = 'blue';
+    map.set(item.index, color);
+  });
+  return map;
+}
+
 type Props = {
   corePoints: CorePoint[];
   annotations: CorePointAnnotation[];
@@ -112,6 +140,9 @@ export default function CorePointsAnnotator({
     }
     return map;
   }, [annotations]);
+
+  // 默认高亮色：用户未手动选择时按重要性展示，保证要点一眼可见
+  const defaultMap = useMemo(() => buildDefaultColorMap(corePoints), [corePoints]);
 
   function updateFor(index: number, patch: Partial<CorePointAnnotation>) {
     const existing = byIndex.get(index);
@@ -152,7 +183,7 @@ export default function CorePointsAnnotator({
             <span className="text-xs text-muted-foreground/60 ml-1">({corePoints.length})</span>
           </h3>
           <p className="text-xs text-muted-foreground mt-0.5 max-w-prose">
-            {t('notes.corePointsSubtitle')}
+            {t('notes.corePointsAutoColorHint')}
           </p>
         </div>
         {noteId && (
@@ -168,7 +199,8 @@ export default function CorePointsAnnotator({
       <div className="space-y-3">
         {corePoints.map((point) => {
           const ann = byIndex.get(point.index);
-          const color = ann?.color || null;
+          const userColor = ann?.color;
+          const color = userColor !== undefined ? userColor : (defaultMap.get(point.index) ?? null);
           const noteText = ann?.note || '';
           const colorMeta = getColorMeta(color);
           const bg = colorMeta ? colorMeta.bgClass : 'bg-card dark:bg-card/50';

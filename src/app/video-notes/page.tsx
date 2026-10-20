@@ -27,6 +27,8 @@ import {
   Share2,
   BookOpen,
   AlignLeft,
+  Languages,
+  Eye,
 } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
@@ -46,6 +48,25 @@ const TranscriptPanel = dynamic(
 );
 
 import type { TranscriptSegmentLite } from '@/components/video-notes/transcript-panel';
+
+/** 笔记级翻译可选目标语言（与 /api/video-notes/translate-note 白名单一致） */
+const NOTE_TARGET_LANGS: Array<{ code: string; label: string }> = [
+  { code: 'zh-Hans', label: '简体中文' },
+  { code: 'zh-Hant', label: '繁體中文' },
+  { code: 'en', label: 'English' },
+  { code: 'ja', label: '日本語' },
+  { code: 'ko', label: '한국어' },
+  { code: 'es', label: 'Español' },
+  { code: 'fr', label: 'Français' },
+  { code: 'de', label: 'Deutsch' },
+  { code: 'ru', label: 'Русский' },
+  { code: 'pt', label: 'Português' },
+  { code: 'it', label: 'Italiano' },
+  { code: 'ar', label: 'العربية' },
+  { code: 'hi', label: 'हिन्दी' },
+  { code: 'th', label: 'ไทย' },
+  { code: 'vi', label: 'Tiếng Việt' },
+];
 
 type HighlightLevel = 'critical' | 'important';
 
@@ -623,14 +644,71 @@ function NoteResultView({
 
   // 右栏页签：笔记 / 逐字稿（同一个视频切换时回到「笔记」）
   const [rightTab, setRightTab] = useState<'notes' | 'transcript'>('notes');
+  const { locale } = useLocale();
+  const [noteLang, setNoteLang] = useState(() => (locale.toLowerCase().startsWith('zh') ? 'en' : 'zh-Hans'));
+  const [translatedNote, setTranslatedNote] = useState<VideoNote | null>(null);
+  const [noteTranslating, setNoteTranslating] = useState(false);
+  const [noteTransError, setNoteTransError] = useState<string | null>(null);
   useEffect(() => {
     setRightTab('notes');
+    setTranslatedNote(null);
+    setNoteTransError(null);
   }, [videoUrl]);
   const transcriptSegments = result.transcript ?? [];
 
-  const corePointsAnnotator = (note.corePoints && note.corePoints.length > 0 && CorePointsAnnotator) ? (
+  // 展示用笔记：译文存在时用译文渲染；原始 result 保持不变（保存/导出/海报仍用原文）
+  const viewNote: VideoNote = translatedNote ?? note;
+
+  const handleTranslateNote = useCallback(async () => {
+    if (!accessToken) {
+      setNoteTransError(t('notes.errorLoginRequired'));
+      return;
+    }
+    setNoteTranslating(true);
+    setNoteTransError(null);
+    try {
+      const res = await fetch('/api/video-notes/translate-note', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          summary: note.summary,
+          highlights: note.highlights.map((h) => h.text),
+          takeaways: note.takeaways,
+          corePoints: note.corePoints.map((cp) => ({ title: cp.title, detail: cp.detail })),
+          targetLang: noteLang,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || t('notes.translateFailed'));
+      const outHighlights: string[] = Array.isArray(data?.highlights) ? data.highlights : [];
+      const outTakeaways: string[] = Array.isArray(data?.takeaways) ? data.takeaways : [];
+      const outCore: Array<{ title?: string; detail?: string }> = Array.isArray(data?.corePoints)
+        ? data.corePoints
+        : [];
+      setTranslatedNote({
+        ...note,
+        summary: typeof data?.summary === 'string' && data.summary ? data.summary : note.summary,
+        highlights: note.highlights.map((h, i) => ({ ...h, text: outHighlights[i] || h.text })),
+        takeaways: outTakeaways.length > 0 ? outTakeaways : note.takeaways,
+        corePoints: note.corePoints.map((cp, i) => ({
+          ...cp,
+          title: outCore[i]?.title || cp.title,
+          detail: outCore[i]?.detail || cp.detail,
+        })),
+      });
+    } catch (e: any) {
+      setNoteTransError(e?.message || t('notes.translateFailed'));
+    } finally {
+      setNoteTranslating(false);
+    }
+  }, [accessToken, note, noteLang, t]);
+
+  const corePointsAnnotator = (viewNote.corePoints && viewNote.corePoints.length > 0 && CorePointsAnnotator) ? (
     <CorePointsAnnotator
-      corePoints={note.corePoints}
+      corePoints={viewNote.corePoints}
       annotations={annotations}
       onAnnotationChange={onAnnotationChange}
       onJumpTimestamp={onJumpTimestamp}
@@ -802,29 +880,78 @@ function NoteResultView({
             />
           ) : (
           <>
+          {/* 笔记翻译工具栏 */}
+          <section className="mb-5 rounded-lg border border-border/70 bg-muted/30 px-3 py-2.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <Languages className="h-4 w-4 text-muted-foreground shrink-0" />
+              <label className="text-xs text-muted-foreground" htmlFor="note-target-lang">
+                {t('notes.translateTo')}
+              </label>
+              <select
+                id="note-target-lang"
+                value={noteLang}
+                onChange={(e) => setNoteLang(e.target.value)}
+                disabled={noteTranslating}
+                className="h-8 rounded-md border border-border bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+              >
+                {NOTE_TARGET_LANGS.map((l) => (
+                  <option key={l.code} value={l.code}>
+                    {l.label}
+                  </option>
+                ))}
+              </select>
+              <Button size="sm" onClick={handleTranslateNote} disabled={noteTranslating} className="h-8">
+                {noteTranslating ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                    {t('notes.translating')}
+                  </>
+                ) : (
+                  <>
+                    <Languages className="h-3.5 w-3.5 mr-1.5" />
+                    {translatedNote ? t('notes.translateNoteAgain') : t('notes.translateNote')}
+                  </>
+                )}
+              </Button>
+              {translatedNote && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setTranslatedNote(null)}
+                  className="h-8"
+                >
+                  <Eye className="h-3.5 w-3.5 mr-1.5" />
+                  {t('notes.showOriginal')}
+                </Button>
+              )}
+            </div>
+            <p className="mt-1.5 text-[11px] text-muted-foreground">{t('notes.translateNoteHint')}</p>
+            {noteTransError && <p className="mt-1.5 text-xs text-destructive">{noteTransError}</p>}
+          </section>
+
           {/* 概述 */}
-          {note.summary && (
+          {viewNote.summary && (
             <section className="mb-5">
               <h3 className="text-sm font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
                 <Sparkles className="h-3.5 w-3.5" />
                 {t('notes.sectionSummary')}
               </h3>
               <p className="text-sm leading-relaxed text-foreground/90">
-                {note.summary}
+                {viewNote.summary}
               </p>
             </section>
           )}
 
           {/* 高光列表（颜色标记） */}
-          {note.highlights?.length > 0 && (
+          {viewNote.highlights?.length > 0 && (
             <section className="mb-5">
               <h3 className="text-sm font-semibold text-muted-foreground mb-3 flex items-center gap-1.5">
                 <Target className="h-3.5 w-3.5" />
                 {t('notes.sectionHighlights')}
-                <span className="text-xs text-muted-foreground/60 ml-1">({note.highlights.length})</span>
+                <span className="text-xs text-muted-foreground/60 ml-1">({viewNote.highlights.length})</span>
               </h3>
               <div className="space-y-2">
-                {note.highlights.map((h, i) => (
+                {viewNote.highlights.map((h, i) => (
                   <HighlightRow
                     key={`${h.timestamp}-${i}`}
                     item={h}
@@ -838,14 +965,14 @@ function NoteResultView({
           )}
 
           {/* 金句 / Takeaways */}
-          {note.takeaways?.length > 0 && (
+          {viewNote.takeaways?.length > 0 && (
             <section className="mb-5">
               <h3 className="text-sm font-semibold text-muted-foreground mb-3 flex items-center gap-1.5">
                 <Quote className="h-3.5 w-3.5" />
                 {t('notes.sectionTakeaways')}
               </h3>
               <div className="space-y-2">
-                {note.takeaways.map((quote, i) => (
+                {viewNote.takeaways.map((quote, i) => (
                   <div
                     id={`takeaway-${i}`}
                     key={i}
@@ -864,7 +991,7 @@ function NoteResultView({
           )}
 
           {/* 核心讲义要点（含颜色标注 & 笔记） */}
-          {note.corePoints && note.corePoints.length > 0 && corePointsAnnotator !== null && corePointsAnnotator !== undefined && (
+          {viewNote.corePoints && viewNote.corePoints.length > 0 && corePointsAnnotator !== null && corePointsAnnotator !== undefined && (
             corePointsAnnotator
           )}
 

@@ -20,7 +20,7 @@ export const commonTranslations = {
     // 新侧边栏入口
     clips: 'Highlight Clips',
     shorts: 'Shorts Studio',
-    notes: 'Highlight Notes',
+    notes: 'YouTube Video Summarizer',
     podcast: 'AI Podcast',
     digitalHumanLive: 'Digital Human Selling',
     news: 'News Video',
@@ -1077,6 +1077,18 @@ export const commonTranslations = {
     posterGenerated: 'Poster generated!',
     posterGenerating: 'Rendering poster…',
     posterShareHint: 'Long-press to save or screenshot — great for WeChat Moments / X / LinkedIn',
+    // === Social share ===
+    shareTo: 'Share to',
+    shareNative: 'Share…',
+    shareEmail: 'Email',
+    shareCopied: 'Link copied',
+    shareCopyFailed: 'Copy failed',
+    // === Note-level translation ===
+    translateNote: 'Translate note',
+    translateNoteAgain: 'Re-translate note',
+    translateNoteHint: 'Translates the whole note — overview, highlights, quotes and core points.',
+    corePointsAutoColorHint:
+      'Key points are auto color-coded by importance: most important / important / supporting',
     // === Notes Library ===
     libraryTitle: 'My Notes',
     librarySubtitle: 'Access all your previously generated video highlight notes.',
