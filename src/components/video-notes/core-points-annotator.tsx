@@ -1,6 +1,7 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, type MouseEvent } from 'react';
+import { PlayCircle } from 'lucide-react';
 import type { CorePointAnnotation, AnnotationColor } from '@/app/api/video-notes/[id]/route';
 
 type CorePoint = {
@@ -152,6 +153,19 @@ export default function CorePointsAnnotator({
     onAnnotationChange(all);
   }
 
+  /**
+   * 点击卡片空白处 → 视频定位到该要点第一个来源时间点。
+   * 卡片内部的交互控件（颜色点、清空按钮、时间戳、备注输入框）不触发跳转，
+   * 避免用户标注笔记时误跳视频。
+   */
+  function handleCardClick(e: MouseEvent<HTMLDivElement>, point: CorePoint) {
+    if (!onJumpTimestamp) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest('button, a, textarea, input, select, label')) return;
+    const firstTs = point.sourceTimestamps?.[0];
+    if (firstTs) onJumpTimestamp(firstTs);
+  }
+
   async function handleSaveAll() {
     if (!noteId || !accessToken) return;
     try {
@@ -206,13 +220,17 @@ export default function CorePointsAnnotator({
           const bg = colorMeta ? colorMeta.bgClass : 'bg-card dark:bg-card/50';
           const ring = colorMeta ? colorMeta.ringClass : '';
           const text = colorMeta ? colorMeta.text : 'text-foreground';
+          const jumpable = !!onJumpTimestamp && !!point.sourceTimestamps?.[0];
 
           return (
             <div
               key={point.index}
+              onClick={(e) => handleCardClick(e, point)}
+              title={jumpable ? t('notes.corePointJumpHint') : undefined}
               className={
                 'rounded-xl border border-border/70 p-4 transition-shadow ' +
-                `${bg} ${ring}`
+                `${bg} ${ring} ` +
+                (jumpable ? 'cursor-pointer hover:shadow-md' : '')
               }
             >
               <div className="flex items-start gap-3">
@@ -234,8 +252,10 @@ export default function CorePointsAnnotator({
                         <button
                           key={i}
                           onClick={() => onJumpTimestamp(ts)}
-                          className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-background/70 hover:bg-background border border-border/60 text-muted-foreground hover:text-foreground hover:border-border transition"
+                          title={t('notes.playAt', { t: ts })}
+                          className="inline-flex items-center gap-1 font-mono text-[11px] px-2 py-0.5 rounded-full bg-primary/10 border border-primary/30 text-primary hover:bg-primary/20 hover:border-primary/50 transition"
                         >
+                          <PlayCircle className="h-3 w-3" />
                           {ts}
                         </button>
                       ))}

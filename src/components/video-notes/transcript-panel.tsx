@@ -1,9 +1,9 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { useLocale } from '@/lib/locale-context';
-import { Languages, Loader2, PlayCircle, RotateCcw, Eye, EyeOff } from 'lucide-react';
+import { Languages, Loader2, PlayCircle, RotateCcw, Eye, EyeOff, Crosshair } from 'lucide-react';
 
 export type TranscriptSegmentLite = {
   start: number;
@@ -43,6 +43,17 @@ function formatClock(sec: number): string {
 
 /** 二分查找当前播放时间命中的逐字稿行（segments 按 start 升序） */
 function findActiveIndex(list: TranscriptSegmentLite[], time: number): number {
+  const idx = findNearestIndex(list, time);
+  if (idx < 0) return -1;
+  const seg = list[idx];
+  const end = seg.start + (seg.duration || 0);
+  // 只在当前行时间窗内（或最后一行）高亮，避免长时间停在上一行
+  if (seg.duration > 0 && time > end + 1.5) return -1;
+  return idx;
+}
+
+/** 二分查找「最后一个 start ≤ time」的行（不判断时间窗），用于定位当前播放位置附近的行 */
+function findNearestIndex(list: TranscriptSegmentLite[], time: number): number {
   if (list.length === 0) return -1;
   let lo = 0;
   let hi = list.length - 1;
@@ -56,11 +67,6 @@ function findActiveIndex(list: TranscriptSegmentLite[], time: number): number {
       hi = mid - 1;
     }
   }
-  if (ans < 0) return -1;
-  const seg = list[ans];
-  const end = seg.start + (seg.duration || 0);
-  // 只在当前行时间窗内（或最后一行）高亮，避免长时间停在上一行
-  if (seg.duration > 0 && time > end + 1.5) return -1;
   return ans;
 }
 
@@ -101,9 +107,32 @@ export default function TranscriptPanel({
   const [error, setError] = useState<string | null>(null);
   const [untranslated, setUntranslated] = useState(0);
   const [showOriginal, setShowOriginal] = useState(false);
+  /** 是否跟随播放自动滚动到当前行（默认关闭，避免打断阅读；可一键开启） */
+  const [follow, setFollow] = useState(false);
 
+  const listRef = useRef<HTMLDivElement | null>(null);
   const display = translated ?? segments;
   const activeIndex = useMemo(() => findActiveIndex(display, activeTime), [display, activeTime]);
+
+  /** 把第 idx 行滚动到可视区域中部（滚动最近的可滚动祖先容器） */
+  const scrollRowIntoView = useCallback((idx: number) => {
+    if (idx < 0) return;
+    const el = listRef.current?.children[idx] as HTMLElement | undefined;
+    el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, []);
+
+  // 播放推进时自动跟随当前行
+  useEffect(() => {
+    if (!follow || activeIndex < 0) return;
+    scrollRowIntoView(activeIndex);
+  }, [activeIndex, follow, scrollRowIntoView]);
+
+  /** 跳到当前播放位置附近的逐字稿行（不改变播放进度） */
+  const jumpToCurrent = useCallback(() => {
+    setFollow(true);
+    const idx = activeIndex >= 0 ? activeIndex : findNearestIndex(display, activeTime);
+    scrollRowIntoView(idx);
+  }, [activeIndex, activeTime, display, scrollRowIntoView]);
 
   const handleTranslate = useCallback(async () => {
     if (!accessToken) {
@@ -215,8 +244,37 @@ export default function TranscriptPanel({
             </Button>
           </>
         )}
-        <span className="ml-auto text-[11px] text-muted-foreground">
-          {t('notes.transcriptCount', { n: segments.length })}
+        <span className="ml-auto flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setFollow((v) => !v)}
+            title={t('notes.transcriptFollow')}
+            className={
+              'inline-flex items-center gap-1 h-8 px-2 rounded-md border text-[11px] transition-colors ' +
+              (follow
+                ? 'border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400'
+                : 'border-border text-muted-foreground hover:text-foreground')
+            }
+          >
+            <span
+              className={
+                'w-1.5 h-1.5 rounded-full ' + (follow ? 'bg-emerald-500' : 'bg-muted-foreground/50')
+              }
+            />
+            {t('notes.transcriptFollow')}
+          </button>
+          <button
+            type="button"
+            onClick={jumpToCurrent}
+            title={t('notes.transcriptJumpCurrent')}
+            className="inline-flex items-center gap-1 h-8 px-2 rounded-md border border-border text-[11px] text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
+          >
+            <Crosshair className="h-3 w-3" />
+            {t('notes.transcriptJumpCurrent')}
+          </button>
+          <span className="text-[11px] text-muted-foreground">
+            {t('notes.transcriptCount', { n: segments.length })}
+          </span>
         </span>
       </div>
 
@@ -233,23 +291,25 @@ export default function TranscriptPanel({
         <p className="text-xs text-muted-foreground mb-3">{t('notes.transcriptTruncatedHint')}</p>
       )}
 
-      {/* 逐字稿列表 */}
-      <div className="space-y-1">
+      {/* 逐字稿列表：点击整行即可把视频定位到该段的时间点 */}
+      <div className="space-y-1" ref={listRef}>
         {display.map((seg, i) => {
           const original = segments[i];
           const isActive = i === activeIndex;
           return (
-            <div
+            <button
               key={`${seg.start}-${i}`}
+              type="button"
+              onClick={() => onJump(seg.start)}
+              title={t('notes.playAt', { t: formatClock(seg.start) })}
               className={
-                'group flex gap-2.5 px-2 py-1.5 rounded-md transition-colors ' +
-                (isActive ? 'bg-primary/10' : 'hover:bg-muted/60')
+                'w-full text-left group flex gap-2.5 px-2 py-1.5 rounded-md transition-colors border-l-2 ' +
+                (isActive
+                  ? 'bg-primary/10 border-primary'
+                  : 'border-transparent hover:bg-muted/60 hover:border-primary/30')
               }
             >
-              <button
-                type="button"
-                onClick={() => onJump(seg.start)}
-                title={t('notes.playAt', { t: formatClock(seg.start) })}
+              <span
                 className={
                   'shrink-0 inline-flex items-center gap-1 h-5 px-1.5 rounded font-mono text-[11px] tabular-nums transition-colors ' +
                   (isActive
@@ -259,16 +319,22 @@ export default function TranscriptPanel({
               >
                 <PlayCircle className="h-3 w-3" />
                 {formatClock(seg.start)}
-              </button>
-              <div className="flex-1 min-w-0">
-                <p className={'text-sm leading-relaxed ' + (isActive ? 'text-foreground' : 'text-foreground/90')}>
+              </span>
+              <span className="flex-1 min-w-0">
+                <span
+                  className={
+                    'block text-sm leading-relaxed ' + (isActive ? 'text-foreground' : 'text-foreground/90')
+                  }
+                >
                   {seg.text}
-                </p>
+                </span>
                 {showOriginal && translated && original && original.text !== seg.text && (
-                  <p className="text-xs leading-relaxed text-muted-foreground mt-0.5">{original.text}</p>
+                  <span className="block text-xs leading-relaxed text-muted-foreground mt-0.5">
+                    {original.text}
+                  </span>
                 )}
-              </div>
-            </div>
+              </span>
+            </button>
           );
         })}
       </div>
