@@ -183,24 +183,28 @@ export default function NoteDetailPage() {
   // 会让短于约 12.5 分钟的视频被误判为「已正确」而跳过重排。重排后偏差归零，只执行一次。
   useEffect(() => {
     if (playerDuration < 60) return;
-    setNote(prev => {
-      if (!prev) return prev;
-      const content = prev.content_json;
-      if (content.hasTranscript !== false) return prev;
-      const list = content.highlights || [];
-      if (list.length < 3) return prev;
-      const serverTotal = content.totalDuration || 0;
-      if (serverTotal > 0 && Math.abs(playerDuration - serverTotal) / playerDuration < 0.15) return prev;
-      const step = (playerDuration - 20) / (list.length - 1);
-      const highlights = list.map((h, i) => {
-        const t = Math.max(0, Math.round(step * i));
-        return { ...h, startSeconds: t, timestamp: formatSeconds(t) };
+    // 等时长稳定 1.5s 再重排：IFrame API 的时长可能先给中间值再收敛，避免中途闪烁。
+    const timer = window.setTimeout(() => {
+      setNote(prev => {
+        if (!prev) return prev;
+        const content = prev.content_json;
+        if (content.hasTranscript !== false) return prev;
+        const list = content.highlights || [];
+        if (list.length < 3) return prev;
+        const serverTotal = content.totalDuration || 0;
+        if (serverTotal > 0 && Math.abs(playerDuration - serverTotal) / playerDuration < 0.15) return prev;
+        const step = (playerDuration - 20) / (list.length - 1);
+        const highlights = list.map((h, i) => {
+          const t = Math.max(0, Math.round(step * i));
+          return { ...h, startSeconds: t, timestamp: formatSeconds(t) };
+        });
+        return {
+          ...prev,
+          content_json: { ...content, highlights, totalDuration: Math.round(playerDuration) },
+        };
       });
-      return {
-        ...prev,
-        content_json: { ...content, highlights, totalDuration: Math.round(playerDuration) },
-      };
-    });
+    }, 1500);
+    return () => window.clearTimeout(timer);
   }, [playerDuration]);
 
   const handleJumpToHighlight = useCallback((index: number) => {

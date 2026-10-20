@@ -444,16 +444,21 @@ export default function VideoNotesPage() {
     if (list.length < 3) return;
     const serverTotal = currentNote.totalDuration || 0;
     if (serverTotal > 0 && Math.abs(playerDuration - serverTotal) / playerDuration < 0.15) return;
-    const step = (playerDuration - 20) / (list.length - 1);
-    const nextHighlights = list.map((h, i) => {
-      const t = Math.max(0, Math.round(step * i));
-      return { ...h, startSeconds: t, timestamp: formatSeconds(t) };
-    });
-    setResult(prev =>
-      prev
-        ? { ...prev, note: { ...prev.note, highlights: nextHighlights, totalDuration: Math.round(playerDuration) } }
-        : prev,
-    );
+    // YouTube IFrame API 返回的时长可能先给出一个中间值再收敛到真实值，因此等时长稳定
+    // 1.5s 后再重排，避免中途按错误时长铺排造成圆点闪烁。时长再次变化时定时器会被清掉重排。
+    const timer = window.setTimeout(() => {
+      const step = (playerDuration - 20) / (list.length - 1);
+      const nextHighlights = list.map((h, i) => {
+        const t = Math.max(0, Math.round(step * i));
+        return { ...h, startSeconds: t, timestamp: formatSeconds(t) };
+      });
+      setResult(prev =>
+        prev
+          ? { ...prev, note: { ...prev.note, highlights: nextHighlights, totalDuration: Math.round(playerDuration) } }
+          : prev,
+      );
+    }, 1500);
+    return () => window.clearTimeout(timer);
   }, [playerDuration, result?.note]);
 
   return (
