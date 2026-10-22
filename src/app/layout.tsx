@@ -107,10 +107,42 @@ const structuredData = {
       '@id': `${siteUrl}/#organization`,
       name: 'Clipop AI',
       url: siteUrl,
-      logo: `${siteUrl}/icon.svg`,
+      logo: { '@type': 'ImageObject', url: `${siteUrl}/icon.svg` },
       description:
         'Clipop AI turns long videos and podcasts into viral vertical shorts with AI highlight detection, auto captions and digital human video generation.',
-      sameAs: ['https://podcastai.clipopai.com/'],
+      slogan: 'Turn long videos into viral vertical shorts',
+      sameAs: [
+        'https://x.com/Aiven66',
+        'https://www.youtube.com/channel/UCtw5ImAi8jpawfXcMJmXr1A',
+        'https://www.instagram.com/clipopai/',
+        'https://podcastai.clipopai.com/',
+      ],
+      contactPoint: [
+        {
+          '@type': 'ContactPoint',
+          contactType: 'customer support',
+          email: 'support@clipop.ai',
+          availableLanguage: ['English', 'Chinese'],
+          url: `${siteUrl}/contact`,
+        },
+        {
+          '@type': 'ContactPoint',
+          contactType: 'privacy',
+          email: 'aiven666666@gmail.com',
+          url: `${siteUrl}/privacy`,
+        },
+      ],
+      knowsAbout: [
+        'AI video clipping',
+        'long video to short video',
+        'highlight detection',
+        'automatic video reframing',
+        'AI captions',
+        'podcast clipping',
+        'digital human video',
+        'YouTube Shorts',
+        'TikTok video remix',
+      ],
     },
     {
       '@type': 'WebSite',
@@ -133,11 +165,26 @@ const structuredData = {
       applicationCategory: 'MultimediaApplication',
       operatingSystem: 'Web, macOS, Windows, Android',
       url: siteUrl,
+      downloadUrl: `${siteUrl}/download`,
+      screenshot: `${siteUrl}/opengraph-image`,
+      featureList: [
+        'AI highlight detection for long videos',
+        'Automatic 9:16 subject reframing',
+        'AI captions and multilingual captions',
+        'YouTube Shorts, TikTok and Reels export',
+        'YouTube Video Summarizer',
+        'AI Podcast clip generation',
+        'Digital human talking-head video',
+        'Batch queue and ZIP export',
+      ],
       offers: {
-        '@type': 'Offer',
-        price: '0',
+        '@type': 'AggregateOffer',
+        lowPrice: '0',
+        highPrice: '19.9',
         priceCurrency: 'USD',
-        description: 'Free plan with 60 credits per day; paid plans from $9.9/month.',
+        offerCount: '3',
+        url: `${siteUrl}/pricing`,
+        description: 'Free plan with 60 credits per day; Starter $9.9/month; Pro $19.9/month.',
       },
       aggregateRating: {
         '@type': 'AggregateRating',
@@ -206,6 +253,8 @@ export default function RootLayout({
         `}} />
         <link rel="dns-prefetch" href="https://us-assets.i.posthog.com" />
         <link rel="dns-prefetch" href="https://api.github.com" />
+        {/* 博客 RSS：供聚合器与 AI 抓取器发现最新内容 */}
+        <link rel="alternate" type="application/rss+xml" title="Clipop AI Blog" href={`${siteUrl}/rss.xml`} />
         {/* 性能：提前与后端/分析域名建连，降低首屏关键请求延迟 */}
         {supabaseOrigin && <link rel="preconnect" href={supabaseOrigin} crossOrigin="anonymous" />}
         <link rel="preconnect" href="https://www.googletagmanager.com" />

@@ -1,11 +1,20 @@
 import type { Metadata } from 'next';
 import ClientShortsProcessor from '@/components/home/client-shorts-processor';
+import { buildMetadata } from '@/lib/seo';
 
-export const metadata: Metadata = {
-  title: 'YouTube Shorts 成片 — 长视频一键生成竖屏高光短视频',
+export const metadata: Metadata = buildMetadata({
+  title: 'YouTube Shorts Studio - Long Video to 9:16 Shorts',
   description:
-    '输入长视频链接，AI 自动提取最具传播力的高光片段，输出 9:16 竖屏 YouTube Shorts 成片，含 AI 字幕，可直接发布。',
-};
+    'Paste a long YouTube or Bilibili link and Clipop AI extracts the strongest highlights, reframes them to 9:16 and exports vertical YouTube Shorts with AI captions.',
+  path: '/shorts',
+  keywords: [
+    'YouTube Shorts generator',
+    'long video to Shorts',
+    'AI Shorts maker',
+    '9:16 video converter',
+    'vertical video editor',
+  ],
+});
 
 export default function ShortsPage() {
   return (

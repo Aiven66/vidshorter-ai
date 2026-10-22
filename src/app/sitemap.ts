@@ -26,6 +26,8 @@ const PUBLIC_ROUTES: RouteDef[] = [
   { path: '/blog', priority: 0.85, changeFrequency: 'daily' },
   { path: '/download', priority: 0.8, changeFrequency: 'weekly' },
   { path: '/about', priority: 0.7, changeFrequency: 'monthly' },
+  { path: '/faq', priority: 0.8, changeFrequency: 'weekly' },
+  { path: '/contact', priority: 0.6, changeFrequency: 'monthly' },
   { path: '/privacy', priority: 0.3, changeFrequency: 'yearly' },
   { path: '/terms', priority: 0.3, changeFrequency: 'yearly' },
 ];

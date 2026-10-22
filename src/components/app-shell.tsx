@@ -437,6 +437,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const termsLabel = t('footer.terms') === 'footer.terms' ? 'Terms of Service' : t('footer.terms');
   const privacyLabel = t('footer.privacy') === 'footer.privacy' ? 'Privacy Policy' : t('footer.privacy');
   const contactLabel = t('footer.contact') === 'footer.contact' ? 'Contact' : t('footer.contact');
+  const faqLabel = t('footer.faq') === 'footer.faq' ? 'FAQ' : t('footer.faq');
   const currentYear = new Date().getFullYear();
 
   return (
@@ -558,6 +559,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               >
                 {contactLabel}: aiven666666@gmail.com
               </a>
+              <Link href="/faq" className="transition-colors hover:text-primary">
+                {faqLabel}
+              </Link>
+              <Link href="/contact" className="transition-colors hover:text-primary" title={contactLabel}>
+                {contactLabel}
+              </Link>
               <Link href="/terms" className="transition-colors hover:text-primary">
                 {termsLabel}
               </Link>

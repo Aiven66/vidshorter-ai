@@ -4,6 +4,7 @@ import { useLocale } from '@/lib/locale-context';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { Sparkles, Users, Zap, Shield, ArrowRight, Target, Award, Globe, TrendingUp, Video, Lightbulb } from 'lucide-react';
+import { AboutTrustSection } from '@/components/seo/about-trust-section';
 
 export default function AboutPage() {
   const { t } = useLocale();
@@ -285,6 +286,9 @@ export default function AboutPage() {
           </p>
         </div>
       </section>
+
+      {/* Company & product facts（信任闭环：主体 / 规格 / 联系方式 / 合规页） */}
+      <AboutTrustSection />
 
       {/* CTA Section */}
       <section className="py-20">
