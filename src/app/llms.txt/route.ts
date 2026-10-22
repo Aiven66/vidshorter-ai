@@ -13,7 +13,7 @@ function buildLlmsTxt(): string {
   lines.push('');
   lines.push(`> ${BRAND.description}`);
   lines.push('');
-  lines.push(`${BRAND.name} is a ${BRAND.category.toLowerCase()} for ${BRAND.audience.join(', ')}.`);
+  lines.push(`${BRAND.name} is an ${BRAND.category.toLowerCase()} for ${BRAND.audience.join(', ')}.`);
   lines.push('');
 
   lines.push('## Core facts');
