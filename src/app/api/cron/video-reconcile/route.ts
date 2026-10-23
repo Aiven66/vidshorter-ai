@@ -4,7 +4,11 @@ import { TERMINAL_VIDEO_STATUSES } from '@/lib/video-batch';
 import { refundIfCharged } from '@/lib/server/video-refund';
 
 /**
- * 定时对账非终态视频任务（Vercel Cron，见 vercel.json，每 5 分钟）。
+ * 定时对账非终态视频任务。
+ *
+ * 调度方式：
+ *   - GitHub Actions `.github/workflows/video-reconcile.yml` 每 5 分钟调用（主路径）；
+ *   - vercel.json 每日 03:00 兜底一次（Hobby 套餐不允许高频 cron）。
  *
  * 为什么需要它：单条任务的超时判定过去只在用户轮询 /api/videos/process/status 时触发。
  * 用户关掉页面后，一条死掉的任务会永远停在 processing —— 既不释放批量队列槽位，

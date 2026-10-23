@@ -1,0 +1,24 @@
+name: Video Reconcile
+
+# Vercel Hobby 只允许每日 cron，这里用 GitHub Actions 维持 5 分钟对账节奏。
+# 需要仓库 Secrets 中配置 CRON_SECRET（与 Vercel 生产环境变量同值）。
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger reconcile endpoint
+        run: |
+          set -e
+          CODE=$(curl -sS -o /tmp/reconcile.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://www.clipopai.com/api/cron/video-reconcile")
+          cat /tmp/reconcile.json || true
+          if [ "$CODE" != "200" ]; then
+            echo "reconcile failed: HTTP $CODE"
+            exit 1
+          fi

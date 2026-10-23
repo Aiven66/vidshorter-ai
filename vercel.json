@@ -26,7 +26,7 @@
     },
     {
       "path": "/api/cron/video-reconcile",
-      "schedule": "*/5 * * * *"
+      "schedule": "0 3 * * *"
     }
   ]
 }
