@@ -12,8 +12,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Trigger reconcile endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           set -e
+          if [ -z "$CRON_SECRET" ]; then
+            echo "CRON_SECRET repo secret is not configured; skipping (daily Vercel cron still runs)."
+            exit 0
+          fi
           CODE=$(curl -sS -o /tmp/reconcile.json -w '%{http_code}' \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
             "https://www.clipopai.com/api/cron/video-reconcile")
