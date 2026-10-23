@@ -23,7 +23,6 @@
     "test:desktop-auth": "node --import tsx scripts/check-desktop-auth-flow.ts",
     "test:download-latest": "node --import tsx scripts/check-download-latest-route.ts",
     "test:home-i18n": "node --import tsx scripts/check-home-i18n.ts",
-    "test:paypal-payment": "node --import tsx scripts/check-paypal-payment-flow.ts",
     "test:recap": "node --import tsx scripts/check-recap.ts",
     "test:recipes": "node --import tsx scripts/check-recipes.ts",
     "test:scenarios": "node --import tsx scripts/check-scenarios.ts",

@@ -23,7 +23,7 @@ function buildLlmsTxt(): string {
   lines.push('- Inputs: YouTube and Bilibili links, public video links, local MP4 / MOV / AVI uploads');
   lines.push('- Output: 9:16 vertical MP4 with burned-in AI captions');
   lines.push('- Clip length: about 20–65 seconds, adapted to the source video length');
-  lines.push('- Pricing: Free $0 (60 credits/day) · Starter $9.9/month (6,000 credits) · Pro $19.9/month (20,000 credits)');
+  lines.push('- Pricing: Free $0 (180 credits on signup, then 60/day with a 600/month cap) · Starter $9.9/month (6,000 credits) · Pro $19.9/month (20,000 credits)');
   lines.push('- Credit cost: 60 credits per clip');
   lines.push('- Export quality: 720p free with watermark · 1080p Starter without watermark · up to 4K Pro');
   lines.push('- Interface languages: 32');

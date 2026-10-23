@@ -5,6 +5,9 @@ import { useAuth } from './auth-context';
 import { isAdminUser } from './admin-gate';
 import {
   FREE_DAILY_CREDITS,
+  FREE_MONTHLY_CAP,
+  FREE_SIGNUP_CREDITS,
+  FREE_WELCOME_TX_TYPE,
   hasQuotaCrossed,
   isLegacyPaidRow,
   planQuota,
@@ -55,9 +58,31 @@ const DEMO_CREDITS_KEY = 'clipop_demo_credits';
 const DEMO_CREDITS_RESET_KEY = 'clipop_demo_credits_reset';
 
 // 额度真源统一在 @/lib/plan-credits（与服务端同一份）：
-// 免费档 60/日（= 1 次生成，CREDIT_COST 60）；Starter 6,000/月；Pro 20,000/月。
+// 免费档注册赠 180、每日 60、每月 600 封顶；Starter 6,000/月；Pro 20,000/月。
 const DAILY_FREE_CREDITS = FREE_DAILY_CREDITS;
 const ADMIN_CREDITS = 10_000;
+
+/** 本自然月已发放的免费额度（daily_reset + welcome_bonus）；查询失败按 0 处理。 */
+async function getMonthlyFreeGranted(
+  client: Awaited<ReturnType<typeof getSupabaseClient>>,
+  userId: string,
+): Promise<number> {
+  try {
+    const { data, error } = await client
+      .from('credit_transactions')
+      .select('amount')
+      .eq('user_id', userId)
+      .in('type', ['daily_reset', FREE_WELCOME_TX_TYPE])
+      .gte('created_at', resetBoundary('month', new Date()));
+    if (error || !data) return 0;
+    return data.reduce((sum: number, row: { amount?: number }) => {
+      const amount = Number(row.amount ?? 0);
+      return amount > 0 ? sum + amount : sum;
+    }, 0);
+  } catch {
+    return 0;
+  }
+}
 
 /** 某 plan 当前的额度与周期（存量旧付费订阅仍走旧日额度）。 */
 function quotaFor(planType: string | null | undefined, legacyPaid: boolean): Quota {
@@ -120,7 +145,7 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
     if (user) {
       // Admin always gets 10000 credits
       const isAdmin = isAdminUser(user);
-      const defaultCredits = isAdmin ? ADMIN_CREDITS : DAILY_FREE_CREDITS;
+      const defaultCredits = isAdmin ? ADMIN_CREDITS : FREE_SIGNUP_CREDITS;
       const useDemoMode = !isSupabaseConfigured() || user.id.startsWith('demo-') || user.id.startsWith('google-demo-');
 
       if (useDemoMode) {
@@ -158,7 +183,7 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
     // Check configuration directly
     if (!isSupabaseConfigured()) {
       const isAdmin = isAdminUser(user);
-      const defaultCredits = isAdmin ? ADMIN_CREDITS : DAILY_FREE_CREDITS;
+      const defaultCredits = isAdmin ? ADMIN_CREDITS : FREE_SIGNUP_CREDITS;
       if (isAdmin || !shouldResetDemoCredits()) {
         setBalance(getDemoCredits(user?.id));
       } else {
@@ -192,7 +217,11 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
         .maybeSingle();
       setPlan(sub?.plan_type || 'free');
       const quota = quotaFor(sub?.plan_type, isLegacyPaidRow(sub?.plan_type, periodEndOf(sub)));
-      const dailyCredits = isAdminUser(user) ? ADMIN_CREDITS : quota.amount;
+      const isFreePlan = !isLegacyPaidRow(sub?.plan_type, periodEndOf(sub))
+        && sub?.plan_type !== 'starter' && sub?.plan_type !== 'pro';
+      const dailyCredits = isAdminUser(user)
+        ? ADMIN_CREDITS
+        : (isFreePlan ? FREE_SIGNUP_CREDITS : quota.amount);
 
       const { data, error } = await client
         .from('credits')
@@ -247,7 +276,10 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
     // Demo mode
     if (!isSupabaseConfigured() || user.id.startsWith('demo-') || user.id.startsWith('google-demo-')) {
       const isAdmin = isAdminUser(user);
-      const resetAmount = isAdmin ? ADMIN_CREDITS : DAILY_FREE_CREDITS;
+      const stored = getDemoCredits(user.id);
+      const resetAmount = isAdmin
+        ? ADMIN_CREDITS
+        : (stored > 0 ? Math.max(stored, DAILY_FREE_CREDITS) : FREE_SIGNUP_CREDITS);
       setBalance(resetAmount);
       saveDemoCredits(resetAmount, user.id);
       setDemoResetTime();
@@ -274,6 +306,7 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
       setPlan(sub?.plan_type || 'free');
       const plan = sub?.plan_type ?? null;
       const quota = quotaFor(plan, isLegacyPaidRow(plan, periodEndOf(sub)));
+      const isFreePlan = plan !== 'starter' && plan !== 'pro';
       const dailyCredits = quota.amount;
 
       // 先查询当前 credits 行（避免每次都重置）
@@ -295,39 +328,51 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
       const resetAt = resetBoundary(quota.period, new Date());
 
       if (!existingRow) {
-        // 新用户：尝试插入（若 RLS 阻止也无妨，服务端会用 service role 处理）
+        // 新用户：免费档注册赠 180；付费档发整月额度。
+        // 尝试插入（若 RLS 阻止也无妨，服务端会用 service role 处理）
+        const initial = isFreePlan ? FREE_SIGNUP_CREDITS : dailyCredits;
         const { data: newRow, error: insertError } = await client
           .from('credits')
           .insert({
             user_id: user.id,
-            balance: dailyCredits,
+            balance: initial,
             last_reset_at: resetAt,
           })
           .select()
           .single();
         if (insertError) {
           console.warn('Credits insert blocked (likely RLS), using local value:', insertError.message);
-          setBalance(dailyCredits);
-          return dailyCredits;
+          setBalance(initial);
+          return initial;
         }
         if (newRow) {
           setBalance(newRow.balance);
           try {
             await client.from('credit_transactions').insert({
               user_id: user.id,
-              amount: dailyCredits,
-              type: quotaTransactionType(quota.period),
-              description: quotaResetDescription(plan, quota, true),
+              amount: initial,
+              type: isFreePlan ? FREE_WELCOME_TX_TYPE : quotaTransactionType(quota.period),
+              description: isFreePlan
+                ? `Welcome bonus (${FREE_SIGNUP_CREDITS} credits to start)`
+                : quotaResetDescription(plan, quota, true),
             });
           } catch {}
           return newRow.balance;
         }
       } else if (shouldReset) {
-        // 跨周期重置
+        // 跨周期重置：免费档受每月 600 封顶约束（本月已发满则不再发放，也不清空余额）
+        let nextBalance = dailyCredits;
+        let granted = dailyCredits;
+        if (isFreePlan) {
+          const monthGranted = await getMonthlyFreeGranted(client, user.id);
+          const remaining = Math.max(0, FREE_MONTHLY_CAP - monthGranted);
+          granted = Math.min(FREE_DAILY_CREDITS, remaining);
+          nextBalance = granted > 0 ? granted : (existingRow.balance ?? 0);
+        }
         const { data, error } = await client
           .from('credits')
           .update({
-            balance: dailyCredits,
+            balance: nextBalance,
             last_reset_at: resetAt,
           })
           .eq('user_id', user.id)
@@ -342,14 +387,16 @@ export function CreditsProvider({ children }: { children: ReactNode }) {
 
         if (data) {
           setBalance(data.balance);
-          try {
-            await client.from('credit_transactions').insert({
-              user_id: user.id,
-              amount: dailyCredits,
-              type: quotaTransactionType(quota.period),
-              description: quotaResetDescription(plan, quota),
-            });
-          } catch {}
+          if (granted > 0) {
+            try {
+              await client.from('credit_transactions').insert({
+                user_id: user.id,
+                amount: granted,
+                type: quotaTransactionType(quota.period),
+                description: quotaResetDescription(plan, quota),
+              });
+            } catch {}
+          }
           return data.balance;
         }
       } else {

@@ -5,6 +5,8 @@ import { detectPlatform } from '@/lib/server/platforms';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createClient } from '@supabase/supabase-js';
 import {
+  FREE_SIGNUP_CREDITS,
+  FREE_WELCOME_TX_TYPE,
   hasQuotaCrossed,
   isLegacyPaidRow,
   planQuota,
@@ -12,6 +14,7 @@ import {
   quotaTransactionType,
   resetBoundary,
 } from '@/lib/plan-credits';
+import { nextFreeResetBalance } from '@/lib/server/free-quota';
 
 // 获取 service role 客户端用于绕过 RLS 的关键积分操作（服务端专用，不会泄露密钥）
 function getServiceRoleClientForCredits(): SupabaseClient | null {
@@ -319,11 +322,13 @@ export async function POST(request: NextRequest) {
             // 仅在跨过当前计费周期边界时重置（免费档按日 / 付费档按月），避免每次点击都重置（修复"重置 bug"）
             const shouldReset = !creditsRow || hasQuotaCrossed(quota.period, creditsRow.last_reset_at);
 
+            const isFreePlan = plan !== 'starter' && plan !== 'pro';
             if (!creditsRow) {
-              // 新用户：插入 credits 行
+              // 新用户：免费档注册赠 180（3 条，计入当月 600 封顶）；付费档发整月额度
+              const initial = isFreePlan ? FREE_SIGNUP_CREDITS : quota.amount;
               const { error: insertErr } = await creditsClient.from('credits').insert({
                 user_id: userId,
-                balance: quota.amount,
+                balance: initial,
                 last_reset_at: resetAt,
               });
               if (insertErr) {
@@ -331,22 +336,29 @@ export async function POST(request: NextRequest) {
               }
               await creditsClient.from('credit_transactions').insert({
                 user_id: userId,
-                amount: quota.amount,
-                type: quotaTransactionType(quota.period),
-                description: quotaResetDescription(plan, quota, true),
+                amount: initial,
+                type: isFreePlan ? FREE_WELCOME_TX_TYPE : quotaTransactionType(quota.period),
+                description: isFreePlan
+                  ? `Welcome bonus (${FREE_SIGNUP_CREDITS} credits to start)`
+                  : quotaResetDescription(plan, quota, true),
               });
             } else if (shouldReset) {
-              // 跨周期重置：仅在 UTC 日/月边界变更时重置
+              // 跨周期重置：仅在 UTC 日/月边界变更时重置（免费档受每月 600 封顶约束）
+              const next = isFreePlan
+                ? await nextFreeResetBalance(creditsClient, userId, creditsRow.balance ?? 0)
+                : { balance: quota.amount, grant: quota.amount };
               await creditsClient
                 .from('credits')
-                .update({ balance: quota.amount, last_reset_at: resetAt })
+                .update({ balance: next.balance, last_reset_at: resetAt })
                 .eq('user_id', userId);
-              await creditsClient.from('credit_transactions').insert({
-                user_id: userId,
-                amount: quota.amount,
-                type: quotaTransactionType(quota.period),
-                description: quotaResetDescription(plan, quota),
-              });
+              if (next.grant > 0) {
+                await creditsClient.from('credit_transactions').insert({
+                  user_id: userId,
+                  amount: next.grant,
+                  type: quotaTransactionType(quota.period),
+                  description: quotaResetDescription(plan, quota),
+                });
+              }
             }
 
             const { data: latestCredits } = await creditsClient

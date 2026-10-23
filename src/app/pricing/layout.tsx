@@ -5,7 +5,7 @@ import { buildFaqJsonLd, buildBreadcrumbJsonLd, type FaqItem } from '@/lib/geo-c
 export const metadata: Metadata = buildMetadata({
   title: 'Pricing & Plans',
   description:
-    'Clipop AI pricing: start free with 60 credits per day, upgrade to Starter or Pro for 1080p/4K exports, no watermark, batch rendering and digital human videos. One-time credit packs available.',
+    'Clipop AI pricing: start free with 180 credits on signup, then 60 per day, and upgrade to Starter or Pro for 1080p/4K exports, no watermark, batch rendering and digital human videos. 7-day money-back guarantee on your first subscription. One-time credit packs available.',
   path: '/pricing',
   keywords: ['Clipop AI pricing', 'AI video clipper pricing', 'video clipper subscription', 'AI video credits'],
 });
@@ -22,7 +22,7 @@ const PRICING_FAQS: FaqItem[] = [
   {
     question: 'How do credit resets work?',
     answer:
-      "Free plans reset to 60 credits every day; paid plans reset to their monthly allowance (Starter 6,000 / Pro 20,000) on the 1st of each month. Everything resets at 00:00 UTC and unused credits don't carry over.",
+      "New free accounts start with 180 credits (3 clips). Free credits then reset to 60 per day, capped at 600 per month. Paid plans reset to their monthly allowance (Starter 6,000 / Pro 20,000) on the 1st of each month. Everything resets at 00:00 UTC and unused credits don't carry over.",
   },
   {
     question: 'Can I upgrade or downgrade my plan?',
@@ -35,7 +35,7 @@ const PRICING_FAQS: FaqItem[] = [
   {
     question: 'What payment methods are supported?',
     answer:
-      'Creem is available for cards, Apple Pay, and Google Pay. PayPal checkout supports PayPal wallet and card payments once production credentials are configured.',
+      'We accept cards, Apple Pay and Google Pay. Checkout is handled by Waffo (primary) or Creem (alternative); both are live payment channels.',
   },
 ];
 

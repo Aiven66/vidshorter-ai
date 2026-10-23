@@ -61,7 +61,7 @@ export const CORE_FAQS: FaqItem[] = [
   {
     question: 'How do credits and pricing work?',
     answer:
-      'One clip costs 60 credits. New accounts receive 60 free credits per day, enough for one clip per day. Starter is $9.9 per month with 6,000 credits per month, and Pro is $19.9 per month with 20,000 credits per month. Free credits reset daily; paid credits reset monthly at 00:00 UTC and do not roll over.',
+      'One clip costs 60 credits. New free accounts get 180 credits on signup (3 clips); after that the Free plan grants 60 credits per day, capped at 600 credits per month. Starter is $9.9 per month with 6,000 credits per month, and Pro is $19.9 per month with 20,000 credits per month. Free credits reset daily; paid credits reset monthly at 00:00 UTC and do not roll over.',
   },
   {
     question: 'Do I need to install software?',
@@ -96,7 +96,7 @@ export const EXTENDED_FAQS: FaqItem[] = [
   {
     question: 'Is there a free plan?',
     answer:
-      'Yes. The Free plan gives you 60 credits per day, which equals one clip per day, with 720p exports and a watermark. You can start without paying.',
+      'Yes. The Free plan gives you 180 credits at signup (3 clips), then 60 credits per day up to 600 per month, with 720p exports and a watermark. You can start without paying.',
   },
   {
     question: 'What is the difference between Highlight Clips, Shorts Studio and AI Video Maker?',
@@ -126,7 +126,7 @@ export const PRODUCT_SPECS: Array<{ label: string; value: string }> = [
   { label: 'Aspect ratio', value: '9:16 vertical with automatic subject reframing' },
   { label: 'Captions', value: 'AI-generated captions burned into the video; multilingual captions supported' },
   { label: 'Export quality', value: 'Free 720p with watermark · Starter 1080p without watermark · Pro up to 4K' },
-  { label: 'Credits', value: '60 credits per clip · Free 60/day · Starter 6,000/month · Pro 20,000/month' },
+  { label: 'Credits', value: '60 credits per clip · Free 180 on signup, then 60/day (600/month cap) · Starter 6,000/month · Pro 20,000/month' },
   { label: 'Platforms', value: 'Web app, macOS desktop app, Windows desktop app, Android app' },
   { label: 'Interface languages', value: '32 languages' },
 ];

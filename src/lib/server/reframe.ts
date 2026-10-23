@@ -390,11 +390,13 @@ export function buildReframeComplex(
   path: ReframePath,
   postChain?: string | null,
   inLabel: string = '[0:v]',
+  outW: number = VERTICAL_W,
+  outH: number = VERTICAL_H,
 ): string {
   const expr = fractionExpression(path);
   const chain =
     `${inLabel}crop=w=trunc(ih*${CROP_RATIO.toFixed(6)}/2)*2:h=ih:x='(iw-ow)*(${expr})':y=0,` +
-    `scale=${VERTICAL_W}:${VERTICAL_H}:force_original_aspect_ratio=increase,crop=${VERTICAL_W}:${VERTICAL_H},setsar=1[vmain]`;
+    `scale=${outW}:${outH}:force_original_aspect_ratio=increase,crop=${outW}:${outH},setsar=1[vmain]`;
   const graph = chain;
   const post = postChain && postChain.trim();
   return post ? `${graph};[vmain]${post}[vout]` : graph.split('[vmain]').join('[vout]');

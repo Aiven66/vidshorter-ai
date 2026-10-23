@@ -2099,7 +2099,9 @@ export default function VideoProcessor({
       // 竖屏/粗剪属 Starter+ 门控能力，避免请求被 403。
       // P0-6：字幕已下放为发布基线，免费用户同样保留（服务端回落默认样式/原文语言）。
       const isFreeNonAdmin = plan === 'free' && !isAdminUser(user);
-      const effVertical = isFreeNonAdmin ? false : exportVertical;
+      // P0-2：竖屏不再由客户端静默降级 —— 免费首条由服务端一次性导出额度放行，
+      // 第 2 条返回 403（vertical_requires_starter），由下面 catch 弹升级引导。
+      const effVertical = exportVertical;
       const effSubtitles = exportSubtitles;
       const effJumpCut = isFreeNonAdmin ? false : exportJumpCut;
       // 竖屏 / AI 字幕 / AI 粗剪是「精确导出规格」：只有服务端 cut-clip 能产出。
@@ -2131,8 +2133,8 @@ export default function VideoProcessor({
       } catch (browserErr) {
         const errMsg = browserErr instanceof Error ? browserErr.message : String(browserErr);
         console.warn('[Download] Server-side cut failed:', errMsg);
-        // 服务端导出门控拒绝（免费用户/权益失效）→ 弹付费引导，且不再走兜底下载
-        if (errMsg.includes('export_requires_paid')) {
+        // 服务端导出门控拒绝（免费用户/权益失效/竖屏额度用尽）→ 弹付费引导，且不再走兜底下载
+        if (errMsg.includes('export_requires_paid') || errMsg.includes('vertical_requires_starter')) {
           setExportPaywallOpen(true);
           setDownloadingId(null);
           setDownloadProgress(null);
@@ -2569,27 +2571,26 @@ export default function VideoProcessor({
             )}
           </div>
 
-          {plan !== 'free' && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                  <Smartphone className="h-3.5 w-3.5" />
-                  <span>{t('video.vertical.label')}</span>
-                </div>
-                <label className="relative inline-flex cursor-pointer items-center">
-                  <input
-                    type="checkbox"
-                    className="peer sr-only"
-                    checked={exportVertical}
-                    onChange={(e) => setExportVertical(e.target.checked)}
-                    disabled={isProcessing || isUploading}
-                  />
-                  <span className="peer h-5 w-9 rounded-full bg-muted after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-background after:shadow after:transition-all peer-checked:bg-primary peer-checked:after:translate-x-4 peer-disabled:opacity-50" />
-                </label>
+          {/* 9:16 竖屏：免费账户含 1 条一次性额度，第 2 条由服务端 403 引导升级 */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                <Smartphone className="h-3.5 w-3.5" />
+                <span>{t('video.vertical.label')}</span>
               </div>
-              <p className="text-xs text-muted-foreground">{t('video.vertical.hint')}</p>
+              <label className="relative inline-flex cursor-pointer items-center">
+                <input
+                  type="checkbox"
+                  className="peer sr-only"
+                  checked={exportVertical}
+                  onChange={(e) => setExportVertical(e.target.checked)}
+                  disabled={isProcessing || isUploading}
+                />
+                <span className="peer h-5 w-9 rounded-full bg-muted after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-background after:shadow after:transition-all peer-checked:bg-primary peer-checked:after:translate-x-4 peer-disabled:opacity-50" />
+              </label>
             </div>
-          )}
+            <p className="text-xs text-muted-foreground">{t('video.vertical.hint')}</p>
+          </div>
 
           {/* AI 自动字幕：P0-6 起为发布基线，对所有用户开放（样式/翻译仍为 Starter+） */}
           <div className="space-y-2">

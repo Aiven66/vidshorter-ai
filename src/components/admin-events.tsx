@@ -31,7 +31,7 @@ interface FunnelStats {
 }
 
 interface PaymentMethodStat {
-  payment_method: 'paypal' | 'creem' | 'unknown';
+  payment_method: 'waffo' | 'creem' | 'unknown';
   count: number;
   unique_users: number;
   revenue_usd: number;
@@ -40,10 +40,10 @@ interface PaymentMethodStat {
 
 interface DailySubscriptionBreakdown {
   date: string;
-  paypal_count: number;
+  waffo_count: number;
   creem_count: number;
   total_count: number;
-  paypal_revenue: number;
+  waffo_revenue: number;
   creem_revenue: number;
   total_revenue: number;
 }
@@ -180,7 +180,7 @@ export function EventsPage({ locale }: EventsPageProps) {
 
   // 支付方式数据
   const paymentBreakdown = data?.payment_method_breakdown || [];
-  const paypalStat = paymentBreakdown.find(p => p.payment_method === 'paypal');
+  const waffoStat = paymentBreakdown.find(p => p.payment_method === 'waffo');
   const creemStat = paymentBreakdown.find(p => p.payment_method === 'creem');
 
   // 每日订阅细分
@@ -334,7 +334,7 @@ export function EventsPage({ locale }: EventsPageProps) {
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-lg">
                 <CreditCard className="h-5 w-5 text-emerald-600" />
-                {t('真实付费方式细分（PayPal / Creem）', 'Real Payment Method Breakdown')}
+                {t('真实付费方式细分（Waffo / Creem）', 'Real Payment Method Breakdown')}
               </CardTitle>
               <p className="text-sm text-muted-foreground">
                 {t('数据来源：credit_transactions 表（后端 applyPlanPurchase 写入，最可靠）',
@@ -343,10 +343,10 @@ export function EventsPage({ locale }: EventsPageProps) {
             </CardHeader>
             <CardContent>
               <div className="grid md:grid-cols-2 gap-4">
-                {/* PayPal */}
+                {/* Waffo */}
                 <PaymentMethodCard
-                  method="paypal"
-                  stat={paypalStat}
+                  method="waffo"
+                  stat={waffoStat}
                   locale={locale}
                 />
                 {/* Creem */}
@@ -369,10 +369,10 @@ export function EventsPage({ locale }: EventsPageProps) {
                       <thead className="bg-muted/50">
                         <tr>
                           <th className="text-left p-2.5 font-medium">{t('日期', 'Date')}</th>
-                          <th className="text-right p-2.5 font-medium text-blue-600">PayPal</th>
+                          <th className="text-right p-2.5 font-medium text-blue-600">Waffo</th>
                           <th className="text-right p-2.5 font-medium text-violet-600">Creem</th>
                           <th className="text-right p-2.5 font-semibold">{t('合计', 'Total')}</th>
-                          <th className="text-right p-2.5 font-medium text-blue-600">PayPal $</th>
+                          <th className="text-right p-2.5 font-medium text-blue-600">Waffo $</th>
                           <th className="text-right p-2.5 font-medium text-violet-600">Creem $</th>
                           <th className="text-right p-2.5 font-semibold text-emerald-600">{t('收入 $', 'Revenue $')}</th>
                         </tr>
@@ -381,10 +381,10 @@ export function EventsPage({ locale }: EventsPageProps) {
                         {[...dailySubBreakdown].reverse().map(row => (
                           <tr key={row.date} className="border-t border-border/50 hover:bg-muted/30">
                             <td className="p-2.5 font-mono">{row.date}</td>
-                            <td className="text-right p-2.5">{row.paypal_count}</td>
+                            <td className="text-right p-2.5">{row.waffo_count}</td>
                             <td className="text-right p-2.5">{row.creem_count}</td>
                             <td className="text-right p-2.5 font-semibold">{row.total_count}</td>
-                            <td className="text-right p-2.5">${row.paypal_revenue.toFixed(2)}</td>
+                            <td className="text-right p-2.5">${row.waffo_revenue.toFixed(2)}</td>
                             <td className="text-right p-2.5">${row.creem_revenue.toFixed(2)}</td>
                             <td className="text-right p-2.5 font-semibold text-emerald-600">${row.total_revenue.toFixed(2)}</td>
                           </tr>
@@ -394,7 +394,7 @@ export function EventsPage({ locale }: EventsPageProps) {
                         <tr>
                           <td className="p-2.5 font-semibold">{t('合计', 'Total')}</td>
                           <td className="text-right p-2.5 font-semibold text-blue-600">
-                            {dailySubBreakdown.reduce((s, r) => s + r.paypal_count, 0)}
+                            {dailySubBreakdown.reduce((s, r) => s + r.waffo_count, 0)}
                           </td>
                           <td className="text-right p-2.5 font-semibold text-violet-600">
                             {dailySubBreakdown.reduce((s, r) => s + r.creem_count, 0)}
@@ -403,7 +403,7 @@ export function EventsPage({ locale }: EventsPageProps) {
                             {dailySubBreakdown.reduce((s, r) => s + r.total_count, 0)}
                           </td>
                           <td className="text-right p-2.5 font-semibold text-blue-600">
-                            ${dailySubBreakdown.reduce((s, r) => s + r.paypal_revenue, 0).toFixed(2)}
+                            ${dailySubBreakdown.reduce((s, r) => s + r.waffo_revenue, 0).toFixed(2)}
                           </td>
                           <td className="text-right p-2.5 font-semibold text-violet-600">
                             ${dailySubBreakdown.reduce((s, r) => s + r.creem_revenue, 0).toFixed(2)}
@@ -499,17 +499,17 @@ export function EventsPage({ locale }: EventsPageProps) {
 // ── 支付方式卡片 ───────────────────────────────────────────────────────────
 
 interface PaymentMethodCardProps {
-  method: 'paypal' | 'creem';
+  method: 'waffo' | 'creem';
   stat?: PaymentMethodStat;
   locale: Locale;
 }
 
 function PaymentMethodCard({ method, stat, locale }: PaymentMethodCardProps) {
   const t = (zh: string, en: string) => (locale === 'zh' ? zh : en);
-  const isPaypal = method === 'paypal';
-  const displayName = isPaypal ? 'PayPal' : 'Creem';
-  const Icon = isPaypal ? Wallet : CreditCard;
-  const colorClasses = isPaypal
+  const isWaffo = method === 'waffo';
+  const displayName = isWaffo ? 'Waffo' : 'Creem';
+  const Icon = isWaffo ? Wallet : CreditCard;
+  const colorClasses = isWaffo
     ? { bg: 'from-blue-500 to-blue-700', text: 'text-blue-600', light: 'bg-blue-50', border: 'border-blue-200' }
     : { bg: 'from-violet-500 to-indigo-600', text: 'text-violet-600', light: 'bg-violet-50', border: 'border-violet-200' };
 

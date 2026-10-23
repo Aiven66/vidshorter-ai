@@ -19,7 +19,7 @@ export const runtime = 'nodejs';
  *      description 格式: "Purchase starter via creem (order_xxx)"
  *
  * 订阅漏斗 step 3 (subscribe_success) 使用 credit_transactions 真实数据覆盖，
- * 同时提供 payment_method_breakdown 展示 PayPal/Creem 细分
+ * 同时提供 payment_method_breakdown 展示 Waffo/Creem 细分
  */
 
 const ADMIN_EMAILS = new Set(['admin@126.com', 'admin@clipop.ai', 'admin@vidshorter.ai']);
@@ -107,7 +107,7 @@ interface FunnelStats {
 }
 
 interface PaymentMethodStat {
-  payment_method: 'paypal' | 'creem' | 'unknown';
+  payment_method: 'waffo' | 'creem' | 'unknown';
   count: number;
   unique_users: number;
   revenue_usd: number;
@@ -116,10 +116,10 @@ interface PaymentMethodStat {
 
 interface DailySubscriptionBreakdown {
   date: string;
-  paypal_count: number;
+  waffo_count: number;
   creem_count: number;
   total_count: number;
-  paypal_revenue: number;
+  waffo_revenue: number;
   creem_revenue: number;
   total_revenue: number;
 }
@@ -150,21 +150,21 @@ interface ApiResponse {
 }
 
 // ── 解析 credit_transactions.description ──────────────────────────────────
-// 格式: "Purchase starter via creem (order_xxx)" 或 "Purchase pro via paypal (order_yyy)"
+// 格式: "Purchase starter via waffo (order_xxx)" 或 "Purchase pro via creem (order_yyy)"
 function parseTransactionDescription(description: string): {
   plan_id: string | null;
-  provider: 'paypal' | 'creem' | 'unknown';
+  provider: 'waffo' | 'creem' | 'unknown';
   order_id: string | null;
 } {
   if (!description) return { plan_id: null, provider: 'unknown', order_id: null };
   // 提取 plan_id
   const planMatch = description.match(/Purchase\s+(\w+)\s+via/i);
   const plan_id = planMatch ? planMatch[1].toLowerCase() : null;
-  // 提取 provider
+  // 提取 provider（仅统计当前主通道 Waffo / Creem；历史 paypal 记录不计入）
   const providerMatch = description.match(/via\s+(\w+)/i);
   const rawProvider = providerMatch ? providerMatch[1].toLowerCase() : 'unknown';
-  const provider: 'paypal' | 'creem' | 'unknown' =
-    rawProvider === 'paypal' ? 'paypal' :
+  const provider: 'waffo' | 'creem' | 'unknown' =
+    rawProvider === 'waffo' ? 'waffo' :
     rawProvider === 'creem' ? 'creem' : 'unknown';
   // 提取 order_id（括号内）
   const orderIdMatch = description.match(/\(([^)]+)\)/);
@@ -237,7 +237,7 @@ export async function GET(request: NextRequest) {
     type ParsedTx = {
       user_id: string;
       plan_id: string | null;
-      provider: 'paypal' | 'creem' | 'unknown';
+      provider: 'waffo' | 'creem' | 'unknown';
       order_id: string | null;
       amount_usd: number;
       created_at: string;
@@ -256,8 +256,8 @@ export async function GET(request: NextRequest) {
           date: (tx.created_at as string).slice(0, 10),
         };
       })
-      // 过滤掉非 paypal/creem 的（如 wechat/alipay 在本次统计外）
-      .filter(tx => tx.provider === 'paypal' || tx.provider === 'creem');
+      // 过滤掉非 waffo/creem 的（如 wechat/alipay 及历史 paypal 在本次统计外）
+      .filter(tx => tx.provider === 'waffo' || tx.provider === 'creem');
 
     // ── 3. 计算每个漏斗的统计数据 ──────────────────────────────────────────
     const funnels: FunnelStats[] = [];
@@ -326,9 +326,9 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // ── 4. 支付方式细分（PayPal/Creem） ──────────────────────────────────
+    // ── 4. 支付方式细分（Waffo/Creem） ───────────────────────────────────
     const paymentMethodBreakdown: PaymentMethodStat[] = [];
-    for (const method of ['paypal', 'creem'] as const) {
+    for (const method of ['waffo', 'creem'] as const) {
       const txs = parsedTxs.filter(tx => tx.provider === method);
       const uniqueUsers = new Set(txs.map(tx => tx.user_id)).size;
       const revenue = txs.reduce((sum, tx) => sum + tx.amount_usd, 0);
@@ -368,15 +368,15 @@ export async function GET(request: NextRequest) {
       .sort((a, b) => a.date.localeCompare(b.date));
 
     // ── 6. 按日期+支付方式聚合的订阅数据 ──────────────────────────────────
-    const dailySubMap = new Map<string, { paypal: number; creem: number; paypal_rev: number; creem_rev: number }>();
+    const dailySubMap = new Map<string, { waffo: number; creem: number; waffo_rev: number; creem_rev: number }>();
     for (const tx of parsedTxs) {
       if (!dailySubMap.has(tx.date)) {
-        dailySubMap.set(tx.date, { paypal: 0, creem: 0, paypal_rev: 0, creem_rev: 0 });
+        dailySubMap.set(tx.date, { waffo: 0, creem: 0, waffo_rev: 0, creem_rev: 0 });
       }
       const entry = dailySubMap.get(tx.date)!;
-      if (tx.provider === 'paypal') {
-        entry.paypal++;
-        entry.paypal_rev += tx.amount_usd;
+      if (tx.provider === 'waffo') {
+        entry.waffo++;
+        entry.waffo_rev += tx.amount_usd;
       } else if (tx.provider === 'creem') {
         entry.creem++;
         entry.creem_rev += tx.amount_usd;
@@ -386,12 +386,12 @@ export async function GET(request: NextRequest) {
     const dailySubscriptionBreakdown: DailySubscriptionBreakdown[] = Array.from(dailySubMap.entries())
       .map(([date, v]) => ({
         date,
-        paypal_count: v.paypal,
+        waffo_count: v.waffo,
         creem_count: v.creem,
-        total_count: v.paypal + v.creem,
-        paypal_revenue: parseFloat(v.paypal_rev.toFixed(2)),
+        total_count: v.waffo + v.creem,
+        waffo_revenue: parseFloat(v.waffo_rev.toFixed(2)),
         creem_revenue: parseFloat(v.creem_rev.toFixed(2)),
-        total_revenue: parseFloat((v.paypal_rev + v.creem_rev).toFixed(2)),
+        total_revenue: parseFloat((v.waffo_rev + v.creem_rev).toFixed(2)),
       }))
       .sort((a, b) => a.date.localeCompare(b.date));
 

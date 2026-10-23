@@ -184,7 +184,7 @@ const structuredData = {
         priceCurrency: 'USD',
         offerCount: '3',
         url: `${siteUrl}/pricing`,
-        description: 'Free plan with 60 credits per day; Starter $9.9/month; Pro $19.9/month.',
+        description: 'Free plan with 180 credits on signup, then 60 credits per day; Starter $9.9/month; Pro $19.9/month.',
       },
       aggregateRating: {
         '@type': 'AggregateRating',

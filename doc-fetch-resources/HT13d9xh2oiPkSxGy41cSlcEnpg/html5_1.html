@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="use-iframe" content="true">
+<meta name="html-box-height-mode" content="auto">
+<meta name="description" content="Clipop 免费转付费漏斗：注册到完成付款六个环节与两处断裂点，静态 SVG，无外部依赖">
+<title>Clipop 免费转付费漏斗与断裂点</title>
+</head>
+<body style="margin:0;padding:0;background:#FFFFFF;">
+<div style="width:820px;max-width:100%;margin:0;padding:0;background:#FFFFFF;">
+<svg viewBox="0 0 820 944" width="100%" style="max-width:820px;display:block" font-family='-apple-system, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif' xmlns="http://www.w3.org/2000/svg">
+<rect x="0" y="0" width="820" height="944" fill="#FFFFFF"/>
+<text x="24" y="54" font-size="21" fill="#1F2937" font-weight="700" text-anchor="start">Clipop 免费 → 付费漏斗：六个环节与两处断裂</text>
+<text x="24" y="78" font-size="12.5" fill="#6B7280" font-weight="400" text-anchor="start">环节顺序来自产品实测；等宽方块只表达先后与流失方向，不代表任何转化比例。</text>
+<rect x="640" y="86" width="11" height="11" fill="none" stroke="#E11D48" stroke-width="1.6"/>
+<text x="658" y="96" font-size="12" fill="#374151" font-weight="400" text-anchor="start">已确认断路</text>
+<rect x="740" y="86" width="11" height="11" fill="#E5E7EB"/>
+<text x="758" y="96" font-size="12" fill="#374151" font-weight="400" text-anchor="start">实测环节</text>
+<rect x="64" y="128" width="456" height="46" fill="#F3F4F6" rx="3"/>
+<circle cx="40" cy="151" r="13" fill="#1F2937"/>
+<text x="40" y="156" font-size="12.5" fill="#FFFFFF" font-weight="700" text-anchor="middle">1</text>
+<text x="82" y="157" font-size="15" fill="#1F2937" font-weight="700" text-anchor="start">注册</text>
+<text x="504" y="156" font-size="12" fill="#9CA3AF" font-weight="400" text-anchor="end">实测</text>
+<text x="64" y="196" font-size="12.5" fill="#6B7280" font-weight="400" text-anchor="start">4 个输入框（姓名 / 邮箱 / 密码 / 确认密码）+ 协议勾选</text>
+<text x="64" y="214" font-size="12.5" fill="#6B7280" font-weight="400" text-anchor="start">代码里还有 6 位邮箱验证码这一步，注册即触发，多一次跳出</text>
+<rect x="64" y="228" width="456" height="46" fill="#F3F4F6" rx="3"/>
+<circle cx="40" cy="251" r="13" fill="#1F2937"/>
+<text x="40" y="256" font-size="12.5" fill="#FFFFFF" font-weight="700" text-anchor="middle">2</text>
+<text x="82" y="257" font-size="15" fill="#1F2937" font-weight="700" text-anchor="start">首次上传</text>
+<text x="504" y="256" font-size="12" fill="#9CA3AF" font-weight="400" text-anchor="end">实测</text>
+<text x="64" y="296" font-size="12.5" fill="#6B7280" font-weight="400" text-anchor="start">首页没有免注册 demo，第一步就是注册；粘贴链接或上传长视频</text>
+<text x="64" y="314" font-size="12.5" fill="#6B7280" font-weight="400" text-anchor="start">免费档单次只出 1 条，批量队列（10 条/次）锁在 Starter+</text>
+<rect x="64" y="328" width="456" height="46" fill="#F3F4F6" rx="3"/>
+<circle cx="40" cy="351" r="13" fill="#1F2937"/>
+<text x="40" y="356" font-size="12.5" fill="#FFFFFF" font-weight="700" text-anchor="middle">3</text>
+<text x="82" y="357" font-size="15" fill="#1F2937" font-weight="700" text-anchor="start">生成任务</text>
+<text x="504" y="356" font-size="12" fill="#9CA3AF" font-weight="400" text-anchor="end">实测</text>
+<text x="64" y="396" font-size="12.5" fill="#6B7280" font-weight="400" text-anchor="start">单条路径无超时回收：批量有 8 分钟 stalled 对账，单条没有</text>
+<text x="64" y="414" font-size="12.5" fill="#6B7280" font-weight="400" text-anchor="start">同一 Admin 账号 38 条历史里约 31 条 Pending，可见 0 条 Completed</text>
+<rect x="64" y="428" width="456" height="46" fill="#F3F4F6" rx="3"/>
+<circle cx="40" cy="451" r="13" fill="#1F2937"/>
+<text x="40" y="456" font-size="12.5" fill="#FFFFFF" font-weight="700" text-anchor="middle">4</text>
+<text x="82" y="457" font-size="15" fill="#1F2937" font-weight="700" text-anchor="start">导出成品</text>
+<text x="504" y="456" font-size="12" fill="#9CA3AF" font-weight="400" text-anchor="end">实测</text>
+<text x="64" y="496" font-size="12.5" fill="#6B7280" font-weight="400" text-anchor="start">免费档导出 720p、带水印、横版；单次仅 1 条</text>
+<text x="64" y="514" font-size="12.5" fill="#6B7280" font-weight="400" text-anchor="start">自定义字幕样式与翻译，文案标注「付费档才有」</text>
+<rect x="64" y="526" width="732" height="62" fill="#F3F4F6" rx="3"/>
+<rect x="64" y="526" width="3" height="62" fill="#1F2937"/>
+<text x="80" y="552" font-size="13.5" fill="#1F2937" font-weight="700" text-anchor="start">断点 1｜导出格式墙：竖版（9:16）直接锁在 Starter+</text>
+<text x="80" y="573" font-size="12.5" fill="#4B5563" font-weight="400" text-anchor="start">用户在最后一刻才发现要的格式拿不到；前面注册、粘贴、排队全成沉没成本，情绪是「被骗」，不是「要不要升级」。</text>
+<rect x="64" y="608" width="456" height="46" fill="#F3F4F6" rx="3"/>
+<circle cx="40" cy="631" r="13" fill="#1F2937"/>
+<text x="40" y="636" font-size="12.5" fill="#FFFFFF" font-weight="700" text-anchor="middle">5</text>
+<text x="82" y="637" font-size="15" fill="#1F2937" font-weight="700" text-anchor="start">点击定价</text>
+<text x="504" y="636" font-size="12" fill="#9CA3AF" font-weight="400" text-anchor="end">实测</text>
+<text x="64" y="676" font-size="12.5" fill="#6B7280" font-weight="400" text-anchor="start">/pricing 无三档对比表、无退款承诺、无年付、0 评价 0 案例</text>
+<text x="64" y="694" font-size="12.5" fill="#6B7280" font-weight="400" text-anchor="start">顶部宣称 Creem 与 PayPal 可结账，实际弹窗只有 Creem / Waffo</text>
+<rect x="64" y="708" width="456" height="82" fill="#FFFFFF" stroke="#E11D48" stroke-width="1.6" rx="3"/>
+<circle cx="40" cy="731" r="13" fill="#E11D48"/>
+<text x="40" y="736" font-size="12.5" fill="#FFFFFF" font-weight="700" text-anchor="middle">6</text>
+<text x="82" y="737" font-size="15" fill="#1F2937" font-weight="700" text-anchor="start">完成付款</text>
+<text x="504" y="736" font-size="12" fill="#E11D48" font-weight="700" text-anchor="end">断路</text>
+<text x="82" y="761" font-size="12.5" fill="#E11D48" font-weight="500" text-anchor="start">Creem: This store is not currently accepting payments.</text>
+<text x="82" y="779" font-size="12.5" fill="#E11D48" font-weight="500" text-anchor="start">Live Payments Not Enabled</text>
+<text x="64" y="812" font-size="12.5" fill="#6B7280" font-weight="400" text-anchor="start">Creem 是默认选中、带 Secure 角标的主按钮路径，走默认路径的用户 100% 付款失败</text>
+<text x="64" y="830" font-size="12.5" fill="#6B7280" font-weight="400" text-anchor="start">唯一可用通道 Waffo 未在页面文案中被提及，结账国家默认「美国」</text>
+<line x1="40" y1="165" x2="40" y2="232" stroke="#D1D5DB" stroke-width="1.5"/>
+<path d="M35.5 227 L40 233.5 L44.5 227" fill="none" stroke="#9CA3AF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="40" y1="265" x2="40" y2="332" stroke="#D1D5DB" stroke-width="1.5"/>
+<path d="M35.5 327 L40 333.5 L44.5 327" fill="none" stroke="#9CA3AF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="40" y1="365" x2="40" y2="432" stroke="#D1D5DB" stroke-width="1.5"/>
+<path d="M35.5 427 L40 433.5 L44.5 427" fill="none" stroke="#9CA3AF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="40" y1="465" x2="40" y2="612" stroke="#D1D5DB" stroke-width="1.5"/>
+<path d="M35.5 607 L40 613.5 L44.5 607" fill="none" stroke="#9CA3AF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="40" y1="645" x2="40" y2="712" stroke="#D1D5DB" stroke-width="1.5"/>
+<path d="M35.5 707 L40 713.5 L44.5 707" fill="none" stroke="#9CA3AF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="24" y1="864" x2="796" y2="864" stroke="#E5E7EB" stroke-width="1"/>
+<text x="24" y="888" font-size="12" fill="#6B7280" font-weight="400" text-anchor="start">环节结构来自产品实测；未标注转化率，站内 PostHog / GTM 数据需自行拉取。</text>
+<text x="24" y="908" font-size="12" fill="#6B7280" font-weight="400" text-anchor="start">实测边界：队列健康度取自单一 Admin 账号的 38 条历史（2026-09-25 起），不可外推为全站成功率；</text>
+<text x="24" y="926" font-size="12" fill="#6B7280" font-weight="400" text-anchor="start">Creem 报错于 2026-10-22 17:18 CST 两次独立复现。</text>
+</svg>
+</div>
+</body>
+</html>

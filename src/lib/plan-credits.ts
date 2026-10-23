@@ -20,6 +20,15 @@ export const CREDIT_COST = 60;
 /** 免费档每日额度：恰好 1 条片子。 */
 export const FREE_DAILY_CREDITS = 60;
 
+/** 注册即赠：3 条成片（一次性，计入当月发放总额）。 */
+export const FREE_SIGNUP_CREDITS = 180;
+
+/** 免费档每个自然月最多发放的积分（含注册赠送）= 10 条成片。 */
+export const FREE_MONTHLY_CAP = 600;
+
+/** 注册赠送流水的 type（与 daily_reset 一起计入月度封顶）。 */
+export const FREE_WELCOME_TX_TYPE = 'welcome_bonus';
+
 export type PaidPlan = 'starter' | 'pro';
 
 export const PLAN_MONTHLY_CREDITS: Record<PaidPlan, number> = {

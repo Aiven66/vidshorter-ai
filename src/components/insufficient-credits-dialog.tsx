@@ -51,7 +51,7 @@ const MINI_PACKS = [
  *  - 突出 Starter 套餐的性价比 (Most Popular, $9.9/月)
  *  - 对比 Free vs Starter,让用户清楚感知升级价值
  *  - 双 CTA: 主按钮"立即升级"跳转定价页,次按钮"稍后再说"
- *  - 添加信任徽章 (PayPal/Creem/SSL) 降低付费焦虑
+ *  - 添加信任徽章 (Waffo/Creem/SSL) 降低付费焦虑
  *  - 使用 Framer 风格的入场动画 (由 Radix Dialog 提供)
  */
 export function InsufficientCreditsDialog({
@@ -266,10 +266,10 @@ export function InsufficientCreditsDialog({
         <div className="bg-muted/30 border-t px-6 py-3">
           <div className="flex items-center justify-center gap-4 text-[10px] text-muted-foreground">
             <div className="flex items-center gap-1">
-              <div className="w-7 h-4 bg-[#003087] rounded flex items-center justify-center">
-                <span className="text-white text-[7px] font-bold">PP</span>
+              <div className="w-7 h-4 bg-primary rounded flex items-center justify-center">
+                <span className="text-primary-foreground text-[7px] font-bold">WF</span>
               </div>
-              <span>PayPal</span>
+              <span>Waffo</span>
             </div>
             <div className="w-px h-3 bg-border" />
             <div className="flex items-center gap-1">

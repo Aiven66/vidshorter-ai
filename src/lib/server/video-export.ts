@@ -74,9 +74,14 @@ const VERTICAL_BG_BLUR_POWER = 2;
  * @param inLabel   输入视频标签，默认 `[0:v]`；jump-cut 前置链接入时传其输出标签
  * @returns 以 `[vout]` 结尾的滤镜图
  */
-export function buildVerticalComplex(postChain?: string | null, inLabel: string = '[0:v]'): string {
-  const w = VERTICAL_OUT_W;
-  const h = VERTICAL_OUT_H;
+export function buildVerticalComplex(
+  postChain?: string | null,
+  inLabel: string = '[0:v]',
+  outW: number = VERTICAL_OUT_W,
+  outH: number = VERTICAL_OUT_H,
+): string {
+  const w = outW;
+  const h = outH;
   // 逐条链路数组 + join(';') 拼接：标签/分号的分隔关系由数组结构保证，
   // 不依赖长模板串的相邻拼接（线上曾出现 `[bgb];` 在构建产物中丢失、
   // 导致 ffmpeg 报 “Trailing garbage after a filter” 的问题）。
@@ -172,5 +177,23 @@ export function buildWatermarkArgs(
   const filterComplex =
     `${base}[1:v]scale=w=-2:h=${WM_HEIGHT}[wm];` +
     `[base][wm]overlay=(main_w-overlay_w-24):(main_h-overlay_h-24):eof_action=repeat[out]`;
+  return { filterComplex, extraInputs: ['-i', wmPng] };
+}
+
+/**
+ * 在已有滤镜图（必须以 `inLabel` 结尾，默认 `[vout]`）之后叠加水印。
+ * 用于 9:16 竖屏导出：竖屏图必须走 filter_complex，不能与 `-vf` 线性链拼接。
+ */
+export function buildWatermarkOverGraph(
+  graph: string,
+  wmPng: string,
+  inLabel: string = '[vout]',
+): { filterComplex: string; extraInputs: string[] } | null {
+  const trimmed = graph.trim();
+  if (!trimmed) return null;
+  const filterComplex =
+    `${trimmed};` +
+    `[1:v]scale=w=-2:h=${WM_HEIGHT}[wm];` +
+    `${inLabel}[wm]overlay=(main_w-overlay_w-24):(main_h-overlay_h-24):eof_action=repeat[out]`;
   return { filterComplex, extraInputs: ['-i', wmPng] };
 }

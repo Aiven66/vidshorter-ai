@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import { posthog } from '@/lib/posthog';
-import { trackEvent, setAnalyticsUser, SUBSCRIBE_FUNNEL } from '@/lib/analytics';
+import { trackEvent, trackCustomEvent, SUBSCRIBE_FUNNEL } from '@/lib/analytics';
 
 interface PlanInfo {
   id: string;
@@ -39,12 +39,13 @@ interface PaymentModalProps {
   onSuccess?: () => void;
 }
 
-type PayMethod = 'creem' | 'paypal' | 'waffo';
+type PayMethod = 'creem' | 'waffo';
 type PayState = 'selecting' | 'pending' | 'success' | 'failed';
 
 export function PaymentModal({ open, onOpenChange, plan, onSuccess }: PaymentModalProps) {
   const { user } = useAuth();
-  const [method, setMethod] = useState<PayMethod>('creem');
+  // 支付主路径：Waffo 为默认，Creem 保留为可选通道（两者都可用，不再出现 PayPal 等死通道）。
+  const [method, setMethod] = useState<PayMethod>('waffo');
   const [payState, setPayState] = useState<PayState>('selecting');
   const [paymentError, setPaymentError] = useState('');
   const [redirectPollUrl, setRedirectPollUrl] = useState('');
@@ -53,7 +54,7 @@ export function PaymentModal({ open, onOpenChange, plan, onSuccess }: PaymentMod
 
   useEffect(() => {
     if (!open) return;
-    setMethod('creem');
+    setMethod('waffo');
     setPayState('selecting');
     setPaymentError('');
     setRedirectPollUrl('');
@@ -156,7 +157,7 @@ export function PaymentModal({ open, onOpenChange, plan, onSuccess }: PaymentMod
       window.location.href = '/login';
       return;
     }
-    if (!plan || (method !== 'creem' && method !== 'waffo')) return;
+    if (!plan) return;
 
     setPayState('pending');
     try {
@@ -171,14 +172,18 @@ export function PaymentModal({ open, onOpenChange, plan, onSuccess }: PaymentMod
       });
       const data = await res.json();
 
-      if (data.error) {
-        setPaymentError(data.error);
-        setPayState('selecting');
-        return;
-      }
-
-      if (!data.checkoutUrl) {
-        setPaymentError('Failed to create checkout session');
+      if (data.error || !data.checkoutUrl) {
+        // 支付断路可观测：创建 checkout 失败必须留痕，否则「付费为零」无法定位到通道。
+        const reason = data.error || 'missing_checkout_url';
+        trackCustomEvent('payment_checkout_failed', {
+          plan_id: plan.id,
+          payment_method: method,
+          http_status: res.status,
+          reason: String(reason).slice(0, 200),
+        });
+        setPaymentError(
+          `${reason}${method === 'creem' ? ' Try Waffo instead — it is our primary checkout channel.' : ' Please try again.'}`,
+        );
         setPayState('selecting');
         return;
       }

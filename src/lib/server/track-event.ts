@@ -5,7 +5,7 @@ import { createClient } from '@supabase/supabase-js';
  *
  * 与前端 analytics.ts 不同，这里使用 service role client 直接写入数据库，
  * 适用于：
- *   - 支付 webhook（PayPal capture / Creem webhook）
+ *   - 支付 webhook（Waffo / Creem webhook）
  *   - 后端任务完成
  *
  * 通过 session_id 字段做幂等：session_id = `server_${paymentMethod}_${orderId}`

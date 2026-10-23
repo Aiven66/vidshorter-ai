@@ -765,8 +765,10 @@ export async function downloadClipViaBrowser(params: {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn('[downloadClipViaBrowser] v48 server-download+cut failed:', msg);
-    // 导出即付费墙：不可回落到 captureStream 录制（否则免费用户仍能拿到文件）
+    // 导出即付费墙：不可回落到 captureStream 录制（否则免费用户仍能拿到文件）。
+    // 9:16 一次性额度用尽同样如此：直接抛门控错误，由 UI 弹升级引导。
     if (msg.includes('export_requires_paid')) throw new Error('export_requires_paid');
+    if (msg.includes('vertical_requires_starter')) throw new Error('vertical_requires_starter');
   }
 
   // Step 3: Fallback to browser captureStream + MediaRecorder + remux

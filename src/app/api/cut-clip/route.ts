@@ -23,6 +23,8 @@ import {
   buildVerticalComplex,
   getWatermarkPngPath,
   buildWatermarkArgs,
+  buildWatermarkOverGraph,
+  type VideoExportTarget,
 } from '@/lib/server/video-export';
 import {
   buildAssFile,
@@ -61,6 +63,11 @@ function exportPaywallResponse() {
     },
     { status: 403 },
   );
+}
+
+/** 9:16 输出尺寸：免费 720×1280，付费 1080×1920（与 plan 分辨率档一致）。 */
+function verticalSize(target: VideoExportTarget): { w: number; h: number } {
+  return target.label === '720p' ? { w: 720, h: 1280 } : { w: 1080, h: 1920 };
 }
 
 /**
@@ -227,13 +234,14 @@ export async function POST(request: NextRequest) {
 
         // Skip the download step — file already uploaded
         const expTarget = resolveExportTarget(plan);
-        const expWm = (expTarget.watermark && !vertical) ? await getWatermarkPngPath() : null;
+        // P0-2：免费用户同样叠加水印（竖屏也一样），9:16 只保证构图不裁切内容。
+        const expWm = expTarget.watermark ? await getWatermarkPngPath() : null;
         // 竖屏走 blur-fit 复合滤镜（vertical=true 时由 cutLocalFile 内部构建）；
         // 横屏走 plan 分辨率 cap + 水印。
         return await cutLocalFile(
           inputPath, outputPath, startTime, duration, null,
           vertical ? null : buildExportVf(expTarget), expWm, null, undefined, vertical,
-          /*jumpCutSegments*/ undefined, request,
+          /*jumpCutSegments*/ undefined, request, verticalSize(expTarget),
         );
       }
       streamUrl = String(formData.get('streamUrl') || '');
@@ -311,8 +319,8 @@ export async function POST(request: NextRequest) {
       // setupFontConfig 写最小 config 指向捆绑字体，ffmpeg 子进程继承 env 生效。
       fontConfigPath = await setupFontConfig();
     }
-    const watermarkPng = (exportTarget.watermark && !vertical) ? await getWatermarkPngPath() : null;
-    if (exportTarget.watermark && !watermarkPng && !vertical) {
+    const watermarkPng = exportTarget.watermark ? await getWatermarkPngPath() : null;
+    if (exportTarget.watermark && !watermarkPng) {
       console.warn('[cut-clip] Watermark requested but PNG could not be materialized — exporting without watermark (non-fatal).');
     }
 
@@ -348,6 +356,7 @@ export async function POST(request: NextRequest) {
           exportVf: vertical ? null : exportVf, // 竖屏由 cutFromStreamUrl 内部构建 blur-fit 复合滤镜
           watermarkPng,
           vertical,
+          verticalSize: verticalSize(exportTarget),
           subtitlePath,
           subtitleStyle,
           request,
@@ -390,7 +399,7 @@ export async function POST(request: NextRequest) {
     return await cutLocalFile(
       inputPath, outputPath, startTime, duration, /*audioPath*/ null,
       vertical ? null : exportVf, watermarkPng, subtitlePath, subtitleStyle, vertical,
-      jumpSegments, request,
+      jumpSegments, request, verticalSize(exportTarget),
     );
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
@@ -446,6 +455,8 @@ async function cutFromStreamUrl(params: {
   watermarkPng?: string | null;
   /** 9:16 竖屏导出：cutFromStreamUrl 内 best-effort 计算人物跟踪取景 */
   vertical?: boolean;
+  /** 9:16 输出尺寸（免费 720×1280 / 付费 1080×1920） */
+  verticalSize?: { w: number; h: number };
   /** AI 自动字幕（Starter+）：已生成的 ASS 文件路径；无字幕时为 null（烧录可选） */
   subtitlePath?: string | null;
   /** 字幕样式（Starter+）：白名单归一化后透传给 ASS 生成 + force_style */
@@ -456,7 +467,7 @@ async function cutFromStreamUrl(params: {
   const {
     cfWorkerUrl, streamUrl, audioUrl, userAgent, visitorData,
     xClientName, clientVersion, clientName, videoId,
-    startTime, duration, outputPath, exportVf, watermarkPng, vertical, subtitlePath, subtitleStyle,
+    startTime, duration, outputPath, exportVf, watermarkPng, vertical, verticalSize, subtitlePath, subtitleStyle,
     request,
   } = params;
 
@@ -530,8 +541,8 @@ async function cutFromStreamUrl(params: {
       true,
     );
     verticalGraph = reframePath
-      ? buildReframeComplex(reframePath, subFilter)
-      : buildVerticalComplex(subFilter);
+      ? buildReframeComplex(reframePath, subFilter, '[0:v]', verticalSize?.w, verticalSize?.h)
+      : buildVerticalComplex(subFilter, '[0:v]', verticalSize?.w, verticalSize?.h);
     finalVf = null;
   } else if (subFilter) {
     finalVf = finalVf ? `${finalVf},${subFilter}` : subFilter;
@@ -556,8 +567,13 @@ async function cutFromStreamUrl(params: {
                '-reconnect_streamed', '1', '-reconnect_delay_max', '5');
     args.push('-headers', httpHeaders);
     args.push('-i', muxedStreamEndpoint.toString());
-    // free 水印：追加第二输入（水印 PNG，loop 覆盖整段，overlay eof_action=pass）
-    const wmArg = watermarkPng ? buildWatermarkArgs(finalVf ?? null, watermarkPng) : null;
+    // free 水印：追加第二输入（水印 PNG，覆盖整段）。竖屏图同样叠加，
+    // 保证免费首条 9:16 成片也是 720p + 水印 + 字幕。
+    const wmArg = watermarkPng
+      ? (verticalGraph
+          ? buildWatermarkOverGraph(verticalGraph, watermarkPng)
+          : buildWatermarkArgs(finalVf ?? null, watermarkPng))
+      : null;
     if (wmArg) args.push(...wmArg.extraInputs);
     args.push('-t', String(duration));
     args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28', '-pix_fmt', 'yuv420p');
@@ -854,6 +870,8 @@ async function cutLocalFile(
   jumpCutSegments?: KeepSegment[] | null,
   /** 原始请求：成功出口据此消费「一次性免费导出额度」 */
   request?: NextRequest,
+  /** 9:16 输出尺寸（免费 720×1280 / 付费 1080×1920） */
+  verticalSize?: { w: number; h: number },
 ): Promise<NextResponse> {
   const ffmpegPath = await findFfmpegBinary();
   if (!ffmpegPath) {
@@ -916,7 +934,7 @@ if (watermarkPng || exportVf || vertical || jumpCutSegments) {
       const jcVLabel = jc ? jc.vLabel : '[0:v]';
       const audioMap = jc ? jc.aLabel : '0:a?';
       // P0 水印仅支持单输入（muxed）分支，避免改动双输入音频路径
-      const wmArg = !audioPath && watermarkPng ? buildWatermarkArgs(exportVf ?? null, watermarkPng, jcVLabel) : null;
+      const addWatermark = !audioPath && !!watermarkPng;
       if (audioPath) {
         // v56: seek audio input to startTime too (see attempt 1 comment)
         args.push('-i', inputPath);
@@ -927,7 +945,7 @@ if (watermarkPng || exportVf || vertical || jumpCutSegments) {
         args.push('-map', '0:v:0', '-map', '1:a:0');
       } else {
         args.push('-i', inputPath);
-        if (wmArg) args.push(...wmArg.extraInputs); // 第二输入：水印 PNG（loop）
+        if (addWatermark) args.push('-i', watermarkPng!); // 第二输入：水印 PNG（单帧，eof_action=repeat）
         args.push('-t', String(duration));
         args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28');
         args.push('-c:a', 'aac', '-b:a', '128k');
@@ -954,13 +972,20 @@ if (watermarkPng || exportVf || vertical || jumpCutSegments) {
           ? remapReframePath(rp, jumpCutSegments)
           : rp;
         verticalGraph = path
-          ? buildReframeComplex(path, subFilter, jcVLabel)
-          : buildVerticalComplex(subFilter, jcVLabel);
+          ? buildReframeComplex(path, subFilter, jcVLabel, verticalSize?.w, verticalSize?.h)
+          : buildVerticalComplex(subFilter, jcVLabel, verticalSize?.w, verticalSize?.h);
       }
       verticalGraphEcho = verticalGraph;
       const finalVf = verticalGraph
         ? null
         : (subFilter ? `${exportVf ?? ''}${exportVf ? ',' : ''}${subFilter}` : exportVf);
+
+      // 水印图：竖屏时挂到 [vout] 之后，横屏时挂到输入链之后。
+      const wmArg = addWatermark
+        ? (verticalGraph
+            ? buildWatermarkOverGraph(verticalGraph, watermarkPng!)
+            : buildWatermarkArgs(exportVf ?? null, watermarkPng!, jcVLabel))
+        : null;
 
       // 组装 filter_complex：粗剪前置链（若有）永远在最前。
       const graphParts: string[] = [];

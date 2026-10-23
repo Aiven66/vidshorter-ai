@@ -4,7 +4,7 @@ import { buildMetadata } from '@/lib/seo';
 export const metadata: Metadata = buildMetadata({
   title: 'Create Your Free Account',
   description:
-    'Create a free Clipop AI account and get 60 credits to turn long videos into vertical shorts with AI highlights and captions.',
+    'Create a free Clipop AI account and get 180 credits (3 clips) to turn long videos into vertical shorts with AI highlights and captions.',
   path: '/register',
   noindex: true,
 });

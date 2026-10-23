@@ -8,6 +8,8 @@ import { resolveEffectivePlan } from '@/lib/server/effective-plan';
 import { pumpUserQueue } from '@/lib/server/video-batch-queue';
 import { TERMINAL_VIDEO_STATUSES, BATCH_KICK_MIN_AGE_MS } from '@/lib/video-batch';
 import {
+  FREE_SIGNUP_CREDITS,
+  FREE_WELCOME_TX_TYPE,
   hasQuotaCrossed,
   isLegacyPaidRow,
   planQuota,
@@ -15,6 +17,7 @@ import {
   quotaTransactionType,
   resetBoundary,
 } from '@/lib/plan-credits';
+import { nextFreeResetBalance } from '@/lib/server/free-quota';
 
 /**
  * Async video-job engine (QStash worker + inline `after()` fallback).
@@ -179,26 +182,37 @@ export async function ensureCreditsAndCheck(client: SupabaseClient, userId: stri
 
   const { data: creditsRow } = await client.from('credits').select('*').eq('user_id', userId).maybeSingle();
 
+  // 免费档：注册赠 180（3 条），并计入当月 600 封顶；付费档维持按月整额发放。
+  const isFree = plan !== 'starter' && plan !== 'pro';
+
   if (!creditsRow) {
-    await client.from('credits').insert({ user_id: userId, balance: quota.amount, last_reset_at: resetAt });
+    const initial = isFree ? FREE_SIGNUP_CREDITS : quota.amount;
+    await client.from('credits').insert({ user_id: userId, balance: initial, last_reset_at: resetAt });
     await client.from('credit_transactions').insert({
       user_id: userId,
-      amount: quota.amount,
-      type: txType,
-      description: quotaResetDescription(plan, quota, true),
+      amount: initial,
+      type: isFree ? FREE_WELCOME_TX_TYPE : txType,
+      description: isFree
+        ? `Welcome bonus (${FREE_SIGNUP_CREDITS} credits to start)`
+        : quotaResetDescription(plan, quota, true),
     });
-    return quota.amount;
+    return initial;
   }
 
   if (hasQuotaCrossed(quota.period, creditsRow.last_reset_at, now)) {
-    await client.from('credits').update({ balance: quota.amount, last_reset_at: resetAt }).eq('user_id', userId);
-    await client.from('credit_transactions').insert({
-      user_id: userId,
-      amount: quota.amount,
-      type: txType,
-      description: quotaResetDescription(plan, quota),
-    });
-    return quota.amount;
+    const next = isFree
+      ? await nextFreeResetBalance(client, userId, creditsRow.balance ?? 0, now)
+      : { balance: quota.amount, grant: quota.amount, capped: false };
+    await client.from('credits').update({ balance: next.balance, last_reset_at: resetAt }).eq('user_id', userId);
+    if (next.grant > 0) {
+      await client.from('credit_transactions').insert({
+        user_id: userId,
+        amount: next.grant,
+        type: txType,
+        description: quotaResetDescription(plan, quota),
+      });
+    }
+    return next.balance;
   }
 
   return creditsRow.balance ?? 0;

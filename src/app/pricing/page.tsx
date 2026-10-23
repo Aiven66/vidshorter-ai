@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useLocale } from '@/lib/locale-context';
 import { useAuth } from '@/lib/auth-context';
-import { Check, Coins, Sparkles, Zap } from 'lucide-react';
+import { Check, Coins, Sparkles, Zap, ShieldCheck, RotateCcw, CalendarClock } from 'lucide-react';
 import Link from 'next/link';
 import { PaymentModal } from '@/components/payment-modal';
 import { useRouter } from 'next/navigation';
@@ -172,6 +172,21 @@ export default function PricingPage() {
           <p className="text-sm text-muted-foreground mt-2">
             {t('pricing.paymentNote')}
           </p>
+          <div className="flex flex-wrap items-center justify-center gap-3 mt-6">
+            {[
+              { icon: ShieldCheck, key: 'pricing.trust.refund' },
+              { icon: RotateCcw, key: 'pricing.trust.autoRefund' },
+              { icon: CalendarClock, key: 'pricing.trust.cancel' },
+            ].map(({ icon: Icon, key }) => (
+              <div
+                key={key}
+                className="flex items-center gap-2 rounded-full border bg-background px-4 py-2 text-sm"
+              >
+                <Icon className="h-4 w-4 text-primary" />
+                <span>{t(key)}</span>
+              </div>
+            ))}
+          </div>
         </div>
 
         <div className="grid md:grid-cols-3 gap-8 max-w-5xl mx-auto">
@@ -295,10 +310,10 @@ export default function PricingPage() {
 
         <div className="flex flex-wrap items-center justify-center gap-6 mt-12 text-sm text-muted-foreground">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-5 bg-[#003087] rounded flex items-center justify-center">
-              <span className="text-white text-[8px] font-bold">PP</span>
+            <div className="w-8 h-5 bg-gradient-to-r from-amber-500 to-orange-600 rounded flex items-center justify-center">
+              <span className="text-white text-[8px] font-bold">WF</span>
             </div>
-            <span>PayPal</span>
+            <span>Waffo</span>
           </div>
           <div className="flex items-center gap-2">
             <div className="w-8 h-5 bg-gradient-to-r from-violet-600 to-indigo-600 rounded flex items-center justify-center">

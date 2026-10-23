@@ -17,12 +17,13 @@ export const dynamic = 'force-dynamic';
  *   - status: the raw videos.status
  *   - error: a user-facing message when the job failed or went stale
  *
- * A stale job (still "processing" longer than PROCESS_STALE_MS, default 25 min,
+ * A stale job (still "processing" longer than PROCESS_STALE_MS, default 15 min,
  * beyond Pro's function window) is reported as a timed-out failure instead of an
- * endless "processing" spinner.
+ * endless "processing" spinner. The same cutoff is enforced independently by the
+ * cron reconciler, so a user who closes the tab no longer leaves a job pending.
  */
 
-const STALE_MS = Number(process.env.PROCESS_STALE_MS || 25 * 60 * 1000);
+const STALE_MS = Number(process.env.PROCESS_STALE_MS || 15 * 60 * 1000);
 
 const TERMINAL = new Set(['completed', 'partial', 'link_only_completed', 'failed']);
 
@@ -163,6 +164,7 @@ export async function GET(request: NextRequest) {
     clips: normalizedClips,
     error: effectiveStatus === 'failed' ? effectiveMessage : null,
     creditsRefunded,
+    retryable: effectiveStatus === 'failed',
     done,
   });
 }
