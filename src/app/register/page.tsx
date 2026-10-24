@@ -15,6 +15,7 @@ import { Suspense } from 'react';
 import { GoogleLoginButton } from '@/components/google-login-button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { posthog } from '@/lib/posthog';
+import { trackCustomEvent, CONVERSION_EVENTS } from '@/lib/analytics';
 import {
   getDesktopCallbackFromSearch,
   isDesktopAuthRequest,
@@ -204,6 +205,12 @@ function RegisterContent() {
           sign_up_method: 'email_password',
         });
       }
+
+      // 转化漏斗 step 3：注册（会话级匿名 ID 关联此前的试跑行为）
+      trackCustomEvent(CONVERSION_EVENTS.SIGN_UP, {
+        method: 'email_password',
+        has_referral: !!getStoredReferrerId(),
+      });
 
       // Claim referral reward if the user was invited via ?ref=
       const token = result.token || accessToken;

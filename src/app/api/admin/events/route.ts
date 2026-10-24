@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { CREDIT_PACKS } from '@/lib/server/subscriptions';
 
 // Force dynamic — prevents Next.js from trying to statically generate this API route at build time.
 export const dynamic = 'force-dynamic';
@@ -82,6 +83,19 @@ const FUNNELS = {
   ],
 } as const;
 
+// v5 P0-1：贯穿「访问 → 付费」的统一漏斗。
+// 前五步复用既有事件名（与 video_generation 漏斗共用），后台按 event_name 聚合。
+const CONVERSION_STEPS = [
+  { key: 'visit', event: 'page_view_home', label: '访问' },
+  { key: 'trial', event: 'click_analyze', label: '试跑' },
+  { key: 'signup', event: 'sign_up', label: '注册' },
+  { key: 'generated', event: 'analyze_success', label: '生成成功' },
+  { key: 'export', event: 'clip_download', label: '首次导出' },
+  { key: 'paywall', event: 'paywall_view', label: '付费墙曝光' },
+  { key: 'checkout', event: 'checkout_started', label: '结算开始' },
+  { key: 'paid', event: 'subscribe_success', label: '付费成功' },
+] as const;
+
 interface DailyCount {
   date: string;
   count: number;
@@ -132,6 +146,86 @@ interface DailyFunnelRow {
   total: number;
 }
 
+// ── v5 P0-1 统一转化漏斗 ─────────────────────────────────────────────────
+interface ConversionStepStat {
+  key: string;
+  event: string;
+  label: string;
+  count: number;
+  unique_actors: number;
+  conversion_from_previous: number;
+  conversion_from_first: number;
+}
+
+interface ConversionBreakdownRow {
+  /** 来源（seo/direct/...）或语言（zh/en/...） */
+  group: string;
+  visitors: number;
+  trials: number;
+  signups: number;
+  generations: number;
+  exporters: number;
+  paywall_views: number;
+  checkouts: number;
+  paid: number;
+  /** 导出 → 付费转化率（%） */
+  export_to_paid: number;
+}
+
+interface ConversionFunnel {
+  steps: ConversionStepStat[];
+  daily: Array<{ date: string } & Record<string, number>>;
+  by_source: ConversionBreakdownRow[];
+  by_locale: ConversionBreakdownRow[];
+  /** 流失最大的环节（key + 上一步到本步的转化率） */
+  biggest_drop: { key: string; label: string; conversion_from_previous: number } | null;
+}
+
+// ── v5 P0-5 失败挽回闭环 ─────────────────────────────────────────────────
+interface FailureReasonStat {
+  /** 归一化后的失败原因 */
+  reason: string;
+  count: number;
+  /** 已自动退还积分的次数 */
+  refunded: number;
+}
+
+interface FailureAnalysis {
+  failures: number;
+  successes: number;
+  /** 失败率（%）= failures / (failures + successes) */
+  failure_rate: number;
+  /** Top 3 失败原因 */
+  top_reasons: FailureReasonStat[];
+  /** 「重试」按钮点击次数 */
+  retry_clicks: number;
+  /** 点击重试后最终成功的独立用户数 */
+  retry_recovered_users: number;
+  /** 点击重试的独立用户数 */
+  retry_users: number;
+  /** 重试成功率（%）= recovered / retry_users */
+  retry_success_rate: number;
+  /** 失败后已自动退积分的次数 */
+  refunded_failures: number;
+}
+
+// ── v5 P0-2 首屏候选卡 ───────────────────────────────────────────────────
+interface PreviewAnalysis {
+  /** 候选卡曝光次数 */
+  views: number;
+  /** 曝光过的独立主体数 */
+  unique_actors: number;
+  /** 其中匿名访客的曝光次数 */
+  guest_views: number;
+  /** 曝光 → 注册（同一主体后续出现 sign_up） */
+  signed_up: number;
+  /** 曝光 → 首次导出（同一主体后续出现 clip_download） */
+  exported: number;
+  /** 提交 → 看到候选卡的耗时分位（毫秒），无数据为 null */
+  elapsed_p50_ms: number | null;
+  elapsed_p90_ms: number | null;
+}
+
 interface ApiResponse {
   range: { startDate: string; endDate: string };
   summary: {
@@ -147,6 +241,9 @@ interface ApiResponse {
   daily_funnel_tables: DailyFunnelRow[];
   real_subscription_count: number;
   real_subscription_revenue: number;
+  conversion_funnel: ConversionFunnel;
+  failure_analysis: FailureAnalysis;
+  preview_analysis: PreviewAnalysis;
 }
 
 // ── 解析 credit_transactions.description ──────────────────────────────────
@@ -176,6 +273,10 @@ function parseTransactionDescription(description: string): {
 function getPlanPrice(planId: string | null): number {
   if (planId === 'pro') return 19.9;
   if (planId === 'starter') return 9.9;
+  // 一次性积分包同样计入真实收入（否则付费转化被低估）
+  if (planId && Object.prototype.hasOwnProperty.call(CREDIT_PACKS, planId)) {
+    return CREDIT_PACKS[planId].priceIntl;
+  }
   return 0;
 }
 
@@ -326,6 +427,150 @@ export async function GET(request: NextRequest) {
       });
     }
 
+    // ── 3.5 统一转化漏斗（v5 P0-1） ────────────────────────────────────────
+    const stepKeyByEvent = new Map<string, string>(
+      CONVERSION_STEPS.map(s => [s.event, s.key])
+    );
+
+    const actorOf = (ev: { user_id?: unknown; session_id?: unknown }): string =>
+      (typeof ev.user_id === 'string' && ev.user_id) ||
+      (typeof ev.session_id === 'string' && ev.session_id) || '';
+
+    const metaOf = (ev: { event_data?: unknown }): { source: string; locale: string } => {
+      const d = (ev.event_data && typeof ev.event_data === 'object')
+        ? ev.event_data as Record<string, unknown>
+        : {};
+      return {
+        source: typeof d.source === 'string' && d.source ? d.source : 'unknown',
+        locale: typeof d.locale === 'string' && d.locale ? d.locale : 'unknown',
+      };
+    };
+
+    // 每个步骤的去重行为主体（登录用户用 user_id，匿名用 session_id）
+    const stepActors = new Map<string, Set<string>>();
+    const stepEventCounts = new Map<string, number>();
+    const dailyConvMap = new Map<string, Record<string, number>>();
+
+    // 来源 / 语言拆解：group -> stepKey -> actor set
+    const sourceAccum = new Map<string, Map<string, Set<string>>>();
+    const localeAccum = new Map<string, Map<string, Set<string>>>();
+    const addToGroup = (
+      map: Map<string, Map<string, Set<string>>>,
+      group: string,
+      stepKey: string,
+      actor: string,
+    ) => {
+      if (!actor) return;
+      let steps = map.get(group);
+      if (!steps) { steps = new Map(); map.set(group, steps); }
+      let set = steps.get(stepKey);
+      if (!set) { set = new Set(); steps.set(stepKey, set); }
+      set.add(actor);
+    };
+
+    // 用户 → 首次归因来源 / 语言（用于把真实付费按用户归属到来源）
+    const userSource = new Map<string, string>();
+    const userLocale = new Map<string, string>();
+    for (const ev of allEvents) {
+      const uid = typeof ev.user_id === 'string' ? ev.user_id : '';
+      if (!uid) continue;
+      const meta = metaOf(ev);
+      if (!userSource.has(uid) && meta.source !== 'unknown') userSource.set(uid, meta.source);
+      if (!userLocale.has(uid) && meta.locale !== 'unknown') userLocale.set(uid, meta.locale);
+    }
+
+    for (const ev of allEvents) {
+      const eventName = String(ev.event_name || '');
+      const stepKey = stepKeyByEvent.get(eventName);
+      if (!stepKey) continue;
+      const actor = actorOf(ev);
+      if (actor) {
+        if (!stepActors.has(stepKey)) stepActors.set(stepKey, new Set());
+        stepActors.get(stepKey)!.add(actor);
+      }
+      stepEventCounts.set(stepKey, (stepEventCounts.get(stepKey) || 0) + 1);
+
+      const date = (ev.created_at as string).slice(0, 10);
+      if (!dailyConvMap.has(date)) dailyConvMap.set(date, {});
+      const dayRow = dailyConvMap.get(date)!;
+      dayRow[stepKey] = (dayRow[stepKey] || 0) + 1;
+
+      const meta = metaOf(ev);
+      addToGroup(sourceAccum, meta.source, stepKey, actor);
+      addToGroup(localeAccum, meta.locale, stepKey, actor);
+    }
+
+    // 真实付费是唯一可信的「付费成功」来源：按用户归属到来源 / 语言
+    const paidUsers = new Set<string>();
+    for (const tx of parsedTxs) {
+      paidUsers.add(tx.user_id);
+      addToGroup(sourceAccum, userSource.get(tx.user_id) || 'unknown', 'paid', tx.user_id);
+      addToGroup(localeAccum, userLocale.get(tx.user_id) || 'unknown', 'paid', tx.user_id);
+      if (!dailyConvMap.has(tx.date)) dailyConvMap.set(tx.date, {});
+      const dayRow = dailyConvMap.get(tx.date)!;
+      dayRow.paid = (dayRow.paid || 0) + 1;
+    }
+
+    const actorCount = (key: string): number =>
+      key === 'paid' ? paidUsers.size : (stepActors.get(key)?.size || 0);
+
+    const conversionSteps: ConversionStepStat[] = CONVERSION_STEPS.map((step, i) => {
+      const unique = actorCount(step.key);
+      const prev = i > 0 ? actorCount(CONVERSION_STEPS[i - 1].key) : unique;
+      const first = actorCount(CONVERSION_STEPS[0].key);
+      return {
+        key: step.key,
+        event: step.event,
+        label: step.label,
+        count: step.key === 'paid' ? parsedTxs.length : (stepEventCounts.get(step.key) || 0),
+        unique_actors: unique,
+        conversion_from_previous: i === 0 ? 100 : (prev > 0 ? (unique / prev) * 100 : 0),
+        conversion_from_first: first > 0 ? (unique / first) * 100 : 0,
+      };
+    });
+
+    const buildBreakdown = (map: Map<string, Map<string, Set<string>>>): ConversionBreakdownRow[] =>
+      Array.from(map.entries())
+        .map(([group, steps]) => {
+          const n = (key: string) => steps.get(key)?.size || 0;
+          const exporters = n('export');
+          const paid = n('paid');
+          return {
+            group,
+            visitors: n('visit'),
+            trials: n('trial'),
+            signups: n('signup'),
+            generations: n('generated'),
+            exporters,
+            paywall_views: n('paywall'),
+            checkouts: n('checkout'),
+            paid,
+            export_to_paid: exporters > 0 ? (paid / exporters) * 100 : 0,
+          };
+        })
+        .sort((a, b) => b.visitors - a.visitors);
+
+    const dropCandidates = conversionSteps.filter(s => s.key !== 'visit');
+    const biggestDrop = dropCandidates.length > 0
+      ? dropCandidates.reduce((min, s) => (s.conversion_from_previous < min.conversion_from_previous ? s : min))
+      : null;
+
+    const conversionFunnel: ConversionFunnel = {
+      steps: conversionSteps,
+      daily: Array.from(dailyConvMap.entries())
+        .map(([date, counts]) => Object.assign({ date }, counts))
+        .sort((a, b) => a.date.localeCompare(b.date)),
+      by_source: buildBreakdown(sourceAccum),
+      by_locale: buildBreakdown(localeAccum),
+      biggest_drop: biggestDrop
+        ? {
+            key: biggestDrop.key,
+            label: biggestDrop.label,
+            conversion_from_previous: biggestDrop.conversion_from_previous,
+          }
+        : null,
+    };
+
     // ── 4. 支付方式细分（Waffo/Creem） ───────────────────────────────────
     const paymentMethodBreakdown: PaymentMethodStat[] = [];
     for (const method of ['waffo', 'creem'] as const) {
@@ -354,6 +599,114 @@ export async function GET(request: NextRequest) {
       });
     }
 
+    // ── 4.6 失败分析（v5 P0-5） ────────────────────────────────────────────
+    // 失败原因归一化：只保留稳定的枚举值，避免把整段报错文本写成维度。
+    const normalizeFailureReason = (raw: unknown): string => {
+      const text = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+      if (!text) return 'unknown';
+      if (/insufficient|not enough|quota|credit/.test(text)) return 'insufficient_credits';
+      if (/timeout|timed out|time out|deadline/.test(text)) return 'timeout';
+      if (/private|sign in|login|cookie|bot|403|forbidden|unavailable/.test(text)) return 'source_blocked';
+      if (/no highlight|no clip|empty|nothing found|未找到/.test(text)) return 'no_highlights';
+      if (/network|fetch|connection|econn|socket/.test(text)) return 'network';
+      if (/unsupported|format|codec|invalid url|bad url/.test(text)) return 'unsupported_input';
+      return 'other';
+    };
+
+    const failureEvents = allEvents.filter(ev =>
+      ev.event_name === 'generation_failed' || ev.event_name === 'analyze_failed'
+    );
+    const successEvents = allEvents.filter(ev => ev.event_name === 'analyze_success');
+    const retryEvents = allEvents.filter(ev => ev.event_name === 'retry_clicked');
+
+    const reasonMap = new Map<string, { count: number; refunded: number }>();
+    let refundedFailures = 0;
+    for (const ev of failureEvents) {
+      const d = (ev.event_data && typeof ev.event_data === 'object')
+        ? ev.event_data as Record<string, unknown>
+        : {};
+      const reason = normalizeFailureReason(d.reason ?? d.error ?? d.message);
+      const refunded = d.credits_refunded === true;
+      if (refunded) refundedFailures++;
+      const entry = reasonMap.get(reason) || { count: 0, refunded: 0 };
+      entry.count++;
+      if (refunded) entry.refunded++;
+      reasonMap.set(reason, entry);
+    }
+
+    // 重试恢复：同一 actor 先点 retry_clicked，之后又出现 analyze_success。
+    // allEvents 已按 created_at 升序，逐条扫描即可。
+    const firstRetryAt = new Map<string, string>();
+    for (const ev of retryEvents) {
+      const actor = actorOf(ev);
+      const at = String(ev.created_at || '');
+      if (!actor || !at) continue;
+      const prev = firstRetryAt.get(actor);
+      if (!prev || at < prev) firstRetryAt.set(actor, at);
+    }
+    const recoveredActors = new Set<string>();
+    for (const ev of successEvents) {
+      const actor = actorOf(ev);
+      const at = String(ev.created_at || '');
+      if (!actor || !at) continue;
+      const retryAt = firstRetryAt.get(actor);
+      if (retryAt && at >= retryAt) recoveredActors.add(actor);
+    }
+
+    const failureCount = failureEvents.length;
+    const successCount = successEvents.length;
+    const retryUsers = firstRetryAt.size;
+
+    const failureAnalysis: FailureAnalysis = {
+      failures: failureCount,
+      successes: successCount,
+      failure_rate: failureCount + successCount > 0
+        ? parseFloat(((failureCount / (failureCount + successCount)) * 100).toFixed(1))
+        : 0,
+      top_reasons: Array.from(reasonMap.entries())
+        .map(([reason, v]) => ({ reason, count: v.count, refunded: v.refunded }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 3),
+      retry_clicks: retryEvents.length,
+      retry_recovered_users: recoveredActors.size,
+      retry_users: retryUsers,
+      retry_success_rate: retryUsers > 0
+        ? parseFloat(((recoveredActors.size / retryUsers) * 100).toFixed(1))
+        : 0,
+      refunded_failures: refundedFailures,
+    };
+
+    // ── 4.7 首屏候选卡（v5 P0-2） ─────────────────────────────────────────
+    const previewEvents = allEvents.filter(ev => ev.event_name === 'preview_shown');
+    const previewActors = new Set<string>();
+    let guestViews = 0;
+    const elapsedSamples: number[] = [];
+    for (const ev of previewEvents) {
+      const actor = actorOf(ev);
+      if (actor) previewActors.add(actor);
+      const d = (ev.event_data && typeof ev.event_data === 'object')
+        ? ev.event_data as Record<string, unknown>
+        : {};
+      if (d.is_guest === true) guestViews++;
+      const ms = typeof d.elapsed_ms === 'number' ? d.elapsed_ms : Number(d.elapsed_ms);
+      if (Number.isFinite(ms) && ms >= 0) elapsedSamples.push(ms);
+    }
+    elapsedSamples.sort((a, b) => a - b);
+    const percentile = (arr: number[], p: number): number | null => {
+      if (arr.length === 0) return null;
+      const idx = Math.min(arr.length - 1, Math.max(0, Math.ceil((p / 100) * arr.length) - 1));
+      return arr[idx];
+    };
+    const previewAnalysis: PreviewAnalysis = {
+      views: previewEvents.length,
+      unique_actors: previewActors.size,
+      guest_views: guestViews,
+      signed_up: Array.from(previewActors).filter(a => stepActors.get('signup')?.has(a)).length,
+      exported: Array.from(previewActors).filter(a => stepActors.get('export')?.has(a)).length,
+      elapsed_p50_ms: percentile(elapsedSamples, 50),
+      elapsed_p90_ms: percentile(elapsedSamples, 90),
+    };
+
     // ── 5. 按日期聚合的行为事件 ───────────────────────────────────────────
     const dailyMap = new Map<string, Record<string, number>>();
     for (const ev of allEvents) {
@@ -364,7 +717,7 @@ export async function GET(request: NextRequest) {
     }
 
     const daily: Array<{ date: string } & Record<string, number>> = Array.from(dailyMap.entries())
-      .map(([date, counts]) => ({ date, ...counts }))
+      .map(([date, counts]) => Object.assign({ date }, counts))
       .sort((a, b) => a.date.localeCompare(b.date));
 
     // ── 6. 按日期+支付方式聚合的订阅数据 ──────────────────────────────────
@@ -452,6 +805,9 @@ export async function GET(request: NextRequest) {
       daily_funnel_tables: dailyFunnelTables,
       real_subscription_count: realSubCount,
       real_subscription_revenue: realSubRevenue,
+      conversion_funnel: conversionFunnel,
+      failure_analysis: failureAnalysis,
+      preview_analysis: previewAnalysis,
     };
 
     return NextResponse.json(response);

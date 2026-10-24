@@ -74,6 +74,14 @@ interface Highlight {
   engagement_score: number;
 }
 
+/** 从链接推导一张「视频封面」图，用于 P0-2 首屏候选卡（无需服务端抽帧）。 */
+function previewThumbnailFor(videoUrl: string): string | undefined {
+  const m = videoUrl.match(
+    /(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/|live\/))([a-zA-Z0-9_-]{7,15})/,
+  );
+  return m ? `https://img.youtube.com/vi/${m[1]}/hqdefault.jpg` : undefined;
+}
+
 interface ClipResult {
   id: string;
   title: string;
@@ -480,6 +488,8 @@ export async function POST(request: NextRequest) {
             recommendedClipCount: recommendedCount,
             videoId: dbVideoId || undefined,
             nextOffset: suppliedHighlights && suppliedHighlights.length > 0 ? clipOffset : 0,
+            // P0-2 首屏候选卡：分析一完成就先把 Top3 交给前端渲染，成片在后台继续。
+            previewThumbnail: previewThumbnailFor(videoUrl),
             done: false,
           },
         })) return;

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import { posthog } from '@/lib/posthog';
-import { trackEvent, trackCustomEvent, SUBSCRIBE_FUNNEL } from '@/lib/analytics';
+import { trackEvent, trackCustomEvent, SUBSCRIBE_FUNNEL, CONVERSION_FUNNEL, CONVERSION_EVENTS } from '@/lib/analytics';
 
 interface PlanInfo {
   id: string;
@@ -51,6 +51,9 @@ export function PaymentModal({ open, onOpenChange, plan, onSuccess }: PaymentMod
   const [redirectPollUrl, setRedirectPollUrl] = useState('');
   const [pollingPayment, setPollingPayment] = useState(false);
   const [manualCheck, setManualCheck] = useState(false);
+  // 支付摩擦观测：记录失败通道（用于引导切换到另一条通道）与是否已上报放弃。
+  const [failedMethod, setFailedMethod] = useState<PayMethod | null>(null);
+  const abandonedTrackedRef = useRef(false);
 
   useEffect(() => {
     if (!open) return;
@@ -60,7 +63,40 @@ export function PaymentModal({ open, onOpenChange, plan, onSuccess }: PaymentMod
     setRedirectPollUrl('');
     setPollingPayment(false);
     setManualCheck(false);
+    setFailedMethod(null);
+    abandonedTrackedRef.current = false;
   }, [open]);
+
+  // 放弃结算：进入支付中状态 30 秒仍未完成 → 记一次 checkout_abandoned。
+  // 只在模态仍打开、且尚未上报时触发，避免与「关闭弹窗」重复计数。
+  useEffect(() => {
+    if (!open || payState !== 'pending' || abandonedTrackedRef.current) return undefined;
+    const timer = setTimeout(() => {
+      if (abandonedTrackedRef.current) return;
+      abandonedTrackedRef.current = true;
+      trackCustomEvent(CONVERSION_EVENTS.CHECKOUT_ABANDONED, {
+        plan_id: plan?.id || null,
+        payment_method: method,
+        is_credit_pack: !!plan?.credits,
+        reason: 'timeout_30s',
+      });
+    }, 30_000);
+    return () => clearTimeout(timer);
+  }, [open, payState, method, plan]);
+
+  // 关闭弹窗时若仍在支付中，同样视为放弃（用户主动离开）。
+  const handleOpenChange = useCallback((next: boolean) => {
+    if (!next && payState === 'pending' && !abandonedTrackedRef.current) {
+      abandonedTrackedRef.current = true;
+      trackCustomEvent(CONVERSION_EVENTS.CHECKOUT_ABANDONED, {
+        plan_id: plan?.id || null,
+        payment_method: method,
+        is_credit_pack: !!plan?.credits,
+        reason: 'closed_dialog',
+      });
+    }
+    onOpenChange(next);
+  }, [payState, method, plan, onOpenChange]);
 
   const trackPaymentCompleted = useCallback((paymentMethod: PayMethod) => {
     if (!posthog || !plan) return;
@@ -80,11 +116,24 @@ export function PaymentModal({ open, onOpenChange, plan, onSuccess }: PaymentMod
         payment_method: paymentMethod,
       },
     });
+
+    // 一次性积分包与订阅分开计数：P0-3 的漏斗验收需要「credit_pack_paid」独立可测，
+    // 否则低价首单会被混进订阅成功，看不清首单转化。
+    if (plan.credits) {
+      trackCustomEvent(CONVERSION_EVENTS.CREDIT_PACK_PAID, {
+        plan_id: plan.id,
+        credits: plan.credits,
+        amount_usd: plan.price.intl,
+        payment_method: paymentMethod,
+      });
+    }
   }, [plan]);
 
   // 支付成功时触发 onSuccess（用于刷新积分等副作用）
   useEffect(() => {
     if (payState === 'success') {
+      // 已成功即不再算放弃，避免 30 秒计时器误报。
+      abandonedTrackedRef.current = true;
       onSuccess?.();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -184,6 +233,7 @@ export function PaymentModal({ open, onOpenChange, plan, onSuccess }: PaymentMod
         setPaymentError(
           `${reason}${method === 'creem' ? ' Try Waffo instead — it is our primary checkout channel.' : ' Please try again.'}`,
         );
+        setFailedMethod(method);
         setPayState('selecting');
         return;
       }
@@ -193,6 +243,15 @@ export function PaymentModal({ open, onOpenChange, plan, onSuccess }: PaymentMod
         return;
       }
 
+      // 转化漏斗 step 7：结算开始（本地与远程支付同口径）
+      trackEvent(CONVERSION_FUNNEL.CHECKOUT_STARTED, {
+        data: {
+          plan_id: plan.id,
+          payment_method: method,
+          is_credit_pack: !!plan.credits,
+        },
+      });
+
       // Creem polls by session_id; Waffo polls by user_id (subscription status)
       const pollUrl = method === 'creem'
         ? `/api/payment/creem?session_id=${encodeURIComponent(data.sessionId || '')}`
@@ -201,6 +260,7 @@ export function PaymentModal({ open, onOpenChange, plan, onSuccess }: PaymentMod
       window.open(data.checkoutUrl, '_blank', 'noopener,noreferrer');
     } catch {
       setPaymentError('Network error, please try again');
+      setFailedMethod(method);
       setPayState('selecting');
     }
   };
@@ -213,7 +273,7 @@ export function PaymentModal({ open, onOpenChange, plan, onSuccess }: PaymentMod
   if (!plan) return null;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-3 text-lg font-semibold">
@@ -250,6 +310,26 @@ export function PaymentModal({ open, onOpenChange, plan, onSuccess }: PaymentMod
                 {plan.credits
                   ? `Your ${plan.credits} credits have been added to your balance.`
                   : `Your ${plan.name} subscription is now active.<br />Credits have been added to your account.`}
+              </p>
+            </div>
+            <div className="w-full space-y-2 rounded-xl border border-border bg-muted/30 p-4 text-xs text-muted-foreground">
+              <p className="flex items-start gap-2">
+                <Shield className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+                <span>
+                  {plan.credits
+                    ? 'One-time purchase — credits never auto-renew.'
+                    : 'Auto-renews monthly. Cancel anytime from your dashboard; access continues until the end of the period.'}
+                </span>
+              </p>
+              <p className="flex items-start gap-2">
+                <CheckCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+                <span>7-day money-back guarantee on your first subscription.</span>
+              </p>
+              <p className="flex items-start gap-2">
+                <ExternalLink className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+                <span>
+                  Questions or refunds: <a className="text-primary underline" href="mailto:support@clipop.ai">support@clipop.ai</a>
+                </span>
               </p>
             </div>
             <Button className="mt-2 h-12 w-full text-base font-medium" onClick={() => onOpenChange(false)}>
@@ -344,6 +424,23 @@ export function PaymentModal({ open, onOpenChange, plan, onSuccess }: PaymentMod
                   <XCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
                   <span>{paymentError}</span>
                 </div>
+                {failedMethod === 'waffo' && (
+                  <Button
+                    variant="outline"
+                    className="mt-3 w-full gap-2 border-destructive/40 text-foreground"
+                    onClick={() => {
+                      // 通道兜底：Waffo 创建订单失败 → 让用户改走 Creem，而不是只能反复重试。
+                      setMethod('creem');
+                      setPaymentError('');
+                      setFailedMethod(null);
+                      setPayState('selecting');
+                    }}
+                  >
+                    <CreditCard className="h-4 w-4" />
+                    Pay with Creem instead
+                    <ChevronRight className="ml-auto h-4 w-4" />
+                  </Button>
+                )}
               </div>
             )}
 

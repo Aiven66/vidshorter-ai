@@ -41,8 +41,12 @@ import { EXPORT_TEMPLATES } from '@/lib/export-templates';
 import { SCENARIOS } from '@/lib/scenarios';
 import type { ScenarioPreset } from '@/lib/scenarios';
 import Link from 'next/link';
-import { trackEvent, trackCustomEvent, setAnalyticsUser, takeVisitGapDays, VIDEO_FUNNEL, LOCAL_EVENTS } from '@/lib/analytics';
+import { trackEvent, trackCustomEvent, setAnalyticsUser, takeVisitGapDays, VIDEO_FUNNEL, LOCAL_EVENTS, CONVERSION_FUNNEL, CONVERSION_EVENTS, setAnalyticsContext } from '@/lib/analytics';
 import { getPublishMap, setPublishInfo, type PublishInfo } from '@/lib/publish-tracker';
+import { estimateEditingMinutes, formatSavedTime, EDITING_MINUTES_PER_CLIP } from '@/lib/value-estimate';
+import { buildClipInsight, potentialLabel, platformLabel } from '@/lib/publish-suggestions';
+import { describeFailure } from '@/lib/failure-reason';
+import { CREDIT_COST } from '@/lib/plan-credits';
 import { MarkPublishedDialog } from '@/components/mark-published-dialog';
 import HighlightRulesPanel, {
   type HighlightRules,
@@ -111,6 +115,8 @@ interface SSEData {
     title?: string;
     recommendedClipCount?: number;
     totalHighlights?: number;
+    // P0-2 首屏候选卡：服务端下发的封面图（未就绪时前端用占位）
+    previewThumbnail?: string;
     clipOffset?: number;
     clipLimit?: number;
     nextOffset?: number;
@@ -589,6 +595,12 @@ export default function VideoProcessor({
   const { t, locale } = useLocale();
   const { user, accessToken, loading: authLoading, refreshSession, signOut } = useAuth();
   const { balance, plan, loading: creditsLoading, refreshCredits, deductCredits } = useCredits();
+  // 门控要读「最新的 plan」：支付成功后 useCredits 会重新拉取套餐，
+  // 而被付费墙拦下、支付后原地重放的那个旧闭包仍捕获着 plan === 'free'，必须经 ref 取实时值。
+  const planRef = useRef(plan);
+  useEffect(() => {
+    planRef.current = plan;
+  }, [plan]);
   // 「YouTube Shorts 成片」模式：只输入长视频链接 → 输出 9:16 竖屏高光成片（3 条 × ≤60s）。
   const isShorts = variant === 'shorts';
   // 9:16 竖屏 + AI 字幕属 Starter+ 权益，免费用户展示升级引导（管理员除外）。
@@ -649,6 +661,17 @@ export default function VideoProcessor({
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState<SSEData | null>(null);
   const [clips, setClips] = useState<VideoClip[]>([]);
+  // P0-2 10 秒首屏预览：分析一完成就展示 Top3 候选卡，成片继续在后台渲染。
+  const [previewCandidates, setPreviewCandidates] = useState<Array<{
+    title: string;
+    start_time: number;
+    end_time: number;
+    summary: string;
+    engagement_score: number;
+  }>>([]);
+  const [previewThumbnail, setPreviewThumbnail] = useState<string>('');
+  const previewShownRef = useRef(false);
+  const previewStartedAtRef = useRef(0);
   // T6.6 配方批量复跑：用同一套配方顺序复跑多条链接（一次提交多条同一风格）。
   const [batchRun, setBatchRun] = useState<{ total: number; done: number; current: string } | null>(null);
   // P0-2 意图可控高光：桌面本地引擎下的高光规则面板 + 当前规则（生成时透传给本地管线）
@@ -685,11 +708,16 @@ export default function VideoProcessor({
   const [compiling, setCompiling] = useState(false);
   const [insufficientOpen, setInsufficientOpen] = useState(false);
   const [exportPaywallOpen, setExportPaywallOpen] = useState(false);
+  // P0-3 就地解锁：记住被付费墙拦下的那次操作，支付成功后原地重放（不跳页、不需要用户再点一次）。
+  const paywallRetryRef = useRef<(() => void) | null>(null);
   const [firstSuccessOpen, setFirstSuccessOpen] = useState(false);
   const [suppressSuccessModal, setSuppressSuccessModal] = useState(false);
   // 分享成功后的临时反馈：记录已复制链接的 clip id（桌面端 Web Share 不可用时降级为复制链接）
   const [copiedShareId, setCopiedShareId] = useState<string | null>(null);
   const copiedShareTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // P0-4 建议标题复制反馈（复制即计数，衡量「发布建议」是否真的被用起来）
+  const [copiedInsightId, setCopiedInsightId] = useState<string | null>(null);
+  const copiedInsightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const trimmedVideoUrl = videoUrl.trim();
   const canStart = (!!trimmedVideoUrl && isHttpVideoUrl(trimmedVideoUrl)) || !!selectedFile;
@@ -705,11 +733,33 @@ export default function VideoProcessor({
   );
   const clipRankById = new Map(rankedClips.map((c, i) => [c.id, i + 1] as const));
   const topPicks = rankedClips.filter(c => (c.engagementScore ?? 0) > 0).slice(0, 3);
+  // P0-3 付费墙价值前置：已节省的剪辑时间 + 一条成片缩略图（模糊预览）
+  const paywallSavedMinutes = estimateEditingMinutes(
+    completedClips.length,
+    completedClips.reduce((sum, c) => sum + Math.max(0, c.endTime - c.startTime), 0),
+  );
+  const paywallPreviewImage = rankedClips.find(c => !!c.thumbnailUrl)?.thumbnailUrl;
+  // P0-4 价值可视化：结果页首次出现成片时上报一次 value_shown（含条数与估算节省时间）。
+  const valueShownRef = useRef(false);
+  useEffect(() => {
+    if (valueShownRef.current || completedClips.length === 0) return;
+    valueShownRef.current = true;
+    trackCustomEvent(CONVERSION_EVENTS.VALUE_SHOWN, {
+      clip_count: completedClips.length,
+      saved_minutes: paywallSavedMinutes,
+      scored_clips: completedClips.filter(c => c.engagementScore !== undefined).length,
+    });
+  }, [completedClips.length, paywallSavedMinutes]);
+
+  // P0-5 失败挽回：把后端原始报错翻译成「发生了什么 + 下一步」。
+  const failureCopy = useMemo(() => describeFailure(error, locale), [error, locale]);
 
   // 同步当前用户信息到 analytics SDK
   useEffect(() => {
     setAnalyticsUser(user ? { id: user.id, email: user.email } : null);
-  }, [user]);
+    // 统一上下文：所有事件都带上来源 / 语言 / 套餐 / 匿名标记，供后台拆解漏斗。
+    setAnalyticsContext({ locale, plan: plan || 'free', isAnonymous: !user });
+  }, [user, locale, plan]);
 
   // 首次出片成功 → 弹一次性升级引导（仅免费非管理员；localStorage 只弹一次）
   const hadClipsRef = useRef(false);
@@ -768,6 +818,18 @@ export default function VideoProcessor({
       trackCustomEvent(LOCAL_EVENTS.RETURN_VISIT, { gap_days: gapDays, returning: gapDays >= 1 });
     }
   }, []);
+
+  // 转化漏斗 step 6：付费墙曝光。两个入口分别记 trigger，后台可区分「额度用尽」与「免费档导出拦截」。
+  useEffect(() => {
+    if (exportPaywallOpen) {
+      trackEvent(CONVERSION_FUNNEL.PAYWALL_VIEW, { data: { trigger: 'export_gate' } });
+    }
+  }, [exportPaywallOpen]);
+  useEffect(() => {
+    if (insufficientOpen) {
+      trackEvent(CONVERSION_FUNNEL.PAYWALL_VIEW, { data: { trigger: 'credits_gate' } });
+    }
+  }, [insufficientOpen]);
 
   useEffect(() => {
     try {
@@ -919,8 +981,12 @@ export default function VideoProcessor({
   // 其余高光以锁定占位呈现，引导注册后继承分析结果继续出全集。
   const runGuestTrial = useCallback(async (inputUrl: string) => {
     setIsProcessing(true);
+    previewStartedAtRef.current = Date.now();
     setProgress({ stage: 'init', progress: 5, message: locale === 'zh' ? '正在生成免费预览…' : 'Generating your free preview...' });
     setClips([]);
+    setPreviewCandidates([]);
+    setPreviewThumbnail('');
+    previewShownRef.current = false;
     setError(null);
     setCreditsRefunded(false);
     setGuestTrial(null);
@@ -934,9 +1000,14 @@ export default function VideoProcessor({
         trialId?: string; previewUrl?: string; title?: string;
         highlights?: Array<{ title: string; score: number; startTime: number; endTime: number }>;
         reasonLabel?: string; totalHighlights?: number; lockedCount?: number;
+        thumbnailUrl?: string;
         code?: string; error?: string;
       };
       if (!res.ok || !data.previewUrl || !data.trialId) {
+        trackCustomEvent(CONVERSION_EVENTS.ANALYZE_FAILED, {
+          reason: data.code || `http_${res.status}`,
+          stage: 'guest_trial',
+        });
         if (data.code === 'trial_used' || res.status === 429) {
           setError(locale === 'zh'
             ? '今日免费试跑已用完，注册即可继续创作。'
@@ -964,11 +1035,33 @@ export default function VideoProcessor({
         lockedCount: data.lockedCount ?? 0,
         totalHighlights: data.totalHighlights ?? 1,
       });
+      // P0-2：访客也拿到 3 张候选卡（第 1 条已渲染，其余为锁定态）。
+      if (data.highlights && data.highlights.length > 0) {
+        setPreviewCandidates(data.highlights.map(h => ({
+          title: h.title,
+          start_time: h.startTime,
+          end_time: h.endTime,
+          summary: '',
+          engagement_score: h.score,
+        })));
+        previewShownRef.current = true;
+        trackCustomEvent(CONVERSION_EVENTS.PREVIEW_SHOWN, {
+          elapsed_ms: Math.max(0, Date.now() - previewStartedAtRef.current),
+          candidates: data.highlights.length,
+          total_highlights: data.totalHighlights ?? data.highlights.length,
+          is_guest: true,
+        });
+      }
+      if (data.thumbnailUrl) setPreviewThumbnail(data.thumbnailUrl);
       setProgress({ stage: 'complete', progress: 100, message: '' });
       try {
         sessionStorage.setItem('clipop_trial', JSON.stringify({ trialId: data.trialId, videoUrl: inputUrl }));
       } catch {}
     } catch (e) {
+      trackCustomEvent(CONVERSION_EVENTS.ANALYZE_FAILED, {
+        reason: e instanceof Error ? e.message.slice(0, 160) : 'trial_exception',
+        stage: 'guest_trial',
+      });
       setError(e instanceof Error ? e.message : 'Trial failed.');
     } finally {
       setIsProcessing(false);
@@ -1011,6 +1104,11 @@ export default function VideoProcessor({
     setProgress({ stage: 'init', progress: 0, message: 'Starting...' });
     // 批量复跑时保留前一条视频的成片（append），单条流程照常清空。
     if (!opts?.append) setClips([]);
+    // P0-2 首屏候选：新一次提交重新计时，候选卡也清空。
+    setPreviewCandidates([]);
+    setPreviewThumbnail('');
+    previewShownRef.current = false;
+    previewStartedAtRef.current = Date.now();
     setError(null);
     setCreditsRefunded(false);
 
@@ -1295,6 +1393,12 @@ export default function VideoProcessor({
 
           if (s.status === 'failed' || s.error) {
             hasError = true;
+            // 转化漏斗：生成失败必须可观测（含服务端是否已退积分），否则「失败一次就走」无法定位。
+            trackCustomEvent(CONVERSION_EVENTS.GENERATION_FAILED, {
+              reason: String(s.error || s.message || 'failed').slice(0, 160),
+              credits_refunded: s.creditsRefunded === true,
+              stage: 'videos_api',
+            });
             // P0-1 失败零损失：服务端已退还本次生成的积分 → 提示重试免费。
             if (s.creditsRefunded) setCreditsRefunded(true);
             if (s.error && /insufficient credits/i.test(s.error)) {
@@ -1393,7 +1497,23 @@ export default function VideoProcessor({
               if (d.data?.videoId) videoId = d.data.videoId;
               if (d.data?.estimatedDuration) analysisDuration = d.data.estimatedDuration;
               if (typeof d.data?.title === 'string' && d.data.title.trim()) analysisTitle = d.data.title.trim();
-              if (d.data?.highlights && d.data.highlights.length > 0) allHighlights = d.data.highlights;
+              if (d.data?.highlights && d.data.highlights.length > 0) {
+                allHighlights = d.data.highlights;
+                if (!previewShownRef.current) {
+                  previewShownRef.current = true;
+                  const top3 = [...d.data.highlights]
+                    .sort((a, b) => (b.engagement_score || 0) - (a.engagement_score || 0))
+                    .slice(0, 3);
+                  setPreviewCandidates(top3);
+                  if (d.data.previewThumbnail) setPreviewThumbnail(d.data.previewThumbnail);
+                  // P0-2 验收：测量「提交 → 看到候选卡」的真实耗时（后台看 P50/P90）。
+                  trackCustomEvent(CONVERSION_EVENTS.PREVIEW_SHOWN, {
+                    elapsed_ms: Math.max(0, Date.now() - previewStartedAtRef.current),
+                    candidates: top3.length,
+                    total_highlights: d.data.highlights.length,
+                  });
+                }
+              }
               if (typeof d.data?.clipLimit === 'number' && d.data.clipLimit > 0) batchLimit = d.data.clipLimit;
               if (typeof d.data?.nextOffset === 'number') nextOffset = d.data.nextOffset;
               if (typeof d.data?.done === 'boolean') done = d.data.done;
@@ -1414,6 +1534,11 @@ export default function VideoProcessor({
                 } else {
                   setError(d.message);
                 }
+                trackCustomEvent(CONVERSION_EVENTS.GENERATION_FAILED, {
+                  reason: String(d.message || d.data?.error || 'stream_error').slice(0, 160),
+                  credits_refunded: d.data?.creditsRefunded === true,
+                  stage: 'stream',
+                });
                 // P0-4：本地下载失败且服务端已退还本次积分 → 提示"可免费重试"。
                 if (d.data?.creditsRefunded) setCreditsRefunded(true);
                 hasError = true;
@@ -1433,7 +1558,22 @@ export default function VideoProcessor({
             if (d.data?.videoId) videoId = d.data.videoId;
             if (d.data?.estimatedDuration) analysisDuration = d.data.estimatedDuration;
             if (typeof d.data?.title === 'string' && d.data.title.trim()) analysisTitle = d.data.title.trim();
-            if (d.data?.highlights && d.data.highlights.length > 0) allHighlights = d.data.highlights;
+            if (d.data?.highlights && d.data.highlights.length > 0) {
+              allHighlights = d.data.highlights;
+              if (!previewShownRef.current) {
+                previewShownRef.current = true;
+                const top3 = [...d.data.highlights]
+                  .sort((a, b) => (b.engagement_score || 0) - (a.engagement_score || 0))
+                  .slice(0, 3);
+                setPreviewCandidates(top3);
+                if (d.data.previewThumbnail) setPreviewThumbnail(d.data.previewThumbnail);
+                trackCustomEvent(CONVERSION_EVENTS.PREVIEW_SHOWN, {
+                  elapsed_ms: Math.max(0, Date.now() - previewStartedAtRef.current),
+                  candidates: top3.length,
+                  total_highlights: d.data.highlights.length,
+                });
+              }
+            }
             if (typeof d.data?.clipLimit === 'number' && d.data.clipLimit > 0) batchLimit = d.data.clipLimit;
             if (typeof d.data?.nextOffset === 'number') nextOffset = d.data.nextOffset;
             if (typeof d.data?.done === 'boolean') done = d.data.done;
@@ -1453,6 +1593,11 @@ export default function VideoProcessor({
               } else {
                 setError(d.message);
               }
+              trackCustomEvent(CONVERSION_EVENTS.GENERATION_FAILED, {
+                reason: String(d.message || d.data?.error || 'stream_error').slice(0, 160),
+                credits_refunded: d.data?.creditsRefunded === true,
+                stage: 'stream_tail',
+              });
               done = true;
             }
           } catch (e) {
@@ -1611,7 +1756,12 @@ export default function VideoProcessor({
     } catch (err) {
       console.error('Processing error:', err);
       setIsUploading(false);
-      setError(err instanceof Error ? err.message : 'Processing failed');
+      const msg = err instanceof Error ? err.message : 'Processing failed';
+      trackCustomEvent(CONVERSION_EVENTS.GENERATION_FAILED, {
+        reason: msg.slice(0, 160),
+        stage: 'exception',
+      });
+      setError(msg);
     } finally {
       setIsProcessing(false);
     }
@@ -1740,6 +1890,25 @@ export default function VideoProcessor({
     copiedShareTimer.current = setTimeout(() => setCopiedShareId(null), 2000);
   };
 
+  // P0-4 发布建议：复制建议标题 + hashtag，并记录「建议被采用」的埋点。
+  const handleCopyInsight = async (clip: VideoClip, suggestedTitle: string, hashtags: string[]) => {
+    const payload = `${suggestedTitle}\n${hashtags.join(' ')}`;
+    try {
+      await navigator.clipboard?.writeText(payload);
+    } catch {
+      /* 剪贴板不可用：仍然给出复制成功的视觉反馈，用户可手动选中文本 */
+    }
+    trackCustomEvent(CONVERSION_EVENTS.VALUE_TITLE_COPIED, {
+      clip_id: clip.id,
+      clip_title: clip.title,
+      recommended_platform: platformLabel(buildClipInsight(clip).platform),
+      has_score: clip.engagementScore !== undefined,
+    });
+    setCopiedInsightId(clip.id);
+    if (copiedInsightTimer.current) clearTimeout(copiedInsightTimer.current);
+    copiedInsightTimer.current = setTimeout(() => setCopiedInsightId(null), 2000);
+  };
+
   // ── #3/#4 Auto Compile（Starter+ 权益）：片段多选 + 拼接成片 ──────────────
   const COMPILE_MAX = 5;
 
@@ -1764,10 +1933,16 @@ export default function VideoProcessor({
   // 统一门控：命中即弹付费引导弹窗（订阅优先 + 积分包兜底）并拦截后续下载。
   // 管理员不受 plan 限制（与 shortsLocked 一致）。
   // allowFreeAllowance=true 时：免费非管理员若仍有「一次性导出额度」则放行一次。
-  const ensureExportAccess = (allowFreeAllowance = false) => {
-    if (plan === 'free' && !isAdminUser(user)) {
+  const ensureExportAccess = (allowFreeAllowance = false, retry?: () => void) => {
+    if (planRef.current === 'free' && !isAdminUser(user)) {
       // 账号级放宽：已消耗积分生成过视频的用户可自由下载；或仍持有一次性导出额度。
       if (allowFreeAllowance && (hasSpentCredits || freeExportAvailable)) return true;
+      trackCustomEvent(CONVERSION_EVENTS.EXPORT_BLOCKED, {
+        reason: 'free_plan_quota',
+        trigger: allowFreeAllowance ? 'allowance_exhausted' : 'paid_feature',
+      });
+      // 记住被拦下的操作，支付成功后原地重放
+      paywallRetryRef.current = retry ?? null;
       setExportPaywallOpen(true);
       return false;
     }
@@ -1775,7 +1950,7 @@ export default function VideoProcessor({
   };
 
   const handleCompile = async () => {
-    if (!ensureExportAccess()) return;
+    if (!ensureExportAccess(false, () => { void handleCompile(); })) return;
     const ytClips = selectedCompilable
       .map(c => {
         const yt = extractYouTubeVideoId(c.linkOnlyUrl) || extractYouTubeVideoId(c.videoUrl || undefined);
@@ -1798,7 +1973,7 @@ export default function VideoProcessor({
     try {
       await compileClips({
         clips: ytClips,
-        exportPlan: plan,
+        exportPlan: planRef.current,
         orientation: exportVertical ? 'vertical' : 'landscape',
         onProgress: (msg) => setDownloadProgress(msg),
       });
@@ -1815,7 +1990,7 @@ export default function VideoProcessor({
 
   /** 配音下载：AI 神经人声合成后合并为片段音轨（仅 YouTube Starter+）。 */
   const handleDownloadVoiceover = async (clip: VideoClip) => {
-    if (!ensureExportAccess()) return;
+    if (!ensureExportAccess(false, () => { void handleDownloadVoiceover(clip); })) return;
     const ytVideoId = extractYouTubeVideoId(clip.linkOnlyUrl) || extractYouTubeVideoId(clip.videoUrl || undefined);
     if (!ytVideoId) {
       setVoiceoverErr(t('video.voiceover.hint'));
@@ -1835,7 +2010,7 @@ export default function VideoProcessor({
         startTime: clip.startTime,
         endTime: clip.endTime,
         title: clip.title,
-        exportPlan: plan,
+        exportPlan: planRef.current,
         orientation: exportVertical ? 'vertical' : 'landscape',
         script: safeScript || undefined,
         voice: voiceoverVoice || undefined,
@@ -1853,7 +2028,7 @@ export default function VideoProcessor({
 
   /** 背景音乐下载：内置免版权 BGM 叠加进片段（仅 YouTube Starter+）。 */
   const handleDownloadBgm = async (clip: VideoClip) => {
-    if (!ensureExportAccess()) return;
+    if (!ensureExportAccess(false, () => { void handleDownloadBgm(clip); })) return;
     const ytVideoId = extractYouTubeVideoId(clip.linkOnlyUrl) || extractYouTubeVideoId(clip.videoUrl || undefined);
     if (!ytVideoId) {
       setBgmErr(t('video.bgm.hint'));
@@ -1868,7 +2043,7 @@ export default function VideoProcessor({
         startTime: clip.startTime,
         endTime: clip.endTime,
         title: clip.title,
-        exportPlan: plan,
+        exportPlan: planRef.current,
         orientation: exportVertical ? 'vertical' : 'landscape',
         mood: bgmMood,
         originalVolume: bgmOrigVol,
@@ -1886,7 +2061,7 @@ export default function VideoProcessor({
 
   /** 卡拉OK 动态字幕下载：逐词高亮字幕烧录进片段（仅 YouTube Starter+）。 */
   const handleDownloadKaraoke = async (clip: VideoClip) => {
-    if (!ensureExportAccess()) return;
+    if (!ensureExportAccess(false, () => { void handleDownloadKaraoke(clip); })) return;
     const ytVideoId = extractYouTubeVideoId(clip.linkOnlyUrl) || extractYouTubeVideoId(clip.videoUrl || undefined);
     if (!ytVideoId) {
       setKaraokeErr(t('video.karaoke.hint'));
@@ -1901,7 +2076,7 @@ export default function VideoProcessor({
         startTime: clip.startTime,
         endTime: clip.endTime,
         title: clip.title,
-        exportPlan: plan,
+        exportPlan: planRef.current,
         orientation: exportVertical ? 'vertical' : 'landscape',
         style: subStyle,
         // 字幕翻译（Starter+）：翻译目标语言
@@ -1920,7 +2095,7 @@ export default function VideoProcessor({
 
   /** 打包下载全部片段（Starter+ 权益）。 */
   const handleExportAll = async () => {
-    if (!ensureExportAccess()) return;
+    if (!ensureExportAccess(false, () => { void handleExportAll(); })) return;
     const ytClips = clips.filter(
       (clip) =>
         (clip.status === 'link_only' || clip.status === 'completed') &&
@@ -1941,7 +2116,7 @@ export default function VideoProcessor({
           endTime: clip.endTime,
           title: clip.title,
         })),
-        exportPlan: plan,
+        exportPlan: planRef.current,
         template: exportTemplate || undefined,
         onProgress: (msg) => setDownloadProgress(msg),
       });
@@ -1950,6 +2125,11 @@ export default function VideoProcessor({
       console.warn('[Download] Export all failed:', msg);
       // 服务端导出门控拒绝（免费用户）→ 弹付费引导而非硬报错
       if (msg.includes('export_requires_paid')) {
+        trackCustomEvent(CONVERSION_EVENTS.EXPORT_BLOCKED, {
+          reason: 'export_requires_paid',
+          trigger: 'export_all',
+        });
+        paywallRetryRef.current = () => { void handleExportAll(); };
         setExportPaywallOpen(true);
         setExportAllErr('');
         setDownloadProgress(null);
@@ -1969,7 +2149,7 @@ export default function VideoProcessor({
    */
   const handleRenderPublishable = async (clip: VideoClip) => {
     // 免费档可完整导出一次可发布成片（720p+水印）；付费卡「去水印/1080p/4K」。
-    if (!ensureExportAccess(true)) return;
+    if (!ensureExportAccess(true, () => { void handleRenderPublishable(clip); })) return;
     const bridge = desktopBridge;
     if (!bridge?.localRenderPublishable) {
       setPublishErr({ id: clip.id, msg: t('video.publishable.desktopOnly') });
@@ -2038,7 +2218,7 @@ export default function VideoProcessor({
     }
     // 本地渲染不经服务端导出端点，需在此补记消费「一次性额度」，
     // 否则免费用户可反复导出可发布成片绕过「仅一次」限制。
-    const usingOneTimeAllowance = plan === 'free' && !isAdminUser(user) && !hasSpentCredits;
+    const usingOneTimeAllowance = planRef.current === 'free' && !isAdminUser(user) && !hasSpentCredits;
     if (usingOneTimeAllowance && rendered) {
       try {
         await fetch('/api/export-allowance', {
@@ -2054,7 +2234,7 @@ export default function VideoProcessor({
 
   const handleDownload = async (clip: VideoClip) => {
     // 允许免费用户用「一次性额度」导出一次（其余导出入口仍保持付费墙）
-    if (!ensureExportAccess(true)) return;
+    if (!ensureExportAccess(true, () => { void handleDownload(clip); })) return;
     // 行为埋点：下载高光短视频 (video_generation funnel step 4)
     trackEvent(VIDEO_FUNNEL.CLIP_DOWNLOAD, {
       data: {
@@ -2098,7 +2278,7 @@ export default function VideoProcessor({
       // 免费用户导出时，强制降级为「横屏、无粗剪」：
       // 竖屏/粗剪属 Starter+ 门控能力，避免请求被 403。
       // P0-6：字幕已下放为发布基线，免费用户同样保留（服务端回落默认样式/原文语言）。
-      const isFreeNonAdmin = plan === 'free' && !isAdminUser(user);
+      const isFreeNonAdmin = planRef.current === 'free' && !isAdminUser(user);
       // P0-2：竖屏不再由客户端静默降级 —— 免费首条由服务端一次性导出额度放行，
       // 第 2 条返回 403（vertical_requires_starter），由下面 catch 弹升级引导。
       const effVertical = exportVertical;
@@ -2116,7 +2296,7 @@ export default function VideoProcessor({
           endTime: clip.endTime,
           title: clip.title,
           // P0: 按用户 plan 给服务端导出差异（free=720p+水印，付费=高清无水印）
-          exportPlan: plan,
+          exportPlan: planRef.current,
           // 9:16 竖屏导出（Starter+）
           orientation: effVertical ? 'vertical' : 'landscape',
           // AI 自动字幕烧录（Starter+）
@@ -2135,6 +2315,11 @@ export default function VideoProcessor({
         console.warn('[Download] Server-side cut failed:', errMsg);
         // 服务端导出门控拒绝（免费用户/权益失效/竖屏额度用尽）→ 弹付费引导，且不再走兜底下载
         if (errMsg.includes('export_requires_paid') || errMsg.includes('vertical_requires_starter')) {
+          trackCustomEvent(CONVERSION_EVENTS.EXPORT_BLOCKED, {
+            reason: errMsg.includes('vertical_requires_starter') ? 'vertical_requires_starter' : 'export_requires_paid',
+            trigger: 'download',
+          });
+          paywallRetryRef.current = () => { void handleDownload(clip); };
           setExportPaywallOpen(true);
           setDownloadingId(null);
           setDownloadProgress(null);
@@ -2152,7 +2337,7 @@ export default function VideoProcessor({
             endTime: clip.endTime,
             title: clip.title,
             // P0 导出即付费墙：服务端据此门控
-            exportPlan: plan,
+            exportPlan: planRef.current,
             onProgress: (msg) => setDownloadProgress(msg),
           });
           browserSuccess = true;
@@ -2161,6 +2346,11 @@ export default function VideoProcessor({
           console.warn('[Download] Server-side fallback failed:', errMsg);
           // 服务端导出门控拒绝（免费用户）→ 弹付费引导，且不再走兜底下载
           if (errMsg.includes('export_requires_paid')) {
+            trackCustomEvent(CONVERSION_EVENTS.EXPORT_BLOCKED, {
+              reason: 'export_requires_paid',
+              trigger: 'download_fallback',
+            });
+            paywallRetryRef.current = () => { void handleDownload(clip); };
             setExportPaywallOpen(true);
             setDownloadingId(null);
             setDownloadProgress(null);
@@ -2231,7 +2421,7 @@ export default function VideoProcessor({
 
     // Non-YouTube clip (uploaded local video) — direct download
     if (!clip.videoUrl) return;
-    const isFreeNonAdmin = plan === 'free' && !isAdminUser(user);
+    const isFreeNonAdmin = planRef.current === 'free' && !isAdminUser(user);
     setDownloadingId(clip.id);
     let localOk = false;
     try {
@@ -2948,25 +3138,45 @@ export default function VideoProcessor({
             <div className="p-3 bg-destructive/10 rounded-lg flex items-start gap-3">
               <AlertCircle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
               <div className="flex-1">
-                <p className="font-medium text-destructive text-sm">{t('common.error')}</p>
-                <p className="text-sm text-muted-foreground">{error}</p>
+                <p className="font-medium text-destructive text-sm">{failureCopy.title}</p>
+                <p className="text-sm text-muted-foreground">{failureCopy.hint}</p>
                 {creditsRefunded && (
                   <p className="text-xs text-green-600 dark:text-green-400 mt-1.5 flex items-start gap-1.5">
                     <CheckCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                    <span>{t('video.failureRefundGuarantee')}</span>
+                    <span>
+                      {locale === 'zh'
+                        ? `已自动退回 ${CREDIT_COST} 积分，重试不会重复扣费`
+                        : `${CREDIT_COST} credits were refunded automatically — retrying won't charge you twice`}
+                    </span>
                   </p>
                 )}
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="mt-2"
-                  disabled={isProcessing}
-                  onClick={() => handleProcess()}
-                >
-                  <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
-                  {t('video.retry')}
-                </Button>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={isProcessing}
+                    onClick={() => {
+                      trackCustomEvent(CONVERSION_EVENTS.RETRY_CLICKED, { source: 'error_banner' });
+                      handleProcess();
+                    }}
+                  >
+                    <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                    {t('video.retry')}
+                  </Button>
+                  {!isShorts && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={isProcessing}
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      <Upload className="h-3.5 w-3.5 mr-1.5" />
+                      {locale === 'zh' ? '换本地上传' : 'Upload a local file'}
+                    </Button>
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -3034,6 +3244,30 @@ export default function VideoProcessor({
                     {completedClips.length}/{clips.length} {t('video.clipsReady')}
                   </Badge>
                 </div>
+                {/* P0-4 价值可视化：先讲「省了多少时间」，再讲「拿了几条片」 */}
+                {completedClips.length > 0 && (
+                  <Card className="mb-4 border-primary/30 bg-primary/[0.03]">
+                    <CardContent className="flex flex-wrap items-center gap-x-5 gap-y-2 py-4">
+                      <div className="flex items-center gap-2.5">
+                        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
+                          <Clock className="h-4 w-4 text-primary" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-semibold">
+                            {locale === 'zh'
+                              ? `${completedClips.length} 条成片 · 约省 ${formatSavedTime(paywallSavedMinutes, locale)}`
+                              : `${completedClips.length} clips · about ${formatSavedTime(paywallSavedMinutes, locale)} saved`}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {locale === 'zh'
+                              ? `按人工剪辑每条约 ${EDITING_MINUTES_PER_CLIP} 分钟估算`
+                              : `Estimated at ~${EDITING_MINUTES_PER_CLIP} min of manual editing per clip`}
+                          </p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
                 <Card className="mb-6 border-border/60 bg-muted/20">
                   <CardContent className="flex flex-col gap-3 py-5 md:flex-row md:items-center md:justify-between">
                     <div>
@@ -3174,6 +3408,71 @@ export default function VideoProcessor({
                   </Card>
                 )}
 
+                {/* P0-2 10 秒首屏预览：分析完成即出候选卡，成片继续在后台渲染 */}
+                {!guestTrial && previewCandidates.length > 0 && topPicks.length === 0 && (isProcessing || completedClips.length === 0) && (
+                  <Card className="mb-6 border-primary/30 bg-primary/[0.03]">
+                    <CardContent className="py-4">
+                      <div className="mb-3 flex items-center gap-2">
+                        <Sparkles className="h-4 w-4 text-primary" />
+                        <p className="text-sm font-semibold">
+                          {locale === 'zh'
+                            ? `AI 已锁定 ${previewCandidates.length} 个高光候选`
+                            : `AI found ${previewCandidates.length} highlight candidates`}
+                        </p>
+                        <Badge variant="secondary" className="text-[10px] gap-1">
+                          {isProcessing ? (
+                            <>
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              {locale === 'zh' ? '成片生成中' : 'Rendering clips'}
+                            </>
+                          ) : (
+                            <>{locale === 'zh' ? '待重试' : 'Needs retry'}</>
+                          )}
+                        </Badge>
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        {previewCandidates.map((cand, i) => (
+                          <div key={`${cand.start_time}-${i}`} className="overflow-hidden rounded-lg border bg-background">
+                            <div className="relative aspect-video w-full bg-muted">
+                              {previewThumbnail ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={previewThumbnail}
+                                  alt={cand.title}
+                                  className="h-full w-full object-cover"
+                                  loading="lazy"
+                                />
+                              ) : (
+                                <div className="flex h-full w-full items-center justify-center">
+                                  <Film className="h-6 w-6 text-muted-foreground" />
+                                </div>
+                              )}
+                              <span className="absolute left-1.5 top-1.5 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                                {i === 0 ? (locale === 'zh' ? '最佳' : 'Best') : `#${i + 1}`}
+                              </span>
+                              {cand.engagement_score ? (
+                                <span className="absolute right-1.5 top-1.5 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                                  {cand.engagement_score}/10
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="p-3">
+                              <p className="line-clamp-2 text-sm font-medium leading-tight">{cand.title}</p>
+                              <p className="mt-1.5 flex items-center gap-1 text-xs text-muted-foreground">
+                                <Clock className="h-3 w-3" />
+                                {fmt(cand.start_time)} – {fmt(cand.end_time)}
+                              </p>
+                              {cand.summary && (
+                                <p className="mt-1.5 line-clamp-2 text-xs text-muted-foreground">{cand.summary}</p>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
                 {/* P0-2 免登录试跑：单条预览 + 锁定占位 + 注册 CTA */}
                 {guestTrial && (
                   <Card className="mb-6 border-primary/30 bg-primary/[0.03]">
@@ -3188,10 +3487,43 @@ export default function VideoProcessor({
                         </Badge>
                       </div>
                       <div className="grid gap-3 sm:grid-cols-3">
-                        {Array.from({ length: Math.min(3, Math.max(0, guestTrial.lockedCount)) }).map((_, i) => (
-                          <div key={i} className="flex aspect-video flex-col items-center justify-center gap-2 rounded-lg border border-dashed bg-muted/40">
-                            <Lock className="h-5 w-5 text-muted-foreground" />
-                            <span className="text-xs text-muted-foreground">{locale === 'zh' ? '注册后解锁' : 'Sign up to unlock'}</span>
+                        {previewCandidates.slice(0, 3).map((cand, i) => (
+                          <div key={`${cand.start_time}-${i}`} className="overflow-hidden rounded-lg border bg-background">
+                            <div className="relative aspect-video w-full bg-muted">
+                              {previewThumbnail ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={previewThumbnail}
+                                  alt={cand.title}
+                                  className="h-full w-full object-cover opacity-70"
+                                  loading="lazy"
+                                />
+                              ) : (
+                                <div className="flex h-full w-full items-center justify-center">
+                                  <Film className="h-6 w-6 text-muted-foreground" />
+                                </div>
+                              )}
+                              {i > 0 && (
+                                <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/40">
+                                  <Lock className="h-4 w-4 text-white" />
+                                  <span className="text-[10px] font-medium text-white">
+                                    {locale === 'zh' ? '注册后解锁' : 'Sign up to unlock'}
+                                  </span>
+                                </div>
+                              )}
+                              {i === 0 && (
+                                <span className="absolute left-1.5 top-1.5 rounded bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground">
+                                  {locale === 'zh' ? '已解锁' : 'Unlocked'}
+                                </span>
+                              )}
+                            </div>
+                            <div className="p-3">
+                              <p className="line-clamp-2 text-sm font-medium leading-tight">{cand.title}</p>
+                              <p className="mt-1.5 flex items-center gap-1 text-xs text-muted-foreground">
+                                <Clock className="h-3 w-3" />
+                                {fmt(cand.start_time)} – {fmt(cand.end_time)}
+                              </p>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -3253,6 +3585,13 @@ export default function VideoProcessor({
                     // 仅 YouTube 片段可参与拼接
                     const clipYtId = extractYouTubeVideoId(clip.linkOnlyUrl) || extractYouTubeVideoId(clip.videoUrl || undefined);
                     const clipSelected = selectedClipIds.includes(clip.id);
+                    // P0-4 发布建议：潜力标签 / 推荐平台 / 建议标题 / hashtag（确定性推导，不调模型）
+                    const insight = buildClipInsight({
+                      title: clip.title,
+                      summary: clip.summary,
+                      duration: clip.duration,
+                      engagementScore: clip.engagementScore,
+                    });
                     return (
                     <Card key={clip.id} className="overflow-hidden group">
                       <div
@@ -3356,6 +3695,35 @@ export default function VideoProcessor({
                             </Badge>
                           )}
                         </div>
+                        {/* P0-4 发布建议：让用户看到「这条怎么发」，而不只是「这条能下载」 */}
+                        {clip.status !== 'failed' && (
+                          <div className="space-y-1.5 rounded-lg border bg-muted/30 p-2.5">
+                            <div className="flex flex-wrap items-center gap-1">
+                              {insight.potential.map(k => (
+                                <Badge key={`${clip.id}-${k}`} variant="secondary" className="text-[10px] font-normal">
+                                  {potentialLabel(k, locale)}
+                                </Badge>
+                              ))}
+                              <span className="ml-auto text-[10px] text-muted-foreground">
+                                {locale === 'zh' ? `推荐 ${platformLabel(insight.platform)}` : `Best for ${platformLabel(insight.platform)}`}
+                              </span>
+                            </div>
+                            <div className="flex items-start gap-1.5">
+                              <p className="line-clamp-2 flex-1 text-xs leading-snug text-foreground/90">{insight.title}</p>
+                              <button
+                                type="button"
+                                title={locale === 'zh' ? '复制标题与标签' : 'Copy title & hashtags'}
+                                onClick={() => { void handleCopyInsight(clip, insight.title, insight.hashtags); }}
+                                className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-background hover:text-foreground"
+                              >
+                                {copiedInsightId === clip.id
+                                  ? <CheckCircle className="h-3.5 w-3.5 text-primary" />
+                                  : <Copy className="h-3.5 w-3.5" />}
+                              </button>
+                            </div>
+                            <p className="text-[10px] text-primary/80">{insight.hashtags.join(' ')}</p>
+                          </div>
+                        )}
                         {/* P1-2 发布标记：发到哪、表现如何，回访即可见 */}
                         {user && clip.status !== 'failed' && (
                           publishMap[clip.id] ? (
@@ -3585,6 +3953,17 @@ export default function VideoProcessor({
         reason="export"
         currentBalance={balance}
         requiredCredits={60}
+        savedMinutes={paywallSavedMinutes}
+        previewImage={paywallPreviewImage}
+        onUnlocked={({ creditsPurchase }) => {
+          // 积分包不解锁导出（服务端按套餐门控），只有订阅成功才自动重放原操作。
+          if (creditsPurchase) return;
+          const retry = paywallRetryRef.current;
+          paywallRetryRef.current = null;
+          if (!retry) return;
+          // 等 useCredits 重新拉取到新套餐后再重放，避免旧闭包仍按 free 拦截。
+          setTimeout(() => { void retry(); }, 1200);
+        }}
       />
 
       {/* 首次出片成功 → 一次性升级引导 */}

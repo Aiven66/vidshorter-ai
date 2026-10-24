@@ -123,12 +123,19 @@ export async function POST(request: NextRequest) {
       endTime: h.end_time,
     }));
 
+    // P0-2 首屏候选卡：YouTube 封面图可零成本拿到，避免访客看到纯文字占位。
+    const thumbMatch = videoUrl.match(
+      /(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/|live\/))([a-zA-Z0-9_-]{7,15})/,
+    );
+    const thumbnailUrl = thumbMatch ? `https://img.youtube.com/vi/${thumbMatch[1]}/hqdefault.jpg` : undefined;
+
     return NextResponse.json({
       trialId,
       previewUrl,
       title: analysis.title || 'Video',
       duration: analysis.duration || 0,
       highlights: top3,
+      thumbnailUrl,
       reasonLabel: top.summary || top.title || '',
       totalHighlights: highlights.length,
       lockedCount: Math.max(0, highlights.length - 1),

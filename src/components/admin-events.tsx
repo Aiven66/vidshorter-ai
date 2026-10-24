@@ -8,7 +8,7 @@ import { useAuth } from '@/lib/auth-context';
 import {
   Activity, Users, MousePointer, Video, Download,
   DollarSign, TrendingUp, Calendar, ChevronDown, ChevronUp, Filter,
-  CreditCard, Wallet, CheckCircle2
+  CreditCard, Wallet, CheckCircle2, AlertTriangle, RotateCcw, Eye
 } from 'lucide-react';
 
 type Locale = 'zh' | 'en';
@@ -56,6 +56,66 @@ interface DailyFunnelRow {
   total: number;
 }
 
+// ── v5 P0-1 统一转化漏斗 ───────────────────────────────────────────────────
+interface ConversionStepStat {
+  key: string;
+  event: string;
+  label: string;
+  count: number;
+  unique_actors: number;
+  conversion_from_previous: number;
+  conversion_from_first: number;
+}
+
+interface ConversionBreakdownRow {
+  group: string;
+  visitors: number;
+  trials: number;
+  signups: number;
+  generations: number;
+  exporters: number;
+  paywall_views: number;
+  checkouts: number;
+  paid: number;
+  export_to_paid: number;
+}
+
+interface ConversionFunnel {
+  steps: ConversionStepStat[];
+  daily: Array<{ date: string } & Record<string, number>>;
+  by_source: ConversionBreakdownRow[];
+  by_locale: ConversionBreakdownRow[];
+  biggest_drop: { key: string; label: string; conversion_from_previous: number } | null;
+}
+
+interface FailureReasonStat {
+  reason: string;
+  count: number;
+  refunded: number;
+}
+
+interface FailureAnalysis {
+  failures: number;
+  successes: number;
+  failure_rate: number;
+  top_reasons: FailureReasonStat[];
+  retry_clicks: number;
+  retry_recovered_users: number;
+  retry_users: number;
+  retry_success_rate: number;
+  refunded_failures: number;
+}
+
+interface PreviewAnalysis {
+  views: number;
+  unique_actors: number;
+  guest_views: number;
+  signed_up: number;
+  exported: number;
+  elapsed_p50_ms: number | null;
+  elapsed_p90_ms: number | null;
+}
+
 interface EventsData {
   range: { startDate: string; endDate: string };
   summary: {
@@ -70,6 +130,9 @@ interface EventsData {
   daily_funnel_tables: DailyFunnelRow[];
   real_subscription_count: number;
   real_subscription_revenue: number;
+  conversion_funnel?: ConversionFunnel;
+  failure_analysis?: FailureAnalysis;
+  preview_analysis?: PreviewAnalysis;
 }
 
 interface EventsPageProps {
@@ -329,6 +392,21 @@ export function EventsPage({ locale }: EventsPageProps) {
 
       {!loading && !error && data && (
         <>
+          {/* v5 P0-1 转化漏斗 */}
+          {data.conversion_funnel && (
+            <ConversionFunnelCard funnel={data.conversion_funnel} locale={locale} />
+          )}
+
+          {/* v5 P0-2 首屏候选卡 */}
+          {data.preview_analysis && (
+            <PreviewAnalysisCard analysis={data.preview_analysis} locale={locale} />
+          )}
+
+          {/* v5 P0-5 失败挽回闭环 */}
+          {data.failure_analysis && (
+            <FailureAnalysisCard analysis={data.failure_analysis} locale={locale} />
+          )}
+
           {/* 真实付费方式细分卡片 */}
           <Card className="border-emerald-200 bg-gradient-to-br from-emerald-50/50 to-blue-50/30">
             <CardHeader>
@@ -788,6 +866,354 @@ interface DailyFunnelTableProps {
   locale: Locale;
 }
 
+// ── v5 P0-1 转化漏斗卡片 ───────────────────────────────────────────────────
+
+interface ConversionFunnelCardProps {
+  funnel: ConversionFunnel;
+  locale: Locale;
+}
+
+function ConversionFunnelCard({ funnel, locale }: ConversionFunnelCardProps) {
+  const t = (zh: string, en: string) => (locale === 'zh' ? zh : en);
+  const steps = funnel.steps;
+  const maxActors = Math.max(1, ...steps.map(s => s.unique_actors));
+
+  return (
+    <Card className="border-primary/30">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-lg">
+          <Filter className="h-5 w-5 text-primary" />
+          {t('转化漏斗：访问 → 付费', 'Conversion Funnel: Visit → Paid')}
+        </CardTitle>
+        <p className="text-sm text-muted-foreground">
+          {t(
+            '去重口径：登录用户按 user_id，匿名按 session_id。付费成功来自 credit_transactions 真实记录。',
+            'Dedup: user_id when signed in, session_id when anonymous. Paid counts come from real credit_transactions.',
+          )}
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        {funnel.biggest_drop && (
+          <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm">
+            <span className="font-medium text-destructive">{t('最大流失环节', 'Biggest drop')}</span>
+            <span className="text-muted-foreground"> · {funnel.biggest_drop.label}</span>
+            <span className="ml-1 font-semibold">{funnel.biggest_drop.conversion_from_previous.toFixed(1)}%</span>
+            <span className="text-muted-foreground"> {t('（上一步 → 本步）', '(prev → this step)')}</span>
+          </div>
+        )}
+
+        <div className="space-y-2">
+          {steps.map((step, i) => {
+            const width = Math.max(4, (step.unique_actors / maxActors) * 100);
+            return (
+              <div key={step.key} className="rounded-lg border border-border p-3">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+                      {i + 1}
+                    </span>
+                    <span className="font-medium">{step.label}</span>
+                    <span className="text-xs text-muted-foreground">{step.event}</span>
+                  </div>
+                  <div className="text-right">
+                    <span className="font-semibold tabular-nums">{step.unique_actors}</span>
+                    <span className="ml-1 text-xs text-muted-foreground">{t('人', 'users')}</span>
+                    <span className="ml-2 text-xs text-muted-foreground">{step.count} {t('事件', 'events')}</span>
+                  </div>
+                </div>
+                <div className="h-2 overflow-hidden rounded-full bg-muted">
+                  <div className="h-full rounded-full bg-primary" style={{ width: `${width}%` }} />
+                </div>
+                <div className="mt-1.5 flex justify-between text-xs text-muted-foreground">
+                  <span>{t('占访问', 'of visits')} {step.conversion_from_first.toFixed(1)}%</span>
+                  {i > 0 && <span>{t('上步转化', 'from prev')} {step.conversion_from_previous.toFixed(1)}%</span>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <ConversionBreakdownTable
+          title={t('按来源拆分', 'By Source')}
+          groupLabel={t('来源', 'Source')}
+          rows={funnel.by_source}
+          locale={locale}
+        />
+        <ConversionBreakdownTable
+          title={t('按语言拆分', 'By Locale')}
+          groupLabel={t('语言', 'Locale')}
+          rows={funnel.by_locale}
+          locale={locale}
+        />
+
+        {/* 每日转化（最近 14 天） */}
+        <div>
+          <h4 className="mb-2 text-sm font-semibold">{t('每日转化（最近 14 天）', 'Daily Conversion (last 14 days)')}</h4>
+          <div className="overflow-x-auto rounded-lg border border-border">
+            <table className="w-full text-xs">
+              <thead className="bg-muted/50">
+                <tr>
+                  <th className="p-2 text-left font-medium">{t('日期', 'Date')}</th>
+                  {steps.map(step => (
+                    <th key={step.key} className="whitespace-nowrap p-2 text-right font-medium">{step.label}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {funnel.daily.length === 0 ? (
+                  <tr>
+                    <td colSpan={steps.length + 1} className="p-6 text-center text-muted-foreground">
+                      {t('暂无数据', 'No data')}
+                    </td>
+                  </tr>
+                ) : (
+                  [...funnel.daily].reverse().slice(0, 14).map(row => (
+                    <tr key={row.date} className="border-t border-border/50 hover:bg-muted/30">
+                      <td className="p-2 font-mono">{row.date}</td>
+                      {steps.map(step => (
+                        <td key={step.key} className="p-2 text-right tabular-nums">{row[step.key] || 0}</td>
+                      ))}
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── v5 P0-2 首屏候选卡 ───────────────────────────────────────────────────
+
+interface PreviewAnalysisCardProps {
+  analysis: PreviewAnalysis;
+  locale: Locale;
+}
+
+function PreviewAnalysisCard({ analysis, locale }: PreviewAnalysisCardProps) {
+  const t = (zh: string, en: string) => (locale === 'zh' ? zh : en);
+  const fmtMs = (ms: number | null) => (ms === null ? '—' : `${(ms / 1000).toFixed(1)}s`);
+  const signupRate = analysis.unique_actors > 0
+    ? (analysis.signed_up / analysis.unique_actors) * 100
+    : 0;
+  const exportRate = analysis.unique_actors > 0
+    ? (analysis.exported / analysis.unique_actors) * 100
+    : 0;
+
+  return (
+    <Card className="border-primary/20">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-lg">
+          <Eye className="h-5 w-5 text-primary" />
+          {t('首屏候选卡（10 秒预览）', 'First-screen Candidates (10s Preview)')}
+        </CardTitle>
+        <p className="text-sm text-muted-foreground">
+          {t(
+            '曝光来自 preview_shown；耗时为「提交 → 看到候选卡」，目标 P50 ≤10s、P90 ≤20s。',
+            'Views come from preview_shown; elapsed = submit → candidates visible. Target P50 ≤10s, P90 ≤20s.',
+          )}
+        </p>
+      </CardHeader>
+      <CardContent>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-lg border border-border p-3">
+            <div className="text-xs text-muted-foreground">{t('曝光', 'Views')}</div>
+            <div className="text-xl font-semibold tabular-nums">{analysis.views}</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {analysis.unique_actors} {t('位用户', 'users')}
+              {analysis.guest_views > 0 && ` · ${analysis.guest_views} ${t('匿名', 'guest')}`}
+            </div>
+          </div>
+          <div className="rounded-lg border border-border p-3">
+            <div className="text-xs text-muted-foreground">{t('P50 / P90 耗时', 'P50 / P90 latency')}</div>
+            <div className="text-xl font-semibold tabular-nums">
+              {fmtMs(analysis.elapsed_p50_ms)} / {fmtMs(analysis.elapsed_p90_ms)}
+            </div>
+            <div className="mt-1 text-xs text-muted-foreground">{t('提交 → 候选卡可见', 'submit → candidates')}</div>
+          </div>
+          <div className="rounded-lg border border-border p-3">
+            <div className="text-xs text-muted-foreground">{t('曝光 → 注册', 'View → Sign up')}</div>
+            <div className="text-xl font-semibold tabular-nums">
+              {analysis.signed_up}
+              <span className="ml-1 text-sm font-normal text-muted-foreground">({signupRate.toFixed(1)}%)</span>
+            </div>
+          </div>
+          <div className="rounded-lg border border-border p-3">
+            <div className="text-xs text-muted-foreground">{t('曝光 → 首次导出', 'View → First export')}</div>
+            <div className="text-xl font-semibold tabular-nums">
+              {analysis.exported}
+              <span className="ml-1 text-sm font-normal text-muted-foreground">({exportRate.toFixed(1)}%)</span>
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── v5 P0-5 失败挽回卡片 ─────────────────────────────────────────────────
+
+interface FailureAnalysisCardProps {
+  analysis: FailureAnalysis;
+  locale: Locale;
+}
+
+function FailureAnalysisCard({ analysis, locale }: FailureAnalysisCardProps) {
+  const t = (zh: string, en: string) => (locale === 'zh' ? zh : en);
+  const reasonLabel = (reason: string): string => {
+    switch (reason) {
+      case 'insufficient_credits': return t('积分不足', 'Insufficient credits');
+      case 'timeout': return t('处理超时', 'Timeout');
+      case 'source_blocked': return t('源站不可访问', 'Source blocked');
+      case 'no_highlights': return t('未识别出高光', 'No highlights');
+      case 'network': return t('网络中断', 'Network error');
+      case 'unsupported_input': return t('不支持的输入', 'Unsupported input');
+      case 'unknown': return t('未分类', 'Unknown');
+      default: return reason;
+    }
+  };
+
+  return (
+    <Card className="border-amber-200">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-lg">
+          <AlertTriangle className="h-5 w-5 text-amber-600" />
+          {t('失败挽回：原因 · 退款 · 重试', 'Failure Recovery: Reason · Refund · Retry')}
+        </CardTitle>
+        <p className="text-sm text-muted-foreground">
+          {t(
+            '失败原因来自 generation_failed / analyze_failed；重试成功率按「同一用户先点重试、之后出现生成成功」计算。',
+            'Reasons come from generation_failed / analyze_failed; retry success = same user clicked retry, then had a successful generation.',
+          )}
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-lg border border-border p-3">
+            <div className="text-xs text-muted-foreground">{t('失败率', 'Failure rate')}</div>
+            <div className="text-xl font-semibold tabular-nums">{analysis.failure_rate.toFixed(1)}%</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {analysis.failures} {t('失败', 'failed')} / {analysis.successes} {t('成功', 'ok')}
+            </div>
+          </div>
+          <div className="rounded-lg border border-border p-3">
+            <div className="text-xs text-muted-foreground">{t('已自动退款', 'Auto-refunded')}</div>
+            <div className="text-xl font-semibold tabular-nums">{analysis.refunded_failures}</div>
+            <div className="mt-1 text-xs text-muted-foreground">{t('次失败已退回积分', 'failures refunded')}</div>
+          </div>
+          <div className="rounded-lg border border-border p-3">
+            <div className="text-xs text-muted-foreground">{t('重试点击', 'Retry clicks')}</div>
+            <div className="text-xl font-semibold tabular-nums">{analysis.retry_clicks}</div>
+            <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+              <RotateCcw className="h-3 w-3" />
+              {analysis.retry_users} {t('位用户', 'users')}
+            </div>
+          </div>
+          <div className="rounded-lg border border-border p-3">
+            <div className="text-xs text-muted-foreground">{t('重试成功率', 'Retry success rate')}</div>
+            <div className="text-xl font-semibold tabular-nums">{analysis.retry_success_rate.toFixed(1)}%</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {analysis.retry_recovered_users}/{analysis.retry_users} {t('人救回', 'recovered')}
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <h4 className="mb-2 text-sm font-semibold">{t('失败原因 Top 3', 'Top 3 Failure Reasons')}</h4>
+          <div className="overflow-x-auto rounded-lg border border-border">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/50">
+                <tr>
+                  <th className="p-2 text-left font-medium">{t('原因', 'Reason')}</th>
+                  <th className="p-2 text-right font-medium">{t('次数', 'Count')}</th>
+                  <th className="p-2 text-right font-medium">{t('其中已退款', 'Refunded')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {analysis.top_reasons.length === 0 ? (
+                  <tr>
+                    <td colSpan={3} className="p-6 text-center text-muted-foreground">
+                      {t('暂无失败记录', 'No failures recorded')}
+                    </td>
+                  </tr>
+                ) : (
+                  analysis.top_reasons.map(row => (
+                    <tr key={row.reason} className="border-t border-border/50 hover:bg-muted/30">
+                      <td className="p-2">{reasonLabel(row.reason)}</td>
+                      <td className="p-2 text-right tabular-nums">{row.count}</td>
+                      <td className="p-2 text-right tabular-nums">{row.refunded}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+interface ConversionBreakdownTableProps {
+  title: string;
+  groupLabel: string;
+  rows: ConversionBreakdownRow[];
+  locale: Locale;
+}
+
+function ConversionBreakdownTable({ title, groupLabel, rows, locale }: ConversionBreakdownTableProps) {
+  const t = (zh: string, en: string) => (locale === 'zh' ? zh : en);
+  const columns: Array<{ key: keyof ConversionBreakdownRow; label: string }> = [
+    { key: 'visitors', label: t('访问', 'Visit') },
+    { key: 'trials', label: t('试跑', 'Trial') },
+    { key: 'signups', label: t('注册', 'Signup') },
+    { key: 'generations', label: t('生成成功', 'Generated') },
+    { key: 'exporters', label: t('导出', 'Export') },
+    { key: 'paywall_views', label: t('付费墙', 'Paywall') },
+    { key: 'checkouts', label: t('结算', 'Checkout') },
+    { key: 'paid', label: t('付费', 'Paid') },
+  ];
+
+  return (
+    <div>
+      <h4 className="mb-2 text-sm font-semibold">{title}</h4>
+      {rows.length === 0 ? (
+        <p className="text-xs text-muted-foreground">{t('暂无数据', 'No data')}</p>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full text-xs">
+            <thead className="bg-muted/50">
+              <tr>
+                <th className="p-2 text-left font-medium">{groupLabel}</th>
+                {columns.map(col => (
+                  <th key={col.key} className="whitespace-nowrap p-2 text-right font-medium">{col.label}</th>
+                ))}
+                <th className="whitespace-nowrap p-2 text-right font-medium">{t('导出→付费', 'Export→Paid')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(row => (
+                <tr key={row.group} className="border-t border-border/50 hover:bg-muted/30">
+                  <td className="p-2 font-mono">{row.group}</td>
+                  {columns.map(col => (
+                    <td key={col.key} className="p-2 text-right tabular-nums">
+                      {Number(row[col.key]) || 0}
+                    </td>
+                  ))}
+                  <td className="p-2 text-right font-semibold text-primary">
+                    {row.export_to_paid.toFixed(1)}%
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
 function DailyFunnelTable({ rows, locale }: DailyFunnelTableProps) {
   const t = (zh: string, en: string) => (locale === 'zh' ? zh : en);
 

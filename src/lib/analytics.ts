@@ -36,6 +36,38 @@ export const SUBSCRIBE_FUNNEL = {
   SUBSCRIBE_SUCCESS: { event: 'subscribe_success', step: 3, funnelId: 'subscription' as const },
 } as const;
 
+// ── 转化漏斗（v5 P0-1） ─────────────────────────────────────────────────────
+// 一条贯穿「访问 → 付费」的主漏斗，用于回答「本周最大流失发生在哪一步」。
+// 其中前五步复用现有事件名（已有调用点会同时写入 video_generation 漏斗），
+// 管理后台按 event_name 聚合，不依赖 funnel_id，因此无需改动既有埋点。
+export const CONVERSION_FUNNEL = {
+  funnelId: 'conversion',
+  VISIT: { event: 'page_view_home', step: 1, funnelId: 'conversion' as const },
+  TRIAL: { event: 'click_analyze', step: 2, funnelId: 'conversion' as const },
+  SIGNUP: { event: 'sign_up', step: 3, funnelId: 'conversion' as const },
+  GENERATED: { event: 'analyze_success', step: 4, funnelId: 'conversion' as const },
+  EXPORT: { event: 'clip_download', step: 5, funnelId: 'conversion' as const },
+  PAYWALL_VIEW: { event: 'paywall_view', step: 6, funnelId: 'conversion' as const },
+  CHECKOUT_STARTED: { event: 'checkout_started', step: 7, funnelId: 'conversion' as const },
+  PAID: { event: 'subscribe_success', step: 8, funnelId: 'conversion' as const },
+} as const;
+
+// 非漏斗步骤的事件名常量（失败 / 阻断 / 价值感知 / 重试 / 放弃）。
+export const CONVERSION_EVENTS = {
+  SIGN_UP: 'sign_up',
+  ANALYZE_FAILED: 'analyze_failed',
+  GENERATION_FAILED: 'generation_failed',
+  EXPORT_BLOCKED: 'export_blocked',
+  PAYWALL_VIEW: 'paywall_view',
+  CHECKOUT_STARTED: 'checkout_started',
+  CHECKOUT_ABANDONED: 'checkout_abandoned',
+  CREDIT_PACK_PAID: 'credit_pack_paid',
+  VALUE_SHOWN: 'value_shown',
+  VALUE_TITLE_COPIED: 'value_title_copied',
+  RETRY_CLICKED: 'retry_clicked',
+  PREVIEW_SHOWN: 'preview_shown',
+} as const;
+
 export type FunnelStep = {
   event: string;
   step: number;
@@ -112,6 +144,87 @@ let currentUser: { id?: string; email?: string } = {};
 /** 在应用初始化时调用，设置当前用户信息（从 useAuth 获取） */
 export function setAnalyticsUser(user: { id?: string; email?: string } | null) {
   currentUser = user || {};
+  analyticsContext.isAnonymous = !currentUser.id;
+}
+
+// ── 统一上下文（来源 / 语言 / 套餐 / 匿名） ──────────────────────────────────
+// 所有事件自动携带这四个字段，管理后台才能按来源和语言拆解漏斗。
+
+export type TrafficSource = 'seo' | 'direct' | 'social' | 'referral' | 'internal' | 'paid' | 'unknown';
+
+export interface AnalyticsContext {
+  source: TrafficSource;
+  locale: string;
+  plan: string;
+  isAnonymous: boolean;
+}
+
+const SOURCE_KEY = 'clipop_attr_source';
+
+let analyticsContext: AnalyticsContext = {
+  source: 'unknown',
+  locale: 'en',
+  plan: 'free',
+  isAnonymous: true,
+};
+
+/** 归因来源：优先 UTM/ref 参数，其次 referrer 域名，结果缓存到 localStorage。 */
+function detectTrafficSource(): TrafficSource {
+  if (typeof window === 'undefined') return 'unknown';
+  try {
+    const cached = localStorage.getItem(SOURCE_KEY) as TrafficSource | null;
+    if (cached) return cached;
+
+    const params = new URLSearchParams(window.location.search);
+    const utm = (params.get('utm_source') || params.get('ref') || params.get('source') || '').toLowerCase();
+    let source: TrafficSource = 'unknown';
+
+    if (utm) {
+      if (/google|bing|yahoo|duckduckgo|baidu|yandex|ecosia|search/.test(utm)) source = 'seo';
+      else if (/facebook|instagram|twitter|\bx\b|tiktok|reddit|linkedin|youtube|pinterest|social/.test(utm)) source = 'social';
+      else if (/cpc|ads|adwords|sponsor|paid/.test(utm)) source = 'paid';
+      else source = 'referral';
+    } else {
+      const ref = document.referrer;
+      if (!ref) source = 'direct';
+      else {
+        try {
+          const host = new URL(ref).hostname.replace(/^www\./, '');
+          const self = window.location.hostname.replace(/^www\./, '');
+          if (host === self) source = 'internal';
+          else if (/google|bing|yahoo|duckduckgo|baidu|yandex|ecosia/.test(host)) source = 'seo';
+          else if (/facebook|instagram|twitter|x\.com|tiktok|reddit|linkedin|youtube|pinterest/.test(host)) source = 'social';
+          else source = 'referral';
+        } catch {
+          source = 'referral';
+        }
+      }
+    }
+
+    localStorage.setItem(SOURCE_KEY, source);
+    return source;
+  } catch {
+    return 'unknown';
+  }
+}
+
+/** 更新上下文（语言 / 套餐 / 来源）。传入 undefined 的字段保持原值。 */
+export function setAnalyticsContext(patch: Partial<AnalyticsContext>) {
+  analyticsContext = {
+    ...analyticsContext,
+    ...(patch.source ? { source: patch.source } : {}),
+    ...(patch.locale ? { locale: patch.locale } : {}),
+    ...(patch.plan ? { plan: patch.plan } : {}),
+    ...(typeof patch.isAnonymous === 'boolean' ? { isAnonymous: patch.isAnonymous } : {}),
+  };
+}
+
+/** 读取当前上下文；首次调用时自动做一次来源归因。 */
+export function getAnalyticsContext(): AnalyticsContext {
+  if (analyticsContext.source === 'unknown') {
+    analyticsContext.source = detectTrafficSource();
+  }
+  return { ...analyticsContext, isAnonymous: !currentUser.id };
 }
 
 // ── 核心 track 函数 ─────────────────────────────────────────────────────────
@@ -146,7 +259,7 @@ export function trackEvent(
       event_name: step.event,
       funnel_id: step.funnelId,
       step_index: step.step,
-      event_data: options.data || {},
+      event_data: { ...getAnalyticsContext(), ...(options.data || {}) },
       session_id: getSessionId(),
       user_id: options.userId || currentUser.id || '',
       user_email: options.userEmail || currentUser.email || '',
@@ -192,7 +305,7 @@ export function trackCustomEvent(
       event_name: eventName,
       funnel_id: null,
       step_index: null,
-      event_data: data,
+      event_data: { ...getAnalyticsContext(), ...data },
       session_id: getSessionId(),
       user_id: currentUser.id || '',
       user_email: currentUser.email || '',
