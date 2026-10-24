@@ -24,12 +24,13 @@ interface MarkPublishedDialogProps {
 }
 
 export function MarkPublishedDialog({ open, onOpenChange, initial, onSave }: MarkPublishedDialogProps) {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const [platform, setPlatform] = useState<PublishPlatform>('tiktok');
   const [postUrl, setPostUrl] = useState('');
   const [views, setViews] = useState('');
   const [likes, setLikes] = useState('');
   const [comments, setComments] = useState('');
+  const [followers, setFollowers] = useState('');
 
   const isUpdate = !!initial;
 
@@ -40,6 +41,7 @@ export function MarkPublishedDialog({ open, onOpenChange, initial, onSave }: Mar
     setViews(initial?.views !== undefined ? String(initial.views) : '');
     setLikes(initial?.likes !== undefined ? String(initial.likes) : '');
     setComments(initial?.comments !== undefined ? String(initial.comments) : '');
+    setFollowers(initial?.followers !== undefined ? String(initial.followers) : '');
   }, [open, initial]);
 
   const handleSave = () => {
@@ -51,6 +53,7 @@ export function MarkPublishedDialog({ open, onOpenChange, initial, onSave }: Mar
       ...(parseMetric(views) !== undefined ? { views: parseMetric(views) } : {}),
       ...(parseMetric(likes) !== undefined ? { likes: parseMetric(likes) } : {}),
       ...(parseMetric(comments) !== undefined ? { comments: parseMetric(comments) } : {}),
+      ...(parseMetric(followers) !== undefined ? { followers: parseMetric(followers) } : {}),
       metricsUpdatedAt: nowIso,
     };
     onSave(info);
@@ -94,7 +97,7 @@ export function MarkPublishedDialog({ open, onOpenChange, initial, onSave }: Mar
             />
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
               <Label htmlFor="publish-views">{t('dashboard.metricViews')}</Label>
               <Input
@@ -122,6 +125,18 @@ export function MarkPublishedDialog({ open, onOpenChange, initial, onSave }: Mar
                 inputMode="numeric"
                 value={comments}
                 onChange={(e) => setComments(e.target.value)}
+                placeholder="0"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="publish-followers">
+                {locale === 'zh' ? '涨粉' : 'Followers'}
+              </Label>
+              <Input
+                id="publish-followers"
+                inputMode="numeric"
+                value={followers}
+                onChange={(e) => setFollowers(e.target.value)}
                 placeholder="0"
               />
             </div>

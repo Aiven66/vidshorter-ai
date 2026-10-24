@@ -35,6 +35,7 @@ import {
   hasMigrated, markMigrated, type PublishInfo,
 } from '@/lib/publish-tracker';
 import { MarkPublishedDialog } from '@/components/mark-published-dialog';
+import { PublishWorkflow, type WorkflowClip } from '@/components/publish-workflow';
 import { NotesLibrary } from '@/components/notes-library';
 import { trackEvent, trackCustomEvent, takeVisitGapDays, setAnalyticsUser, VIDEO_FUNNEL, LOCAL_EVENTS } from '@/lib/analytics';
 
@@ -704,6 +705,13 @@ export default function DashboardPage() {
   const [referralOpen, setReferralOpen] = useState(false);
   // 控制台主内容区页签（快捷入口可切换）
   const [activeTab, setActiveTab] = useState('history');
+
+  // 支持 /dashboard?tab=workflow 直达（发布提醒邮件里使用）。
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const tab = new URLSearchParams(window.location.search).get('tab');
+    if (tab === 'workflow' || tab === 'notes' || tab === 'history') setActiveTab(tab);
+  }, []);
   // P1-2/P0 发布记录（本地缓存 + 服务端跨设备持久化）
   const [publishMap, setPublishMap] = useState<Record<string, PublishInfo>>({});
   // 发布弹窗目标：只需 clipId（既来自作品卡片，也来自发布运营台列表）
@@ -895,6 +903,23 @@ export default function DashboardPage() {
   const publishSummary = useMemo(
     () => summarizePublish(user?.id || '', allClipIds),
     [user?.id, allClipIds, publishMap],
+  );
+
+  // v6 发布工作流：把作品库里的成片摊平成「可排期片段」。
+  const workflowClips = useMemo<WorkflowClip[]>(
+    () =>
+      videos.flatMap((v) =>
+        (v.clips ?? [])
+          .filter((c) => c.status === 'completed')
+          .map((c) => ({
+            id: c.id,
+            title: c.title,
+            summary: c.summary,
+            duration: c.duration,
+            thumbnailUrl: c.thumbnailUrl,
+          })),
+      ),
+    [videos],
   );
 
   const handlePublishSave = (clipId: string, info: PublishInfo) => {
@@ -1117,7 +1142,19 @@ export default function DashboardPage() {
               <FileText className="h-4 w-4" />
               {t('notes.libraryTitle')}
             </TabsTrigger>
+            <TabsTrigger value="workflow" className="gap-2">
+              <Sparkles className="h-4 w-4" />
+              {locale === 'zh' ? '发布工作流' : 'Publish workflow'}
+            </TabsTrigger>
           </TabsList>
+
+          <TabsContent value="workflow">
+            <PublishWorkflow
+              clips={workflowClips}
+              publishMap={publishMap}
+              onSavePublish={handlePublishSave}
+            />
+          </TabsContent>
 
           {/* 我的笔记：内嵌笔记库，方便直接查看与操作 */}
           <TabsContent value="notes">

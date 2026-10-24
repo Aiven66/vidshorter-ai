@@ -73,6 +73,8 @@ export function sanitizePublishInfo(raw: unknown): PublishInfo | null {
   if (likes !== undefined) info.likes = likes;
   const comments = sanitizeMetric(o.comments);
   if (comments !== undefined) info.comments = comments;
+  const followers = sanitizeMetric(o.followers);
+  if (followers !== undefined) info.followers = followers;
   return info;
 }
 

@@ -14,6 +14,8 @@ export interface PublishInfo {
   views?: number;
   likes?: number;
   comments?: number;
+  /** v6 工作流：这条片带来的粉丝增长（用于「哪条涨粉最多」榜单） */
+  followers?: number;
   metricsUpdatedAt?: string; // ISO
 }
 
@@ -22,6 +24,7 @@ export interface PublishSummary {
   views: number;
   likes: number;
   comments: number;
+  followers: number;
 }
 
 export const PUBLISH_PLATFORMS: PublishPlatform[] = ['tiktok', 'reels', 'shorts', 'other'];
@@ -79,7 +82,7 @@ export function removePublishInfo(
 export function summarizePublish(userId: string, clipIds?: string[]): PublishSummary {
   const map = getPublishMap(userId);
   const ids = clipIds ?? Object.keys(map);
-  const summary: PublishSummary = { published: 0, views: 0, likes: 0, comments: 0 };
+  const summary: PublishSummary = { published: 0, views: 0, likes: 0, comments: 0, followers: 0 };
   for (const id of ids) {
     const info = map[id];
     if (!info) continue;
@@ -87,6 +90,7 @@ export function summarizePublish(userId: string, clipIds?: string[]): PublishSum
     summary.views += Number(info.views) || 0;
     summary.likes += Number(info.likes) || 0;
     summary.comments += Number(info.comments) || 0;
+    summary.followers += Number(info.followers) || 0;
   }
   return summary;
 }

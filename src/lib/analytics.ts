@@ -66,6 +66,10 @@ export const CONVERSION_EVENTS = {
   VALUE_TITLE_COPIED: 'value_title_copied',
   RETRY_CLICKED: 'retry_clicked',
   PREVIEW_SHOWN: 'preview_shown',
+  WORKFLOW_COPY_GENERATED: 'workflow_copy_generated',
+  WORKFLOW_SCHEDULED: 'workflow_scheduled',
+  WORKFLOW_HANDOFF_OPENED: 'workflow_handoff_opened',
+  WORKFLOW_PUBLISHED: 'workflow_published',
 } as const;
 
 export type FunnelStep = {
