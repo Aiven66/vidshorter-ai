@@ -258,7 +258,6 @@ export default function RootLayout({
         {/* 性能：提前与后端/分析域名建连，降低首屏关键请求延迟 */}
         {supabaseOrigin && <link rel="preconnect" href={supabaseOrigin} crossOrigin="anonymous" />}
         <link rel="preconnect" href="https://www.googletagmanager.com" />
-        <link rel="preconnect" href="https://download.clipopai.com" crossOrigin="anonymous" />
         {/* 全站结构化数据（Organization / WebSite / SoftwareApplication） */}
         <script
           type="application/ld+json"

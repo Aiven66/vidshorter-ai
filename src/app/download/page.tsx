@@ -4,54 +4,43 @@ import { useLocale } from '@/lib/locale-context';
 import { Button } from '@/components/ui/button';
 import { Download, Monitor, Apple, Smartphone, Check, Shield, Zap, Globe } from 'lucide-react';
 import Link from 'next/link';
+import { DOWNLOAD_ARTIFACTS, type DownloadPlatform } from '@/lib/download-manifest';
 
 export default function DownloadPage() {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
 
   const tr = (key: string) => {
     const s = t(key);
     return s === key ? '' : s;
   };
 
-  const platforms = [
+  const platforms: Array<{
+    key: DownloadPlatform;
+    icon: typeof Monitor;
+    name: string;
+    desc: string;
+    features: string[];
+  }> = [
     {
+      key: 'windows',
       icon: Monitor,
       name: 'Windows',
-      version: 'v2.1.0',
-      size: '85 MB',
       desc: tr('download.windowsDesc') || 'Windows 10/11 (64-bit)',
-      href: 'https://download.clipopai.com/ClipopAI-Setup-2.1.0.exe',
-      features: [
-        'GPU 加速视频处理',
-        '本地字幕解析',
-        '批量短视频导出',
-      ],
+      features: ['GPU 加速视频处理', '本地字幕解析', '批量短视频导出'],
     },
     {
+      key: 'macos',
       icon: Apple,
       name: 'macOS',
-      version: 'v2.1.0',
-      size: '92 MB',
-      desc: tr('download.macDesc') || 'macOS 11.0+ (Universal)',
-      href: 'https://download.clipopai.com/ClipopAI-2.1.0.dmg',
-      features: [
-        'Apple Silicon 原生支持',
-        'M 系列芯片优化',
-        '快捷键全局启动',
-      ],
+      desc: tr('download.macDesc') || 'macOS 11.0+',
+      features: ['Apple Silicon 原生支持', 'M 系列芯片优化', '快捷键全局启动'],
     },
     {
+      key: 'android',
       icon: Smartphone,
       name: 'Android',
-      version: 'v2.0.5',
-      size: '38 MB',
       desc: tr('download.androidDesc') || 'Android 8.0+',
-      href: 'https://download.clipopai.com/ClipopAI-2.0.5.apk',
-      features: [
-        '移动端快速剪辑',
-        '一键分享社交',
-        '离线 AI 分析',
-      ],
+      features: ['移动端快速剪辑', '一键分享社交', '离线 AI 分析'],
     },
   ];
 
@@ -132,6 +121,7 @@ export default function DownloadPage() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl mx-auto">
           {platforms.map((p) => {
             const Icon = p.icon;
+            const artifact = DOWNLOAD_ARTIFACTS[p.key];
             return (
               <div
                 key={p.name}
@@ -145,9 +135,9 @@ export default function DownloadPage() {
                 <h3 className="text-xl font-bold mb-1">{p.name}</h3>
                 <p className="text-sm text-muted-foreground mb-1">{p.desc}</p>
                 <div className="flex items-center gap-3 text-xs text-muted-foreground mb-4">
-                  <span>{p.version}</span>
+                  <span>{artifact.version}</span>
                   <span>·</span>
-                  <span>{p.size}</span>
+                  <span>{artifact.sizeMb} MB</span>
                 </div>
 
                 {/* 特性列表 */}
@@ -160,13 +150,33 @@ export default function DownloadPage() {
                   ))}
                 </ul>
 
-                {/* 下载按钮 */}
+                {/* 下载按钮：安装包托管在 GitHub Releases，直连下载 */}
                 <Button asChild size="lg" className="w-full">
-                  <a href={p.href} download>
+                  <a href={artifact.fallbackUrl} download={artifact.fileName}>
                     <Download className="h-4 w-4 mr-2" />
                     {tr('download.btn') || '立即下载'}
                   </a>
                 </Button>
+                <p className="mt-2 text-center text-[11px] text-muted-foreground">
+                  {artifact.requirement}
+                </p>
+                <div className="mt-2 flex items-center justify-center gap-3 text-[11px]">
+                  <a
+                    href={`/api/download/${p.key}`}
+                    className="text-muted-foreground underline-offset-4 hover:text-primary hover:underline"
+                  >
+                    {locale === 'zh' ? '站内加速下载' : 'Mirror download'}
+                  </a>
+                  <span className="text-muted-foreground/40">·</span>
+                  <a
+                    href={artifact.releaseUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-muted-foreground underline-offset-4 hover:text-primary hover:underline"
+                  >
+                    {locale === 'zh' ? 'GitHub 发布页' : 'Release notes'}
+                  </a>
+                </div>
               </div>
             );
           })}
@@ -177,6 +187,20 @@ export default function DownloadPage() {
           <p className="text-sm text-muted-foreground">
             {tr('download.iosHint') ||
               'iOS 版本正在开发中，敬请期待。'}
+          </p>
+        </div>
+
+        {/* 下载说明：安装包托管在 GitHub Releases，本站镜像仅作加速/兜底 */}
+        <div className="max-w-5xl mx-auto mt-8 rounded-lg border border-border bg-muted/20 p-4 text-center">
+          <p className="text-xs text-muted-foreground">
+            {locale === 'zh'
+              ? '安装包托管在 GitHub Releases（永久免费、可断点续传）。若 GitHub 被当前网络拦截或速度很慢，请点卡片下方的「站内加速下载」。'
+              : 'Installers are hosted on GitHub Releases. If GitHub is blocked or slow on your network, use "Mirror download" under each card.'}
+          </p>
+          <p className="mt-2 text-[11px] text-muted-foreground">
+            {locale === 'zh'
+              ? 'macOS 目前仅提供 Apple Silicon (arm64) 安装包，Intel 机型暂不支持。'
+              : 'macOS builds are Apple Silicon (arm64) only; Intel Macs are not supported yet.'}
           </p>
         </div>
       </section>
