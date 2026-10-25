@@ -10,6 +10,7 @@ const translations = {
   'localEngine': '本地引擎',
   'tiktokRemix': 'TikTok 二創',
   'tokpure': 'AI 批量剪輯',
+  'aiDubbing': 'AI多語轉換',
   },
   localEngine: {
   title: '本地 AI 引擎',

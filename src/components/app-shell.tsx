@@ -30,6 +30,7 @@ import {
   Cpu,
   Music2,
   Sparkles,
+  Languages,
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { useCredits } from '@/lib/credits-context';
@@ -99,6 +100,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/shorts', labelKey: 'shorts', icon: Smartphone },
   { href: '/video-clips', labelKey: 'clips', icon: Scissors },
   { href: '/tiktok-remix', labelKey: 'tiktokRemix', icon: Music2 },
+  { href: '/ai-dubbing', labelKey: 'aiDubbing', icon: Languages },
   { href: '/local-engine', labelKey: 'localEngine', icon: Cpu },
   { href: '#invite', labelKey: 'inviteFriends', icon: Gift, action: 'referral' },
   { href: '/video-notes', labelKey: 'notes', icon: FileText },
@@ -306,6 +308,7 @@ function SidebarLabel({ labelKey }: { labelKey: NavItem['labelKey'] }) {
     aiVideo: 'AI 成片',
     clips: '高光剪辑',
     tiktokRemix: 'TikTok 二创',
+    aiDubbing: 'AI多语转换',
     inviteFriends: '邀请好友',
     shorts: 'Shorts 成片',
     notes: '高光笔记',

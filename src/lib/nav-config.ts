@@ -23,6 +23,7 @@ export type NavKey =
   | 'aiTools'
   | 'podcast'
   | 'localEngine'
+  | 'aiDubbing'
   | 'aiVideo';
 
 export interface NavConfig {
@@ -54,6 +55,7 @@ export const NAV_LABELS: Record<NavKey, { zh: string; en: string }> = {
   podcast: { zh: 'AI播客', en: 'AI Podcast' },
   aiTools: { zh: 'AI 工具箱', en: 'AI Tools' },
   localEngine: { zh: '本地引擎', en: 'Local Engine' },
+  aiDubbing: { zh: 'AI多语转换', en: 'AI Dubbing' },
   blog: { zh: '博客', en: 'Blog' },
   pricing: { zh: '定价', en: 'Pricing' },
   download: { zh: '下载客户端', en: 'Download App' },
@@ -76,6 +78,7 @@ export const DEFAULT_NAV_CONFIG: NavConfig = {
     'home',
     'clips',
     'tiktokRemix',
+    'aiDubbing',
     'localEngine',
     'inviteFriends',
     'shorts',
@@ -91,6 +94,7 @@ export const DEFAULT_NAV_CONFIG: NavConfig = {
   ],
   hidden: ['aiVideo'],
   badges: [
+    'aiDubbing',
     'aiVideo',
     'shorts',
     'tiktokRemix',

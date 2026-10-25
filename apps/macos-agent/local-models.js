@@ -17,6 +17,7 @@
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
+const { execFile } = require('node:child_process');
 
 // ggml 文件魔数 0x67676d6c，按小端写入的字节序为 'lmgg'。
 const GGML_MAGIC_LITTLE_ENDIAN = Buffer.from([0x6c, 0x6d, 0x67, 0x67]);
@@ -88,6 +89,30 @@ const MODEL_REGISTRY = [
       },
     ],
   },
+  {
+    // AI 多语转换：唯一能「用原声音色」的本地 TTS（零样本克隆）。
+    // 上游只提供 tar.bz2 整包（含 encoder/decoder/tokens/lexicon），vocoder 单独下载。
+    id: 'zipvoice-zh-en',
+    engine: 'sherpa-onnx',
+    kind: 'zipvoice',
+    dir: 'zipvoice',
+    label: 'ZipVoice 音色克隆 (中/英，约 160MB)',
+    archive: {
+      url: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-zipvoice-distill-int8-zh-en-emilia.tar.bz2',
+      minBytes: 100 * 1024 * 1024,
+    },
+    files: [
+      { name: 'encoder.int8.onnx', minBytes: 40 * 1024 * 1024 },
+      { name: 'decoder.int8.onnx', minBytes: 40 * 1024 * 1024 },
+      { name: 'tokens.txt', minBytes: 10 * 1024 },
+      { name: 'lexicon.txt', minBytes: 10 * 1024 },
+      {
+        name: 'vocos_24khz.onnx',
+        url: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/vocoder-models/vocos_24khz.onnx',
+        minBytes: 40 * 1024 * 1024,
+      },
+    ],
+  },
 ];
 
 const DEFAULT_MODEL_ID = 'whisper-base';
@@ -97,6 +122,9 @@ const SENSEVOICE_MODEL_ID = 'sensevoice-small';
 
 /** 说话人分离模型（pyannote 分割 + 声纹嵌入；可选增强，需用户显式下载）。 */
 const DIARIZATION_MODEL_ID = 'speaker-diarization';
+
+/** AI 多语转换用的零样本音色克隆模型（ZipVoice zh-en）。 */
+const ZIPVOICE_MODEL_ID = 'zipvoice-zh-en';
 
 function findModel(id) {
   return MODEL_REGISTRY.find((m) => m.id === id) || null;
@@ -153,6 +181,19 @@ function fileReady(model, filePath, minBytes) {
   return true;
 }
 
+/** 解压 tar.bz2 到目标目录，并剥掉上游包内的顶层目录。 */
+function extractArchive(archivePath, destDir) {
+  return new Promise((resolve, reject) => {
+    execFile('tar', ['-xjf', archivePath, '-C', destDir, '--strip-components=1'], { maxBuffer: 8 * 1024 * 1024 }, (err, _stdout, stderr) => {
+      if (err) {
+        reject(new Error(`extract failed: ${String(stderr || err.message).slice(-400)}`));
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
 function createModelStore({ modelsDir, binDir }) {
   if (!modelsDir) throw new Error('local-models: modelsDir is required');
 
@@ -200,6 +241,7 @@ function createModelStore({ modelsDir, binDir }) {
       defaultModelId: DEFAULT_MODEL_ID,
       senseVoiceModelId: SENSEVOICE_MODEL_ID,
       diarizationModelId: DIARIZATION_MODEL_ID,
+      zipVoiceModelId: ZIPVOICE_MODEL_ID,
       models,
       readyCount: models.filter((m) => m.ready).length,
       totalBytes: models.reduce((sum, m) => sum + m.bytes, 0),
@@ -249,6 +291,30 @@ function createModelStore({ modelsDir, binDir }) {
         continue;
       }
 
+      // 归档型模型（ZipVoice）：上游只发 tar.bz2，先整包下载再解压。
+      if (model.archive) {
+        const pending = modelFiles(model).filter((f) => !f.url);
+        const missing = pending.some((f) => !fileReady(model, path.join(current.path, f.name), f.minBytes));
+        if (missing) {
+          await fsp.mkdir(current.path, { recursive: true });
+          const archivePath = path.join(current.path, '_model.tar.bz2');
+          onProgress?.({ id, stage: 'downloading', pct: 0, file: 'model.tar.bz2' });
+          await download(archivePath, model.archive.url, model.archive.minBytes, ({ received, total }) => {
+            onProgress?.({
+              id,
+              stage: 'downloading',
+              pct: total ? Math.min(0.9, (received / total) * 0.9) : 0,
+              file: 'model.tar.bz2',
+              received,
+              total,
+            });
+          });
+          onProgress?.({ id, stage: 'extracting', pct: 0.92, file: 'model.tar.bz2' });
+          await extractArchive(archivePath, current.path);
+          await fsp.rm(archivePath, { force: true });
+        }
+      }
+
       const files = modelFiles(model);
       for (let i = 0; i < files.length; i += 1) {
         const f = files[i];
@@ -260,6 +326,10 @@ function createModelStore({ modelsDir, binDir }) {
         if (alreadyReady) {
           onProgress?.({ id, stage: 'downloading', pct: (i + 1) / files.length, file: f.name });
           continue;
+        }
+        // 归档内文件没有独立 url：解压后仍缺失说明包内容不符
+        if (!f.url) {
+          throw new Error(`model file missing after extraction: ${f.name}`);
         }
         onProgress?.({ id, stage: 'downloading', pct: i / files.length, file: f.name });
         await download(filePath, f.url, f.minBytes, ({ received, total }) => {
@@ -326,6 +396,7 @@ function createModelStore({ modelsDir, binDir }) {
     defaultModelId: DEFAULT_MODEL_ID,
     senseVoiceModelId: SENSEVOICE_MODEL_ID,
     diarizationModelId: DIARIZATION_MODEL_ID,
+    zipVoiceModelId: ZIPVOICE_MODEL_ID,
     status,
     prepare,
     modelPath,
@@ -340,6 +411,7 @@ module.exports = {
   DEFAULT_MODEL_ID,
   SENSEVOICE_MODEL_ID,
   DIARIZATION_MODEL_ID,
+  ZIPVOICE_MODEL_ID,
   createModelStore,
   isGgmlFile,
   isMultiFileModel,

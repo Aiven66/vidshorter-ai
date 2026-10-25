@@ -12,7 +12,8 @@ const { promisify } = require('node:util');
 const { fileURLToPath } = require('node:url');
 const execFileAsync = promisify(execFile);
 const { generateHighlightsFromPath, ffmpegPath, probeDurationSeconds } = require('./local-highlights');
-const { createModelStore } = require('./local-models');
+const { createModelStore, SENSEVOICE_MODEL_ID, ZIPVOICE_MODEL_ID } = require('./local-models');
+const { createDubber } = require('./local-dub');
 const { createTranscriber, detectEngine } = require('./local-asr');
 const { planHighlights } = require('./local-highlight-scorer');
 const { extractSignals, normalizeSignals } = require('./local-signals');
@@ -1422,7 +1423,169 @@ ipcMain.handle('local-transcribe', async (_event, input) => {
   });
 });
 
-// ==================== INTENT-AWARE HIGHLIGHTS (P0-2 意图可控高光) ====================
+// ==================== AI 多语转换（本地音色克隆） ====================
+/**
+ * 付费门控：AI 多语转换属于 Starter+ 权益。
+ * 与导出一样按 fail-closed 处理——plan 缺失/非法一律拒绝，管理员(admin)放行。
+ */
+function dubPlanAllowed(plan) {
+  const p = String(plan || '').toLowerCase();
+  return p === 'starter' || p === 'pro' || p === 'admin';
+}
+
+function localPiperDataDir() {
+  const res = process.resourcesPath || '';
+  const candidates = [
+    path.join(__dirname, 'resources', 'piper', 'espeak-ng-data'),
+    path.join(res, 'piper', 'espeak-ng-data'),
+    path.join(res, 'app.asar.unpacked', 'piper', 'espeak-ng-data'),
+  ];
+  return candidates.find((p) => fsSync.existsSync(p)) || '';
+}
+
+function localDubTtsBin() {
+  const res = process.resourcesPath || '';
+  const candidates = [
+    path.join(__dirname, 'resources', 'sherpa-onnx', 'bin', 'sherpa-onnx-offline-tts'),
+    path.join(res, 'sherpa-onnx', 'bin', 'sherpa-onnx-offline-tts'),
+    path.join(res, 'app.asar.unpacked', 'sherpa-onnx', 'bin', 'sherpa-onnx-offline-tts'),
+  ];
+  return candidates.find((p) => fsSync.existsSync(p)) || '';
+}
+
+/** ZipVoice 的 espeak-ng-data：模型包自带优先，缺失时回退到随包 piper 词表。 */
+function localDubDataDir(modelDir) {
+  if (modelDir) {
+    const bundled = path.join(modelDir, 'espeak-ng-data');
+    if (fsSync.existsSync(bundled)) return bundled;
+  }
+  return localPiperDataDir();
+}
+
+function localDubZipvoice() {
+  const store = createModelStore({ modelsDir: localWhisperDir(), binDir: localBinDirs()[0] });
+  const id = ZIPVOICE_MODEL_ID;
+  const sub = (name) => store.resolveModelSubFile(id, name) || '';
+  const model = store.status().models.find((m) => m.id === id);
+  return {
+    ttsBin: localDubTtsBin(),
+    encoder: sub('encoder.int8.onnx'),
+    decoder: sub('decoder.int8.onnx'),
+    vocoder: sub('vocos_24khz.onnx'),
+    tokens: sub('tokens.txt'),
+    lexicon: sub('lexicon.txt'),
+    dataDir: localDubDataDir(model ? model.path : ''),
+  };
+}
+
+function createLocalDubber(emit) {
+  return createDubber({
+    ffmpegPath: ffmpegPath(),
+    ytdlpPath: path.join(__dirname, 'bin', 'yt-dlp'),
+    workDir: path.join(app.getPath('userData'), 'dub-work'),
+    transcribe: (input) => createLocalTranscriber().transcribe(input),
+    zipvoice: localDubZipvoice(),
+    onProgress: emit,
+  });
+}
+
+ipcMain.handle('dub:capabilities', async () => {
+  const dubber = createLocalDubber(() => {});
+  const store = createModelStore({ modelsDir: localWhisperDir(), binDir: localBinDirs()[0] });
+  const stats = store.status();
+  const model = stats.models.find((m) => m.id === ZIPVOICE_MODEL_ID);
+  // 转写模型是否可用：whisper 任一档或 SenseVoice 就绪即可（与 createLocalTranscriber 的选取一致）。
+  const asrReady = stats.models.some(
+    (m) => m.ready && (m.engine === 'whisper.cpp' || m.id === SENSEVOICE_MODEL_ID),
+  );
+  return {
+    ...dubber.capabilities(),
+    modelReady: Boolean(model && model.ready),
+    modelBytes: model ? model.bytes : 0,
+    modelMinBytes: model ? model.minBytes : 0,
+    asrReady,
+  };
+});
+
+ipcMain.handle('dub:prepare-model', async (event) => {
+  const store = createModelStore({ modelsDir: localWhisperDir(), binDir: localBinDirs()[0] });
+  return await store.prepare([ZIPVOICE_MODEL_ID], (progress) => {
+    try {
+      event.sender.send('dub:progress', {
+        scope: 'model',
+        stage: progress.stage,
+        pct: progress.pct,
+        file: progress.file,
+        received: progress.received,
+        total: progress.total,
+      });
+    } catch {}
+  });
+});
+
+let dubJob = null;
+
+ipcMain.handle('dub:run', async (event, input) => {
+  if (!dubPlanAllowed(input?.plan)) {
+    return { ok: false, code: 'DUB_PLAN_REQUIRED', message: 'AI 多语转换需要 Starter 或 Pro 套餐。' };
+  }
+  if (dubJob) return { ok: false, code: 'DUB_BUSY', message: '已有任务在运行，请稍候。' };
+
+  const job = { cancelled: false };
+  dubJob = job;
+  const emit = (payload) => {
+    try { event.sender.send('dub:progress', { scope: 'run', ...payload }); } catch {}
+  };
+
+  try {
+    const dubber = createLocalDubber(emit);
+    const result = await dubber.run(
+      {
+        source: String(input?.source || '').trim(),
+        targetLang: String(input?.targetLang || '').toLowerCase(),
+        keepOriginalAudio: input?.keepOriginalAudio !== false,
+        burnSubtitles: input?.burnSubtitles !== false,
+      },
+      () => job.cancelled,
+    );
+
+    // 成品持久化：userData 便于长期保留；/tmp/generated-clips 便于媒体服务预览
+    const keepDir = path.join(app.getPath('userData'), 'dubbed');
+    await fs.mkdir(keepDir, { recursive: true });
+    const keepPath = path.join(keepDir, result.outputName);
+    await fs.copyFile(result.outputPath, keepPath);
+    try {
+      await fs.mkdir('/tmp/generated-clips', { recursive: true });
+      await fs.copyFile(result.outputPath, path.join('/tmp/generated-clips', result.outputName));
+    } catch {}
+
+    emit({ stage: 'done', progress: 1, message: '完成' });
+    return {
+      ok: true,
+      ...result,
+      outputPath: keepPath,
+      videoUrl: mediaBaseUrl ? `${mediaBaseUrl}/api/serve-clip/${result.outputName}` : '',
+    };
+  } catch (err) {
+    const code = (err && err.code) || 'DUB_FAILED';
+    return { ok: false, code, message: (err && err.message) || String(err), missing: err?.missing };
+  } finally {
+    dubJob = null;
+  }
+});
+
+ipcMain.handle('dub:cancel', async () => {
+  if (dubJob) dubJob.cancelled = true;
+  return { ok: true };
+});
+
+ipcMain.handle('dub:reveal-output', async (_event, filePath) => {
+  const p = String(filePath || '');
+  if (p && fsSync.existsSync(p)) shell.showItemInFolder(p);
+  return { ok: true };
+});
+
+
 function localRuleStore() {
   return createRuleStore({ filePath: path.join(app.getPath('userData'), 'highlight-rules.json') });
 }

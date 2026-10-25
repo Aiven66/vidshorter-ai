@@ -48,6 +48,17 @@ const desktopBridge = {
   localModelsStatus: () => ipcRenderer.invoke('local-models:status'),
   localModelsPrepare: (ids) => ipcRenderer.invoke('local-models:prepare', { ids }),
   localTranscribe: (input) => ipcRenderer.invoke('local-transcribe', input),
+  // AI 多语转换（本地音色克隆）
+  dubCapabilities: () => ipcRenderer.invoke('dub:capabilities'),
+  dubPrepareModel: () => ipcRenderer.invoke('dub:prepare-model'),
+  dubRun: (input) => ipcRenderer.invoke('dub:run', input),
+  dubCancel: () => ipcRenderer.invoke('dub:cancel'),
+  dubRevealOutput: (filePath) => ipcRenderer.invoke('dub:reveal-output', filePath),
+  onDubProgress: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('dub:progress', handler);
+    return () => ipcRenderer.removeListener('dub:progress', handler);
+  },
   localHighlightRulesLoad: (profileId) => ipcRenderer.invoke('local-highlight-rules:load', { profileId }),
   localHighlightRulesSave: (rules) => ipcRenderer.invoke('local-highlight-rules:save', { rules }),
   localHighlightsPlan: (input) => ipcRenderer.invoke('local-highlights:plan', input),
