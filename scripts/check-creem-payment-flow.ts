@@ -155,7 +155,10 @@ async function main() {
   const webhookSource = readFileSync('src/app/api/payment/creem/webhook/route.ts', 'utf8');
   assert.match(webhookSource, /CREEM_WEBHOOK_SECRET/);
   assert.match(webhookSource, /timingSafeEqual/);
-  assert.match(webhookSource, /applyPlanPurchase\(\{ userId, planId, provider: 'creem', orderId \}\)/);
+  assert.match(
+    webhookSource,
+    /applyPlanPurchase\(\{[^}]*userId: params\.userId,[^}]*planId: params\.planId,[^}]*provider: 'creem',[^}]*orderId: params\.orderId,/,
+  );
 
   console.log('Creem payment flow checks passed.');
 }

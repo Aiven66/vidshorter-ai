@@ -7,9 +7,7 @@ import {
   getBuiltInBlogPosts,
   isPostForLocale,
   normalizeBlogRow,
-  stripHtml,
 } from '../src/lib/blog-content';
-import { locales } from '../src/lib/i18n';
 import { POST as publishBlogPost } from '../src/app/api/blog/posts/route';
 
 const root = process.cwd();
@@ -31,18 +29,14 @@ assert.match(commonSource, /feedback: 'Feedback'/);
 assert.match(zhSource, /feedback: '用户反馈'/);
 assert.match(zhHantSource, /feedback: '使用者回饋'/);
 
+// 内置文章已清空（改由管理员通过后台发布），三个语言的列表都应返回空数组
 const enPosts = getBuiltInBlogPosts('en');
 const zhPosts = getBuiltInBlogPosts('zh');
 const zhHantPosts = getBuiltInBlogPosts('zh-Hant');
-assert.ok(enPosts.length >= 10);
+assert.equal(enPosts.length, 0);
 assert.equal(zhPosts.length, enPosts.length);
 assert.equal(zhHantPosts.length, enPosts.length);
 assert.ok(enPosts.every(post => post.id.endsWith('-en')));
-assert.ok(zhPosts.every(post => post.id.endsWith('-zh')));
-assert.ok(zhHantPosts.every(post => post.id.endsWith('-zh-Hant')));
-assert.ok(enPosts.every(post => !/[一-龥]/.test(post.title + stripHtml(post.content))));
-assert.ok(zhPosts.some(post => /短视频|长视频|高光/.test(post.title + stripHtml(post.content))));
-assert.ok(enPosts.every(post => /clipopai/i.test(post.title + stripHtml(post.content))));
 
 const enRow = normalizeBlogRow({
   id: 'admin-test-en',
@@ -60,7 +54,10 @@ const legacyRow = normalizeBlogRow({
 });
 assert.equal(isPostForLocale(enRow, 'en'), true);
 assert.equal(isPostForLocale(enRow, 'zh'), false);
-assert.equal(isPostForLocale(legacyRow, 'en'), false);
+// 历史数据没有 locale 字段时按默认语言（英文）归入，避免老文章在列表里消失
+assert.equal(legacyRow.locale, 'en');
+assert.equal(isPostForLocale(legacyRow, 'en'), true);
+assert.equal(isPostForLocale(legacyRow, 'zh'), false);
 
 const generated = createLocalizedAdminPosts({
   title: 'How clipopai Converts Long Videos into Highlight Shorts',
@@ -68,12 +65,12 @@ const generated = createLocalizedAdminPosts({
   content: '<p>Paste a long video URL or upload a local video, then let AI find the strongest highlight moments.</p>',
   publish: true,
 });
-assert.equal(generated.length, locales.length);
-assert.ok(generated.some(post => post.locale === 'en' && post.title === 'How clipopai Converts Long Videos into Highlight Shorts'));
-assert.ok(generated.some(post => post.locale === 'zh' && /AI 高光短视频指南/.test(post.title)));
-assert.ok(generated.some(post => post.locale === 'zh-Hant' && /AI 高光短影片指南/.test(post.title)));
-assert.ok(generated.every(post => post.is_published === true));
-assert.equal(new Set(generated.map(post => post.cover_image)).size, 1);
+// 只创建英文原文，多语言版本由发布后的翻译流程生成
+assert.equal(generated.length, 1);
+assert.equal(generated[0].locale, 'en');
+assert.equal(generated[0].title, 'How clipopai Converts Long Videos into Highlight Shorts');
+assert.equal(generated[0].is_published, true);
+assert.ok(generated[0].cover_image, 'cover image must be generated');
 
 const blogListSource = readProjectFile('src/app/blog/page.tsx');
 assert.match(blogListSource, /getBuiltInBlogPosts/);
@@ -85,14 +82,15 @@ assert.doesNotMatch(blogListSource, /seo-4/);
 
 const blogDetailSource = readProjectFile('src/app/blog/[id]/page.tsx');
 assert.match(blogDetailSource, /getBuiltInBlogPost/);
-assert.match(blogDetailSource, /isPostForLocale/);
-assert.match(blogDetailSource, /fallbackPost/);
+assert.match(blogDetailSource, /getBuiltInBlogPosts/);
+assert.match(blogDetailSource, /normalizeBlogRow/);
 
+// 后台博客发布 UI 已迁到 /ax 管理端组件，/admin 只做跳转
 const adminSource = readProjectFile('src/app/admin/page.tsx');
-assert.match(adminSource, /Publish Blog Article/);
-assert.match(adminSource, /createLocalizedAdminPosts/);
-assert.match(adminSource, /\/api\/blog\/posts/);
-assert.match(adminSource, /admin@126\.com/);
+assert.match(adminSource, /\/ax\/login/);
+const adminBlogSource = readProjectFile('src/components/admin-blog.tsx');
+assert.match(adminBlogSource, /\/api\/blog\/posts/);
+assert.match(adminBlogSource, /admin@126\.com/);
 
 const routeSource = readProjectFile('src/app/api/blog/posts/route.ts');
 assert.match(routeSource, /SUPABASE_SERVICE_ROLE_KEY/);

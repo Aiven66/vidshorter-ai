@@ -1,4 +1,4 @@
-import { BRAND, CORE_PAGES, PRODUCT_SPECS, CORE_FAQS } from '@/lib/geo-content';
+import { BRAND, CONTENT_UPDATED, CORE_PAGES, PRODUCT_SPECS, CORE_FAQS } from '@/lib/geo-content';
 
 export const revalidate = 86400;
 
@@ -70,7 +70,7 @@ function buildLlmsTxt(): string {
   lines.push(`- RSS feed: ${BRAND.url}/rss.xml`);
   lines.push('');
 
-  lines.push(`Last updated: 2026-10-22`);
+  lines.push(`Last updated: ${CONTENT_UPDATED}`);
   lines.push('');
 
   return lines.join('\n');

@@ -24,6 +24,22 @@ const AI_CRAWLERS = [
   'MistralAI-User',
 ];
 
+/** 私有/接口路径：主流爬虫与 AI 爬虫都不应抓取（抓了也只会拿到 401/跳转）。 */
+const DISALLOW = [
+  '/api/',
+  '/dashboard',
+  '/admin',
+  '/ax',
+  '/notes',
+  '/batch',
+  '/recap',
+  '/login',
+  '/register',
+  '/forgot-password',
+  '/auth/',
+  '/desktop/',
+];
+
 export default function robots(): MetadataRoute.Robots {
   return {
     rules: [
@@ -32,24 +48,11 @@ export default function robots(): MetadataRoute.Robots {
         allow: '/',
         // 注意：绝不能屏蔽 /_next/ —— 否则 Googlebot 无法抓取 JS/CSS，
         // 无法正常渲染页面（本项目大量页面为首屏水合的客户端组件）。
-        disallow: [
-          '/api/',
-          '/dashboard',
-          '/admin',
-          '/ax',
-          '/notes',
-          '/batch',
-          '/recap',
-          '/login',
-          '/register',
-          '/forgot-password',
-          '/auth/',
-          '/desktop/',
-        ],
+        disallow: DISALLOW,
       },
-      // 明确允许主流 AI 检索/训练爬虫抓取公开内容（GEO：提高被引用概率）。
-      // 这些爬虫只需公开页面，因此不复制 disallow 列表。
-      ...AI_CRAWLERS.map((userAgent) => ({ userAgent, allow: '/' })),
+      // 明确允许主流 AI 检索/训练爬虫抓取公开内容（GEO：提高被引用概率），
+      // 同时沿用同一份私有路径黑名单，避免抓取预算浪费在后台页面。
+      ...AI_CRAWLERS.map((userAgent) => ({ userAgent, allow: '/', disallow: DISALLOW })),
     ],
     sitemap: `${siteUrl}/sitemap.xml`,
     host: siteUrl,

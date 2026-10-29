@@ -36,6 +36,14 @@ export const BRAND = {
 
 export type FaqItem = { question: string; answer: string };
 
+/**
+ * 站点内容事实的最后更新日期（YYYY-MM-DD）。
+ * sitemap 的 lastmod、llms.txt 与 /ai/summary.json 共用，避免每次 ISR 刷新
+ * 都把所有 URL 标成「刚刚更新」而被搜索引擎低估爬取预算。
+ * 修改产品事实（功能/定价/FAQ）时同步更新此日期。
+ */
+export const CONTENT_UPDATED = '2026-10-25';
+
 /** 首页与 FAQ 页共用的核心问答（英文 SSR 正文，供搜索引擎与 AI 抽取）。 */
 export const CORE_FAQS: FaqItem[] = [
   {
@@ -72,6 +80,11 @@ export const CORE_FAQS: FaqItem[] = [
     question: 'Which languages are supported?',
     answer:
       'The Clipop AI interface is available in 32 languages, and the platform supports multilingual captions. Caption availability depends on the source audio and the caption language you select.',
+  },
+  {
+    question: 'Does Clipop AI support AI dubbing with the original voice?',
+    answer:
+      'Yes. AI Dubbing runs in the macOS desktop app and uses zero-shot voice cloning to re-speak a video in Chinese or English with the original speaker timbre. Subtitle text is machine-translated and burned into the video. Video and audio stay on the device; only subtitle text is sent to a free translation endpoint.',
   },
   {
     question: 'Can I use the clips commercially?',
@@ -128,6 +141,7 @@ export const PRODUCT_SPECS: Array<{ label: string; value: string }> = [
   { label: 'Export quality', value: 'Free 720p with watermark · Starter 1080p without watermark · Pro up to 4K' },
   { label: 'Credits', value: '60 credits per clip · Free 180 on signup, then 60/day (600/month cap) · Starter 6,000/month · Pro 20,000/month' },
   { label: 'Platforms', value: 'Web app, macOS desktop app, Windows desktop app, Android app' },
+  { label: 'AI dubbing', value: 'Voice-preserving multilingual dubbing (Chinese / English) runs locally in the macOS app; subtitles are translated and burned in without an LLM API' },
   { label: 'Interface languages', value: '32 languages' },
 ];
 
@@ -198,6 +212,7 @@ export function buildAiSummary() {
       'AI Podcast clip generation',
       'Text-to-video AI Video Maker',
       'Digital human talking-head video generation',
+      'Voice-preserving AI dubbing in Chinese and English (macOS, on-device)',
       'Batch queue and ZIP export',
     ],
     inputs: {
@@ -238,7 +253,7 @@ export function buildAiSummary() {
       abuse: BRAND.abuseEmail,
     },
     sameAs: [...BRAND.sameAs],
-    updated: '2026-10-22',
+    updated: CONTENT_UPDATED,
   };
 }
 
@@ -249,6 +264,7 @@ export const CORE_PAGES: Array<{ path: string; title: string; description: strin
   { path: '/shorts', title: 'Shorts Studio', description: 'Generate 9:16 YouTube Shorts from a long video link.' },
   { path: '/ai-video', title: 'AI Video Maker', description: 'Generate a vertical video from a text topic with templates and narration.' },
   { path: '/video-notes', title: 'YouTube Video Summarizer', description: 'Transcript, summary, notes and translation for long videos.' },
+  { path: '/ai-dubbing', title: 'AI Dubbing', description: 'Switch a video into Chinese or English while keeping the original speaker timbre, with synced subtitles.' },
   { path: '/podcast', title: 'AI Podcast', description: 'Turn podcasts into clips and narrated content.' },
   { path: '/ai-tools', title: 'AI Toolbox', description: 'Watermark removal, upscaling, colorization and smart edits.' },
   { path: '/tiktok-remix', title: 'TikTok Remix', description: 'Analyze and remix TikTok videos into original short content.' },

@@ -8,13 +8,9 @@ import { HomeDemoExperience } from '@/components/home/demo-experience';
 // 如需恢复：把下面开关改为 true。
 const SHOW_MARKETING_SECTIONS = false;
 
-export default async function VideoClipsPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ url?: string }>;
-}) {
-  // 首页「智能解析与生成」会带上 ?url=，此处透传给处理器以预填并自动开始
-  const { url } = await searchParams;
+export default function VideoClipsPage() {
+  // 直接静态渲染；`?url=` 预填由 ClientVideoProcessor 在客户端读取，
+  // 避免 searchParams 把整页变成动态渲染（每次访问都 SSR、无法 CDN 缓存）。
   return (
     <div className="min-h-screen">
       <section className="relative overflow-hidden bg-gradient-to-b from-background via-background to-muted/30">
@@ -23,7 +19,7 @@ export default async function VideoClipsPage({
             <HomeHero />
             {SHOW_MARKETING_SECTIONS && <HomeDemoExperience />}
             <div id="core-video-processor" className="mx-auto max-w-5xl scroll-mt-24">
-              <ClientVideoProcessor initialUrl={url} />
+              <ClientVideoProcessor />
             </div>
             {SHOW_MARKETING_SECTIONS && (
               <>

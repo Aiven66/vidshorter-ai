@@ -1,5 +1,6 @@
 import type { MetadataRoute } from 'next';
 import { buildBlogUrl } from '@/lib/blog-content';
+import { CONTENT_UPDATED } from '@/lib/geo-content';
 import { REMIX_TEMPLATE_PAGES } from '@/lib/tiktok-remix-content';
 
 const siteUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://www.clipopai.com').replace(/\/$/, '');
@@ -16,6 +17,7 @@ const PUBLIC_ROUTES: RouteDef[] = [
   { path: '/shorts', priority: 0.95, changeFrequency: 'daily' },
   { path: '/ai-video', priority: 0.9, changeFrequency: 'daily' },
   { path: '/tiktok-remix', priority: 0.9, changeFrequency: 'weekly' },
+  { path: '/ai-dubbing', priority: 0.9, changeFrequency: 'weekly' },
   { path: '/digital-human-live', priority: 0.9, changeFrequency: 'weekly' },
   { path: '/video-notes', priority: 0.85, changeFrequency: 'weekly' },
   { path: '/ai-tools', priority: 0.85, changeFrequency: 'weekly' },
@@ -80,10 +82,13 @@ async function fetchPublishedPosts(): Promise<MetadataRoute.Sitemap> {
 }
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const now = new Date();
+  // 静态路由用固定的内容更新日，而不是每次生成时的时间：
+  // 否则每次 ISR 刷新（每小时）都会把所有 URL 的 lastmod 推到现在，
+  // 搜索引擎会认为「全站每小时都变」从而降低 lastmod 权重。
+  const contentUpdated = new Date(`${CONTENT_UPDATED}T00:00:00.000Z`);
   const staticEntries: MetadataRoute.Sitemap = PUBLIC_ROUTES.map((route) => ({
     url: `${siteUrl}${route.path}`,
-    lastModified: now,
+    lastModified: contentUpdated,
     changeFrequency: route.changeFrequency,
     priority: route.priority,
   }));
@@ -91,7 +96,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   /** TikTok 二创模版长尾子页（与 [template]/page.tsx 的 generateStaticParams 同源） */
   const remixEntries: MetadataRoute.Sitemap = REMIX_TEMPLATE_PAGES.map((page) => ({
     url: `${siteUrl}/tiktok-remix/${page.slug}`,
-    lastModified: now,
+    lastModified: contentUpdated,
     changeFrequency: 'weekly',
     priority: 0.7,
   }));

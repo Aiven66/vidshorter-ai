@@ -149,7 +149,7 @@ function checkFiles() {
     const src = readFileSync(file, 'utf8');
     assert.ok(src.includes('uploadAiInput'), `${file} must upload input to storage`);
     assert.ok(src.includes(`'${tool}'`), `${file} must call ${tool} API`);
-    assert.ok(src.includes('useAuth'), `${file} must check login state`);
+    assert.ok(src.includes('useAiToolAuth'), `${file} must check login state`);
   }
 
   // 图片去水印必须保留涂抹掩码交互
@@ -189,12 +189,16 @@ function checkLabConversions() {
 }
 
 function checkDilateAndBBox() {
-  // 5x5 掩码，中心一个白点，膨胀 1px → 十字 5 点
+  // 5x5 掩码，中心一个白点，1px 方形核膨胀 → 3x3 共 9 点。
   const mask = new Uint8Array(5 * 5);
   mask[2 * 5 + 2] = 1;
   const dilated = dilateBinary(mask, 5, 5, 1);
   const count = dilated.reduce((s, v) => s + v, 0);
-  assert.equal(count, 5, `dilate should produce 5 pixels, got ${count}`);
+  assert.equal(count, 9, `dilate with square kernel should produce 9 pixels, got ${count}`);
+
+  // 各向异性核：只做水平膨胀 → 3 点。
+  const horizontal = dilateBinary(mask, 5, 5, 1, 0);
+  assert.equal(horizontal.reduce((s, v) => s + v, 0), 3, 'horizontal-only dilation should produce 3 pixels');
 
   const bbox = maskBBoxSingleChannel(mask, 5, 5, 0);
   assert.deepEqual(bbox, { x: 2, y: 2, w: 1, h: 1 });

@@ -243,7 +243,7 @@ ok('英文基线的定价与 FAQ 也是月度口径', () => {
   const src = readFileSync(join(process.cwd(), 'src/lib/i18n/common.ts'), 'utf8');
   assert.equal(field(src, 'starter', 'feature1'), '6,000 credits monthly');
   assert.equal(field(src, 'pro', 'feature1'), '20,000 credits monthly');
-  assert.equal(field(src, 'free', 'feature1'), '60 credits daily (1 clip)');
+  assert.equal(field(src, 'free', 'feature1'), '180 credits on signup (3 clips), then 60/day — 600/month cap');
   assert.ok(/monthly/.test(pricingFaqA2(src) ?? ''));
 });
 

@@ -29,6 +29,7 @@
     "test:video-notes": "node --import tsx scripts/check-video-notes.ts",
     "test:yuecut": "node scripts/check-yuecut.js",
     "test:web-auth": "node --import tsx scripts/check-web-auth-regressions.ts",
+    "test:web-smoke": "node --import tsx scripts/check-web-smoke.ts",
     "test:windows-agent": "node --import tsx scripts/check-windows-agent.ts",
     "waffo:setup": "node --import tsx scripts/waffo-setup.ts",
     "start": "bash ./scripts/start.sh",

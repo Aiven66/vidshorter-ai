@@ -1,41 +1,56 @@
 import assert from 'node:assert/strict';
-import { getBuiltInBlogPost, getBuiltInBlogPosts, normalizeBlogRow, normalizeLocale } from '../src/lib/blog-content';
+import {
+  buildBlogUrl,
+  getBuiltInBlogPost,
+  getBuiltInBlogPosts,
+  isPostForLocale,
+  normalizeBlogRow,
+  normalizeLocale,
+  slugifyTitle,
+} from '../src/lib/blog-content';
 import { locales } from '../src/lib/i18n/index';
 
 async function main() {
+  // 内置文章已清空（内容由管理员从后台发布），这里保证不会悄悄回退到旧种子数据。
   for (const locale of locales) {
-    const activeLocale = normalizeLocale(locale);
-    const posts = getBuiltInBlogPosts(activeLocale);
-
-    assert.ok(posts.length >= 16, `${locale} should expose built-in blog posts`);
-
-    for (const post of posts) {
-      const detail = getBuiltInBlogPost(post.id, activeLocale);
-      assert.ok(detail, `${locale} detail should resolve ${post.id}`);
-      assert.equal(detail?.locale, activeLocale, `${post.id} should resolve in current locale`);
-      assert.equal(detail?.translation_group, post.translation_group, `${post.id} should keep translation group`);
-    }
+    assert.deepEqual(getBuiltInBlogPosts(normalizeLocale(locale)), [], `${locale}: built-in posts must stay empty`);
   }
+  assert.equal(getBuiltInBlogPost('legacy-seed-id', 'en'), null, 'unknown built-in id must resolve to null');
 
-  const englishPost = getBuiltInBlogPosts('en')[0];
-  const zhDetailFromEnglishId = getBuiltInBlogPost(englishPost.id, 'zh');
-  assert.ok(zhDetailFromEnglishId, 'Chinese detail should resolve an English suffixed id by slug');
-  assert.equal(zhDetailFromEnglishId?.locale, 'zh');
-  assert.equal(zhDetailFromEnglishId?.translation_group, englishPost.translation_group);
+  // locale 归一化：繁体后缀必须先于 zh 命中，未知值回退 en。
+  assert.equal(normalizeLocale('zh-Hant'), 'zh-Hant');
+  assert.equal(normalizeLocale('zh-TW'), 'zh-Hant');
+  assert.equal(normalizeLocale('zh-HK'), 'zh-Hant');
+  assert.equal(normalizeLocale('zh-CN'), 'zh');
+  assert.equal(normalizeLocale('zh'), 'zh');
+  assert.equal(normalizeLocale('en-US'), 'en');
+  assert.equal(normalizeLocale(''), 'en');
+  assert.equal(normalizeLocale('not-a-locale'), 'en');
 
-  const traditionalPost = getBuiltInBlogPosts('zh-Hant')[0];
-  const normalizedRow = normalizeBlogRow({ id: traditionalPost.id, title: traditionalPost.title });
-  assert.equal(normalizedRow.locale, 'zh-Hant', 'zh-Hant suffix should be inferred before zh');
-
-  const englishPosts = getBuiltInBlogPosts('en');
-  const categoryCounts = new Map<string, number>();
-  for (const post of englishPosts) {
-    categoryCounts.set(post.category, (categoryCounts.get(post.category) || 0) + 1);
-  }
-  assert.ok(
-    [...categoryCounts.values()].some(count => count >= 2),
-    'related-post recommendations should have same-category candidates'
+  // 博客 URL 可稳定生成：ASCII / CJK 保留，空标题回退 untitled。
+  assert.equal(
+    buildBlogUrl({ id: '1234abcd-0000-0000-0000-000000000000', title: 'Hello World' }),
+    '/blog/hello-world-1234abcd.html',
   );
+  assert.equal(
+    buildBlogUrl({ id: 'abcd1234-0000-0000-0000-000000000000', title: '中文标题' }),
+    '/blog/中文标题-abcd1234.html',
+  );
+  assert.equal(slugifyTitle(''), 'untitled');
+  assert.equal(slugifyTitle('  ***  '), 'untitled');
+
+  // 数据库行归一化：显式 locale 生效，摘要从 HTML 抽取，默认已发布。
+  const zhHant = normalizeBlogRow({ id: 'row-a', title: 'Traditional', content: '<p>你好</p>', locale: 'zh-Hant' });
+  assert.equal(zhHant.locale, 'zh-Hant');
+  assert.equal(zhHant.is_published, true);
+  assert.equal(zhHant.isBuiltIn, false);
+  assert.ok((zhHant.summary || '').length > 0);
+
+  const zh = normalizeBlogRow({ id: 'row-b', title: 'Simplified', content: '<p>内容</p>', locale: 'zh' });
+  assert.equal(zh.locale, 'zh');
+  assert.equal(isPostForLocale(zh, 'zh'), true);
+  assert.equal(isPostForLocale(zhHant, 'zh'), false);
+  assert.equal(isPostForLocale(zh, 'zh-Hant'), false);
 
   console.log(`Blog routing checks passed for ${locales.length} locales.`);
 }
