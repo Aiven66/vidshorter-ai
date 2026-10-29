@@ -263,7 +263,7 @@ const translations = {
   cta: '免费开始剪辑',
   secondary: '观看演示',
   startFree: '免费开始',
-  freeCredits: '注册即可获得60积分（每天1次生成）',
+  freeCredits: '注册即可获得180积分（3条成片）',
   },
   highlights: {
   bilibili: { title: '支持 B站和 YouTube 链接', desc: '粘贴支持的长视频链接，即可开始 AI 高光短视频生成，不需要手动找时间轴。' },
@@ -301,7 +301,7 @@ const translations = {
   q1: 'clipopai 支持哪些视频输入？',
   a1: '你可以粘贴 YouTube、B站等公开视频链接，也可以上传本地 MP4、MOV、AVI 等视频文件。',
   q2: '新用户注册后有多少免费积分？',
-  a2: '新用户注册后可获得60积分，可以用于体验核心的 AI 高光短视频生成流程。',
+  a2: '新用户注册后可获得180积分（3条成片），可以用于体验核心的 AI 高光短视频生成流程。',
   q3: '一定需要安装 Mac 桌面客户端吗？',
   a3: '普通上传和公开视频链接可以直接在网页端处理。当 YouTube 访问不稳定或需要更稳定的本地处理时，推荐使用 Mac Agent。',
   q4: 'AI 会生成什么结果？',
@@ -363,7 +363,7 @@ const translations = {
       clientHint: '网络受限？推荐下载客户端直连处理：',
       clientMac: 'Mac 版 (Apple Silicon)',
       clientWin: 'Windows 64位',
-      newUserBonus: '新用户首次登录赠送 60 积分',
+      newUserBonus: '新用户首次登录赠送 180 积分',
     },
     presets: {
       kicker: '智能创作模版',

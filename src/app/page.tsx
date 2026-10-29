@@ -6,7 +6,7 @@ import { buildMetadata } from '@/lib/seo';
 export const metadata: Metadata = buildMetadata({
   title: 'AI Video Clipper - Turn Long Videos into Viral Shorts',
   description:
-    'Paste a YouTube, Bilibili or podcast link, or upload a long video. Clipop AI auto-detects highlights, adds multilingual captions and renders 9:16 vertical shorts. New users get 60 free credits.',
+    'Paste a YouTube, Bilibili or podcast link, or upload a long video. Clipop AI auto-detects highlights, adds multilingual captions and renders 9:16 vertical shorts. New users get 180 free credits (3 clips).',
   path: '/',
   keywords: [
     'AI video clipper',

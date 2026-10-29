@@ -13,7 +13,7 @@ const siteUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://www.clipopai.com').
 
 const SITE_TITLE = 'Clipop AI - AI Video Clipper | Turn Long Videos into Viral Shorts';
 const SITE_DESCRIPTION =
-  'Clipop AI is an AI-powered video tool to auto generate highlight shorts from long videos. Paste YouTube & Bilibili links or upload local videos, get auto captions for TikTok, Reels and more. New users gain 60 free credits.';
+  'Clipop AI is an AI-powered video tool to auto generate highlight shorts from long videos. Paste YouTube & Bilibili links or upload local videos, get auto captions for TikTok, Reels and more. New users gain 180 free credits (3 clips).';
 
 /**
  * 移动端视口：

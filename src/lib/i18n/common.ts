@@ -303,7 +303,7 @@ export const commonTranslations = {
       cta: 'Start Clipping for Free',
       secondary: 'Watch Demo',
       startFree: 'Start For Free',
-      freeCredits: 'Sign up now and get 60 free credits (1 clip/day)',
+      freeCredits: 'Sign up now and get 180 free credits (3 clips)',
     },
     demo: {
       badge: 'Instant preview',
@@ -439,7 +439,7 @@ export const commonTranslations = {
       clientHint: 'Network limited? Use the desktop client for direct processing:',
       clientMac: 'macOS (Apple Silicon)',
       clientWin: 'Windows 64-bit',
-      newUserBonus: 'New users get 60 free credits',
+      newUserBonus: 'New users get 180 free credits',
     },
     presets: {
       kicker: 'Smart templates',

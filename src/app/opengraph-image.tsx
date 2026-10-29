@@ -76,7 +76,7 @@ export default function OpengraphImage() {
               background: 'linear-gradient(135deg, #F2D98C 0%, #C79A3E 100%)',
             }}
           >
-            60 free credits
+            180 free credits
           </div>
           <div style={{ display: 'flex', fontSize: 24, color: '#737373' }}>www.clipopai.com</div>
         </div>
